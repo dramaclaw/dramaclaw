@@ -261,6 +261,10 @@ from novelvideo.freezone.image_node import (
     DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION,
     reverse_prompt_from_image,
 )
+from novelvideo.freezone.local_video_upscale import (
+    is_local_video_upscale_backend,
+    local_video_upscale_enabled,
+)
 from novelvideo.freezone.mark_node import detect_freezone_mark
 from novelvideo.freezone.paths import (
     CANVAS_ID_RE,
@@ -9925,8 +9929,13 @@ def _video_processing_entry(
     catalog: list[dict[str, Any]] | None,
     mode: str,
 ) -> dict[str, Any] | None:
+    local_enabled = local_video_upscale_enabled()
     return next(
-        (item for item in catalog or [] if mode in (item.get("supportedModes") or [])),
+        (
+            item for item in catalog or []
+            if mode in (item.get("supportedModes") or [])
+            and (local_enabled or not is_local_video_upscale_backend(item.get("apiModel") or item.get("api_model")))
+        ),
         None,
     )
 
@@ -9958,9 +9967,12 @@ async def _resolve_video_processing_model(
         requester_user_id=requester_user_id,
     )
     selected = resolved or entry
+    backend = str(selected.get("apiModel") or selected.get("api_model") or "")
+    if is_local_video_upscale_backend(backend) and not local_video_upscale_enabled():
+        raise HTTPException(409, "当前环境未启用本地 GPU 视频增强")
     return {
         "catalog_id": identifier,
-        "backend": str(selected.get("apiModel") or selected.get("api_model") or ""),
+        "backend": backend,
         "request_schema": schema,
         "model_params": params,
         "resolution_options": _video_processing_resolutions(selected),
@@ -11804,7 +11816,7 @@ async def _prepare_video_upscale(
         requester_user_id=requester_user_id,
     )
     adjust_frame_rate = body.target_fps is not None or body.slowdown != "auto"
-    local_frame_rate = upscale["backend"] == "video-upscale-fast" and adjust_frame_rate
+    local_frame_rate = is_local_video_upscale_backend(upscale["backend"]) and adjust_frame_rate
     if local_frame_rate:
         if body.resolution != "1080p" or body.target_fps != 60 or body.slowdown != "auto":
             raise HTTPException(400, "3060 内测补帧仅支持 1080p、60 fps 和原速。")

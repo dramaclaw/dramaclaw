@@ -30,6 +30,11 @@ from typing import Any, Literal, Optional
 import numpy as np
 from PIL import Image
 
+from novelvideo.freezone.local_video_upscale import (
+    LOCAL_VIDEO_UPSCALE_MODEL,
+    is_local_video_upscale_backend,
+    local_video_upscale_enabled,
+)
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
 from novelvideo.freezone.video_slowdown import slowdown_factor
 from novelvideo.egress_context import (
@@ -468,6 +473,10 @@ async def run_freezone_video_upscale(
     for compatibility with old queued tasks. New canvas submissions always freeze
     their catalog-selected processing model(s) into the task payload.
     """
+    if not local_video_upscale_enabled() and (
+        is_local_video_upscale_backend(upscale_backend) or is_local_video_upscale_backend(frame_rate_backend)
+    ):
+        raise RuntimeError("当前环境未启用本地 GPU 视频增强")
     if upscale_backend:
         return await _run_model_video_enhancement(
             project_dir=project_dir,
@@ -672,7 +681,7 @@ async def _run_video_processing_model(
     )
 
     generator = create_video_generator(
-        backend=backend,
+        backend=f"newapi_{LOCAL_VIDEO_UPSCALE_MODEL}" if is_local_video_upscale_backend(backend) else backend,
         resolution=resolution,
         generate_audio=False,
         model_params=model_params,
@@ -727,7 +736,7 @@ async def _run_model_video_enhancement(
         raise FileNotFoundError(f"video source not found: {src}")
     factor = slowdown_factor(slowdown)
     # The frozen backend preserves the behavior of tasks queued before this profile existed.
-    combined = upscale_backend == "video-upscale-fast" and frame_rate_backend == upscale_backend
+    combined = is_local_video_upscale_backend(upscale_backend) and is_local_video_upscale_backend(frame_rate_backend)
     if combined and (resolution != "1080p" or target_fps != 60 or factor != 1 or face_enhance):
         raise RuntimeError("unsupported local 1080p60 enhancement parameters")
     has_frame_rate_stage = not combined and (factor > 1 or target_fps is not None)

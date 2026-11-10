@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import jobs as freezone_jobs
 from novelvideo.freezone.jobs import _video_upscale_filter
+from novelvideo.generators import video_generator
 
 
 def test_video_upscale_filter_uses_lanczos_and_enhancement() -> None:
@@ -133,12 +134,15 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
 
 
 @pytest.mark.parametrize(
-    ("smart_interpolation", "width", "height", "fps", "duration", "limit"),
-    [(True, 1344, 768, 24.0, 15.083, 16), (False, 854, 480, 30.0, 29.1, 30)],
+    ("backend", "smart_interpolation", "width", "height", "fps", "duration", "limit"),
+    [
+        ("video-upscale-fast", True, 1344, 768, 24.0, 15.083, 16),
+        ("newapi_video-upscale-fast", False, 854, 480, 30.0, 29.1, 30),
+    ],
 )
 @pytest.mark.asyncio
 async def test_local_1080p60_uses_one_gateway_request_and_publishes_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, smart_interpolation: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str, smart_interpolation: bool,
     width: int, height: int, fps: float, duration: float, limit: int,
 ) -> None:
     source = tmp_path / "source.mp4"
@@ -152,18 +156,24 @@ async def test_local_1080p60_uses_one_gateway_request_and_publishes_output(
     async def model(mode: str, *, requester_user_id: str):
         assert requester_user_id == "member-1"
         return {"catalog_id": mode,
-                "backend": "video-upscale-fast" if mode == "video_upscale" else "video-frame-rate",
+                "backend": backend if mode == "video_upscale" else "video-frame-rate",
                 "model_params": {}, "request_schema": {}, "resolution_options": ["1080p"]}
 
     async def process(**kwargs):
         calls.append(kwargs)
         kwargs["on_progress"](0.55)
-        kwargs["output_path"].write_bytes(b"1080p60")
+        Path(kwargs["output_path"]).write_bytes(b"1080p60")
+        return SimpleNamespace(status=SimpleNamespace(value="done"))
 
+    def generator(*, backend: str, **_kwargs):
+        assert video_generator.parse_newapi_video_backend(backend) == "video-upscale-fast"
+        return SimpleNamespace(generate=process)
+
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
     monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *_: source)
     monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", model)
     monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
-    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", process)
+    monkeypatch.setattr(video_generator, "create_video_generator", generator)
     body = freezone_routes.FreezoneVideoUpscaleRequest(
         source_url="/static/source.mp4", target_fps=60, smart_interpolation=smart_interpolation,
     )
@@ -184,8 +194,7 @@ async def test_local_1080p60_uses_one_gateway_request_and_publishes_output(
     assert output.read_bytes() == b"1080p60"
     assert metadata["target_fps"] == 60
     assert len(calls) == 1
-    assert calls[0]["backend"] == "video-upscale-fast"
-    assert calls[0]["mode"] == "video_upscale"
+    assert calls[0]["gen_mode"] == "video_upscale"
     assert calls[0]["processing_metadata"]["target_fps"] == 60
     assert calls[0]["processing_metadata"]["smart_interpolation"] is smart_interpolation
     assert progress == pytest.approx([0.5675])
@@ -195,6 +204,54 @@ async def test_local_1080p60_uses_one_gateway_request_and_publishes_output(
             body=body, project_dir=tmp_path, requester_user_id="member-1",
         )
     assert rejected.value.status_code == 400
+
+
+@pytest.mark.parametrize("backend", ["video-upscale-fast", "newapi_video-upscale-fast"])
+@pytest.mark.asyncio
+async def test_disabled_local_model_is_not_offered_or_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+
+    async def project(*_args, **_kwargs):
+        return SimpleNamespace(requester_user_id="member-1"), "admin", "project", tmp_path, str(tmp_path)
+
+    async def catalog(*_args, **_kwargs):
+        return [
+            {"catalogId": "local", "apiModel": backend, "supportedModes": ["video_upscale"],
+             "resolutionOptions": ["1080p"]},
+            {"catalogId": "frame-rate", "apiModel": "newapi_video-frame-rate", "supportedModes": ["video_frame_rate"],
+             "resolutionOptions": ["1080p", "2k"]},
+        ]
+
+    async def probe(*_args, **_kwargs):
+        return {"width": 1280, "height": 720, "fps": 30, "duration": 5}
+
+    monkeypatch.delenv("LOCAL_VIDEO_UPSCALE_ENABLED", raising=False)
+    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *_: source)
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", project)
+    monkeypatch.setattr(freezone_routes, "_scoped_media_model_catalog", catalog)
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+
+    result = await freezone_routes.freezone_video_upscale_probe(
+        project="project", source_url="/static/source.mp4", user={"id": "member-1"},
+    )
+    assert result["data"]["upscale_resolutions"] == []
+    assert result["data"]["frame_rate_resolutions"] == ["1080p", "2k"]
+    with pytest.raises(HTTPException, match="当前没有可用的视频超分模型") as rejected:
+        await freezone_routes._prepare_video_upscale(
+            body=freezone_routes.FreezoneVideoUpscaleRequest(
+                source_url="/static/source.mp4", target_fps=60,
+            ),
+            project_dir=tmp_path, requester_user_id="member-1",
+        )
+    assert rejected.value.status_code == 409
+    with pytest.raises(RuntimeError, match="当前环境未启用本地 GPU 视频增强"):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path, job_id="misrouted", source_path=str(source),
+            upscale_backend=backend, frame_rate_backend=backend, target_fps=60,
+        )
 
 
 @pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
