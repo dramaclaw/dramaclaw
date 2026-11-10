@@ -14,6 +14,17 @@ RUN cargo install --locked --version 1.0.0-alpha.3 vtracer-cli
 # older than the vendored server expects; the binary is copied into the final image.
 FROM node:22-bookworm-slim AS node-runtime
 
+# Cache canvas dependencies separately and build only the server worker inputs.
+FROM node:22-bookworm-slim AS canvas-core-build
+WORKDIR /canvas-core
+RUN corepack enable
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/tsconfig*.json frontend/vite.canvas-server.config.ts ./
+COPY frontend/src ./src
+COPY frontend/public/locales ./public/locales
+RUN pnpm run build:canvas-server
+
 # Studio's one runtime dependency (playwright-core), installed from the vendored lockfile so
 # the version and integrity hash match what was tested. npm is not needed at runtime.
 FROM node:22-bookworm-slim AS openfilm-deps
@@ -108,6 +119,9 @@ COPY src ./src
 COPY .hermes ./.hermes
 COPY deploy ./deploy
 
+# Place the worker bundle where the editable Python package resolves it.
+COPY --from=canvas-core-build /canvas-core/dist-canvas-server /app/frontend/dist-canvas-server
+
 # Hermes Linux sandbox binary: install the vendored codex-linux-sandbox for
 # this image's target arch onto PATH, where sandbox_wrap._wrap_linux looks it
 # up (`shutil.which` / /usr/local/bin). TARGETARCH is amd64|arm64 (BuildKit),
@@ -156,6 +170,9 @@ RUN set -eux; \
     apt-get purge -y git; \
     apt-get autoremove -y; \
     rm -rf /var/lib/apt/lists/*
+
+# Fail the build if the default canvas worker pool cannot start in the image.
+RUN /app/.venv/bin/python -c "from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool; pool = get_canvas_core_pool(); pool.warm(); pool.close()"
 
 # Hermes comes from this project's own fork, always. A PyPI release cannot
 # serve this image: it keeps the same version string as the fork and then drops
