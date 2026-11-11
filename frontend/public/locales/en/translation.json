@@ -6878,7 +6878,8 @@
         "probeError": "Unable to inspect source video: {{error}}",
         "submit": "Generate HD video",
         "model": "Model",
-        "standardModel": "Standard video enhancement"
+        "standardModel": "Standard video enhancement",
+        "modelUnavailable": "The saved enhancement model is unavailable. Select an available model to continue."
       }
     },
     "videoNode": {

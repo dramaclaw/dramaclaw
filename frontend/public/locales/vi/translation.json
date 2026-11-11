@@ -6752,7 +6752,8 @@
         "probeError": "Không thể đọc thông số video nguồn: {{error}}",
         "submit": "Tạo video HD",
         "model": "Model",
-        "standardModel": "Standard video enhancement"
+        "standardModel": "Standard video enhancement",
+        "modelUnavailable": "Mô hình tăng cường đã lưu hiện không khả dụng. Hãy chọn mô hình khả dụng để tiếp tục."
       }
     },
     "videoNode": {

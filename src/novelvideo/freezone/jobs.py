@@ -724,9 +724,12 @@ async def _run_model_video_enhancement(
     probe = await probe_video_stream(
         str(src), cwd=project_dir, egress_context=egress_context
     )
-    from novelvideo.freezone.video_slowdown import is_topaz_backend
+    from novelvideo.freezone.video_slowdown import is_topaz_backend, topaz_requires_frame_rate
 
     topaz = is_topaz_backend(upscale_backend)
+    topaz_frame_rate = topaz and topaz_requires_frame_rate(target_fps, slowdown)
+    if topaz_frame_rate and not frame_rate_backend:
+        raise RuntimeError("video frame-rate model is not configured")
     work_dir = outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}_stages"
     work_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -743,7 +746,7 @@ async def _run_model_video_enhancement(
             processing_metadata={
                 **(
                     {"target_fps": int(target_fps)}
-                    if topaz and factor == 1 and target_fps is not None
+                    if topaz and not topaz_frame_rate and target_fps is not None
                     else {}
                 ),
                 **(
@@ -771,7 +774,7 @@ async def _run_model_video_enhancement(
         effective_target_fps = target_fps
         if factor > 1 and effective_target_fps is None:
             effective_target_fps = max(1, round(float(probe["fps"]), 3))
-        if effective_target_fps is not None and (not topaz or factor > 1):
+        if effective_target_fps is not None and (not topaz or topaz_frame_rate):
             if not frame_rate_backend:
                 raise RuntimeError("video frame-rate model is not configured")
             framed = work_dir / "03_frame_rate.mp4"
@@ -815,7 +818,7 @@ async def _run_model_video_enhancement(
             "face_enhance": bool(face_enhance),
             "source": probe,
             "stages": (
-                (1 + int(factor > 1))
+                (1 + int(topaz_frame_rate))
                 if topaz
                 else 1 + int(factor > 1) + int(effective_target_fps is not None)
             ),

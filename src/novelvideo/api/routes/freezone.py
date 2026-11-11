@@ -11838,17 +11838,22 @@ async def _prepare_video_upscale(
         fps = body.target_fps
         if fps is None and body.slowdown != "auto":
             fps = float(source_meta["fps"])
-        if fps is not None and (not float(fps).is_integer() or not 1 <= fps <= 120):
-            raise HTTPException(400, "Topaz 补帧和慢放需要选择 1–120 的整数目标帧率")
+        if fps is not None and (not float(fps).is_integer() or not 16 <= fps <= 120):
+            raise HTTPException(400, "Topaz 补帧和慢放需要选择 16–120 的整数目标帧率")
     upscale = await _resolve_video_processing_model(
         "video_upscale",
         requester_user_id=requester_user_id,
         scheme=body.enhancement_model,
     )
     frame_rate: dict[str, Any] | None = None
-    if (body.target_fps is not None or body.slowdown != "auto") and not (
-        body.enhancement_model == "topaz" and body.slowdown == "auto"
-    ):
+    from novelvideo.freezone.video_slowdown import topaz_requires_frame_rate
+
+    needs_frame_rate = (
+        topaz_requires_frame_rate(body.target_fps, body.slowdown)
+        if body.enhancement_model == "topaz"
+        else body.target_fps is not None or body.slowdown != "auto"
+    )
+    if needs_frame_rate:
         frame_rate = await _resolve_video_processing_model(
             "video_frame_rate",
             requester_user_id=requester_user_id,

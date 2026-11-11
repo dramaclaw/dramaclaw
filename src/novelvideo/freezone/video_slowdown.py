@@ -10,6 +10,11 @@ def slowdown_factor(value: str) -> int:
         raise ValueError(f"unsupported slowdown: {value}") from exc
 
 
+def topaz_requires_frame_rate(target_fps: float | None, slowdown: str) -> bool:
+    """Precision handles explicit FPS up to 60; Apollo handles retiming above it."""
+    return slowdown_factor(slowdown) > 1 or (target_fps is not None and target_fps > 60)
+
+
 def is_topaz_backend(backend: str) -> bool:
     """Identify the public Topaz processing models, including gateway prefixes."""
     return backend.removeprefix("newapi_") in {

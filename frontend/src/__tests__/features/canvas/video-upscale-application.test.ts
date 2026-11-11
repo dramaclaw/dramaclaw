@@ -75,6 +75,7 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       upscaleSourceUrl: '/static/v.mp4',
       upscaleResolution: '2k',
       upscaleEnhancementModel: 'topaz',
+      upscaleModelPendingInitialization: true,
       isGenerating: false,
     });
     expect(
@@ -117,6 +118,7 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       videoUrl: '/static/v-hd.mp4',
       isGenerating: false,
       generationError: null,
+      upscaleModelPendingInitialization: false,
     });
   });
 

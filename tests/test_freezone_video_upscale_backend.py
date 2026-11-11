@@ -409,7 +409,7 @@ async def test_video_upscale_quote_rejects_unavailable_model_resolution_before_b
         )
 
 
-@pytest.mark.parametrize("slowdown,target_fps", [("auto", None), ("auto", 60), ("2x", 60)])
+@pytest.mark.parametrize("slowdown,target_fps", [("auto", None), ("auto", 16), ("auto", 60), ("auto", 90), ("auto", 120), ("2x", 60)])
 async def test_topaz_uses_native_interpolation_without_standard_or_local_slowdown(
     tmp_path, monkeypatch, slowdown, target_fps,
 ):
@@ -437,15 +437,16 @@ async def test_topaz_uses_native_interpolation_without_standard_or_local_slowdow
         frame_rate_backend="newapi_topaz-video-frame-rate",
     )
     assert output.exists()
-    assert len(calls) == (2 if slowdown == "2x" else 1)
+    separate = slowdown != "auto" or (target_fps is not None and target_fps > 60)
+    assert len(calls) == (2 if separate else 1)
     assert "scene" not in calls[0]["processing_metadata"]
-    if slowdown == "2x":
+    if separate:
         assert calls[0]["processing_metadata"] == {}
-        assert calls[1]["processing_metadata"]["slowdown"] == "2x"
+        assert calls[1]["processing_metadata"]["slowdown"] == slowdown
         assert calls[1]["duration"] == 10
-        assert calls[1]["processing_metadata"]["target_fps"] == 60
+        assert calls[1]["processing_metadata"]["target_fps"] == target_fps
     elif target_fps:
-        assert calls[0]["processing_metadata"] == {"target_fps": 60}
+        assert calls[0]["processing_metadata"] == {"target_fps": target_fps}
     assert meta["stages"] == len(calls)
 
 
@@ -474,8 +475,13 @@ def test_topaz_quote_has_same_fps_and_duration_as_execution():
     assert all(s["enhancement_model"] == "topaz" for s in stages)
 
 
-@pytest.mark.parametrize("slowdown,expected_modes", [("auto", ["video_upscale"]), ("2x", ["video_upscale", "video_frame_rate"])])
-async def test_prepare_topaz_selects_matching_catalog_stages(tmp_path, monkeypatch, slowdown, expected_modes):
+@pytest.mark.parametrize("slowdown,target_fps,expected_modes", [
+    ("auto", 16, ["video_upscale"]), ("auto", 60, ["video_upscale"]),
+    ("auto", 90, ["video_upscale", "video_frame_rate"]),
+    ("auto", 120, ["video_upscale", "video_frame_rate"]),
+    ("2x", 60, ["video_upscale", "video_frame_rate"]),
+])
+async def test_prepare_topaz_selects_matching_catalog_stages(tmp_path, monkeypatch, slowdown, target_fps, expected_modes):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
     selected = []
@@ -493,10 +499,62 @@ async def test_prepare_topaz_selects_matching_catalog_stages(tmp_path, monkeypat
     monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
     monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *args: source)
     monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", resolve)
-    await freezone_routes._prepare_video_upscale(
+    _source, _meta, _models, billing = await freezone_routes._prepare_video_upscale(
         body=freezone_routes.FreezoneVideoUpscaleRequest(
-            source_url="source", enhancement_model="topaz", target_fps=60, slowdown=slowdown,
+            source_url="source", enhancement_model="topaz", target_fps=target_fps, slowdown=slowdown,
         ),
         project_dir=tmp_path, requester_user_id="user",
     )
     assert selected == expected_modes
+    stages = billing["pricing_stages"]
+    assert [stage["mode"] for stage in stages] == expected_modes
+    assert stages[0]["output_fps"] == (24 if len(stages) == 2 else target_fps)
+    if len(stages) == 2:
+        assert stages[1]["target_fps"] == target_fps
+        assert stages[1]["duration_seconds"] == (20 if slowdown == "2x" else 10)
+
+
+@pytest.mark.parametrize("target_fps,slowdown,source_fps", [
+    (12, "auto", 24), (12, "2x", 24), (15, "auto", 24),
+    (29.97, "auto", 24), (None, "2x", 12),
+])
+async def test_topaz_invalid_target_fps_rejected_before_model_submission(
+    tmp_path, monkeypatch, target_fps, slowdown, source_fps,
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    async def probe(*args, **kwargs):
+        return {"width": 1280, "height": 720, "fps": source_fps, "duration": 10.0}
+    async def unexpected_model(*args, **kwargs):
+        pytest.fail("invalid FPS must fail before selecting or submitting paid models")
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *args: source)
+    monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", unexpected_model)
+    with pytest.raises(HTTPException, match="16–120") as exc:
+        await freezone_routes._prepare_video_upscale(
+            body=freezone_routes.FreezoneVideoUpscaleRequest(
+                source_url="source", enhancement_model="topaz",
+                target_fps=target_fps, slowdown=slowdown,
+            ), project_dir=tmp_path, requester_user_id="user",
+        )
+    assert exc.value.status_code == 400
+
+
+async def test_topaz_high_fps_requires_apollo_before_paid_upscale(tmp_path, monkeypatch):
+    source = tmp_path / 'source.mp4'
+    source.write_bytes(b'source')
+
+    async def probe(*args, **kwargs):
+        return {'width': 1280, 'height': 720, 'fps': 24, 'duration': 10}
+
+    async def unexpected_model(**kwargs):
+        pytest.fail('missing Apollo must fail before paying for upscale')
+
+    monkeypatch.setattr(freezone_jobs, 'probe_video_stream', probe)
+    monkeypatch.setattr(freezone_jobs, '_run_video_processing_model', unexpected_model)
+    with pytest.raises(RuntimeError, match='frame-rate model is not configured'):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path, job_id='missing-apollo', source_path=str(source),
+            resolution='1080p', target_fps=120,
+            upscale_backend='newapi_topaz-video-upscale', frame_rate_backend=None,
+        )

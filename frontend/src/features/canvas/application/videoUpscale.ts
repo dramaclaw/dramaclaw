@@ -64,6 +64,7 @@ export function createVideoUpscaleResultNode(
       upscaleSourceUrl: opts.sourceUrl,
       upscaleResolution: opts.resolution,
       upscaleEnhancementModel: opts.enhancementModel ?? "topaz",
+      upscaleModelPendingInitialization: opts.enhancementModel === undefined,
       isGenerating: false,
     } as unknown as Parameters<typeof store.addNode>[2],
   );
@@ -93,6 +94,7 @@ export async function submitVideoUpscale(
 
   useCanvasStore.getState().updateNodeData(nodeId, {
     isGenerating: true,
+    upscaleModelPendingInitialization: false,
     generationStartedAt: Date.now(),
     generationError: null,
   });

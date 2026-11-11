@@ -7018,7 +7018,8 @@
         "probeError": "Não foi possível inspecionar o vídeo de origem: {{error}}",
         "submit": "Gerar vídeo em HD",
         "model": "Model",
-        "standardModel": "Standard video enhancement"
+        "standardModel": "Standard video enhancement",
+        "modelUnavailable": "O modelo de aprimoramento salvo está indisponível. Selecione um modelo disponível para continuar."
       }
     },
     "videoNode": {
