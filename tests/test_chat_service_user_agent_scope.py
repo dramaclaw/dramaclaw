@@ -690,64 +690,6 @@ def test_backend_api_get_ignores_stale_legacy_supertale_url(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_append_chat_notification_persists_project_assistant_message(
-    monkeypatch, tmp_path
-):
-    seen = {}
-
-    async def fake_project_context(user, scope):
-        seen["scope"] = scope
-        return SimpleNamespace(
-            output_dir=tmp_path / "out", state_dir=tmp_path / "state"
-        )
-
-    def fake_add_assistant_message(
-        username,
-        project,
-        content,
-        media=None,
-        *,
-        project_dir=None,
-        project_state_dir=None,
-    ):
-        seen.update(
-            {
-                "username": username,
-                "project": project,
-                "content": content,
-                "project_dir": project_dir,
-                "project_state_dir": project_state_dir,
-            }
-        )
-        return {"id": "1", "role": "assistant", "content": content}
-
-    monkeypatch.setattr(chat_routes, "_project_context_for_scope", fake_project_context)
-    monkeypatch.setattr(
-        chat_routes.chat_service,
-        "add_assistant_message",
-        fake_add_assistant_message,
-    )
-
-    result = await chat_routes.append_chat_notification(
-        chat_routes.ChatNotificationIn(
-            scope=chat_routes.ChatScopePayload(kind="project", id="demo"),
-            text="  任务已完成。  ",
-        ),
-        user={"username": "alice"},
-    )
-
-    assert result == {
-        "ok": True,
-        "data": {"id": "1", "role": "assistant", "content": "任务已完成。"},
-    }
-    assert seen["username"] == "alice"
-    assert seen["project"] == "demo"
-    assert seen["content"] == "任务已完成。"
-    assert seen["project_dir"] == tmp_path / "out"
-    assert seen["project_state_dir"] == tmp_path / "state"
-
-
-@pytest.mark.anyio
 async def test_deterministic_stream_redacts_local_paths(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))

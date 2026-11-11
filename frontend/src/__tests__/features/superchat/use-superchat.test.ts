@@ -120,6 +120,54 @@ const MESSAGE_CACHE_PREFIX = "superchat:messages:v2:";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const apiPostMock = vi.hoisted(() => vi.fn((_url: string, _options?: unknown) => Promise.resolve({})));
 
+it("keeps keyed notifications local and replaces a repeated message", async () => {
+  apiPostMock.mockClear();
+  localStorage.clear();
+  const { result, unmount } = renderHook(() => useSuperChat({
+    project: "local-notices", displayName: "Tester",
+  }));
+  const appended: boolean[] = [];
+  try {
+    await act(async () => {
+      appended.push(await result.current.appendNotification("✅ 分镜图已完成。", "batch:b1"));
+      appended.push(await result.current.appendNotification("✅ 分镜图已完成。", "batch:b1"));
+    });
+    expect(apiPostMock.mock.calls.map(([url]) => url))
+      .not.toContain("api/v1/chat/notifications");
+    expect(appended).toEqual([true, true]);
+    expect(result.current.messages.map(({ id, role, text }) => ({ id, role, text }))).toEqual([
+      { id: "task-notification:batch:b1", role: "assistant", text: "✅ 分镜图已完成。" },
+    ]);
+  } finally {
+    unmount();
+  }
+});
+
+it("adds an unkeyed notification locally with a generated id", async () => {
+  apiPostMock.mockClear();
+  localStorage.clear();
+  const { result, unmount } = renderHook(() => useSuperChat({
+    project: "local-notices", displayName: "Tester",
+  }));
+  let appended = false;
+  try {
+    await act(async () => {
+      appended = await result.current.appendNotification("  ✅ 分镜图已完成。  ");
+    });
+    expect(apiPostMock.mock.calls.map(([url]) => url))
+      .not.toContain("api/v1/chat/notifications");
+    expect(appended).toBe(true);
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      id: expect.stringMatching(/^task-notification-/),
+      role: "assistant",
+      text: "✅ 分镜图已完成。",
+    });
+  } finally {
+    unmount();
+  }
+});
+
 it("does not POST chat history during a full live turn or its history snapshot", async () => {
   apiPostMock.mockClear();
   localStorage.clear();

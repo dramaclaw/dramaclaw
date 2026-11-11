@@ -443,36 +443,6 @@ async def test_canvas_background_followup_is_saved_for_agent_without_reresolving
 
 
 @pytest.mark.anyio
-async def test_workflow_completion_notification_is_idempotent_per_canvas(monkeypatch, tmp_path):
-    from novelvideo.chat.store import ChatStore
-
-    store = ChatStore()
-    monkeypatch.setattr(store, "db_for", lambda _username, scope: tmp_path / f"{scope.canvas_id}.db")
-    monkeypatch.setattr(chat_route, "chat_store", store)
-
-    async def fake_project_context(_user, _scope):
-        return None
-
-    monkeypatch.setattr(chat_route, "_project_context_for_scope", fake_project_context)
-    payload = chat_route.ChatNotificationIn(
-        scope=chat_route.ChatScopePayload(
-            kind="project", id="p", surface="freezone", canvasId="canvas-a", agentId="main",
-        ),
-        text="本轮工作流已完成，是否继续？",
-        idempotency_key="workflow-completion:run-1",
-    )
-    first = await chat_route.append_chat_notification(payload, {"username": "admin"})
-    second = await chat_route.append_chat_notification(payload, {"username": "admin"})
-    assert first["data"]["id"] == second["data"]["id"]
-    with sqlite3.connect(tmp_path / "canvas-a.db") as conn:
-        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
-    payload.scope.canvasId = "canvas-b"
-    await chat_route.append_chat_notification(payload, {"username": "admin"})
-    with sqlite3.connect(tmp_path / "canvas-b.db") as conn:
-        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     "receipt_revision,receipt_task,expected_status",
     [

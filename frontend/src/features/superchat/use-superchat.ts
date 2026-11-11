@@ -98,11 +98,6 @@ type ActiveTurnSnapshot = {
   startedAt: number;
 };
 
-type ChatNotificationResponse = {
-  ok: boolean;
-  data?: unknown;
-};
-
 function loadSettings(): SuperChatSettings {
   try {
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") as Partial<SuperChatSettings>;
@@ -2849,42 +2844,24 @@ export function useSuperChat({
     return true;
   }, [connected, desiredScope, displayName, markTurnActive, normalizedComposeNodeId, normalizedFreezoneCanvasId, sendFrame, surface]);
 
-  const appendNotification = useCallback(async (text: string, idempotencyKey?: string): Promise<boolean> => {
+  const appendNotification = useCallback((text: string, idempotencyKey?: string): boolean => {
     const trimmed = text.trim();
     if (!trimmed) return false;
-    try {
-      const response = await api
-        .post("api/v1/chat/notifications", {
-          json: {
-            scope: desiredScope,
-            text: trimmed,
-            ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
-          },
-        })
-        .json<ChatNotificationResponse>();
-      const message = normalizeMessageForScope(response.data, "assistant", desiredScope);
-      if (message && scopeMatches(desiredScope, desiredScopeRef.current)) {
-        setMessages((current) => sortMessages([...current.filter((item) => item.id !== message.id), message]));
-      }
-      return true;
-    } catch (error) {
-      console.error("[superchat] append notification failed", error);
-      const fallback = normalizeMessageForScope(
-        {
-          id: idempotencyKey ? `task-notification:${idempotencyKey}`
-            : `task-notification-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          role: "assistant",
-          content: trimmed,
-          created_at: new Date().toISOString(),
-        },
-        "assistant",
-        desiredScope,
-      );
-      if (fallback && scopeMatches(desiredScope, desiredScopeRef.current)) {
-        setMessages((current) => sortMessages([...current.filter((item) => item.id !== fallback.id), fallback]));
-      }
-      return false;
+    const message = normalizeMessageForScope(
+      {
+        id: idempotencyKey ? `task-notification:${idempotencyKey}`
+          : `task-notification-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: "assistant",
+        content: trimmed,
+        created_at: new Date().toISOString(),
+      },
+      "assistant",
+      desiredScope,
+    );
+    if (message && scopeMatches(desiredScope, desiredScopeRef.current)) {
+      setMessages((current) => sortMessages([...current.filter((item) => item.id !== message.id), message]));
     }
+    return true;
   }, [desiredScope]);
 
   const clearConversation = useCallback(async (): Promise<boolean> => {

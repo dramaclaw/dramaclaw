@@ -19,7 +19,7 @@ const localeState = vi.hoisted(() => ({ language: "zh" }));
 
 const superChatMocks = vi.hoisted(() => ({
   send: vi.fn(async () => true),
-  appendNotification: vi.fn(async () => undefined),
+  appendNotification: vi.fn(() => true),
   messages: [] as ChatMessage[],
   busy: false,
   activeTurnId: null as string | null,

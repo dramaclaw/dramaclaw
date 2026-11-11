@@ -461,12 +461,6 @@ class ClarificationToolResultIn(BaseModel):
     message: str | None = None
 
 
-class ChatNotificationIn(BaseModel):
-    scope: ChatScopePayload | None = None
-    text: str
-    idempotency_key: str | None = Field(default=None, min_length=1, max_length=500)
-
-
 class DirectorAutoStartIn(BaseModel):
     episode: int = Field(default=1, ge=1)
     voice_policy: str | None = Field(default=None, pattern="^(system|custom)$")
@@ -575,54 +569,6 @@ async def resume_director_auto_run(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "data": _director_auto_payload(run)}
-
-
-@router.post("/chat/notifications")
-async def append_chat_notification(
-    payload: ChatNotificationIn,
-    user: dict = Depends(get_api_user),
-) -> dict[str, Any]:
-    username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
-    text = payload.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
-    if len(text) > 4000:
-        raise HTTPException(status_code=400, detail="text is too long")
-
-    if _is_freezone_scope(scope):
-        project_ctx = await _project_context_for_scope(user, scope)
-        message = await chat_store.append_message_async(
-            username,
-            _chat_store_scope_for_project_context(scope, project_ctx),
-            "assistant",
-            text,
-            idempotency_key=(
-                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
-            ),
-        )
-    elif scope.kind == "project":
-        project_ctx = await _project_context_for_scope(user, scope)
-        if not scope.id:
-            raise HTTPException(status_code=400, detail="project scope id is required")
-        message = await asyncio.to_thread(
-            chat_service.add_assistant_message,
-            username,
-            str(scope.id),
-            text,
-            project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=(
-                project_ctx.state_dir if project_ctx is not None else None
-            ),
-        )
-    else:
-        message = await chat_store.append_message_async(
-            username, scope, "assistant", text,
-            idempotency_key=(
-                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
-            ),
-        )
-    return {"ok": True, "data": message}
 
 
 @router.post("/chat/uploads")

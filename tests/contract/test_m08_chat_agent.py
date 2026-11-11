@@ -99,6 +99,10 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
                 "event": {"type": "noop"},
             },
         )
+        notification = client.post(
+            "/api/v1/chat/notifications",
+            json={"scope": {"kind": "home"}, "text": "通知", "idempotency_key": "k1"},
+        )
 
     assert cancel.status_code == 200
     assert cancel.json()["ok"] is True
@@ -108,6 +112,10 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
     }
     assert ui_event.status_code == 404
     assert "/api/v1/chat/ui-events" not in {
+        route.path for route in iter_route_contexts(app.routes)
+    }
+    assert notification.status_code == 404
+    assert "/api/v1/chat/notifications" not in {
         route.path for route in iter_route_contexts(app.routes)
     }
 
