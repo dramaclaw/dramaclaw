@@ -284,6 +284,94 @@ def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
     )
 
 
+def test_agent_credential_without_write_scope_cannot_patch_workflow_run(
+    workflow_run_client: TestClient,
+) -> None:
+    from novelvideo.api.auth import get_api_user
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base, json={"actions": [{"node_id": "image", "action": "generate_image"}]}
+    )
+    assert created.status_code == 200
+    target = f"{base}/{created.json()['data']['run_id']}"
+    overrides = workflow_run_client.app.dependency_overrides
+    browser_user = overrides[get_api_user]
+    overrides[get_api_user] = lambda: {
+        "id": "u-alice",
+        "username": "alice",
+        "credential_kind": "agent_session",
+        "scopes": ["projects:read"],
+        "current_scope_kind": "project",
+        "current_project_id": "proj_demo",
+    }
+
+    response = workflow_run_client.patch(target, json={"status": "cancelled"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "scope missing: 'projects:write' (token has ['projects:read'])"
+    )
+    overrides[get_api_user] = browser_user
+    observed = workflow_run_client.get(target)
+    assert observed.status_code == 200
+    assert observed.json()["data"]["status"] == "running"
+
+
+def test_agent_credential_in_other_project_cannot_patch_workflow_run(
+    workflow_run_client: TestClient,
+) -> None:
+    from novelvideo.api.auth import get_api_user
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base, json={"actions": [{"node_id": "image", "action": "generate_image"}]}
+    )
+    assert created.status_code == 200
+    target = f"{base}/{created.json()['data']['run_id']}"
+    overrides = workflow_run_client.app.dependency_overrides
+    browser_user = overrides[get_api_user]
+    overrides[get_api_user] = lambda: {
+        "id": "u-alice",
+        "username": "alice",
+        "credential_kind": "agent_session",
+        "scopes": ["projects:write"],
+        "current_scope_kind": "project",
+        "current_project_id": "proj_other",
+    }
+
+    response = workflow_run_client.patch(target, json={"status": "cancelled"})
+    assert response.status_code == 403
+    overrides[get_api_user] = browser_user
+    observed = workflow_run_client.get(target)
+    assert observed.status_code == 200
+    assert observed.json()["data"]["status"] == "running"
+
+
+def test_agent_credential_with_write_scope_can_cancel_workflow_run(
+    workflow_run_client: TestClient,
+) -> None:
+    from novelvideo.api.auth import get_api_user
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base, json={"actions": [{"node_id": "image", "action": "generate_image"}]}
+    )
+    assert created.status_code == 200
+    target = f"{base}/{created.json()['data']['run_id']}"
+    workflow_run_client.app.dependency_overrides[get_api_user] = lambda: {
+        "id": "u-alice",
+        "username": "alice",
+        "credential_kind": "agent_session",
+        "scopes": ["projects:write"],
+        "current_scope_kind": "project",
+        "current_project_id": "proj_demo",
+    }
+
+    response = workflow_run_client.patch(target, json={"status": "cancelled"})
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "cancelled"
+
+
 def test_recipe_media_claim_reports_interrupted_run_before_enqueue(
     workflow_run_client: TestClient, monkeypatch
 ) -> None:

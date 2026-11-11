@@ -17540,7 +17540,7 @@ async def patch_canvas_workflow_run(
     canvas_id: str,
     run_id: str,
     body: dict = Body(...),
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:write")),
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
