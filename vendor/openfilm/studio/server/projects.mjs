@@ -25,6 +25,7 @@ import { FILM_FILE, filmHtml } from '../../src/film-doc.mjs';
 import { writeAtomic } from './atomic.mjs';
 import { coverAt } from './cover.mjs';
 import { libraryProjects, libraryRoot } from '../../src/locations.mjs';
+import { projectMissing } from './project-presence.mjs';
 
 export const TOOL_DIR = '.film';
 
@@ -194,17 +195,19 @@ function folderName(/** @type {string} */ name) {
  */
 const describe = (/** @type {Recent} */ r) => {
   const created = statSync(r.path, { throwIfNoEntry: false });
+  const missingReason = projectMissing(r.path);
   const duration = filmDuration(r.path);
   const cover = coverAt(r.path);
   return {
-    /* `missing`: its folder is gone (one that only lost its film.html is still there, and still opens) */
-    id: r.id, path: r.path, name: filmTitle(r.path) ?? basename(r.path), openedAt: r.openedAt, missing: !created?.isDirectory(),
+    id: r.id, path: r.path, name: filmTitle(r.path) ?? basename(r.path), openedAt: r.openedAt, missing: Boolean(missingReason),
+    ...(missingReason ? { missingReason } : {}),
     createdAt: created ? Math.round(created.birthtimeMs || created.ctimeMs) : r.openedAt,
     ...(duration != null ? { duration } : {}),
     ...(r.folderId ? { folderId: r.folderId } : {}),
     ...(cover != null ? { cover } : {}),
   };
 };
+
 
 /** The film's own title — what the host named the cut. Null when the document has none to give. */
 function filmTitle(/** @type {string} */ folder) {
@@ -439,12 +442,12 @@ export async function renameProject(/** @type {string} */ id, /** @type {string}
 
 /**
  * Delete a project: its folder goes to the system's Trash (where the person can still take it back), and it leaves the
- * list. A folder that is already gone just leaves the list.
+ * list. An unavailable project just leaves the list; any remaining files are kept.
  */
 export async function deleteProject(/** @type {string} */ id) {
   const found = (await readState()).recent.find((r) => r.id === id);
   if (!found) throw new ProjectError('no such project', 404);
-  if (existsSync(found.path)) await moveToTrash(found.path);
+  if (!projectMissing(found.path)) await moveToTrash(found.path);
   await forgetProject(id);
 }
 

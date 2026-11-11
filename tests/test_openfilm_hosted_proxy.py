@@ -130,10 +130,19 @@ def test_json_rewrites_preview_urls_and_preserves_film_keys(tmp_path):
 
 def test_vendored_router_and_assets_are_scoped_to_the_current_film():
     root = Path(__file__).resolve().parents[1]
-    original = next(
-        (root / "vendor/openfilm/studio/ui/dist/assets").glob("*.dramaclaw12.js")
-    ).read_text()
+    chunks = list(
+        (root / "vendor/openfilm/studio/ui/dist/assets").glob("index-*.dramaclaw*.js")
+    )
+    assert len(chunks) == 1, "expected exactly one patched Studio chunk"
+    original = chunks[0].read_text()
     adapted = proxy.editor_chunk(original, BASE)
+    assert adapted.count(
+        'window.parent.postMessage({type:"dramaclaw:studio-export"},location.origin)'
+    ) == 1
+    assert (
+        'onClick:()=>{S?i.showError(`${s("project.filmCannotExport")} ${S}`):'
+        'Zt>0?Ff(!0):i.show(s("project.filmNotReady"))}'
+    ) not in adapted
     without_scoped_calls = adapted.replace(BASE + "/api/", "scoped-api/")
     assert '"/api/' not in without_scoped_calls and "`/api/" not in without_scoped_calls
     assert "${location.host}/api/" not in without_scoped_calls
@@ -306,10 +315,12 @@ def test_repeated_query_parameters_cannot_hide_a_git_path(client):
     assert client.captured == []
 
 
-def test_host_preferences_cannot_change_other_users_shortcuts_or_storage(client):
-    response = client.patch(
-        BASE + "/api/prefs", headers={"origin": EDITOR}, json={"projectsFolder": "/etc"}
-    )
+@pytest.mark.parametrize(
+    "change",
+    [{"projectsFolder": "/etc"}, {"autoVersions": True}, {"showAutoVersions": True}],
+)
+def test_host_preferences_cannot_change_other_users_shortcuts_or_storage(client, change):
+    response = client.patch(BASE + "/api/prefs", headers={"origin": EDITOR}, json=change)
     assert response.status_code == 403
     assert client.captured == []
 

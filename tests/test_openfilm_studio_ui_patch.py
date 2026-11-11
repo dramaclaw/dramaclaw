@@ -42,21 +42,44 @@ def chunk() -> str:
 
 
 def test_version_history_stays_out_of_the_embed(chunk: str) -> None:
-    """Version history is the editor's local git — commit messages, branches and copies of
-    the film's media. The person cutting a video in the host manages no project folder, so
-    both the toolbar entry and its dialog stay hidden; the history API itself is untouched."""
-    assert 'function EG({open:e,onClick:t,className:s}){const r=Be();return a.jsx(on,' not in chunk
-    assert 'function EG({open:e,onClick:t,className:s}){const r=Be();return new URLSearchParams(location.search).get("hostBack")?null:a.jsx(on,' in chunk
-    assert 'function AG({projectId:e,history:t,open:s,anchor:r,onClose:i}){const l=Be(),' not in chunk
-    assert 'function AG({projectId:e,history:t,open:s,anchor:r,onClose:i}){if(new URLSearchParams(location.search).get("hostBack"))return null;const l=Be(),' in chunk
+    """Version history is the editor's local git — named versions and copies of the film's
+    media, now shown in a date-ordered modal with video previews. The person cutting a video
+    in the host manages no project folder, so both the toolbar entry and its dialog stay
+    hidden; the history API itself is untouched."""
+    assert 'function DY({open:e,onClick:t,className:n}){const s=We();return a.jsx(cn,' not in chunk
+    assert (
+        'function DY({open:e,onClick:t,className:n}){const s=We();return '
+        'new URLSearchParams(location.search).get("hostBack")?null:a.jsx(cn,'
+    ) in chunk
+    assert (
+        'function $Y({projectId:e,projectName:t,history:n,open:s,onClose:i,onOpenProject:l})'
+        '{const c=We(),'
+    ) not in chunk
+    assert (
+        'function $Y({projectId:e,projectName:t,history:n,open:s,onClose:i,onOpenProject:l})'
+        '{if(new URLSearchParams(location.search).get("hostBack"))return null;const c=We(),'
+    ) in chunk
+
+
+def test_auto_versions_switch_stays_out_of_the_embed(chunk: str) -> None:
+    """The host grows version history only through deliberate commits, so the embed
+    must not offer Studio's automatic version creation in Settings → Advanced."""
+    assert 'function P_(){const e=We(),' not in chunk
+    assert (
+        'function P_(){if(new URLSearchParams(location.search).get("hostBack"))'
+        'return null;const e=We(),'
+    ) in chunk
 
 
 def test_dev_release_notes_stay_out_of_the_embed(chunk: str) -> None:
     """Settings → Developer closed with a Releases group that previews the vendored editor's
     own notes: it prints the upstream version and reopens the dialog the embed suppresses.
     The editor ships with the host image, so there is no user-facing update to preview."""
-    assert 'rb()?a.jsx(jo,{title:e("settings.developer.releaseGroup")' not in chunk
-    assert 'rb()&&!new URLSearchParams(location.search).get("hostBack")?a.jsx(jo,{title:e("settings.developer.releaseGroup")' in chunk
+    assert ':null,a.jsx(vo,{title:e("settings.developer.releaseGroup")' not in chunk
+    assert (
+        ':null,!new URLSearchParams(location.search).get("hostBack")'
+        '&&a.jsx(vo,{title:e("settings.developer.releaseGroup")'
+    ) in chunk
 
 
 def test_source_edits_are_stored_as_patches() -> None:
@@ -134,9 +157,9 @@ def test_film_title_decodes_pythons_apostrophe() -> None:
 
 
 def test_project_fonts_do_not_carry_the_vendored_product(chunk: str) -> None:
-    """`eA` prefixes both the @font-face family and the stack that points at it, so the name is
-    written into every film that picks a project font — and a re-vendor puts the editor's own name
-    back there."""
+    """The font helper prefixes both the @font-face family and the stack that points at it, so
+    the name is written into every film that picks a project font — and a re-vendor puts the
+    editor's own name back there."""
     assert '"OpenFilm Project "' not in chunk
     assert '"Dramaclaw Project "' in chunk
 
@@ -146,12 +169,12 @@ def test_embed_title_cannot_rename_the_film_folder(chunk: str) -> None:
     the id the host looks the film up by. Enter therefore looked like a save that had not taken
     (the name came back) while the next open quietly built a fresh cut and orphaned the edits.
     In the embed the name belongs to the canvas node, so the heading only shows it."""
-    assert 'children:oc?a.jsx("input",{autoFocus:!0,value:Cm' not in chunk
+    assert 'children:ld?a.jsx("input",{autoFocus:!0,value:kr' not in chunk
     assert (
         'children:new URLSearchParams(location.search).get("hostBack")'
         '?a.jsx("span",{className:"min-w-0 truncate px-2 text-[13px] font-medium '
-        'text-[var(--text-muted)]",children:WY(Ko||r("project.untitled"))})'
-        ':oc?a.jsx("input",{autoFocus:!0,value:Cm'
+        'text-[var(--text-muted)]",children:cJ(Gi||s("project.untitled"))})'
+        ':ld?a.jsx("input",{autoFocus:!0,value:kr'
     ) in chunk
 
 
@@ -196,8 +219,8 @@ def test_index_html_loads_the_patched_chunk() -> None:
 
 def test_desktop_download_promo_is_disabled(chunk: str) -> None:
     """The chip sells OpenFilm's own desktop app; Dramaclaw is the host."""
-    assert 'r("desktop.title")' in chunk, "the promo markup moved — re-derive the anchor"
-    assert '!Et&&a.jsx(on,{label:r("desktop.title")' not in chunk
+    assert 's("desktop.title")' in chunk, "the promo markup moved — re-derive the anchor"
+    assert '!_t&&a.jsx(cn,{label:s("desktop.title")' not in chunk
 
 
 def test_brand_mark_replaced_by_settings_gear(chunk: str) -> None:
@@ -242,7 +265,7 @@ def test_host_language_wins_over_browser_guessing(chunk: str) -> None:
     """A cross-site iframe gets a reduced `navigator.languages` (Chrome hands back the
     alternative locale), so auto-detection resolves to English inside the embed. The
     host states the language instead; a manual pick in the editor still outranks it."""
-    assert 'function Pk(){' in chunk, "language resolver moved — re-derive the anchor"
+    assert 'function rM(){' in chunk, "language resolver moved — re-derive the anchor"
     assert 'const q=new URLSearchParams(location.search).get("lang")' in chunk
 
 
@@ -264,7 +287,10 @@ def test_host_language_survives_the_editors_own_navigation(chunk: str) -> None:
 def test_failed_project_sends_the_user_back_to_the_canvas(chunk: str) -> None:
     """The error screen used to render a Projects button that walked the user into
     Studio's own project list, with no toolbar and therefore no way back."""
-    dead_end = 'onClick:s,className:"rounded-lg border border-[var(--border)] px-3 py-1.5 hover:bg-[var(--bg-hover)]",children:r("nav.projects")'
+    dead_end = (
+        'onClick:n,className:"rounded-lg border border-[var(--border)] px-3 py-1.5 '
+        'hover:bg-[var(--bg-hover)]",children:s("nav.projects")'
+    )
     assert dead_end not in chunk, "the project-list dead end is reachable again"
     assert 'if(x){const _q=new URLSearchParams(location.search),_b=_q.get("hostBack")' in chunk
 
@@ -273,17 +299,21 @@ def test_project_gone_sends_the_user_back_to_the_canvas(chunk: str) -> None:
     """onLeave is how the project panel reports a vanished film: standalone it navigates
     to "/" and the router then auto-opens the first project it finds. Inside the embed
     that is a different user's cut, so the host has to take the user back instead."""
-    assert 'i=()=>{Wu?Wu.report({gone:!0}):s("/",!0)}' not in chunk
-    assert 'i=()=>{if(Wu){Wu.report({gone:!0});return}' in chunk
+    assert 'i=()=>{Rd?Rd.report({gone:!0}):n("/",!0)}' not in chunk
+    assert 'i=()=>{if(Rd){Rd.report({gone:!0});return}' in chunk
 
 
 def test_embed_loading_splash_drops_openfilm_mark_and_copy(chunk: str) -> None:
     """The boot splash is OpenFilm's own loading screen — its wordmark plus 「正在打开
     项目」 wording — and it paints after the host's loading surface is gone, so a refresh
     flashes another product. In the embed only the neutral bar is left for the film fetch."""
-    assert 'function ME({labelKey:e}){const t=Be();' in chunk, "loading splash moved — re-derive the anchor"
-    assert 'function ME({labelKey:e}){const t=Be();const _h=' in chunk
-    assert '!_h&&a.jsx("span",{className:"text-[var(--text)]",children:a.jsx(z0,{size:34})})' in chunk
+    assert 'function iA({labelKey:e}){const t=We();' in chunk, (
+        "loading splash moved — re-derive the anchor"
+    )
+    assert 'function iA({labelKey:e}){const t=We();const _h=' in chunk
+    assert (
+        '!_h&&a.jsx("span",{className:"text-[var(--text)]",children:a.jsx(H1,{size:34})})'
+    ) in chunk
     assert '!_h&&e?a.jsx("p"' in chunk
 
 
@@ -315,7 +345,10 @@ def test_catalogue_copy_never_names_the_vendored_product(
     segment = chunk[from_index:to_index]
     for token in ("OpenFilm", "Studio"):
         stray = re.search(rf"(?<![A-Za-z0-9_]){token}(?![A-Za-z0-9_])", segment)
-        assert not stray, f"{lang} catalogue still shows {token}: {segment[max(0, stray.start()-60):stray.start()+60]!r}"
+        assert not stray, (
+            f"{lang} catalogue still shows {token}: "
+            f"{segment[max(0, stray.start()-60):stray.start()+60]!r}"
+        )
 
 
 def test_copy_overrides_replace_foreign_instructions(chunk: str) -> None:
@@ -333,34 +366,45 @@ def test_copy_overrides_replace_foreign_instructions(chunk: str) -> None:
 def test_embed_hides_settings_footer_links(chunk: str) -> None:
     """The settings sidebar footer links to the upstream repo, its examples repo and its
     website — all three walk an embedded user out to OpenFilm."""
-    assert 'children:P$.map(E=>a.jsx("a",{href:E.href' not in chunk
-    assert 'children:!new URLSearchParams(location.search).get("hostBack")&&P$.map(E=>a.jsx("a",{href:E.href' in chunk
+    assert 'children:L_.map(N=>a.jsx("a",{href:N.href' not in chunk
+    assert (
+        'children:!new URLSearchParams(location.search).get("hostBack")'
+        '&&L_.map(N=>a.jsx("a",{href:N.href'
+    ) in chunk
 
 
 def test_embed_hides_about_and_update_row(chunk: str) -> None:
     """About shows the vendored editor's own version and a 检查更新 button that would update
     it; neither is a Dramaclaw concept."""
-    assert 'Et?.update?.onState?a.jsx(K$,{}):a.jsx(U$,{})' not in chunk
-    assert 'Et?.update?.onState?a.jsx(K$,{}):new URLSearchParams(location.search).get("hostBack")?null:a.jsx(U$,{})' in chunk
+    assert '_t?.update?.onState?a.jsx(B_,{}):a.jsx(__,{})' not in chunk
+    assert (
+        '_t?.update?.onState?a.jsx(B_,{}):'
+        'new URLSearchParams(location.search).get("hostBack")?null:a.jsx(__,{})'
+    ) in chunk
 
 
 def test_embed_never_opens_the_whats_new_dialog(chunk: str) -> None:
     """The dialog prints upstream release notes under the vendored version number and its
     footer links to OpenFilm's GitHub releases."""
-    assert '!s||typeof document>"u")return null;if(new URLSearchParams(location.search).get("hostBack"))return null;' in chunk
+    assert (
+        ',[t,l]),!t||typeof document>"u"||'
+        'new URLSearchParams(location.search).get("hostBack")?null:Fr.createPortal('
+    ) in chunk
 
 
 def test_embed_does_not_offer_the_studio_start_command(chunk: str) -> None:
     """When the editor loses its server it offers `openfilm open` to copy into a terminal;
     a Dramaclaw user has no terminal and no such command."""
-    assert 'i&&!Et?a.jsx("button",{type:"button",onClick:()=>{navigator.clipboard?.writeText(l)' not in chunk
-    assert 'i&&!Et&&!new URLSearchParams(location.search).get("hostBack")?a.jsx("button"' in chunk
+    assert (
+        'i&&!_t?a.jsx("button",{type:"button",onClick:()=>{navigator.clipboard?.writeText(l)'
+    ) not in chunk
+    assert 'i&&!_t&&!new URLSearchParams(location.search).get("hostBack")?a.jsx("button"' in chunk
 
 
 def test_shortcut_scheme_label_follows_the_ui_language(chunk: str) -> None:
     """Settings → Keyboard shortcuts names the keymap after the vendored product."""
     assert 'openfilm:"OpenFilm"' not in chunk
-    assert 'openfilm:v0()==="zh-CN"?"虾画":"Dramaclaw"' in chunk
+    assert 'openfilm:j1()==="zh-CN"?"虾画":"Dramaclaw"' in chunk
 
 
 def test_index_html_drops_openfilm_title_and_favicon() -> None:
@@ -374,8 +418,14 @@ def test_embed_hides_the_locked_start_command(chunk: str) -> None:
     """The full-screen "this browser isn't signed in" dialog pairs its explanation with a
     `openfilm open` clipboard button that hands out a keyed localhost address. The host opens
     that address itself, so the embed keeps the explanation and drops the command."""
-    assert 'Et?null:a.jsxs("div",{className:"mt-4 flex items-center gap-2 text-[12.5px] text-[var(--text-muted)]",children:[a.jsx("span",{children:e("connection.lockedHow")})' not in chunk
-    assert 'Et||new URLSearchParams(location.search).get("hostBack")?null:a.jsxs("div",{className:"mt-4 flex items-center gap-2' in chunk
+    assert (
+        '_t?null:a.jsxs("div",{className:"mt-4 flex items-center gap-2 text-[12.5px] '
+        'text-[var(--text-muted)]",children:[a.jsx("span",{children:e("connection.lockedHow")})'
+    ) not in chunk
+    assert (
+        '_t||new URLSearchParams(location.search).get("hostBack")?null:'
+        'a.jsxs("div",{className:"mt-4 flex items-center gap-2'
+    ) in chunk
 
 
 def _code_brand() -> list[tuple[str, str, int]]:
@@ -415,7 +465,7 @@ def test_locked_copy_never_asks_for_a_terminal(
 def test_zh_copy_is_not_space_padded(chunk: str) -> None:
     """Upstream padded its Latin wordmark with spaces, which is right around a foreign word and a
     typo around 虾画."""
-    start, end = "pz={nav:{", "cx=["
+    start, end = "TO={nav:{", "bg=["
     segment = chunk[chunk.index(start):chunk.index(end, chunk.index(start))]
     stray = re.search(r"[\u3000-\u9fff] 虾画|虾画 [\u3000-\u9fff]", segment)
     if stray:

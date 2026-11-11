@@ -22,23 +22,23 @@ const DIST = process.env.OPENFILM_STUDIO_DIST
   ? resolve(process.env.OPENFILM_STUDIO_DIST)
   : resolve(dirname(fileURLToPath(import.meta.url)), '../../vendor/openfilm/studio/ui/dist');
 const ASSETS = join(DIST, 'assets');
-const SOURCE_CHUNK = 'index-D1xgKltC.js';
-const PATCHED_CHUNK = 'index-D1xgKltC.dramaclaw12.js';
+const SOURCE_CHUNK = 'index-7ByF79tc.js';
+const PATCHED_CHUNK = 'index-7ByF79tc.dramaclaw13.js';
 const INDEX = join(DIST, 'index.html');
 
 /** The OpenFilm "F" wordmark, wherever it is drawn (top bar, splash, about). */
-const LOGO_MARK = 'function z0({size:e=18}){const t=`openfilm-gap-${j.useId().replace(/:/g,"")}`;return a.jsxs("svg",{width:e,height:e,viewBox:TD,fill:"currentColor",className:"block shrink-0",role:"img","aria-label":"OpenFilm",children:[a.jsxs("mask",{id:t,maskUnits:"userSpaceOnUse",x:"0",y:"0",width:"100",height:"100",children:[a.jsx("rect",{width:"100",height:"100",fill:"#fff"}),a.jsx("path",{d:FC,stroke:"#000",strokeWidth:"7",strokeLinejoin:"round"})]}),a.jsxs("g",{mask:`url(#${t})`,children:[a.jsx("rect",{x:"22",y:"12",width:"64",height:"20",rx:"5"}),a.jsx("rect",{x:"25",y:"44",width:"47",height:"19",rx:"5"})]}),a.jsx("path",{d:FC})]})}';
+const LOGO_MARK = 'function H1({size:e=18}){const t=`openfilm-gap-${k.useId().replace(/:/g,"")}`;return a.jsxs("svg",{width:e,height:e,viewBox:wH,fill:"currentColor",className:"block shrink-0",role:"img","aria-label":"OpenFilm",children:[a.jsxs("mask",{id:t,maskUnits:"userSpaceOnUse",x:"0",y:"0",width:"100",height:"100",children:[a.jsx("rect",{width:"100",height:"100",fill:"#fff"}),a.jsx("path",{d:W3,stroke:"#000",strokeWidth:"7",strokeLinejoin:"round"})]}),a.jsxs("g",{mask:`url(#${t})`,children:[a.jsx("rect",{x:"22",y:"12",width:"64",height:"20",rx:"5"}),a.jsx("rect",{x:"25",y:"44",width:"47",height:"19",rx:"5"})]}),a.jsx("path",{d:W3})]})}';
 
 /** A Lucide settings gear, stroked in currentColor like every other toolbar icon. */
 const LOGO_SETTINGS =
-  'function z0({size:e=18}){return a.jsxs("svg",{width:e,height:e,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeLinejoin:"round",className:"block shrink-0","aria-hidden":!0,children:[a.jsx("path",{d:"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"}),a.jsx("circle",{cx:"12",cy:"12",r:"3"})]})}';
+  'function H1({size:e=18}){return a.jsxs("svg",{width:e,height:e,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeLinejoin:"round",className:"block shrink-0","aria-hidden":!0,children:[a.jsx("path",{d:"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"}),a.jsx("circle",{cx:"12",cy:"12",r:"3"})]})}';
 
 /** The anchor behind the Properties panel's "Download" button. */
 const DOWNLOAD_ANCHOR =
-  'a.jsxs("a",{href:t,download:e.name,className:"flex items-center gap-1.5 rounded-md bg-[var(--fill-tsp)] px-2.5 py-2 hover:bg-[var(--bg-hover)]",children:[a.jsx(up,{size:13}),i("assets.download")]})';
+  'a.jsxs("a",{href:t,download:e.name,className:"flex items-center gap-1.5 rounded-md bg-[var(--fill-tsp)] px-2.5 py-2 hover:bg-[var(--bg-hover)]",children:[a.jsx(Um,{size:13}),i("assets.download")]})';
 
 const DOWNLOAD_SAVE =
-  'a.jsxs("a",{href:t,download:e.name,onClick:async(ev)=>{ev.preventDefault();try{const r=await fetch(t);if(!r.ok)throw new Error(String(r.status));const u=URL.createObjectURL(await r.blob()),link=document.createElement("a");link.href=u,link.download=e.name,document.body.appendChild(link),link.click(),link.remove(),setTimeout(()=>URL.revokeObjectURL(u),1e4)}catch{window.open(t,"_blank","noopener")}},className:"flex items-center gap-1.5 rounded-md bg-[var(--fill-tsp)] px-2.5 py-2 hover:bg-[var(--bg-hover)]",children:[a.jsx(up,{size:13}),i("assets.download")]})';
+  'a.jsxs("a",{href:t,download:e.name,onClick:async(ev)=>{ev.preventDefault();try{const r=await fetch(t);if(!r.ok)throw new Error(String(r.status));const u=URL.createObjectURL(await r.blob()),link=document.createElement("a");link.href=u,link.download=e.name,document.body.appendChild(link),link.click(),link.remove(),setTimeout(()=>URL.revokeObjectURL(u),1e4)}catch{window.open(t,"_blank","noopener")}},className:"flex items-center gap-1.5 rounded-md bg-[var(--fill-tsp)] px-2.5 py-2 hover:bg-[var(--bg-hover)]",children:[a.jsx(Um,{size:13}),i("assets.download")]})';
 
 /**
  * The patches, in order. Each `find` must appear exactly `count` times.
@@ -47,8 +47,8 @@ const PATCHES = [
   {
     id: 'hide-desktop-promo',
     why: 'The "Desktop" chip sells the OpenFilm desktop app; Dramaclaw is the host, so it never applies.',
-    find: '!Et&&a.jsx(on,{label:r("desktop.title"),side:"bottom",children:a.jsxs("button"',
-    replace: '!1&&a.jsx(on,{label:r("desktop.title"),side:"bottom",children:a.jsxs("button"',
+    find: '!_t&&a.jsx(cn,{label:s("desktop.title"),side:"bottom",children:a.jsxs("button"',
+    replace: '!1&&a.jsx(cn,{label:s("desktop.title"),side:"bottom",children:a.jsxs("button"',
     count: 1,
   },
   {
@@ -71,9 +71,9 @@ const PATCHES = [
     why: 'The editor picks its language from navigator.languages, which browsers reduce to the alternative '
       + 'locale (en-US) inside a cross-site iframe — so the embed always came up English. Read the language the '
       + 'host put in the address first; a language chosen in the editor still wins.',
-    find: 'function Pk(){try{const e=localStorage.getItem(wv);return cx.some(t=>t.code===e)?e:"system"}catch{return"system"}}',
-    replace: 'function Pk(){try{const e=localStorage.getItem(wv);if(cx.some(t=>t.code===e))return e;'
-      + 'const q=new URLSearchParams(location.search).get("lang");if(cx.some(t=>t.code===q))return q;'
+    find: 'function rM(){try{const e=localStorage.getItem(C0);return bg.some(t=>t.code===e)?e:"system"}catch{return"system"}}',
+    replace: 'function rM(){try{const e=localStorage.getItem(C0);if(bg.some(t=>t.code===e))return e;'
+      + 'const q=new URLSearchParams(location.search).get("lang");if(bg.some(t=>t.code===q))return q;'
       + 'return"system"}catch{return"system"}}',
     count: 1,
   },
@@ -81,20 +81,21 @@ const PATCHES = [
     id: 'keep-host-language',
     why: 'Studio rewrites its own address as the user moves around (history.pushState through keepKey). That '
       + 'kept the key, hostBack and its label but dropped the host\'s ?lang=, so the next reload re-resolved the '
-      + 'language from the browser and the embed came back English.',
-    find: 'for(const i of["hostBack","hostBackLabel"]){const l=t.get(i);l&&r.searchParams.set(i,l)}',
-    replace: 'for(const i of["hostBack","hostBackLabel","lang"]){const l=t.get(i);l&&r.searchParams.set(i,l)}',
+      + 'language from the browser and the embed came back English. Source patch 0002 keeps lang; this entry '
+      + 're-checks the compiled navigation and patches it if a rebuild ever drops it.',
+    find: 'for(const i of["hostBack","hostBackLabel"]){const l=t.get(i);l&&s.searchParams.set(i,l)}',
+    replace: 'for(const i of["hostBack","hostBackLabel","lang"]){const l=t.get(i);l&&s.searchParams.set(i,l)}',
     count: 1,
   },
   {
     id: 'error-state-goes-back',
     why: 'When the project fails to load the editor renders a bare "Projects" button and no toolbar, so an '
       + 'embedded user lands on OpenFilm\'s own project list with no way home. Send it to the host instead.',
-    find: 'if(x)return a.jsxs("div",{className:"workspace-shell flex flex-col items-center justify-center gap-3 bg-[var(--dock-shell)] text-[13px] text-[var(--text-muted)]",children:[a.jsx("p",{children:x}),a.jsx("button",{type:"button",onClick:s,className:"rounded-lg border border-[var(--border)] px-3 py-1.5 hover:bg-[var(--bg-hover)]",children:r("nav.projects")})]});',
+    find: 'if(x)return a.jsxs("div",{className:"workspace-shell flex flex-col items-center justify-center gap-3 bg-[var(--dock-shell)] text-[13px] text-[var(--text-muted)]",children:[a.jsx("p",{children:x}),a.jsx("button",{type:"button",onClick:n,className:"rounded-lg border border-[var(--border)] px-3 py-1.5 hover:bg-[var(--bg-hover)]",children:s("nav.projects")})]});',
     replace: 'if(x){const _q=new URLSearchParams(location.search),_b=_q.get("hostBack"),'
-      + '_l=_b?_q.get("hostBackLabel")||r("nav.projects"):r("nav.projects");'
+      + '_l=_b?_q.get("hostBackLabel")||s("nav.projects"):s("nav.projects");'
       + 'return a.jsxs("div",{className:"workspace-shell flex flex-col items-center justify-center gap-3 bg-[var(--dock-shell)] text-[13px] text-[var(--text-muted)]",children:'
-      + '[a.jsx("p",{children:x}),a.jsx("button",{type:"button",onClick:()=>{if(!_b){s();return}'
+      + '[a.jsx("p",{children:x}),a.jsx("button",{type:"button",onClick:()=>{if(!_b){n();return}'
       + 'if(window.parent!==window){window.parent.postMessage({type:"dramaclaw:studio-back"},"*");return}'
       + 'window.location.assign(_b)},className:"rounded-lg border border-[var(--border)] px-3 py-1.5 hover:bg-[var(--bg-hover)]",children:_l})]})}',
     count: 1,
@@ -104,12 +105,12 @@ const PATCHES = [
     why: 'onLeave is how the project panel reports a film that no longer exists: standalone it navigates to '
       + '"/" and the router then auto-opens the first project it finds. Inside the embed that would drop the '
       + 'user into another project, so hand the turn back to the host instead.',
-    find: 'i=()=>{Wu?Wu.report({gone:!0}):s("/",!0)}',
-    replace: 'i=()=>{if(Wu){Wu.report({gone:!0});return}'
+    find: 'i=()=>{Rd?Rd.report({gone:!0}):n("/",!0)}',
+    replace: 'i=()=>{if(Rd){Rd.report({gone:!0});return}'
       + 'const _b=new URLSearchParams(location.search).get("hostBack");'
       + 'if(_b&&window.parent!==window){window.parent.postMessage({type:"dramaclaw:studio-back"},"*");return}'
       + 'if(_b){window.location.assign(_b);return}'
-      + 's("/",!0)}',
+      + 'n("/",!0)}',
     count: 1,
   },
   {
@@ -117,14 +118,14 @@ const PATCHES = [
     why: 'The boot splash carries OpenFilm\'s wordmark and its own 「正在打开项目」 copy, and it paints right '
       + 'after the host\'s loading surface is gone — so a refresh flashes another product\'s loading screen. '
       + 'In the embed keep only the neutral indeterminate bar for the film fetch.',
-    find: 'function ME({labelKey:e}){const t=Be();return a.jsxs("div",{role:"status","aria-live":"polite","aria-busy":!0,'
+    find: 'function iA({labelKey:e}){const t=We();return a.jsxs("div",{role:"status","aria-live":"polite","aria-busy":!0,'
       + 'className:"workspace-shell z-[9000] flex flex-col items-center justify-center bg-[var(--panel)]",children:'
-      + '[a.jsx("span",{className:"text-[var(--text)]",children:a.jsx(z0,{size:34})}),e?a.jsx("p",{className:"mt-6 '
+      + '[a.jsx("span",{className:"text-[var(--text)]",children:a.jsx(H1,{size:34})}),e?a.jsx("p",{className:"mt-6 '
       + 'text-[14px] font-medium tracking-[-0.01em] text-[var(--text)]",children:t(e)}):null,',
-    replace: 'function ME({labelKey:e}){const t=Be();const _h=!!new URLSearchParams(location.search).get("hostBack");'
+    replace: 'function iA({labelKey:e}){const t=We();const _h=!!new URLSearchParams(location.search).get("hostBack");'
       + 'return a.jsxs("div",{role:"status","aria-live":"polite","aria-busy":!0,'
       + 'className:"workspace-shell z-[9000] flex flex-col items-center justify-center bg-[var(--panel)]",children:'
-      + '[!_h&&a.jsx("span",{className:"text-[var(--text)]",children:a.jsx(z0,{size:34})}),!_h&&e?a.jsx("p",{className:"mt-6 '
+      + '[!_h&&a.jsx("span",{className:"text-[var(--text)]",children:a.jsx(H1,{size:34})}),!_h&&e?a.jsx("p",{className:"mt-6 '
       + 'text-[14px] font-medium tracking-[-0.01em] text-[var(--text)]",children:t(e)}):null,',
     count: 1,
   },
@@ -132,8 +133,8 @@ const PATCHES = [
     id: 'no-settings-footer-links',
     why: 'The settings sidebar footer links to the upstream repo, its examples repo and its website: three doors '
       + 'out of the embed and onto OpenFilm. They are the product\'s own front door, not the film being edited.',
-    find: 'children:P$.map(E=>a.jsx("a",{href:E.href,target:"_blank",rel:"noreferrer"',
-    replace: 'children:!new URLSearchParams(location.search).get("hostBack")&&P$.map(E=>a.jsx("a",{href:E.href,target:"_blank",rel:"noreferrer"',
+    find: 'children:L_.map(N=>a.jsx("a",{href:N.href,target:"_blank",rel:"noreferrer"',
+    replace: 'children:!new URLSearchParams(location.search).get("hostBack")&&L_.map(N=>a.jsx("a",{href:N.href,target:"_blank",rel:"noreferrer"',
     count: 1,
   },
   {
@@ -141,24 +142,24 @@ const PATCHES = [
     why: 'Settings → General ends in an About row that prints the vendored editor\'s version, a 检查更新 button, '
       + 'and — once npm reports something newer — an 「npx -y openfilm@latest update」 row that rewrites vendor/openfilm '
       + 'and these very patches. None of it is a Dramaclaw concept.',
-    find: 'Et?.update?.onState?a.jsx(K$,{}):a.jsx(U$,{})',
-    replace: 'Et?.update?.onState?a.jsx(K$,{}):new URLSearchParams(location.search).get("hostBack")?null:a.jsx(U$,{})',
+    find: '_t?.update?.onState?a.jsx(B_,{}):a.jsx(__,{})',
+    replace: '_t?.update?.onState?a.jsx(B_,{}):new URLSearchParams(location.search).get("hostBack")?null:a.jsx(__,{})',
     count: 1,
   },
   {
     id: 'no-whats-new-dialog',
     why: 'The dialog fires by itself when the bundled version outranks the one in prefs, prints upstream release '
-      + 'notes (CLI flags, the desktop app) under that version, and its footer links to OpenFilm\'s GitHub releases.',
-    find: ',[s,u]),!s||typeof document>"u")return null;const p=s[0]',
-    replace: ',[s,u]),!s||typeof document>"u")return null;if(new URLSearchParams(location.search).get("hostBack"))return null;const p=s[0]',
+      + 'notes for that version alone, and its footer links to OpenFilm\'s GitHub releases.',
+    find: ',[t,l]),!t||typeof document>"u"?null:Fr.createPortal(',
+    replace: ',[t,l]),!t||typeof document>"u"||new URLSearchParams(location.search).get("hostBack")?null:Fr.createPortal(',
     count: 1,
   },
   {
     id: 'no-studio-start-command',
     why: 'When the editor loses its server the banner offers `openfilm open` to copy into a terminal. An embedded '
       + 'user has no terminal and no such command — the host restarts the editor for them.',
-    find: 'i&&!Et?a.jsx("button",{type:"button",onClick:()=>{navigator.clipboard?.writeText(l)',
-    replace: 'i&&!Et&&!new URLSearchParams(location.search).get("hostBack")?a.jsx("button",{type:"button",onClick:()=>{navigator.clipboard?.writeText(l)',
+    find: 'i&&!_t?a.jsx("button",{type:"button",onClick:()=>{navigator.clipboard?.writeText(l)',
+    replace: 'i&&!_t&&!new URLSearchParams(location.search).get("hostBack")?a.jsx("button",{type:"button",onClick:()=>{navigator.clipboard?.writeText(l)',
     count: 1,
   },
   {
@@ -166,34 +167,43 @@ const PATCHES = [
     why: 'The full-screen "this browser is not signed in" dialog offers the same terminal command, and its '
       + 'clipboard button hands the user a keyed localhost address they have no business copying. The host '
       + 'opens that address itself; the dialog is left as the explanation it is.',
-    find: 'Et?null:a.jsxs("div",{className:"mt-4 flex items-center gap-2 text-[12.5px] text-[var(--text-muted)]",children:[a.jsx("span",{children:e("connection.lockedHow")})',
-    replace: 'Et||new URLSearchParams(location.search).get("hostBack")?null:a.jsxs("div",{className:"mt-4 flex items-center gap-2 text-[12.5px] text-[var(--text-muted)]",children:[a.jsx("span",{children:e("connection.lockedHow")})',
+    find: '_t?null:a.jsxs("div",{className:"mt-4 flex items-center gap-2 text-[12.5px] text-[var(--text-muted)]",children:[a.jsx("span",{children:e("connection.lockedHow")})',
+    replace: '_t||new URLSearchParams(location.search).get("hostBack")?null:a.jsxs("div",{className:"mt-4 flex items-center gap-2 text-[12.5px] text-[var(--text-muted)]",children:[a.jsx("span",{children:e("connection.lockedHow")})',
     count: 1,
   },
   {
     id: 'no-version-history-entry',
-    why: 'Version history is the vendored editor\'s local git: commit the film, branch it, roll back to an older '
-      + 'snapshot. It asks the person cutting a video for commit messages, branch names and megabytes of held '
+    why: 'Version history is the vendored editor\'s local git: save the film, copy it, roll back to an older '
+      + 'snapshot. It asks the person cutting a video for version names and megabytes of held '
       + 'files — project vocabulary the host owns, not the user. The history API stays; the toolbar entry goes.',
-    find: 'function EG({open:e,onClick:t,className:s}){const r=Be();return a.jsx(on,',
-    replace: 'function EG({open:e,onClick:t,className:s}){const r=Be();return new URLSearchParams(location.search).get("hostBack")?null:a.jsx(on,',
+    find: 'function DY({open:e,onClick:t,className:n}){const s=We();return a.jsx(cn,',
+    replace: 'function DY({open:e,onClick:t,className:n}){const s=We();return new URLSearchParams(location.search).get("hostBack")?null:a.jsx(cn,',
     count: 1,
   },
   {
     id: 'no-version-history-dialog',
-    why: 'The same surface as a dialog, reachable through the toolbar entry alone — guard it too so a future '
-      + 'opener cannot bring 「提交」「分支」 into the embed.',
-    find: 'function AG({projectId:e,history:t,open:s,anchor:r,onClose:i}){const l=Be(),',
-    replace: 'function AG({projectId:e,history:t,open:s,anchor:r,onClose:i}){if(new URLSearchParams(location.search).get("hostBack"))return null;const l=Be(),',
+    why: 'The same surface, now a date-ordered modal with video previews, reachable through the toolbar entry '
+      + 'alone — guard it too so a future opener cannot bring local version management into the embed.',
+    find: 'function $Y({projectId:e,projectName:t,history:n,open:s,onClose:i,onOpenProject:l}){const c=We(),',
+    replace: 'function $Y({projectId:e,projectName:t,history:n,open:s,onClose:i,onOpenProject:l}){if(new URLSearchParams(location.search).get("hostBack"))return null;const c=We(),',
+    count: 1,
+  },
+  {
+    // The host creates versions only through deliberate person or agent commits.
+    id: 'no-auto-versions-switch',
+    why: 'The embed must not offer automatic version creation in Settings → Advanced.',
+    find: 'function P_(){const e=We(),',
+    replace: 'function P_(){if(new URLSearchParams(location.search).get("hostBack"))return null;const e=We(),',
     count: 1,
   },
   {
     id: 'no-dev-release-notes',
     why: 'Settings → Developer ends in a Releases group that previews the vendored editor\'s own release notes. '
-      + 'It prints the upstream version (0.2.4) and opens the dialog the embed already suppresses. The editor '
-      + 'ships with the host image, so there is nothing here for a user to preview.',
-    find: 'rb()?a.jsx(jo,{title:e("settings.developer.releaseGroup")',
-    replace: 'rb()&&!new URLSearchParams(location.search).get("hostBack")?a.jsx(jo,{title:e("settings.developer.releaseGroup")',
+      + 'It prints the upstream version (0.2.7) and opens the dialog the embed already suppresses. The editor '
+      + 'ships with the host image, so there is nothing here for a user to preview. Upstream now renders the '
+      + 'group unconditionally; the embed still hides it.',
+    find: ':null,a.jsx(vo,{title:e("settings.developer.releaseGroup")',
+    replace: ':null,!new URLSearchParams(location.search).get("hostBack")&&a.jsx(vo,{title:e("settings.developer.releaseGroup")',
     count: 1,
   },
   {
@@ -202,19 +212,19 @@ const PATCHES = [
       + 'looks the film up by. Enter then looked like a save that had not taken (the name came straight back, '
       + 'because it is read from the film\'s <title>) while the next open built a fresh cut at the old path and '
       + 'orphaned every manual edit. The canvas node owns the name, so the embed shows it and does not edit it.',
-    find: 'children:oc?a.jsx("input",{autoFocus:!0,value:Cm,onChange:C=>sl(C.target.value)',
+    find: 'children:ld?a.jsx("input",{autoFocus:!0,value:kr,onChange:C=>wp(C.target.value)',
     replace: 'children:new URLSearchParams(location.search).get("hostBack")'
       + '?a.jsx("span",{className:"min-w-0 truncate px-2 text-[13px] font-medium text-[var(--text-muted)]",'
-      + 'children:WY(Ko||r("project.untitled"))})'
-      + ':oc?a.jsx("input",{autoFocus:!0,value:Cm,onChange:C=>sl(C.target.value)',
+      + 'children:cJ(Gi||s("project.untitled"))})'
+      + ':ld?a.jsx("input",{autoFocus:!0,value:kr,onChange:C=>wp(C.target.value)',
     count: 1,
   },
   {
     id: 'shortcut-scheme-label',
     why: 'Settings → Keyboard shortcuts names the keymap after the vendored product. The label is a constant '
       + 'outside the catalogues, so it follows the resolved language by hand.',
-    find: 'const T$={openfilm:"OpenFilm",premiere:"Premiere Pro",fcp:"Final Cut Pro X"}',
-    replace: 'const T$={openfilm:v0()==="zh-CN"?"虾画":"Dramaclaw",premiere:"Premiere Pro",fcp:"Final Cut Pro X"}',
+    find: 'const S_={openfilm:"OpenFilm",premiere:"Premiere Pro",fcp:"Final Cut Pro X"}',
+    replace: 'const S_={openfilm:j1()==="zh-CN"?"虾画":"Dramaclaw",premiere:"Premiere Pro",fcp:"Final Cut Pro X"}',
     count: 1,
   },
 ];
@@ -228,11 +238,11 @@ const BRAND = { en: 'Dramaclaw', 'zh-CN': '虾画', ja: 'Dramaclaw', ko: 'Dramac
  * tokens outside them (package name, CSS classes, storage keys, URLs, release notes) stay put.
  */
 const CATALOGUES = [
-  { lang: 'en', start: '$k={nav:{', end: 'cz={nav:{' },
-  { lang: 'es', start: 'cz={nav:{', end: 'uz={nav:{' },
-  { lang: 'ja', start: 'uz={nav:{', end: 'dz={nav:{' },
-  { lang: 'ko', start: 'dz={nav:{', end: 'pz={nav:{' },
-  { lang: 'zh-CN', start: 'pz={nav:{', end: 'cx=[' },
+  { lang: 'en', start: 'sM={nav:{', end: 'CO={nav:{' },
+  { lang: 'es', start: 'CO={nav:{', end: 'NO={nav:{' },
+  { lang: 'ja', start: 'NO={nav:{', end: 'EO={nav:{' },
+  { lang: 'ko', start: 'EO={nav:{', end: 'TO={nav:{' },
+  { lang: 'zh-CN', start: 'TO={nav:{', end: 'bg=[' },
 ];
 
 /**

@@ -108,13 +108,14 @@ export async function pageFrame(root, base, rel, ms, width, overrides = null, si
     await mkdir(dir, { recursive: true });
     await writeAtomic(file, jpeg);
     await writeAtomic(join(dir, `${key}.json`), JSON.stringify({ files: deps }));
-    await writeAtomic(join(dir, `${key}.stamp`), await stampOf(root, deps));
     if (rel === FILM_PAGE) {
       /* the whole film's length, learnt on the way: the projects list shows it (projects.mjs filmDuration) */
       if (Number.isFinite(duration)) await writeAtomic(join(root, TOOL_DIR, 'cache', FILM_DURATION), JSON.stringify({ film: `${info.mtimeMs}:${info.size}`, duration }));
       /* the film's poster, kept as its last whatever film.html becomes (filmPoster) */
       if (ms < 0 && w === POSTER_W) await writeAtomic(join(root, TOOL_DIR, 'cache', FILM_POSTER), jpeg);
     }
+    /* the stamp last: a request that finds it takes the frame as made, the film's length and poster written too */
+    await writeAtomic(join(dir, `${key}.stamp`), await stampOf(root, deps));
     return jpeg;
   })();
   drawing.set(id, made);

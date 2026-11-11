@@ -1,16 +1,16 @@
 diff --git a/packages/openfilm/studio/server/exports.mjs b/packages/openfilm/studio/server/exports.mjs
-index 7e5e045..ff6d5a8 100644
+index f01b47e..48abb6f 100644
 --- a/packages/openfilm/studio/server/exports.mjs
 +++ b/packages/openfilm/studio/server/exports.mjs
-@@ -204,7 +204,7 @@ export function framing(stage, frame, fill, out, alpha) {
+@@ -203,7 +203,7 @@ export function framing(stage, frame, fill, out, alpha) {
  
- /* ── names ──────────────────────────────────────────────────────────────── */
- 
--const safeName = (/** @type {string} */ text) => text.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'OpenFilm';
-+const safeName = (/** @type {string} */ text) => text.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Dramaclaw';
- 
- /** A name in `dir` that is free: `name.ext`, else `name 2.ext`… */
- function freeFile(/** @type {string} */ dir, /** @type {string} */ name, /** @type {string} */ ext) {
+ const safeName = (/** @type {string} */ text) => {
+   /* no dot or space at the end (Windows drops them, and the file is not found under the name it was made with) */
+-  const name = text.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80).replace(/[. ]+$/, '') || 'OpenFilm';
++  const name = text.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80).replace(/[. ]+$/, '') || 'Dramaclaw';
+   /* names Windows keeps for devices, whatever follows their first dot */
+   return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(name) ? name.replace(/^[^.]*/, (m) => `${m} film`) : name;
+ };
 diff --git a/packages/openfilm/studio/server/fcpxml.mjs b/packages/openfilm/studio/server/fcpxml.mjs
 index 5eab2f2..781f537 100644
 --- a/packages/openfilm/studio/server/fcpxml.mjs
@@ -61,10 +61,10 @@ index 5eab2f2..781f537 100644
      ];
    });
 diff --git a/packages/openfilm/studio/server/nle.mjs b/packages/openfilm/studio/server/nle.mjs
-index 91589e1..10a7fd0 100644
+index ce3f588..b15d9c8 100644
 --- a/packages/openfilm/studio/server/nle.mjs
 +++ b/packages/openfilm/studio/server/nle.mjs
-@@ -356,7 +356,7 @@ export function planNleTimeline(film, opts) {
+@@ -379,7 +379,7 @@ export function planNleTimeline(film, opts) {
    }
  
    const end = Math.max(total, ...video.flatMap((t) => t.clips.map((c) => c.end)), ...audio.flatMap((t) => t.clips.map((c) => c.end)));

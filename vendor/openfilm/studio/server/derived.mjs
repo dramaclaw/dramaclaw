@@ -70,15 +70,17 @@ async function cached(/** @type {string} */ root, /** @type {string} */ kind, /*
 }
 
 /**
- * Length and picture size of a media file: `{ duration (s), width, height, fps, audio, codec, pixfmt }`; a still has no
- * duration. The size is the picture as it is shown: a video turned a quarter (a phone's portrait video) has its sides
- * swapped. `codec` and `pixfmt` are its picture's (proxies.mjs tells heavy footage by them).
+ * Length and picture size of a media file: `{ duration (s), width, height, fps, audio, codec, pixfmt, profile, level }`;
+ * a still has no duration. The size is the picture as it is shown: a video turned a quarter (a phone's portrait video)
+ * has its sides swapped. `codec`, `pixfmt`, `profile` and `level` are its picture's (proxies.mjs tells heavy footage by
+ * them, and asks the editor whether its browser decodes it).
  * @param {string} root @param {string} rel
  */
 export async function probe(root, rel) {
   const { abs, key } = await source(root, rel);
-  /* `.3`: since the size is as shown (an older answer has a turned video's sides as stored), with the codec */
-  const bytes = await cached(root, 'probe', `${key}.3.json`, async () => {
+  /* `.4`: since the size is as shown (an older answer has a turned video's sides as stored), with the codec, its
+     profile and level */
+  const bytes = await cached(root, 'probe', `${key}.4.json`, async () => {
     const out = JSON.parse((await tool('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', abs])).toString());
     const video = out.streams?.find((/** @type {{ codec_type: string }} */ s) => s.codec_type === 'video');
     const audio = out.streams?.some((/** @type {{ codec_type: string }} */ s) => s.codec_type === 'audio');
@@ -91,6 +93,8 @@ export async function probe(root, rel) {
       ...(video ? (quarter ? { width: video.height, height: video.width } : { width: video.width, height: video.height }) : {}),
       ...(d && n ? { fps: Math.round((n / d) * 100) / 100 } : {}),
       ...(video?.codec_name ? { codec: String(video.codec_name), pixfmt: String(video.pix_fmt ?? '') } : {}),
+      ...(video?.profile ? { profile: String(video.profile) } : {}),
+      ...(Number(video?.level) > 0 ? { level: Number(video.level) } : {}),
       audio: Boolean(audio),
     }));
   });

@@ -61,6 +61,7 @@
  *   karaoke: FilmSubtitleKaraoke | null,
  *   language: string | null,
  *   bilingual: boolean,
+ *   fadeMs: number,
  * }} FilmSubtitleStyle
  */
 
@@ -239,6 +240,7 @@ export const FILM_SUBTITLE_DEFAULT = {
   karaoke: null,
   language: null,
   bilingual: false,
+  fadeMs: 0,
 };
 
 /**
@@ -641,12 +643,27 @@ export function parseFilmSubtitleStyle(raw) {
     })),
     language: isFilmSubtitleLanguage(v.language) ? v.language : null,
     bilingual: bool(v.bilingual, false),
+    fadeMs: num(v.fadeMs, base.fadeMs, 0, 1000),
   };
 }
 
 /* ── for an export ───────────────────────────────────────────────────────── */
 
 const escapeHtml = (/** @type {string} */ s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * How far a line has faded in or out at a moment: 1 when it is whole, 0 when it is not drawn yet or gone. The line
+ * fades in over `fadeMs` from its start and out over the same time before its end; a line shorter than twice that
+ * fades for half its length each way. Off (`fadeMs` 0): always 1.
+ * @param {{ startMs: number, durMs: number }} cue @param {number} timeMs @param {number} fadeMs
+ */
+export function filmSubtitleOpacity(cue, timeMs, fadeMs) {
+  const fade = Math.min(fadeMs, cue.durMs / 2);
+  if (!(fade > 0)) return 1;
+  const inward = (timeMs - cue.startMs) / fade;
+  const outward = (cue.startMs + cue.durMs - timeMs) / fade;
+  return Math.max(0, Math.min(1, inward, outward));
+}
 
 /**
  * The subtitle layer of one frame, for an export that burns subtitles in: an HTML fragment to lay over the picture.
@@ -676,8 +693,9 @@ export function filmSubtitleFrameHtml(cues, style, frame, timeMs) {
       ? `<span style="${escapeHtml(filmSubtitleCssText(filmSubtitleWordCss(fitted)))}">${escapeHtml(w.text)}</span>`
       : escapeHtml(w.text))).join('')
     : escapeHtml(filmSubtitleText(cue));
+  const opacity = filmSubtitleOpacity(cue, timeMs, fitted.fadeMs);
   return `<div style="position:absolute;left:0;top:0;width:${frame.w}px;height:${frame.h}px;overflow:hidden;pointer-events:none">`
-    + `<div style="${escapeHtml(filmSubtitleCssText(css.box))}"><span style="${escapeHtml(filmSubtitleCssText(css.text))}">${body}</span></div></div>`;
+    + `<div style="${escapeHtml(filmSubtitleCssText(opacity < 1 ? { ...css.box, opacity: String(opacity) } : css.box))}"><span style="${escapeHtml(filmSubtitleCssText(css.text))}">${body}</span></div></div>`;
 }
 
 /* ── files ───────────────────────────────────────────────────────────────── */
@@ -764,4 +782,17 @@ export function filmSubtitleCuesInRange(cues, fromMs, toMs) {
     out.push({ ...cue, startMs: start - fromMs, durMs: end - start });
   }
   return out;
+}
+
+/** Cues for selected stretches joined in list order, each moved to its position in the result.
+ * @template {FilmSubtitleCue} T
+ * @param {readonly T[]} cues @param {readonly (readonly [number, number])[]} ranges @returns {T[]}
+ */
+export function filmSubtitleCuesInRanges(cues, ranges) {
+  let offset = 0;
+  return ranges.flatMap(([from, to]) => {
+    const part = filmSubtitleCuesInRange(cues, from, to).map((cue) => ({ ...cue, startMs: cue.startMs + offset }));
+    offset += to - from;
+    return part;
+  });
 }

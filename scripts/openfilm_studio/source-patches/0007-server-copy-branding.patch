@@ -34,7 +34,7 @@ index 28c93dc..239a084 100644
  
  /**
 diff --git a/packages/openfilm/studio/server/fetch-github.mjs b/packages/openfilm/studio/server/fetch-github.mjs
-index 3282f41..a0412ea 100644
+index dc542a0..9f52c03 100644
 --- a/packages/openfilm/studio/server/fetch-github.mjs
 +++ b/packages/openfilm/studio/server/fetch-github.mjs
 @@ -49,7 +49,7 @@ const pause = (ms, signal) => new Promise((done) => {
@@ -60,7 +60,7 @@ index 26d04d3..1c4fe77 100644
    const tooBig = () => new FetchError(`It is bigger than ${Math.max(1, Math.round(maxBytes / 1024 / 1024))} MB, so it was stopped.`, 413, 'too-big');
    /** @type {FetchProgress} */
 diff --git a/packages/openfilm/studio/server/get.mjs b/packages/openfilm/studio/server/get.mjs
-index f6fbac5..3c646cf 100644
+index 88d31a7..1aef9c2 100644
 --- a/packages/openfilm/studio/server/get.mjs
 +++ b/packages/openfilm/studio/server/get.mjs
 @@ -129,7 +129,7 @@ export const VERBS = /** @type {Record<string, VerbSpec>} */ ({
@@ -110,31 +110,46 @@ index 5292b1a..cc18b6f 100644
  process.on('SIGTERM', stop);
  
 diff --git a/packages/openfilm/studio/server/providers/common.mjs b/packages/openfilm/studio/server/providers/common.mjs
-index 0b8185c..c4523f0 100644
+index 7c4559c..2b6a6b0 100644
 --- a/packages/openfilm/studio/server/providers/common.mjs
 +++ b/packages/openfilm/studio/server/providers/common.mjs
-@@ -26,7 +26,7 @@ export async function call(service, url, init, ctx) {
-   if (res.ok) return res;
-   const text = await res.text().catch(() => '');
-   if (outOfBalance(res.status, text)) throw noBalance(service);
+@@ -29,7 +29,7 @@ export async function call(service, url, init, ctx) {
+   /* with no key (a keyless provider) there is nothing to blank out */
+   const reason = (ctx.key ? reasonOf(text).split(ctx.key).join('•••') : reasonOf(text)).slice(0, 500);
+   if (PAID_PLAN.test(text)) throw new Error(`${service} needs a paid plan for this (${res.status})${reason ? `: ${reason}` : ''}`);
 -  if (res.status === 401 || res.status === 403) throw new Error(`${service} did not accept your key (${res.status}). Check it in Studio: Settings (the OpenFilm logo at the top left) → Providers.`);
 +  if (res.status === 401 || res.status === 403) throw new Error(`${service} did not accept your key (${res.status}). Check it in Studio: Settings (the gear at the top left) → Providers.`);
-   const reason = reasonOf(text).split(ctx.key).join('•••').slice(0, 500);
    throw new Error(`${service} answered ${res.status}${reason ? `: ${reason}` : ''}`);
  }
+ 
 diff --git a/packages/openfilm/studio/server/providers/index.mjs b/packages/openfilm/studio/server/providers/index.mjs
-index 032ddb4..f8d55cc 100644
+index 5bb72ea..9f818f5 100644
 --- a/packages/openfilm/studio/server/providers/index.mjs
 +++ b/packages/openfilm/studio/server/providers/index.mjs
-@@ -51,7 +51,7 @@ async function named(id, verb, settings, strict) {
-   const fail = (/** @type {string} */ why) => { if (strict) throw new Error(why); return null; };
-   if (!provider) return fail(`There is no provider "${id}": use ${OWN.map((p) => p.id).join(', ')}.`);
+@@ -55,8 +55,8 @@ async function named(id, verb, settings, strict) {
    if (!provider.verbs.includes(verb)) return fail(`${provider.name} does not do ${verb}.`);
--  if (!providerKey(provider, settings)) return fail(`There is no ${provider.name} key: add one in Studio (the OpenFilm logo at the top left opens Settings → Providers) or set ${provider.env}.`);
-+  if (!providerKey(provider, settings)) return fail(`There is no ${provider.name} key: add one in Studio (the gear at the top left opens Settings → Providers) or set ${provider.env}.`);
+   if (!providerKey(provider, settings)) {
+     return fail(provider.keyless
+-      ? `${provider.name} is not connected: connect it in Studio (the OpenFilm logo at the top left opens Settings → Providers), no key needed, or set ${provider.env}.`
+-      : `There is no ${provider.name} key: add one in Studio (the OpenFilm logo at the top left opens Settings → Providers) or set ${provider.env}.`);
++      ? `${provider.name} is not connected: connect it in Studio (the gear at the top left opens Settings → Providers), no key needed, or set ${provider.env}.`
++      : `There is no ${provider.name} key: add one in Studio (the gear at the top left opens Settings → Providers) or set ${provider.env}.`);
+   }
    return provider;
  }
+diff --git a/packages/openfilm/studio/server/providers/keenable.mjs b/packages/openfilm/studio/server/providers/keenable.mjs
+index 546d1b0..8bdcaba 100644
+--- a/packages/openfilm/studio/server/providers/keenable.mjs
++++ b/packages/openfilm/studio/server/providers/keenable.mjs
+@@ -28,7 +28,7 @@ export default {
+     const base = serviceUrl('KEENABLE', 'https://api.keenable.ai');
+     /* the keyed endpoint, or with no key its public one */
+     const at = (/** @type {string} */ path) => `${base}${path}${ctx.key ? '' : '/public'}`;
+-    const headers = { 'x-keenable-title': 'OpenFilm', ...(ctx.key ? { 'x-api-key': ctx.key } : {}) };
++    const headers = { 'x-keenable-title': 'Dramaclaw', ...(ctx.key ? { 'x-api-key': ctx.key } : {}) };
+     const cost = ctx.key ? { cost: billedBy(NAME) } : {};
  
+     if (verb === 'web-search') {
 diff --git a/packages/openfilm/studio/server/providers/pixabay.mjs b/packages/openfilm/studio/server/providers/pixabay.mjs
 index 8b8c8bd..19b8119 100644
 --- a/packages/openfilm/studio/server/providers/pixabay.mjs
@@ -162,10 +177,10 @@ index 6d89026..fd1b74b 100644
      } catch (e) {
        if (ctx.signal.aborted) throw e;
 diff --git a/packages/openfilm/studio/server/server.mjs b/packages/openfilm/studio/server/server.mjs
-index d798d10..5bd1575 100644
+index fa96b3e..7184d93 100644
 --- a/packages/openfilm/studio/server/server.mjs
 +++ b/packages/openfilm/studio/server/server.mjs
-@@ -208,7 +208,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+@@ -227,7 +227,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
        if (whenIdle && exports.busy()) return json(res, 409, { error: 'an export is running' });
        if (whenIdle && making) return json(res, 409, { error: 'media is being made' });
        /* not busy, but kept (423, not 409: the app asks its own Studio whether it is busy this way) */
@@ -174,7 +189,7 @@ index d798d10..5bd1575 100644
        json(res, 200, { pages: editorPages.size });
        setImmediate(() => (onQuit ?? (() => { void studio.close(); }))());
        return;
-@@ -1124,7 +1124,7 @@ function sendEditor(/** @type {Res} */ res, /** @type {string} */ dir, /** @type
+@@ -1193,7 +1193,7 @@ function sendEditor(/** @type {Res} */ res, /** @type {string} */ dir, /** @type
    const page = join(root, 'index.html');
    /* no referrer: the page's address holds the key, and a link it opens must not carry it to another site */
    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', ...headers });

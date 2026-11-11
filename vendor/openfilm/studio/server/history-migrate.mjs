@@ -4,8 +4,10 @@
  * the folder but video and files over 20 MB, each commit with `git add --all`: renders, frames, logs and other takes
  * went in, and footage did not. Each of its versions is made again holding the film's files only (closure.mjs), with
  * the same message, author and time; media in it moves to the store (history-store.mjs); the changes left on a branch
- * (stashes) become parked versions. On the branch checked out, a "History cleanup" commit then adds what the film uses
- * that history never had (its videos), as they are in the folder now.
+ * (stashes) become parked versions. On the branch checked out, an "upgrade" version then adds what a version holds now
+ * (history.mjs versionFiles) that the converted ones do not (the film's videos, the folder's other code and notes), as
+ * they are in the folder now. A history of format 2 kept the film's files only: the same is added to it
+ * (upgradeHistory).
  *
  * It is made beside the old one (`.film/history-next`), borrowing its objects, then packed on its own and checked
  * before it takes its place. The old history goes to the Trash, so nothing is lost if something went wrong; the
@@ -14,7 +16,7 @@
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createWriteStream, existsSync } from 'node:fs';
+import { createWriteStream, existsSync, readFileSync } from 'node:fs';
 import { chmod, copyFile, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tempPath, replaceFile } from './atomic.mjs';
@@ -25,18 +27,51 @@ import {
 import { TOOL_DIR } from './projects.mjs';
 import { moveToTrash } from './trash.mjs';
 
-/** The format of a history Studio made: 2 keeps the film's files only, media outside git. */
-export const FORMAT = 2;
+/** The format of a history Studio made: 2 kept the film's files only, media outside git; 3 keeps the project's files. */
+export const FORMAT = 3;
 const MARKER = 'openfilm.json';
-export const CLEANUP_MESSAGE = 'History cleanup: the film\'s files only, its media kept from now on';
+/** The message of the version that adds what an earlier history did not keep (history.mjs Kind 'upgrade'). */
+export const UPGRADE_MESSAGE = 'Kept all the project\'s files\n\nOpenfilm-Version: upgrade\n';
 
 /** The format of the history in `gitDir`: 1 for one an earlier Studio made (no marker), else what its marker says. */
 export function formatOf(/** @type {string} */ gitDir) {
   if (!existsSync(join(gitDir, MARKER))) return 1;
-  return FORMAT;
+  try { return Number(JSON.parse(readFileSync(join(gitDir, MARKER), 'utf8')).format) || 2; } catch { return 2; }
 }
 
 export const markFormat = (/** @type {string} */ gitDir) => writeFile(join(gitDir, MARKER), `${JSON.stringify({ format: FORMAT })}\n`);
+
+/**
+ * Add the folder's `paths` to the version `head` (`base`, as read), as an "upgrade" version on `headRef`.
+ * @param {import('./history-store.mjs').Repo} repo @param {string} headRef @param {string} head
+ * @param {import('./history-store.mjs').Version} base @param {string[]} paths
+ */
+async function addToVersion(repo, headRef, head, base, paths) {
+  const added = await keepFiles(repo, paths, null);
+  if (!added.size) return;
+  const tree = await writeTree(repo, new Map([...base, ...added]));
+  const made = (await repo.git(['commit-tree', tree, '-p', head, '-F', '-'], { input: UPGRADE_MESSAGE })).trim();
+  await repo.git(['update-ref', headRef, made]);
+}
+
+/**
+ * A history of format 2 (the film's files only) brought to this one: on the branch checked out, what a version holds
+ * now beyond the film's files (`files`: history.mjs versionFiles) is added as an "upgrade" version, so nothing looks
+ * changed that was not. The person's files are not written.
+ * @param {string} root @param {string} gitDir @param {(root: string) => Promise<Map<string, number>>} files
+ */
+export async function upgradeHistory(root, gitDir, files) {
+  const repo = openRepo(root, gitDir);
+  const head = (await repo.git(['rev-parse', '--verify', '--quiet', 'HEAD']).catch(() => '')).trim();
+  const headRef = (await repo.git(['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim();
+  if (head && headRef) {
+    const base = await readVersion(repo, head);
+    const closure = await filmClosure(folderView(root));
+    const missing = [...(await files(root)).keys()].filter((path) => !base.has(path) && !closure.has(path));
+    if (missing.length) await addToVersion(repo, headRef, head, base, missing);
+  }
+  await markFormat(gitDir);
+}
 
 /** A blob of the old history written to the store (streamed: it may be large), named by its sha256. */
 function extract(/** @type {import('./history-store.mjs').Repo} */ old, /** @type {string} */ storeDir, /** @type {string} */ oid) {
@@ -80,10 +115,12 @@ function rewriteCommit(/** @type {string} */ raw, /** @type {string} */ tree, /*
 }
 
 /**
- * Bring the history in `gitDir` (an earlier Studio's) up to date; see the header. `progress` hears how far it is.
- * @param {string} root @param {string} gitDir @param {import('./history-store.mjs').Progress} [progress]
+ * Bring the history in `gitDir` (an earlier Studio's) up to date; see the header. `files` reads what a version of the
+ * folder holds now (history.mjs versionFiles); `progress` hears how far it is.
+ * @param {string} root @param {string} gitDir @param {(root: string) => Promise<Map<string, number>>} files
+ * @param {import('./history-store.mjs').Progress} [progress]
  */
-export async function migrateHistory(root, gitDir, progress) {
+export async function migrateHistory(root, gitDir, files, progress) {
   const old = openRepo(root, gitDir);
   const refLines = (await old.git(['for-each-ref', '--format=%(objectname)%1f%(*objectname)%1f%(refname)', 'refs/heads', 'refs/tags'])).split('\n').filter(Boolean);
   const stashList = await old.git(['stash', 'list', '--format=%H%x1f%gs']).catch(() => '');
@@ -196,19 +233,14 @@ export async function migrateHistory(root, gitDir, progress) {
     progress?.({ phase: 'migrate', done: ++done, total });
   }
 
-  /* the branch checked out: what its film uses that history never had (video, mostly), from the folder as it is */
+  /* the branch checked out: what a version holds now that the converted one does not (its video, mostly, and the
+     folder's other code and notes), from the folder as it is */
   const tip = (await old.git(['rev-parse', '--verify', '--quiet', 'HEAD']).catch(() => '')).trim();
   if (tip && headRef && mapped.has(tip)) {
-    const version = await readVersion(old, tip);
-    const closure = await filmClosure(versionView(old, version, folderView(root)));
-    const missing = [...closure.keys()].filter((path) => !version.has(path));
-    if (missing.length) {
-      const base = await readVersion(neu, /** @type {string} */ (mapped.get(tip)));
-      const added = await keepFiles(neu, missing, null);
-      const tree = await writeTree(neu, new Map([...base, ...added]));
-      const made = (await git(['commit-tree', tree, '-p', /** @type {string} */ (mapped.get(tip)), '-m', CLEANUP_MESSAGE])).trim();
-      await git(['update-ref', headRef, made]);
-    }
+    const closure = await filmClosure(versionView(old, await readVersion(old, tip), folderView(root)));
+    const base = await readVersion(neu, /** @type {string} */ (mapped.get(tip)));
+    const missing = [...new Set([...closure.keys(), ...(await files(root)).keys()])].filter((path) => !base.has(path));
+    if (missing.length) await addToVersion(neu, headRef, /** @type {string} */ (mapped.get(tip)), base, missing);
   }
   progress?.({ phase: 'migrate', done: ++done, total });
 

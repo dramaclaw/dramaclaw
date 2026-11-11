@@ -11,7 +11,7 @@
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -64,7 +64,19 @@ export async function moveToTrash(path) {
   const info = join(root, 'Trash', 'info');
   await mkdir(files, { recursive: true });
   await mkdir(info, { recursive: true });
-  const name = freeName(files, basename(path));
-  await writeFile(join(info, `${name}.trashinfo`), `[Trash Info]\nPath=${encodeURI(path)}\nDeletionDate=${new Date().toISOString().slice(0, 19)}\n`);
-  await rename(path, join(files, name));
+  const ext = extname(path), stem = basename(path, ext);
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? basename(path) : `${stem} ${n}${ext}`;
+    if (existsSync(join(files, name))) continue;
+    const record = join(info, `${name}.trashinfo`);
+    try {
+      await writeFile(record, `[Trash Info]\nPath=${encodeURI(path)}\nDeletionDate=${new Date().toISOString().slice(0, 19)}\n`, { flag: 'wx' });
+    } catch (e) {
+      if (/** @type {NodeJS.ErrnoException} */ (e).code === 'EEXIST') continue;
+      throw e;
+    }
+    try { await rename(path, join(files, name)); }
+    catch (e) { await rm(record, { force: true }); throw e; }
+    return;
+  }
 }
