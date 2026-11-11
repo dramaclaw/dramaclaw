@@ -3278,6 +3278,10 @@
       "pipeline": {
         "normalizingScenes": "AI đang chuẩn hoá các khối cảnh trong kịch bản..."
       },
+      "videoUpscale": {
+        "start": "Đang bắt đầu nâng cấp video...",
+        "processing": "Đang nâng cấp video..."
+      },
       "script": {
         "start": "Đang tạo kịch bản...",
         "beatVideoPromptStart": "Đang tạo prompt video cho beat {{beatNum}}",

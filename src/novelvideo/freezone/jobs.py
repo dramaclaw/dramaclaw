@@ -30,6 +30,11 @@ from typing import Any, Literal, Optional
 import numpy as np
 from PIL import Image
 
+from novelvideo.freezone.local_video_upscale import (
+    LOCAL_VIDEO_UPSCALE_MODEL,
+    is_local_video_upscale_backend,
+    local_video_upscale_enabled,
+)
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
 from novelvideo.freezone.video_slowdown import slowdown_factor
 from novelvideo.egress_context import (
@@ -459,6 +464,7 @@ async def run_freezone_video_upscale(
     frame_rate_backend: str | None = None,
     frame_rate_model_params: Optional[dict[str, Any]] = None,
     frame_rate_request_schema: Optional[dict[str, Any]] = None,
+    on_progress: Callable[[float], None] | None = None,
     egress_context: TrustedEgressContext | None = None,
 ) -> tuple[Path, dict]:
     """Enhance a video through configured gateway models.
@@ -467,6 +473,10 @@ async def run_freezone_video_upscale(
     for compatibility with old queued tasks. New canvas submissions always freeze
     their catalog-selected processing model(s) into the task payload.
     """
+    if not local_video_upscale_enabled() and (
+        is_local_video_upscale_backend(upscale_backend) or is_local_video_upscale_backend(frame_rate_backend)
+    ):
+        raise RuntimeError("当前环境未启用本地 GPU 视频增强")
     if upscale_backend:
         return await _run_model_video_enhancement(
             project_dir=project_dir,
@@ -484,6 +494,7 @@ async def run_freezone_video_upscale(
             frame_rate_backend=frame_rate_backend,
             frame_rate_model_params=frame_rate_model_params,
             frame_rate_request_schema=frame_rate_request_schema,
+            on_progress=on_progress,
             egress_context=egress_context,
         )
     if frame_interpolation != "none":
@@ -662,6 +673,7 @@ async def _run_video_processing_model(
     model_params: Optional[dict[str, Any]],
     request_schema: Optional[dict[str, Any]],
     egress_context: TrustedEgressContext | None,
+    on_progress: Callable[[float], None] | None = None,
 ) -> None:
     from novelvideo.generators.video_generator import (
         ShotReference,
@@ -669,7 +681,7 @@ async def _run_video_processing_model(
     )
 
     generator = create_video_generator(
-        backend=backend,
+        backend=f"newapi_{LOCAL_VIDEO_UPSCALE_MODEL}" if is_local_video_upscale_backend(backend) else backend,
         resolution=resolution,
         generate_audio=False,
         model_params=model_params,
@@ -684,6 +696,7 @@ async def _run_video_processing_model(
         duration=max(1, math.ceil(duration)),
         references=[ShotReference("video", str(source_path), "源视频")],
         gen_mode=mode,
+        on_progress=on_progress,
         processing_metadata=processing_metadata,
         egress_context=egress_context,
         task_type="freezone_video_upscale",
@@ -715,12 +728,25 @@ async def _run_model_video_enhancement(
     frame_rate_backend: str | None,
     frame_rate_model_params: Optional[dict[str, Any]],
     frame_rate_request_schema: Optional[dict[str, Any]],
+    on_progress: Callable[[float], None] | None,
     egress_context: TrustedEgressContext | None,
 ) -> tuple[Path, dict]:
     src = Path(source_path)
     if not src.exists():
         raise FileNotFoundError(f"video source not found: {src}")
     factor = slowdown_factor(slowdown)
+    # The frozen backend preserves the behavior of tasks queued before this profile existed.
+    combined = is_local_video_upscale_backend(upscale_backend) and is_local_video_upscale_backend(frame_rate_backend)
+    if combined and (resolution != "1080p" or target_fps != 60 or factor != 1 or face_enhance):
+        raise RuntimeError("unsupported local 1080p60 enhancement parameters")
+    has_frame_rate_stage = not combined and (factor > 1 or target_fps is not None)
+    upscale_end = 0.60 if has_frame_rate_stage else 0.95
+    frame_rate_start = 0.70 if factor > 1 else upscale_end
+
+    def report(value: float) -> None:
+        if on_progress is not None:
+            on_progress(value)
+
     probe = await probe_video_stream(str(src), cwd=project_dir, egress_context=egress_context)
     work_dir = outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}_stages"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -738,11 +764,17 @@ async def _run_model_video_enhancement(
             processing_metadata={
                 "scene": scene,
                 "face_enhance": bool(face_enhance),
+                **({"target_fps": 60, "smart_interpolation": smart_interpolation} if combined else {}),
             },
             model_params=upscale_model_params,
             request_schema=upscale_request_schema,
             egress_context=egress_context,
+            on_progress=lambda value: report(0.10 + value * (upscale_end - 0.10)),
         )
+        if combined:
+            actual = await probe_video_stream(str(current), cwd=project_dir, egress_context=egress_context)
+            if (actual["width"], actual["height"], actual["fps"]) != (1920, 1080, 60):
+                raise RuntimeError("local video enhancement returned an output other than 1920×1080 at 60 fps")
 
         if factor > 1:
             slowed = work_dir / "02_slowed.mp4"
@@ -754,11 +786,12 @@ async def _run_model_video_enhancement(
                 egress_context=egress_context,
             )
             current = slowed
+            report(frame_rate_start)
 
         effective_target_fps = target_fps
         if factor > 1 and effective_target_fps is None:
             effective_target_fps = max(1, round(float(probe["fps"]), 3))
-        if effective_target_fps is not None:
+        if effective_target_fps is not None and not combined:
             if not frame_rate_backend:
                 raise RuntimeError("video frame-rate model is not configured")
             framed = work_dir / "03_frame_rate.mp4"
@@ -783,6 +816,9 @@ async def _run_model_video_enhancement(
                 model_params=frame_rate_model_params,
                 request_schema=frame_rate_request_schema,
                 egress_context=egress_context,
+                on_progress=lambda value: report(
+                    frame_rate_start + value * (0.95 - frame_rate_start)
+                ),
             )
             current = framed
 

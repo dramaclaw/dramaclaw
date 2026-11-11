@@ -261,6 +261,10 @@ from novelvideo.freezone.image_node import (
     DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION,
     reverse_prompt_from_image,
 )
+from novelvideo.freezone.local_video_upscale import (
+    is_local_video_upscale_backend,
+    local_video_upscale_enabled,
+)
 from novelvideo.freezone.mark_node import detect_freezone_mark
 from novelvideo.freezone.paths import (
     CANVAS_ID_RE,
@@ -9925,8 +9929,13 @@ def _video_processing_entry(
     catalog: list[dict[str, Any]] | None,
     mode: str,
 ) -> dict[str, Any] | None:
+    local_enabled = local_video_upscale_enabled()
     return next(
-        (item for item in catalog or [] if mode in (item.get("supportedModes") or [])),
+        (
+            item for item in catalog or []
+            if mode in (item.get("supportedModes") or [])
+            and (local_enabled or not is_local_video_upscale_backend(item.get("apiModel") or item.get("api_model")))
+        ),
         None,
     )
 
@@ -9958,9 +9967,12 @@ async def _resolve_video_processing_model(
         requester_user_id=requester_user_id,
     )
     selected = resolved or entry
+    backend = str(selected.get("apiModel") or selected.get("api_model") or "")
+    if is_local_video_upscale_backend(backend) and not local_video_upscale_enabled():
+        raise HTTPException(409, "当前环境未启用本地 GPU 视频增强")
     return {
         "catalog_id": identifier,
-        "backend": str(selected.get("apiModel") or selected.get("api_model") or ""),
+        "backend": backend,
         "request_schema": schema,
         "model_params": params,
         "resolution_options": _video_processing_resolutions(selected),
@@ -11794,16 +11806,36 @@ async def _prepare_video_upscale(
         source_meta = await probe_video_stream(str(source_path))
     except RuntimeError as exc:
         raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
+    width, height = int(source_meta["width"]), int(source_meta["height"])
     target_long_edge = VIDEO_UPSCALE_TARGET_LONG_EDGES[body.resolution]
-    if max(int(source_meta["width"]), int(source_meta["height"])) >= target_long_edge:
+    if max(width, height) >= target_long_edge:
         raise HTTPException(400, "目标分辨率必须高于源视频分辨率")
 
     upscale = await _resolve_video_processing_model(
         "video_upscale",
         requester_user_id=requester_user_id,
     )
+    adjust_frame_rate = body.target_fps is not None or body.slowdown != "auto"
+    local_frame_rate = is_local_video_upscale_backend(upscale["backend"]) and adjust_frame_rate
+    if local_frame_rate:
+        if body.resolution != "1080p" or body.target_fps != 60 or body.slowdown != "auto":
+            raise HTTPException(400, "3060 内测补帧仅支持 1080p、60 fps 和原速。")
+        if body.face_enhance:
+            raise HTTPException(400, "3060 内测补帧暂不支持同时开启人脸修复。")
+        fps, duration = float(source_meta["fps"]), float(source_meta["duration"])
+        seconds = 30 if width <= 854 and height <= 480 else 16
+        if (
+            width <= height or min(width, height) < 64 or width > 1344 or height > 768
+            or width % 2 or height % 2 or fps not in (24, 30) or not 0 < duration <= seconds
+        ):
+            source_label = f"源视频为 {width}×{height}、{fps:g} fps、{duration:g} 秒。"
+            raise HTTPException(
+                400, source_label + "3060 内测补帧支持 24 或 30 fps 的横屏视频，"
+                "宽高须为偶数，短边至少 64 像素，最大 1344×768；"
+                "854×480 以内限 30 秒，其余限 16 秒。",
+            )
     frame_rate: dict[str, Any] | None = None
-    if body.target_fps is not None or body.slowdown != "auto":
+    if adjust_frame_rate:
         frame_rate = await _resolve_video_processing_model(
             "video_frame_rate",
             requester_user_id=requester_user_id,
@@ -11815,9 +11847,9 @@ async def _prepare_video_upscale(
         "upscale_backend": upscale["backend"],
         "upscale_model_params": upscale["model_params"],
         "upscale_request_schema": upscale["request_schema"],
-        "frame_rate_backend": frame_rate["backend"] if frame_rate else None,
-        "frame_rate_model_params": frame_rate["model_params"] if frame_rate else None,
-        "frame_rate_request_schema": (frame_rate["request_schema"] if frame_rate else None),
+        "frame_rate_backend": upscale["backend"] if local_frame_rate else frame_rate["backend"] if frame_rate else None,
+        "frame_rate_model_params": frame_rate["model_params"] if frame_rate and not local_frame_rate else None,
+        "frame_rate_request_schema": frame_rate["request_schema"] if frame_rate and not local_frame_rate else None,
     }
     billing = _video_enhance_billing(body, source_meta, upscale, frame_rate)
     return source_path, source_meta, processing_models, billing

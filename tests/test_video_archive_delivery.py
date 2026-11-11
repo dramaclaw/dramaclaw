@@ -519,6 +519,136 @@ async def test_ce_ignores_advertised_archive_and_downloads_result_url(
     assert calls == {"poll": 1, "download": 1}
 
 
+@pytest.mark.asyncio
+async def test_freezone_upscale_download_uses_the_submitting_gateway(monkeypatch, tmp_path):
+    from novelvideo.generators import video_generator as module
+    from novelvideo.ports.video_delivery import VideoDeliveryReceipt
+    from novelvideo.utils import media_download
+    proof_header = "X-Local-Video-Upscale-Key"
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_CLIENT_KEY", "a" * 64)
+    monkeypatch.setenv("NEWAPI_BASE_URL", "https://gateway.example/v1")
+
+    generator = module.NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://gateway.example/v1",
+        model="video-upscale-fast",
+        resolution="1080p",
+    )
+    reference = "https://relay.example/input.mp4"
+    task_id = "task_upscale"
+    downloaded = []
+    progress = []
+    task_states = iter([("QUEUED", "20%"), ("IN_PROGRESS", "30%"), ("SUCCESS", "100%")])
+
+    async def submit(url, payload, *, headers):
+        assert url == "https://gateway.example/v1/video/generations"
+        assert headers[proof_header] == "a" * 64
+        assert headers["Authorization"] == "Bearer test-key"
+        assert payload["metadata"]["reference_videos"] == [reference]
+        assert payload["metadata"]["resolution"] == "1080p"
+        return {"task_id": task_id}
+
+    async def poll(*args, **kwargs):
+        assert proof_header not in (kwargs.get("headers") or {})
+        status, percent = next(task_states)
+        return {
+            "data": {
+                "status": status,
+                "progress": percent,
+                "task_id": task_id,
+                "result_url": f"https://unexpected.example/v1/videos/{task_id}/content",
+            }
+        }
+
+    async def download(url, output_path, *, headers):
+        downloaded.append(url)
+        assert headers["Authorization"] == "Bearer test-key"
+        assert proof_header not in headers
+        Path(output_path).write_bytes(b"upscale-result")
+        return VideoDeliveryReceipt(method="download", size=14, sha256="fixture")
+
+    async def billing(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(generator, "_post_json", submit)
+    monkeypatch.setattr(generator, "_get_json", poll)
+    monkeypatch.setattr(module, "get_video_result_delivery", lambda: None)
+    monkeypatch.setattr(module, "_reserve_video_model_call", billing)
+    monkeypatch.setattr(module, "_confirm_video_model_call", billing)
+    monkeypatch.setattr(media_download, "download_to_path", download)
+
+    output = tmp_path / "video.mp4"
+    result = await generator.generate(
+        image_path=None,
+        prompt="",
+        output_path=str(output),
+        aspect_ratio="auto",
+        duration=3,
+        references=[module.ShotReference("video", reference, "源视频")],
+        gen_mode="video_upscale",
+        poll_interval=0,
+        max_polls=3,
+        on_progress=progress.append,
+    )
+
+    assert result.status is module.VideoGenStatus.DONE
+    assert progress == [0.1, 0.2, 0.2, 0.3, 0.9, 1.0]
+    assert downloaded == [f"https://gateway.example/v1/videos/{task_id}/content"]
+    assert output.read_bytes() == b"upscale-result"
+
+
+@pytest.mark.asyncio
+async def test_local_upscale_credential_is_not_sent_to_a_different_gateway(monkeypatch, tmp_path):
+    from novelvideo.generators import video_generator as module
+
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_CLIENT_KEY", "a" * 64)
+    monkeypatch.setenv("NEWAPI_BASE_URL", "https://gateway.example/v1")
+    generator = module.NewApiVideoGenerator(
+        api_key="test-key", endpoint="https://other-gateway.example/v1", model="video-upscale-fast",
+    )
+
+    async def unexpected(*_args, **_kwargs):
+        pytest.fail("a request was made before validating the credential destination")
+
+    monkeypatch.setattr(generator, "_post_json", unexpected)
+    monkeypatch.setattr(generator, "_apply_huimeng_protocol_media_inputs", unexpected)
+    result = await generator.generate(
+        image_path=None, prompt="", output_path=str(tmp_path / "result.mp4"), gen_mode="video_upscale",
+    )
+    assert result.status is module.VideoGenStatus.FAILED
+    assert result.error == "LOCAL_VIDEO_UPSCALE_GATEWAY_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_local_upscale_submit_disables_http_redirects(monkeypatch):
+    from novelvideo.generators import video_generator as module
+
+    generator = module.NewApiVideoGenerator(
+        api_key="test-key", endpoint="https://gateway.example/v1", model="video-upscale-fast",
+    )
+
+    class Redirect(_Response):
+        status = 307
+        headers = {"Location": "https://other-gateway.example/v1/video/generations"}
+
+        async def text(self):
+            return "redirect"
+
+    class Session(_Session):
+        def post(self, url, *, json, headers, allow_redirects=True):
+            assert allow_redirects is False
+            return Redirect([])
+
+    monkeypatch.setattr(module.aiohttp, "ClientSession", lambda **kwargs: Session([], **kwargs))
+    with pytest.raises(module.NewApiVideoError, match="HTTP 307"):
+        await generator._post_json(
+            "https://gateway.example/v1/video/generations", {},
+            headers={"X-Local-Video-Upscale-Key": "a" * 64},
+        )
+
+
 class _Content:
     def __init__(self, chunks: list[bytes]) -> None:
         self._chunks = chunks

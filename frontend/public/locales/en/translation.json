@@ -3395,6 +3395,10 @@
       "pipeline": {
         "normalizingScenes": "Normalizing screenplay scene blocks with AI..."
       },
+      "videoUpscale": {
+        "start": "Starting video enhancement...",
+        "processing": "Enhancing video..."
+      },
       "script": {
         "start": "Generating script...",
         "beatVideoPromptStart": "Generating video prompt for beat {{beatNum}}",

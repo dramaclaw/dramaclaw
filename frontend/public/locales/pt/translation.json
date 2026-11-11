@@ -3395,6 +3395,10 @@
       "pipeline": {
         "normalizingScenes": "A normalizar os blocos de cenas do guião com IA..."
       },
+      "videoUpscale": {
+        "start": "A iniciar a melhoria do vídeo...",
+        "processing": "A melhorar o vídeo..."
+      },
       "script": {
         "start": "A gerar o guião...",
         "beatVideoPromptStart": "A gerar o prompt de vídeo para o beat {{beatNum}}",

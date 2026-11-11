@@ -34,6 +34,11 @@ from dotenv import load_dotenv
 
 from novelvideo.egress_context import ambient_egress_context
 from novelvideo.authz_retry import retry_authz_read
+from novelvideo.freezone.local_video_upscale import (
+    LOCAL_VIDEO_UPSCALE_CLIENT_HEADER,
+    LOCAL_VIDEO_UPSCALE_MODEL,
+    local_video_upscale_client_key,
+)
 from novelvideo.i18n_message import lmsg
 from novelvideo.ports import (
     get_usage_meter,
@@ -2061,9 +2066,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         *,
         headers: dict[str, str] | None = None,
     ) -> dict:
+        options = (
+            {"allow_redirects": False}
+            if headers and LOCAL_VIDEO_UPSCALE_CLIENT_HEADER in headers
+            else {}
+        )
         async with aiohttp.ClientSession(timeout=self._client_timeout()) as session:
             async with session.post(
-                url, json=payload, headers=headers or self.headers
+                url, json=payload, headers=headers or self.headers, **options
             ) as resp:
                 text = await resp.text()
                 if resp.status < 200 or resp.status >= 300:
@@ -3136,6 +3146,18 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             )
             return VideoGenResult(status=VideoGenStatus.FAILED, error=safe_error)
 
+        submit_url = f"{request_base_url}/video/generations"
+        submit_headers = request_headers if organization_request else None
+        if self.model == LOCAL_VIDEO_UPSCALE_MODEL:
+            try:
+                client_key = local_video_upscale_client_key(submit_url)
+            except ValueError as exc:
+                return await fail_before_submit(str(exc))
+            submit_headers = {
+                **(request_headers or self.headers),
+                LOCAL_VIDEO_UPSCALE_CLIENT_HEADER: client_key,
+            }
+
         if requested_mode:
             try:
                 await self._apply_huimeng_protocol_media_inputs(
@@ -3436,16 +3458,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 request_payload=payload,
             )
             submit_attempted = True
-            if organization_request:
+            if submit_headers is not None:
                 submitted = await self._post_json(
-                    f"{request_base_url}/video/generations",
+                    submit_url,
                     payload,
-                    headers=request_headers,
+                    headers=submit_headers,
                 )
             else:
-                submitted = await self._post_json(
-                    f"{request_base_url}/video/generations", payload
-                )
+                submitted = await self._post_json(submit_url, payload)
             await update_current_model_call_log(
                 response_payload=submitted,
             )
@@ -3534,7 +3554,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     )
                 task = self._task_response_data(polled)
                 status = str(task.get("status") or "").lower()
-                progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
+                if self.model == "video-upscale-fast" and requested_mode == "video_upscale":
+                    match = re.fullmatch(r"(\d{1,3})%", str(task.get("progress") or ""))
+                    if match and int(match[1]) < 100:
+                        progress(max(0.2, int(match[1]) / 100))
+                else:
+                    progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
 
                 if status in {"completed", "succeeded", "success", "done"}:
                     await update_current_model_call_log(
@@ -3684,6 +3709,29 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             delivery = await archive_delivery.deliver(
                                 source=archived_source,
                                 output_path=output_path,
+                            )
+                        elif (
+                            self.model == "video-upscale-fast"
+                            and requested_mode == "video_upscale"
+                        ):
+                            from novelvideo.utils.media_download import download_to_path
+
+                            # Credentials go only to the gateway that accepted this job.
+                            path = urllib.parse.urlsplit(video_url).path
+                            if (
+                                re.fullmatch(
+                                    r"task_[A-Za-z0-9_-]{1,123}", task_id or ""
+                                )
+                                is None
+                                or path != f"/v1/videos/{task_id}/content"
+                            ):
+                                raise VideoDeliveryError(
+                                    "VIDEO_GATEWAY_RESULT_INVALID", retryable=False
+                                )
+                            delivery = await download_to_path(
+                                f"{request_base_url}/videos/{task_id}/content",
+                                output_path,
+                                headers=request_headers or self.headers,
                             )
                         else:
                             log(
