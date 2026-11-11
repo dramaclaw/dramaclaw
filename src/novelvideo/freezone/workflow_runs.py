@@ -18,6 +18,7 @@ from typing import Any
 
 from novelvideo.freezone.agent_canvas_metrics import count
 from novelvideo.freezone.paths import CANVAS_ID_RE
+from novelvideo.freezone.server_workflow_actions import IMAGE_TOOL_SERVER_ACTIONS
 from novelvideo.freezone.workflow_contract_generated import GENERATION_ACTION_TYPES
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
@@ -43,6 +44,7 @@ def get_server_workflow_media_link() -> dict[str, str] | None:
 
 
 _WORKFLOW_MEDIA_ACTIONS = {
+    "freezone_edit": IMAGE_TOOL_SERVER_ACTIONS,
     "freezone_gen": {"generate_image"},
     "freezone_video_gen": {"generate_video", "generate_text_video"},
     "freezone_video_upscale": {"generate_video"},

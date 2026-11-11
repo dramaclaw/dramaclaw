@@ -16,6 +16,7 @@ from novelvideo.freezone import canvas_store
 from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
 from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
 from novelvideo.freezone.server_workflow_actions import (
+    IMAGE_TOOL_SERVER_ACTIONS,
     server_action_refusal,
     server_action_supported,
 )
@@ -47,7 +48,9 @@ def _server_run_actions(canvas: dict, plan: dict, idempotency_key: str) -> list[
     nodes = {node["id"]: node for node in canvas.get("nodes", [])}
     actions = []
     # workflowInvalidation.ts includes HTML and Skill actions in generation identities.
-    generation_actions = GENERATION_ACTIONS | {"generate_html", "run_skill", "translate_text"}
+    generation_actions = GENERATION_ACTIONS | IMAGE_TOOL_SERVER_ACTIONS | {
+        "generate_html", "run_skill", "translate_text",
+    }
     for planned in plan["actions"]:
         node_id, name = planned["node_id"], planned["action"]
         catalog = nodes.get(node_id, {}).get("data", {}).get("workflowCatalog")
@@ -124,7 +127,7 @@ async def check_server_workflow(
 def canvas_open_required_detail(check: dict) -> dict:
     labels = ", ".join(item["label"] or item["action"] for item in check["blocked"])
     return {"code": "canvas_open_required",
-            "message": f"这些动作需要打开画布才能运行：{labels}", "blocked": check["blocked"]}
+            "message": f"这些动作需要打开画布才能运行：{labels}", "blocked": check["blocked"]}  # i18n-exempt
 
 
 async def start_server_workflow_run(

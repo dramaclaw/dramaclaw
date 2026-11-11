@@ -698,3 +698,174 @@ async def test_video_route_dispatch_preserves_identity_and_link(
         {**body, "canvas_id": "default", "node_id": "n"}, media_link=link,
     ) == TASK
     assert get_server_workflow_media_link() is None
+
+
+@pytest.mark.parametrize("route,handler,model,body", [
+    ("outpaint", "freezone_outpaint", "FreezoneOutpaintRequest", {"source_url": "/static/a.png"}),
+    ("upscale", "freezone_upscale", "FreezoneUpscaleRequest", {"source_url": "/static/a.png"}),
+    ("template-edit", "freezone_template_edit", "FreezoneTemplateEditRequest",
+     {"source_url": "/static/a.png", "mode": "multi_camera_nine_grid"}),
+])
+async def test_image_tool_request_dispatch(host, monkeypatch, route, handler, model, body):
+    from novelvideo.freezone.workflow_runs import get_server_workflow_media_link
+
+    link = {"run_id": "run-1", "canvas_id": "default", "node_id": "n",
+            "generation_attempt_id": "attempt-1"}
+
+    async def submit(project, parsed, user):
+        assert project == "project"
+        assert type(parsed).__name__ == model
+        assert parsed.model_dump().items() >= body.items()
+        assert get_server_workflow_media_link() == link
+        return {"ok": True, "data": {**TASK, "extra": "drop"}}
+
+    monkeypatch.setattr(routes, handler, submit)
+    assert await host.request("POST", f"projects/project/freezone/{route}", body,
+                              media_link=link) == TASK
+    assert get_server_workflow_media_link() is None
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+async def test_add_nodes_idempotent_retry_and_lease(host, context, monkeypatch, conflict):
+    root = context.state_dir
+    canvas = canvas_store.ensure_default_canvas(root, project_id="project").payload
+    source = {"id": "source", "type": "imageNode", "position": {"x": 0, "y": 0}, "data": {}}
+    child = {"id": "child", "type": "exportImageNode", "position": {"x": 400, "y": 0},
+             "data": {"generationOwner": "server", "generationRunId": "run-1"}}
+    edge = {"id": "e-source-child", "source": "source", "target": "child"}
+    canvas["nodes"] = [source]
+    canvas_store.atomic_write_json(canvas_store.canvas_path(root, "default"), canvas)
+    save = canvas_store.save_canvas_async
+    calls = 0
+
+    async def save_with_edit(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if conflict and calls == 1:
+            latest = canvas_store.read_canvas(root, "default")
+            latest["nodes"][0]["data"]["displayName"] = "Concurrent edit"
+            latest["revision"] += 1
+            canvas_store.atomic_write_json(canvas_store.canvas_path(root, "default"), latest)
+        return await save(*args, **kwargs)
+
+    monkeypatch.setattr(canvas_store, "save_canvas_async", save_with_edit)
+    await host.add_nodes([child], [edge])
+    saved = canvas_store.read_canvas(root, "default")
+    assert saved["nodes"][1] == child
+    assert saved["edges"] == [edge]
+    assert saved["revision"] == canvas["revision"] + (2 if conflict else 1)
+    assert saved["save_source"] == "workflow_result"
+    if conflict:
+        assert saved["nodes"][0]["data"]["displayName"] == "Concurrent edit"
+    await host.add_nodes([child], [edge])
+    assert canvas_store.read_canvas(root, "default") == saved
+    assert calls == (2 if conflict else 1)
+    events = freezone_root(root) / "_canvas_events/default.jsonl"
+    assert len(events.read_text().splitlines()) == 1
+
+    def lost():
+        raise RuntimeError("lease lost")
+
+    host.assert_lease = lost
+    with pytest.raises(ActionLeaseLost):
+        await host.add_nodes([{**child, "id": "other"}], [])
+    assert canvas_store.read_canvas(root, "default") == saved
+
+
+@pytest.mark.parametrize("route,action", [
+    ("outpaint", "run_outpaint_tool"), ("upscale", "run_upscale_tool"),
+    ("template-edit", "run_grid_multi_camera"),
+])
+@pytest.mark.parametrize("linked", [False, True])
+async def test_image_tool_route_claim_once(context, monkeypatch, route, action, linked):
+    from PIL import Image
+    from novelvideo.freezone import workflow_runs as store
+    from novelvideo.ports import get_usage_meter
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    root = context.state_dir
+    source = root / "source.png"
+    Image.new("RGB", (64, 64)).save(source)
+    canvas_store.ensure_default_canvas(root, project_id="project")
+    run = store.create_workflow_run(
+        project_dir=root, project_id="project", canvas_id="default", owner_kind="server",
+        actions=[{"node_id": "n", "action": action, "generation_attempt_id": "attempt-1"}],
+    )
+    link = {"run_id": run["run_id"], "canvas_id": "default", "node_id": "n",
+            "generation_attempt_id": "attempt-1"} if linked else None
+    tasks, enqueued = {}, []
+
+    async def resolve(project, user):
+        return context, "", project, root, str(context.output_dir)
+
+    async def scoped(*args, **kwargs):
+        return None
+
+    async def catalog(*args, **kwargs):
+        return None, None, None
+
+    async def enqueue(ctx, *, task_type, queue_kind, scope, payload, **kwargs):
+        await get_usage_meter().reserve_feature_start_credits(
+            user_id=ctx.requester_user_id, feature_key="image-tool", product_surface="freezone",
+            project_id=ctx.project_id, task_type=task_type, task_id="media-task",
+        )
+        assert task_type == "freezone_edit" and queue_kind == "default"
+        assert not payload.get("node_id")
+        assert not any(key in payload for key in (
+            "generation_attempt_id", "product_operation_id", "run_id", "claim_canvas_id",
+            "claim_node_id",
+        ))
+        enqueued.append(payload.copy())
+        state = SimpleNamespace(task_id="media-task", status="running", metadata={
+            "backend": "celery", "queue": "default",
+        })
+        tasks[scope] = state
+        return SimpleNamespace(task_state=state, backend="celery", queue="default")
+
+    monkeypatch.setattr(routes, "_resolve_freezone_project", resolve)
+    monkeypatch.setattr(routes, "_require_scoped_media_model", scoped)
+    monkeypatch.setattr(routes, "_resolve_catalog_request", catalog)
+    monkeypatch.setattr(routes, "resolve_static_url_to_path", lambda *args: source)
+    monkeypatch.setattr(routes, "_resolve_url_list", lambda *args: [str(source)])
+    monkeypatch.setattr(routes, "get_task_backend", lambda: SimpleNamespace(enqueue_project_task=enqueue))
+    monkeypatch.setattr(routes, "get_task_manager", lambda: SimpleNamespace(
+        get_task_for_project=lambda ctx, kind, episode, **kw: tasks.get(kw["scope"]),
+    ))
+    host = InProcessActionHost(ctx=context, canvas_id="default", assert_lease=lambda: None)
+    body = {"source_url": "/static/source.png"}
+    if route == "template-edit":
+        body["mode"] = "multi_camera_nine_grid"
+    with RecordingUsageMeter().registered() as meter:
+        first = await host.request("POST", f"projects/project/freezone/{route}", body,
+                                   media_link=link)
+        second = await host.request("POST", f"projects/project/freezone/{route}", body,
+                                    media_link=link)
+        reservations = [c for c in meter.calls if c[0] == "reserve_feature_start_credits"]
+    assert len(enqueued) == len(reservations) == (1 if linked else 2)
+    assert (first["job_id"] == second["job_id"]) is linked
+    if linked:
+        row = store.read_workflow_run(project_dir=root, canvas_id="default",
+                                      run_id=run["run_id"])["actions"][0]
+        assert row["job_id"] == first["job_id"]
+        assert row["task_type"] == "freezone_edit"
+
+
+async def test_image_tool_claim_rejects_generation_row(context, monkeypatch):
+    from novelvideo.freezone import workflow_runs as store
+
+    canvas_store.ensure_default_canvas(context.state_dir, project_id="project")
+    run = store.create_workflow_run(
+        project_dir=context.state_dir, project_id="project", canvas_id="default",
+        owner_kind="server", actions=[{"node_id": "n", "action": "generate_image",
+                                        "generation_attempt_id": "attempt"}],
+    )
+    with store.server_workflow_media_link({"run_id": run["run_id"], "node_id": "n",
+                                          "canvas_id": "default",
+                                          "generation_attempt_id": "attempt"}):
+        with pytest.raises(HTTPException) as caught:
+            await routes._enqueue_claimed_workflow_media(
+                ctx=context, project_dir=context.state_dir, task_type="freezone_edit",
+                queue_kind="default", payload={"base_path": "unused"}, job_id="unused",
+                claim_canvas_id="default", claim_node_id="n",
+            )
+    assert caught.value.status_code == 409

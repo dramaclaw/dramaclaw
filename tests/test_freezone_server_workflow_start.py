@@ -280,3 +280,32 @@ async def test_video_check_support_and_manifest_refusals(setup, data, reason):
     assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": ([{
         "node_id": "text", "action": "generate_video", "label": "Video", "reason": reason,
     }] if reason else [])}
+
+
+async def test_image_tool_support_attempt_and_no_source_invalidation(setup):
+    setup.canvas["nodes"][0].update(type="imageNode", data={"imageUrl": "/static/a.png"})
+    canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), setup.canvas)
+    setup.plan["actions"] = [dict(setup.plan["actions"][0], action="run_outpaint_tool",
+                                  invalidation_reason="upstream_changed")]
+    setup.plan["levels"] = [[0]]
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": []}
+    run = await launch(setup)
+    assert run["actions"][0]["generation_attempt_id"] == (
+        "canvas-confirmation:confirmation-1:image:run_outpaint_tool"
+    )
+    assert canvas_store.read_canvas(setup.root, "default")["nodes"] == setup.canvas["nodes"]
+    assert [q["task_type"] for q in setup.queued] == ["freezone_workflow_drive"]
+
+
+async def test_image_tool_batch_refuses_scene_matting_and_text_source(setup):
+    names = ["run_outpaint_tool", "run_scene360_tool", "run_matting_tool"]
+    setup.plan["actions"] = [dict(setup.plan["actions"][0], action=name) for name in names] + [
+        dict(setup.plan["actions"][1], action="run_upscale_tool"),
+    ]
+    result = await check(setup)
+    assert result["status"] == "runnable"
+    assert [(r["action"], r["reason"]) for r in result["refused"]] == [
+        (name, "action_not_on_server") for name in [
+            "run_scene360_tool", "run_matting_tool", "run_upscale_tool",
+        ]
+    ]

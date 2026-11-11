@@ -637,3 +637,20 @@ async def test_generate_video_uses_video_lane_capacity(tmp_path, monkeypatch):
     assert store.read_workflow_run(**scope)["actions"][0]["error"] == (
         "workflow lane capacity timed out"
     )
+
+
+async def test_image_tool_uses_default_capacity(tmp_path):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{"node_id": "tool", "action": "run_outpaint_tool"}],
+                      levels=[[0]])
+    runner = FakeRunner(scope, capacity=[0, 1])
+    lanes = []
+    capacity = runner.lane_capacity
+
+    async def recorded(lane):
+        lanes.append(lane)
+        return await capacity(lane)
+
+    runner.lane_capacity = recorded
+    assert (await drive(scope, clock, runner))["status"] == "completed"
+    assert lanes == ["default", "default"]

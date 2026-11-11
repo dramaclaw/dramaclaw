@@ -30,7 +30,7 @@ it('serves every tool op and phase with an empty environment', async () => {
       expected.push({ id, ok: false, error: { code: 'invalid_request', message: expect.any(String) } });
     }
     requests.push({ id: 'unknown', op: 'unknown' });
-    expected.push({ id: 'unknown', ok: false, error: { code: 'invalid_request', message: expect.stringContaining('image_tool_request, image_tool_patch, audio_translate_request, audio_translate_patch, world_generation_request, world_generation_patch') } });
+    expected.push({ id: 'unknown', ok: false, error: { code: 'invalid_request', message: expect.stringContaining('image_tool_request, image_tool_patch, image_tool_place, audio_translate_request, audio_translate_patch, world_generation_request, world_generation_patch') } });
     requests.push({ id: 'last', op: 'ping' });
     expected.push({ id: 'last', ok: true, result: { pong: true } });
     await fs.writeFile('/tmp/c3b/g3-fixture-counts.json', JSON.stringify({
@@ -49,6 +49,13 @@ it('serves every tool op and phase with an empty environment', async () => {
       expect(await exit, stderr).toBe(0);
     } finally { clearTimeout(timer); }
     expect(stderr).toBe('');
-    expect(stdout.trim().split('\n').map(line => JSON.parse(line))).toStrictEqual(expected);
+    const responses = stdout.trim().split('\n').map(line => JSON.parse(line));
+    for (const response of responses) {
+      if (response.ok && response.result?.node?.type === 'exportImageNode') {
+        expect(response.result.node.data.createdAt).toEqual(expect.any(Number));
+        response.result.node.data.createdAt = 123;
+      }
+    }
+    expect(responses).toStrictEqual(expected);
   } finally { await fs.rm(outDir, { recursive: true, force: true }); }
 }, 30000);

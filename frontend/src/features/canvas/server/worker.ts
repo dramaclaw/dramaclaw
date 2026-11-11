@@ -12,7 +12,7 @@ import { serveImageGenerationRequest, serveImageGenerationPatch } from './imageG
 import { serveVideoGenerationRequest, serveVideoGenerationPatch } from './videoGeneration';
 import { serveAudioGenerationRequest, serveAudioGenerationPatch } from './audioGeneration';
 import { serveTextGenerationRequest, serveTextGenerationPatch } from './textGeneration';
-import { serveImageToolRequest, serveImageToolPatch } from './imageTool';
+import { serveImageToolRequest, serveImageToolPatch, serveImageToolPlace } from './imageTool';
 import { serveAudioTranslateRequest, serveAudioTranslatePatch } from './audioTranslate';
 import { serveWorldGenerationRequest, serveWorldGenerationPatch, serveWorldGenerationUpstream } from './worldGeneration';
 import { serveGenerationErrorDescribe } from './generationError';
@@ -78,7 +78,7 @@ function parseContextPayload(payload: unknown) {
 const operations = ['recipe_compile_request', 'recipe_compile_result', 'ping', 'plan_workflow', 'apply_commands', 'answer_context', 'image_generation_request', 'image_generation_patch',
   'video_generation_request', 'video_generation_patch', 'audio_generation_request', 'audio_generation_patch',
   'text_generation_request', 'text_generation_patch', 'generation_error_describe',
-  'image_tool_request', 'image_tool_patch', 'audio_translate_request', 'audio_translate_patch',
+  'image_tool_request', 'image_tool_patch', 'image_tool_place', 'audio_translate_request', 'audio_translate_patch',
   'world_generation_request', 'world_generation_patch', 'world_generation_upstream'];
 
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
@@ -124,6 +124,8 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       result = await serveTextGenerationPatch(parsed.payload);
     } else if (parsed.op === 'image_tool_request') {
       result = await serveImageToolRequest(parsed.payload);
+    } else if (parsed.op === 'image_tool_place') {
+      result = await serveImageToolPlace(parsed.payload);
     } else if (parsed.op === 'image_tool_patch') {
       result = await serveImageToolPatch(parsed.payload);
     } else if (parsed.op === 'audio_translate_request') {

@@ -612,8 +612,12 @@ async def _enqueue_claimed_workflow_media(
     queue_kind: str,
     payload: dict[str, Any],
     job_id: str,
+    claim_canvas_id: str | None = None,
+    claim_node_id: str | None = None,
 ) -> dict:
     """Use the durable workflow claim and task scope for one media submission."""
+    canvas_id = claim_canvas_id if claim_canvas_id is not None else str(payload.get("canvas_id") or "")
+    node_id = claim_node_id if claim_node_id is not None else str(payload.get("node_id") or "")
     operation_id = str(payload.get("product_operation_id") or "")
     server_link = get_server_workflow_media_link() if not operation_id else None
     attempt_id = str(payload.get("generation_attempt_id") or "")
@@ -622,15 +626,15 @@ async def _enqueue_claimed_workflow_media(
             run = await asyncio.to_thread(
                 read_workflow_run,
                 project_dir=_canvas_state_project_dir(ctx, project_dir),
-                canvas_id=str(payload.get("canvas_id") or ""),
+                canvas_id=canvas_id,
                 run_id=server_link["run_id"],
             )
         except ValueError:
             run = None
         if (
             run is None
-            or run["canvas_id"] != payload.get("canvas_id")
-            or server_link["node_id"] != payload.get("node_id")
+            or run["canvas_id"] != canvas_id
+            or server_link["node_id"] != node_id
         ):
             raise HTTPException(
                 409, "server workflow media link does not match the submitted node"
@@ -666,8 +670,8 @@ async def _enqueue_claimed_workflow_media(
                     claim_workflow_media_action,
                     project_dir=_canvas_state_project_dir(ctx, project_dir),
                     project_id=ctx.project_id,
-                    canvas_id=str(payload.get("canvas_id") or ""),
-                    node_id=str(payload.get("node_id") or ""),
+                    canvas_id=canvas_id,
+                    node_id=node_id,
                     operation_id=operation_id,
                     attempt_id=attempt_id,
                     run_id=server_link["run_id"] if server_link is not None else "",
@@ -703,9 +707,9 @@ async def _enqueue_claimed_workflow_media(
                 reclaim_failed_workflow_media_action,
                 project_dir=_canvas_state_project_dir(ctx, project_dir),
                 project_id=ctx.project_id,
-                canvas_id=str(payload.get("canvas_id") or ""),
+                canvas_id=canvas_id,
                 run_id=claim["run_id"],
-                node_id=str(payload.get("node_id") or ""),
+                node_id=node_id,
                 operation_id=operation_id,
                 attempt_id=attempt_id,
                 task_type=task_type,
@@ -729,7 +733,7 @@ async def _enqueue_claimed_workflow_media(
             await _cancel_claimed_media_if_run_cancelled(
                 ctx=ctx,
                 project_dir=project_dir,
-                canvas_id=str(payload.get("canvas_id") or ""),
+                canvas_id=canvas_id,
                 run_id=claim["run_id"],
                 task=existing,
             )
@@ -744,7 +748,7 @@ async def _enqueue_claimed_workflow_media(
         run = await workflow_read_executor().run(
             "response_detail", read_workflow_run,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
-            canvas_id=str(payload.get("canvas_id") or ""),
+            canvas_id=canvas_id,
             run_id=claim["run_id"],
         )
         if run is None or run.get("status") != "running":
@@ -759,7 +763,7 @@ async def _enqueue_claimed_workflow_media(
                 renew_workflow_media_claim,
                 project_dir=_canvas_state_project_dir(ctx, project_dir),
                 run_id=claim["run_id"],
-                node_id=str(payload.get("node_id") or ""),
+                node_id=node_id,
                 operation_id=operation_id,
                 job_id=job_id,
                 claimed_at=float(claim["claimed_at"]),
@@ -780,7 +784,7 @@ async def _enqueue_claimed_workflow_media(
             bind_workflow_media_task,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             run_id=claim["run_id"],
-            node_id=str(payload.get("node_id") or ""),
+            node_id=node_id,
             operation_id=operation_id,
             job_id=job_id,
             task_type=task_type,
@@ -789,7 +793,7 @@ async def _enqueue_claimed_workflow_media(
         await _cancel_claimed_media_if_run_cancelled(
             ctx=ctx,
             project_dir=project_dir,
-            canvas_id=str(payload.get("canvas_id") or ""),
+            canvas_id=canvas_id,
             run_id=claim["run_id"],
             task=queued.task_state,
         )
@@ -2933,6 +2937,35 @@ async def _start_or_enqueue_freezone_edit_job(
         "display_name": "编辑图片",
         **(task_display or {}),
     }
+    task_payload = {
+        "job_id": job_id,
+        "project_dir": str(project_dir),
+        "prompt": prompt_text,
+        "base_path": base_paths[0],
+        "extra_reference_paths": extra_paths,
+        "aspect_ratio": resolved_aspect_ratio,
+        "image_size": image_size,
+        "provider": normalized_provider,
+        "model": resolved_model,
+        "quality": quality,
+        "canvas_id": canvas_id or "",
+        "node_id": node_id or "",
+        "model_id": model_id or "",
+        "catalog_id": catalog_id or "",
+        "gen_mode": gen_mode or "",
+        # 目录动态参数与它的 schema 一起下发给 runner；schema 是 runner
+        # 把参数写进网关请求体（requestPath）的唯一依据，只带值没有用。
+        **({"model_params": model_params} if model_params else {}),
+        **({"request_schema": request_schema} if request_schema else {}),
+        **({"billing": billing} if billing else {}),
+        **display_payload,
+    }
+    if ctx is not None and (link := get_server_workflow_media_link()) is not None:
+        return await _enqueue_claimed_workflow_media(
+            ctx=ctx, project_dir=project_dir, task_type="freezone_edit", queue_kind="default",
+            payload=task_payload, job_id=job_id,
+            claim_canvas_id=link["canvas_id"], claim_node_id=link["node_id"],
+        )
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -2941,29 +2974,7 @@ async def _start_or_enqueue_freezone_edit_job(
             queue_kind="default",
             episode=0,
             scope=job_id,
-            payload={
-                "job_id": job_id,
-                "project_dir": str(project_dir),
-                "prompt": prompt_text,
-                "base_path": base_paths[0],
-                "extra_reference_paths": extra_paths,
-                "aspect_ratio": resolved_aspect_ratio,
-                "image_size": image_size,
-                "provider": normalized_provider,
-                "model": resolved_model,
-                "quality": quality,
-                "canvas_id": canvas_id or "",
-                "node_id": node_id or "",
-                "model_id": model_id or "",
-                "catalog_id": catalog_id or "",
-                "gen_mode": gen_mode or "",
-                # 目录动态参数与它的 schema 一起下发给 runner；schema 是 runner
-                # 把参数写进网关请求体（requestPath）的唯一依据，只带值没有用。
-                **({"model_params": model_params} if model_params else {}),
-                **({"request_schema": request_schema} if request_schema else {}),
-                **({"billing": billing} if billing else {}),
-                **display_payload,
-            },
+            payload=task_payload,
         )
         return {
             "ok": True,
@@ -3057,6 +3068,25 @@ async def _start_or_enqueue_freezone_edit_path(
             "operation": billing_operation,
         },
     )
+    task_payload = {
+        "job_id": job_id,
+        "project_dir": str(project_dir),
+        "prompt": prompt,
+        "base_path": base_path.as_posix(),
+        "extra_reference_paths": extra_reference_paths,
+        "aspect_ratio": aspect_ratio,
+        "image_size": image_size,
+        "provider": provider,
+        "model": model,
+        "quality": quality,
+        "billing": billing,
+    }
+    if ctx is not None and (link := get_server_workflow_media_link()) is not None:
+        return await _enqueue_claimed_workflow_media(
+            ctx=ctx, project_dir=project_dir, task_type=task_type, queue_kind="default",
+            payload=task_payload, job_id=job_id,
+            claim_canvas_id=link["canvas_id"], claim_node_id=link["node_id"],
+        )
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -3065,19 +3095,7 @@ async def _start_or_enqueue_freezone_edit_path(
             queue_kind="default",
             episode=0,
             scope=job_id,
-            payload={
-                "job_id": job_id,
-                "project_dir": str(project_dir),
-                "prompt": prompt,
-                "base_path": base_path.as_posix(),
-                "extra_reference_paths": extra_reference_paths,
-                "aspect_ratio": aspect_ratio,
-                "image_size": image_size,
-                "provider": provider,
-                "model": model,
-                "quality": quality,
-                "billing": billing,
-            },
+            payload=task_payload,
         )
         return _project_job_response(
             task_type=task_type,

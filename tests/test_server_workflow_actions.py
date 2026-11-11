@@ -6,6 +6,8 @@ import asyncio
 from copy import deepcopy
 from pathlib import Path
 import shutil
+import subprocess
+import uuid
 
 import pytest
 
@@ -39,6 +41,8 @@ class FakeHost:
                                 "position": {"x": 0, "y": 0}, "data": {"prompt": "A ship"}}],
                        "edges": []}
         self.patches = []
+        self.patch_nodes = []
+        self.additions = []
         self.requests = []
         self.task = TASK
         self.responses = [TASK]
@@ -71,8 +75,14 @@ class FakeHost:
         if self.lose_on_outcome and patch.get("isGenerating") is False:
             self.held = False
             raise ActionLeaseLost()
+        self.patch_nodes.append(node_id)
         self.patches.append(deepcopy(patch))
         next(n["data"] for n in self.canvas["nodes"] if n["id"] == node_id).update(patch)
+
+    async def add_nodes(self, nodes, edges):
+        self.additions.append(deepcopy((nodes, edges)))
+        self.canvas["nodes"].extend(deepcopy(nodes))
+        self.canvas["edges"].extend(deepcopy(edges))
 
     async def request(self, method, path, body, *, media_link=None):
         self.requests.append({"method": method, "path": path, "body": deepcopy(body)})
@@ -101,9 +111,19 @@ class FakeHost:
         self.clock += seconds
 
 
+@pytest.fixture(scope="session")
+def source_bundle(tmp_path_factory):
+    directory = tmp_path_factory.mktemp("image-tool-worker")
+    subprocess.run([
+        "./node_modules/.bin/vite", "build", "--config", "vite.canvas-server.config.ts",
+        "--outDir", str(directory),
+    ], cwd=BUNDLE.parents[1], check=True, capture_output=True)
+    return directory / "canvas-core-worker.mjs"
+
+
 @pytest.fixture
-def setup_runner():
-    pool = CanvasCorePool(BUNDLE, size=1)
+def setup_runner(source_bundle):
+    pool = CanvasCorePool(source_bundle, size=1)
     host = FakeHost()
 
     async def core_call(op, payload):
@@ -400,7 +420,8 @@ async def test_image_submission_media_link(setup_runner, recipe):
         generation_attempt_id="attempt-1", product_operation_id="operation-1" if recipe else None,
     ))["status"] == "completed"
     assert host.media_links == ([None, None] if recipe else [{
-        "run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1",
+        "run_id": "run-1", "canvas_id": "default", "node_id": "n",
+        "generation_attempt_id": "attempt-1",
     }])
 
 
@@ -430,7 +451,8 @@ async def test_missing_takeover_task_resubmits_identical_request(setup_runner, r
     assert host.requests == [first] * (len(errors) + 1)
     assert accepted == [TASK]
     link = None if recipe else {
-        "run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1",
+        "run_id": "run-1", "canvas_id": "default", "node_id": "n",
+        "generation_attempt_id": "attempt-1",
     }
     assert host.media_links == [link] * (len(errors) + 1)
     assert host.clock == 2 + len(errors) * 2
@@ -544,7 +566,7 @@ async def test_audio_speech_submission_and_artifact(setup_runner, tmp_path):
                       "artifact": {"audio_url": AUDIO_URL}}
     assert host.requests == [{"method": "POST", "path": "projects/project/freezone/audio/speech",
                               "body": SPEECH_BODY}]
-    assert host.media_links == [{"run_id": "run-1", "node_id": "n",
+    assert host.media_links == [{"run_id": "run-1", "canvas_id": "default", "node_id": "n",
                                  "generation_attempt_id": "attempt-1"}]
     assert accepted == [AUDIO_TASK]
     assert phases == ["submitting", "generating"]
@@ -678,7 +700,8 @@ async def test_audio_recipe_and_product_operation(setup_runner, recipe):
                       product_operation_id="operation-1" if recipe else None)
             )["status"] == "completed"
     assert host.media_links == ([None, None] if recipe is True else [None] if recipe else [{
-        "run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1",
+        "run_id": "run-1", "canvas_id": "default", "node_id": "n",
+        "generation_attempt_id": "attempt-1",
     }])
     if recipe:
         assert host.requests[-1]["body"]["product_operation_id"] == "operation-1"
@@ -764,7 +787,7 @@ async def test_audio_translate_writes_only_text(setup_runner, tmp_path):
     assert host.requests == [{"method": "POST", "path": "projects/project/freezone/text/translate",
                               "body": {"text": "Hello", "node_type": "audio",
                                        "canvas_id": "default", "node_id": "n"}}]
-    assert host.media_links == [{"run_id": "run-1", "node_id": "n",
+    assert host.media_links == [{"run_id": "run-1", "canvas_id": "default", "node_id": "n",
                                  "generation_attempt_id": "attempt-1"}]
     assert host.patches == [{"text": "你好", "generationOwner": None, "generationRunId": None}]
     assert host.result_tasks == [TRANSLATE_TASK]
@@ -888,7 +911,7 @@ async def test_video_submission_fresh_result_and_owner(setup_runner, upscale, ca
     ]
     assert host.requests[0]["body"]["canvas_id"] == "default"
     assert host.requests[0]["body"]["node_id"] == "n"
-    assert host.media_links == [{"run_id": "run-1", "node_id": "n",
+    assert host.media_links == [{"run_id": "run-1", "canvas_id": "default", "node_id": "n",
                                  "generation_attempt_id": "attempt-1"}]
     assert phases == ["submitting", "generating"]
     assert accepted == [host.task]
@@ -1165,3 +1188,161 @@ def test_video_continuity_refusal(mode, story):
     )
     assert server_action_refusal("generate_image", node, edges) is None
     assert server_action_refusal("generate_video", {**node, "type": "imageGenNode"}, edges) is None
+
+
+TOOL_CHILD = str(uuid.uuid5(uuid.NAMESPACE_URL, "workflow-image-tool:run-1:tool-attempt"))
+
+
+@pytest.mark.parametrize("action,route,mode", [
+    ("run_outpaint_tool", "outpaint", None),
+    ("run_upscale_tool", "upscale", None),
+    ("run_grid_multi_camera", "template-edit", "multi_camera_nine_grid"),
+    ("run_grid_plot_four", "template-edit", "story_pitch_four_grid"),
+    ("run_grid_face_three_view", "template-edit", "character_face_three_view"),
+    ("run_grid_product_three_view", "template-edit", "product_three_view"),
+    ("run_grid_serial_storyboard_25", "template-edit", "storyboard_25_grid"),
+    ("run_grid_cinematic_light_correction", "template-edit", "cinematic_light_correction"),
+    ("run_grid_character_three_view", "template-edit", "character_three_view_generation"),
+    ("run_grid_scene_setting_sheet", "template-edit", "scene_setting_sheet"),
+    ("run_grid_frame_projection_3s_later", "template-edit", "image_projection_after_3s"),
+    ("run_grid_frame_projection_5s_earlier", "template-edit", "image_projection_before_5s"),
+])
+async def test_image_tool_happy_path(setup_runner, tmp_path, action, route, mode):
+    host, runner, run, phases, accepted = setup_runner
+    host.data.update(imageUrl=URL, aspectRatio="16:9", workflowResultStale=True)
+    source = deepcopy(host.canvas["nodes"][0])
+    patch = host.patch_node
+
+    async def ordered_patch(node_id, data):
+        if data.get("generationTaskKey"):
+            assert accepted == [TASK]
+        await patch(node_id, data)
+
+    host.patch_node = ordered_patch
+    built = await runner.core_call("image_tool_request", {
+        "canvas": await host.read_canvas(), "node_id": "n", "action": action,
+        "env": {"locale": "zh", "project": "project", "now_ms": 0,
+                "image_models": (await host.catalogs())["image"]},
+    })
+    result = await run(action, generation_attempt_id="tool-attempt")
+    assert result == {"status": "completed", "output": {
+        "nodeId": TOOL_CHILD, "imageUrl": URL, "previewImageUrl": URL,
+        "task_key": TASK["task_key"], "job_id": TASK["job_id"],
+    }, "artifact": {"output_url": URL}}
+    assert host.canvas["nodes"][0] == source
+    assert set(host.patch_nodes) == {TOOL_CHILD}
+    assert len(host.additions) == 1
+    nodes, edges = host.additions[0]
+    assert len(nodes) == len(edges) == 1
+    assert nodes[0]["id"] == TOOL_CHILD
+    assert nodes[0]["type"] == "exportImageNode"
+    assert nodes[0]["data"].items() >= {
+        **built["child"]["data"], "generationOwner": "server", "generationRunId": "run-1",
+    }.items()
+    assert (edges[0]["source"], edges[0]["target"]) == ("n", TOOL_CHILD)
+    assert host.requests == [{"method": "POST", "path": f"projects/project/freezone/{route}",
+                              "body": built["body"]}]
+    if mode:
+        assert host.requests[0]["body"]["mode"] == mode
+    assert host.media_links == [{"run_id": "run-1", "canvas_id": "default", "node_id": "n",
+                                 "generation_attempt_id": "tool-attempt"}]
+    child = host.canvas["nodes"][1]["data"]
+    assert child["imageUrl"] == URL
+    assert child["generationOwner"] is None and child["generationRunId"] is None
+    assert child["isGenerating"] is False
+    assert "workflowResultStale" not in child
+    assert phases == ["submitting", "generating"]
+    assert_durable(tmp_path, action, result["artifact"])
+    # Same run and attempt reuses the child even if the runner is re-entered.
+    accepted.clear()
+    host.responses = [TASK]
+    host.statuses = [{"status": "completed", "result": {"output_url": URL}}]
+    assert (await run(action, generation_attempt_id="tool-attempt"))["output"]["nodeId"] == TOOL_CHILD
+    assert len(host.additions) == 1
+
+
+@pytest.mark.parametrize("fallback", ["/static/fallback.png", None, ""])
+async def test_image_tool_job_result_fallback(setup_runner, fallback):
+    host, _, run, _, _ = setup_runner
+    host.data["imageUrl"] = URL
+    host.statuses = [{"status": "completed", "result": {}}]
+    host.fallback = fallback
+    result = await run("run_outpaint_tool", generation_attempt_id="tool-attempt")
+    if fallback:
+        assert result["artifact"] == {"output_url": fallback}
+    else:
+        assert result == {"status": "failed", "error": "任务已结束但没有返回图片"}
+        assert host.canvas["nodes"][1]["data"]["generationError"] == result["error"]
+    assert set(host.patch_nodes) == {TOOL_CHILD}
+
+
+@pytest.mark.parametrize("action,message", [
+    ("run_outpaint_tool", "目标节点没有可用于扩图的图片"),
+    ("run_upscale_tool", "目标节点没有可用于高清放大的图片"),
+    ("run_grid_plot_four", "目标节点没有可用于生成的图片"),
+])
+async def test_image_tool_missing_source_has_no_effects(setup_runner, action, message):
+    host, _, run, _, _ = setup_runner
+    assert await run(action, generation_attempt_id="tool-attempt") == {
+        "status": "failed", "error": message,
+    }
+    assert host.patches == host.additions == host.requests == []
+
+
+@pytest.mark.parametrize("failure", ["http", "failed", "cancelled"])
+async def test_image_tool_failure_on_child(setup_runner, failure):
+    host, _, run, _, _ = setup_runner
+    host.data["imageUrl"] = URL
+    message = "HTTP 400: refused" if failure == "http" else (
+        "task failed" if failure == "failed" else "任务已取消"
+    )
+    if failure == "http":
+        host.responses = [ServerActionHttpError(message)]
+    else:
+        host.statuses = [{"status": failure}]
+    assert await run("run_outpaint_tool", generation_attempt_id="tool-attempt") == {
+        "status": "failed", "error": message,
+    }
+    child = host.canvas["nodes"][1]["data"]
+    assert child["generationError"] == message
+    assert child["isGenerating"] is False
+    assert child["generationOwner"] is None
+    if failure != "http":
+        assert child["generationTaskKey"] is None
+    assert set(host.patch_nodes) == {TOOL_CHILD}
+
+
+@pytest.mark.parametrize("has_task", [False, True])
+async def test_image_tool_takeover(setup_runner, has_task):
+    host, _, run, phases, accepted = setup_runner
+    host.data["imageUrl"] = URL
+    host.canvas["nodes"].append({"id": TOOL_CHILD, "type": "exportImageNode",
+        "position": {"x": 400, "y": 0}, "data": {
+            "generationRunId": "run-1", "generationOwner": "server", "isGenerating": True,
+        }})
+    result = await run("run_outpaint_tool", existing_task=TASK if has_task else None,
+                       generation_attempt_id="tool-attempt")
+    assert result["status"] == "completed"
+    assert host.additions == []
+    assert len(host.requests) == (0 if has_task else 1)
+    assert accepted == ([] if has_task else [TASK])
+    if not has_task:
+        assert host.patches[0] == {"isGenerating": True, "generationStartedAt": 0,
+            "generationError": None, "generationOwner": "server", "generationRunId": "run-1"}
+    assert set(host.patch_nodes) == {TOOL_CHILD}
+
+
+async def test_image_tool_stop_during_wait_clears_child(setup_runner):
+    host, _, run, _, _ = setup_runner
+    host.data["imageUrl"] = URL
+
+    async def stop(task):
+        host.stopped = True
+        return {"status": "running"}
+
+    host.task_status = stop
+    assert await run("run_outpaint_tool", generation_attempt_id="tool-attempt") == {
+        "status": "stopped",
+    }
+    assert host.patches[-1] == CLEAR
+    assert set(host.patch_nodes) == {TOOL_CHILD}

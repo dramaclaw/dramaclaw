@@ -24,6 +24,9 @@ from novelvideo.api.schemas import (
     FreezoneAudioMusicRequest,
     FreezoneAudioSpeechRequest,
     FreezoneGenRequest,
+    FreezoneOutpaintRequest,
+    FreezoneUpscaleRequest,
+    FreezoneTemplateEditRequest,
     FreezoneJobAcceptedResponse,
     FreezoneRecipeCompileRequest,
     FreezoneRecipeCompileResponse,
@@ -120,6 +123,38 @@ class InProcessActionHost:
         return canvas or {"nodes": [], "edges": []}
 
     async def patch_node(self, node_id: str, patch: dict) -> None:
+        def update(canvas):
+            node = next((node for node in canvas["nodes"] if node.get("id") == node_id), None)
+            if node is None:
+                return False
+            data = node.get("data") or {}
+            merged = {**data, **patch}
+            if merged == data:
+                return False
+            node["data"] = merged
+            return True
+
+        await self._update_canvas(update)
+
+    async def add_nodes(self, nodes: list[dict], edges: list[dict]) -> None:
+        def update(canvas):
+            def append_new(existing, additions):
+                ids = {item["id"] for item in existing}
+                appended = []
+                for item in additions:
+                    if item["id"] not in ids:
+                        ids.add(item["id"])
+                        appended.append(deepcopy(item))
+                existing.extend(appended)
+                return bool(appended)
+
+            added_nodes = append_new(canvas["nodes"], nodes)
+            added_edges = append_new(canvas["edges"], edges)
+            return added_nodes or added_edges
+
+        await self._update_canvas(update)
+
+    async def _update_canvas(self, update: Callable[[dict], bool]) -> None:
         from novelvideo.api.routes import freezone as routes
 
         self._assert_write_lease()
@@ -133,20 +168,13 @@ class InProcessActionHost:
         )
         async with self._patch_lock:
             for attempt in range(3):
-                canvas = await self.read_canvas()
-                nodes = deepcopy(canvas["nodes"])
-                node = next((node for node in nodes if node.get("id") == node_id), None)
-                if node is None:
+                canvas = deepcopy(await self.read_canvas())
+                if not update(canvas):
                     return
-                data = node.get("data") or {}
-                merged = {**data, **patch}
-                if merged == data:
-                    return
-                node["data"] = merged
                 fields = {key: value for key, value in canvas.items()
                           if key in CanvasPayload.model_fields}
                 fields.update(
-                    nodes=nodes, base_revision=canvas.get("revision"),
+                    base_revision=canvas.get("revision"),
                     save_source="workflow_result", client_save_id=str(uuid.uuid4()),
                 )
                 body = CanvasPayload(**fields)
@@ -175,6 +203,12 @@ class InProcessActionHost:
 
         prefix = f"projects/{quote(self.ctx.project_id, safe='')}/freezone/"
         dispatch = {
+            "outpaint": (FreezoneOutpaintRequest, FreezoneJobAcceptedResponse,
+                         partial(routes.freezone_outpaint, self.ctx.project_id)),
+            "upscale": (FreezoneUpscaleRequest, FreezoneJobAcceptedResponse,
+                        partial(routes.freezone_upscale, self.ctx.project_id)),
+            "template-edit": (FreezoneTemplateEditRequest, FreezoneJobAcceptedResponse,
+                              partial(routes.freezone_template_edit, self.ctx.project_id)),
             "gen": (FreezoneGenRequest, FreezoneJobAcceptedResponse,
                     partial(routes.freezone_gen, self.ctx.project_id)),
             "video/gen": (FreezoneVideoGenRequest, FreezoneJobAcceptedResponse,

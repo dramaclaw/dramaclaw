@@ -9,6 +9,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 import time
+import uuid
 from typing import Any, Protocol
 
 
@@ -35,6 +36,7 @@ class ActionHost(Protocol):
     async def catalogs(self, *, video: bool = False) -> dict: ...
     async def read_canvas(self) -> dict: ...
     async def patch_node(self, node_id: str, patch: dict) -> None: ...
+    async def add_nodes(self, nodes: list[dict], edges: list[dict]) -> None: ...
     async def request(
         self, method: str, path: str, body: dict, *, media_link: dict[str, str] | None = None,
     ) -> dict: ...
@@ -45,14 +47,25 @@ class ActionHost(Protocol):
     async def fail_product_operation(self, operation_id: str) -> None: ...
 
 
-SERVER_WORKFLOW_ACTIONS = frozenset({
+IMAGE_TOOL_SERVER_ACTIONS = frozenset({
+    "run_outpaint_tool", "run_upscale_tool",
+    "run_grid_multi_camera", "run_grid_plot_four", "run_grid_face_three_view",
+    "run_grid_product_three_view", "run_grid_serial_storyboard_25",
+    "run_grid_cinematic_light_correction", "run_grid_character_three_view",
+    "run_grid_scene_setting_sheet", "run_grid_frame_projection_3s_later",
+    "run_grid_frame_projection_5s_earlier",
+})
+IMAGE_TOOL_NODE_TYPES = frozenset({"imageGenNode", "uploadNode", "imageNode", "exportImageNode"})
+
+SERVER_WORKFLOW_ACTIONS = IMAGE_TOOL_SERVER_ACTIONS | frozenset({
     "generate_image", "generate_text", "generate_audio", "translate_text", "generate_video",
 })
 
 
 def server_action_supported(action: str, node_type: str | None) -> bool:
     return action in SERVER_WORKFLOW_ACTIONS and (
-        (action != "translate_text" or node_type == "audioNode")
+        (action not in IMAGE_TOOL_SERVER_ACTIONS or node_type in IMAGE_TOOL_NODE_TYPES)
+        and (action != "translate_text" or node_type == "audioNode")
         and (action != "generate_video" or node_type == "videoNode")
     )
 
@@ -174,19 +187,23 @@ class WorkflowActionRunner:
                 return await execution.text()
             if action == "generate_audio":
                 return await execution.audio(existing_task)
-            if action == "translate_text":
+            if action == "translate_text" or action in IMAGE_TOOL_SERVER_ACTIONS:
                 canvas = await self.host.read_canvas()
                 node_type = next((node.get("type") for node in canvas["nodes"]
                                   if node["id"] == node_id), None)
                 if server_action_supported(action, node_type):
+                    if action in IMAGE_TOOL_SERVER_ACTIONS:
+                        return await execution.image_tool(action, existing_task)
                     return await execution.audio_translate(existing_task)
             return {"status": "failed", "error": f"Unsupported server action: {action}"}
         except _ActionStopped:
             try:
                 if self.host.lease_held():
-                    data = await execution.node_data()
-                    if execution.started or data.get("generationRunId") == self.run_id:
-                        await self.host.patch_node(node_id, dict(CLEAR_GENERATION))
+                    target_id = execution.child_node_id if action in IMAGE_TOOL_SERVER_ACTIONS else node_id
+                    if target_id is not None:
+                        data = await execution.node_data(target_id)
+                        if execution.started or data.get("generationRunId") == self.run_id:
+                            await self.host.patch_node(target_id, dict(CLEAR_GENERATION))
             except ActionLeaseLost:
                 pass
             return {"status": "stopped"}
@@ -209,8 +226,10 @@ class _ActionExecution:
         self.should_stop = should_stop
         self.started = False
         self.product_operation = product_operation
+        self.generation_attempt_id = generation_attempt_id
+        self.child_node_id = None
         self.media_link = ({
-            "run_id": runner.run_id, "node_id": node_id,
+            "run_id": runner.run_id, "canvas_id": runner.canvas_id, "node_id": node_id,
             "generation_attempt_id": generation_attempt_id,
         } if generation_attempt_id and not product_operation else None)
 
@@ -218,14 +237,15 @@ class _ActionExecution:
         if self.should_stop():
             raise _ActionStopped()
 
-    async def node_data(self):
+    async def node_data(self, node_id=None):
         canvas = await self.host.read_canvas()
         return next((node["data"] for node in canvas["nodes"]
-                     if node["id"] == self.node_id), {})
+                     if node["id"] == (node_id or self.node_id)), {})
 
     async def core(self, op, payload):
         self.check()
-        if op in {"audio_generation_patch", "audio_translate_patch", "video_generation_patch"}:
+        if op in {"audio_generation_patch", "audio_translate_patch", "video_generation_patch",
+                  "image_tool_patch"}:
             payload = {"locale": self.host.locale, **payload}
         result = await self.runner.core_call(op, payload)
         self.check()
@@ -251,6 +271,108 @@ class _ActionExecution:
         await self.patch({**patch, "generationOwner": "server",
                           "generationRunId": self.runner.run_id})
         self.started = True
+
+    async def patch_child(self, patch):
+        self.check()
+        await self.host.patch_node(self.child_node_id, patch)
+
+    async def image_tool(self, action, existing_task):
+        kind = "stopped"
+        logger.info(
+            "run_id=%s node_id=%s action=%s outcome=started",
+            self.runner.run_id, self.node_id, action,
+        )
+        try:
+            result = await self.image_tool_execute(action, existing_task)
+            kind = result["status"]
+            return result
+        finally:
+            logger.info(
+                "run_id=%s node_id=%s action=%s outcome=%s",
+                self.runner.run_id, self.node_id, action, kind,
+            )
+
+    async def image_tool_execute(self, action, existing_task):
+        deadline = self.runner.monotonic() + self.runner.task_timeout_seconds
+        canvas = await self.host.read_canvas()
+        built = await self.core("image_tool_request", {
+            "canvas": canvas, "node_id": self.node_id, "action": action,
+            "env": {"locale": self.host.locale, "project": self.runner.project_id,
+                    "image_models": (await self.host.catalogs())["image"],
+                    "now_ms": self.runner.now_ms()},
+        })
+        if built["ok"] is False:
+            return {"status": "failed", "error": built["message"]}
+        self.child_node_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"workflow-image-tool:{self.runner.run_id}:{self.generation_attempt_id}",
+        ))
+        child = next((node for node in canvas["nodes"] if node["id"] == self.child_node_id), None)
+        if child is None:
+            placed = await self.core("image_tool_place", {
+                "canvas": canvas, "locale": self.host.locale, "child_node_id": self.child_node_id,
+                "child": {**built["child"], "data": {
+                    **built["child"]["data"], "generationOwner": "server",
+                    "generationRunId": self.runner.run_id,
+                }}, "edge": built["edge"],
+            })
+            self.check()
+            await self.host.add_nodes([placed["node"]], [placed["edge"]] if placed["edge"] else [])
+            self.started = True
+        elif existing_task is None:
+            await self.patch_child({
+                "isGenerating": True, "generationStartedAt": self.runner.now_ms(),
+                "generationError": None, "generationOwner": "server",
+                "generationRunId": self.runner.run_id,
+            })
+            self.started = True
+        task = existing_task
+        try:
+            if task is None or await self.host.task_status(task) is None:
+                await self.phase("submitting")
+                task = await self.submit_task(
+                    {"method": "POST", "path": built["route"], "body": built["body"]},
+                    deadline=deadline, timeout_message="图片生成超时",
+                )
+                await self.on_accepted(task)
+                await self.patch_child(await self.core("image_tool_patch", {
+                    "phase": "accepted", "task": task,
+                }))
+        except ServerActionHttpError as exc:
+            return await self.image_tool_failure(str(exc), task, "failed")
+        await self.phase("generating")
+        outcome = await self.wait_task(
+            task, timeout_message="图片生成超时", failed_message="task failed",
+        )
+        if outcome["kind"] != "completed":
+            return await self.image_tool_failure(outcome["message"], task, outcome["kind"])
+        resolution = await self.core("image_tool_patch", {
+            "phase": "output_resolution", "result": outcome.get("result") or None, "task": task,
+        })
+        url = (await self.host.job_result_url(task) if resolution["kind"] == "fetch_job_result"
+               else resolution["url"])
+        # Server actions require a usable result; the browser accepts an empty URL.
+        if not url:
+            return await self.image_tool_failure("任务已结束但没有返回图片", task, "completed")
+        await self.patch_child({**await self.core("image_tool_patch", {
+            "phase": "success", "action": action, "url": url,
+        }), **_CLEAR_OWNER})
+        result = await self.core("image_tool_patch", {
+            "phase": "action_result", "action": action, "child_node_id": self.child_node_id,
+            "url": url, "task": task,
+        })
+        return {"status": "completed", "output": result["output"], "artifact": {"output_url": url}}
+
+    async def image_tool_failure(self, message, task, kind):
+        data = await self.node_data(self.child_node_id)
+        clear_task = ({
+            "generationTaskKey": None, "generationTaskType": None, "generationTaskJobId": None,
+        } if kind in {"failed", "cancelled"} and task
+            and data.get("generationTaskKey") == task["task_key"] else {})
+        await self.patch_child({**await self.core("image_tool_patch", {
+            "phase": "failure", "message": message,
+        }), **_CLEAR_OWNER, **clear_task})
+        return {"status": "failed", "error": message}
 
     async def image(self, existing_task):
         deadline = self.runner.monotonic() + self.runner.task_timeout_seconds
@@ -547,7 +669,7 @@ class _ActionExecution:
         elif outcome.get("timed_out"):
             outcome = {"kind": "poll_timeout"}
         else:
-            outcome = {"kind": "failed", "message": "任务已取消" if outcome["kind"] == "cancelled"
+            outcome = {"kind": "failed", "message": "任务已取消" if outcome["kind"] == "cancelled"  # i18n-exempt
                        else outcome["message"]}
         return await self.video_upscale_outcome(outcome, task)
 
