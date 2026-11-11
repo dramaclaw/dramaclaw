@@ -4124,6 +4124,7 @@ tests/test_api_characters_asset_contract.py,Elastic-2.0,2026 SuperTale contribut
 tests/test_api_compose_export_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_config_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_coverage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_default_logging.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_episode_detail.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_agent_bundles.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_asset_library_folders.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
