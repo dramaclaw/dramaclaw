@@ -87,6 +87,22 @@ async def _stop_codex_turn_sweeper(application: FastAPI) -> None:
             await sweeper
 
 
+def _start_server_workflow_sweeper(application: FastAPI) -> None:
+    from novelvideo.freezone.server_workflow_index import run_server_workflow_sweeper
+
+    application.state.server_workflow_sweeper = asyncio.create_task(
+        run_server_workflow_sweeper(), name="server-workflow-sweeper",
+    )
+
+
+async def _stop_server_workflow_sweeper(application: FastAPI) -> None:
+    sweeper = getattr(application.state, "server_workflow_sweeper", None)
+    if sweeper is not None:
+        sweeper.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweeper
+
+
 def _request_body_limit(request: Request) -> int:
     content_type = request.headers.get("content-type", "").lower()
     if request.url.path == "/api/v1/chat/uploads" and "multipart/form-data" in content_type:
@@ -473,11 +489,13 @@ def create_app() -> FastAPI:
             observe_workflow_event_loop(), name="workflow-event-loop-observer"
         )
         _start_codex_turn_sweeper(application)
+        _start_server_workflow_sweeper(application)
 
     @application.on_event("shutdown")
     async def shutdown() -> None:
         from novelvideo.ports.registry import PortNotRegistered, get_port
 
+        await _stop_server_workflow_sweeper(application)
         await _stop_codex_turn_sweeper(application)
 
         pool = getattr(application.state, "canvas_core_pool", None)

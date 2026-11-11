@@ -3,6 +3,9 @@ import type { FreezoneAudioVoiceRef, FreezoneAudioReferencesResult } from "@/fea
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { z } from "zod";
+import {
+  recipeCompileRequestBody as recipeCompileJson, recipeCompileResult,
+} from '@/features/canvas/application/generationRequests/recipeCompileRequest';
 import { readVoiceDesignResponse } from "@/lib/queries/voice-design";
 import type { SaveGeneratedAccountVoice } from "@/types/voice-design";
 import { apiCall, apiCallEnvelope, apiClient } from "./client";
@@ -84,44 +87,13 @@ const pendingRecipeCompiles: PendingRecipeCompile[] = [];
 let recipeCompileBatchTimer: ReturnType<typeof setTimeout> | null = null;
 let recipeCompileRequestSequence = 0;
 
-function recipeCompileJson(payload: FreezoneRecipeCompilePayload) {
-  return {
-    ...(payload.projectId ? { project_id: payload.projectId } : {}),
-    ...(payload.productOperationId
-      ? { product_operation_id: payload.productOperationId }
-      : {}),
-    recipe_id: payload.recipeId,
-    recipe_version: payload.recipeVersion ?? "",
-    ...(payload.recipePipeline?.length
-      ? { recipe_pipeline: payload.recipePipeline }
-      : {}),
-    skill_id: payload.skillId ?? "",
-    skill_version: payload.skillVersion ?? "",
-    confirmed_inputs: payload.confirmedInputs ?? {},
-    node_kind: payload.nodeKind,
-    prompt_strategy: payload.promptStrategy ?? "llm_refine",
-    node_prompt: payload.nodePrompt ?? "",
-    user_goal: payload.userGoal ?? "",
-    upstream_text: payload.upstreamText ?? "",
-    reference_media: payload.referenceMedia ?? [],
-  };
-}
-
 function resolveRecipeCompile(
   pending: PendingRecipeCompile,
   data: FreezoneRecipeCompileWireData,
 ): void {
-  pending.payload.onCompileMetadata?.({
-    mode: data.compile_mode ?? "model",
-    prompt: data.prompt,
-    recipeIds: Array.isArray(data.recipe_ids)
-      ? data.recipe_ids.filter((item): item is string => typeof item === "string" && item.length > 0)
-      : [
-          pending.payload.recipeId,
-          ...(pending.payload.recipePipeline ?? []).map((item) => item.id),
-        ],
-  });
-  pending.resolve(data.prompt);
+  const result = recipeCompileResult(recipeCompileJson(pending.payload), data);
+  pending.payload.onCompileMetadata?.(result.metadata);
+  pending.resolve(result.prompt);
 }
 
 async function sendSingleRecipeCompile(pending: PendingRecipeCompile): Promise<void> {

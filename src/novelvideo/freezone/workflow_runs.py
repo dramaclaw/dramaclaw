@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -14,9 +15,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from novelvideo.freezone.agent_canvas_metrics import count
 from novelvideo.freezone.paths import CANVAS_ID_RE
 from novelvideo.freezone.workflow_contract_generated import GENERATION_ACTION_TYPES
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+
+logger = logging.getLogger(__name__)
 
 RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 IDEMPOTENCY_KEY_RE = re.compile(r"^[a-zA-Z0-9._:-]{1,160}$")
@@ -136,6 +140,10 @@ _SCHEMA_READY_LOCK = threading.Lock()
 
 class WorkflowRunLeaseConflict(RuntimeError):
     """Raised when another live runner owns the canvas workflow lease."""
+
+
+class WorkflowRunOwnerConflict(WorkflowRunLeaseConflict):
+    """Raised when an executor tries to drive another executor's run."""
 
 
 class WorkflowRunIdempotencyConflict(RuntimeError):
@@ -479,12 +487,14 @@ def _read_run(
 
 
 def _run_from_rows(row: sqlite3.Row, action_rows: list[sqlite3.Row]) -> dict[str, Any]:
+    metadata = _decode_metadata(row["metadata_json"])
     return {
         "schema_version": row["schema_version"],
         "run_id": row["run_id"],
         "project_id": row["project_id"],
         "canvas_id": row["canvas_id"],
         "status": row["status"],
+        "owner_kind": metadata.get("owner_kind", "browser_legacy"),
         "resumable": bool(row["resumable"]),
         "created_at": row["created_at"],
         "started_at": row["started_at"],
@@ -494,7 +504,7 @@ def _run_from_rows(row: sqlite3.Row, action_rows: list[sqlite3.Row]) -> dict[str
         "runner_id": row["runner_id"],
         "lease_expires_at": row["lease_expires_at"],
         "actions": [_action_from_row(action_row) for action_row in action_rows],
-        "metadata": _decode_metadata(row["metadata_json"]),
+        "metadata": metadata,
     }
 
 
@@ -608,12 +618,15 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
 def _list_runs_in_transaction(
     conn: sqlite3.Connection,
     *,
-    canvas_id: str,
+    canvas_id: str | None = None,
     statuses: set[str] | None = None,
     limit: int = 0,
 ) -> list[dict[str, Any]]:
-    parameters: list[Any] = [canvas_id]
-    where = "canvas_id = ?"
+    parameters: list[Any] = []
+    where = "1 = 1"
+    if canvas_id is not None:
+        where += " AND canvas_id = ?"
+        parameters.append(canvas_id)
     if statuses:
         placeholders = ",".join("?" for _ in statuses)
         where += f" AND status IN ({placeholders})"
@@ -1004,6 +1017,25 @@ def reclaim_failed_workflow_media_action(
         }
 
 
+def _run_is_active(run: dict, now: datetime) -> bool:
+    expires = _parse_timestamp(run.get("lease_expires_at"))
+    return run["status"] == "running" and (
+        run["owner_kind"] == "server"
+        or bool(str(run.get("runner_id") or "").strip() and expires and expires > now)
+    )
+
+
+def active_workflow_run(
+    *, project_dir: Path, canvas_id: str, now: datetime | None = None,
+) -> dict | None:
+    """Return the run that prevents starting another workflow on this canvas."""
+    _validate_scope(canvas_id)
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        return next((run for run in _list_runs_in_transaction(conn, canvas_id=canvas_id)
+                     if _run_is_active(run, current)), None)
+
+
 def create_workflow_run(
     *,
     project_dir: Path,
@@ -1014,8 +1046,12 @@ def create_workflow_run(
     metadata: dict[str, Any] | None = None,
     idempotency_key: str = "",
     runner_id: str = "",
+    owner_kind: str = "browser_legacy",
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     _validate_scope(canvas_id)
+    if owner_kind not in {"server", "browser_legacy"}:
+        raise ValueError(f"invalid workflow run owner_kind: {owner_kind!r}")
     checked_idempotency_key = idempotency_key.strip()
     if checked_idempotency_key and not IDEMPOTENCY_KEY_RE.match(
         checked_idempotency_key
@@ -1025,8 +1061,8 @@ def create_workflow_run(
     if checked_runner_id and not RUNNER_ID_RE.match(checked_runner_id):
         raise ValueError("invalid workflow run runner_id")
     run_id = f"run_{uuid.uuid4().hex}"
-    current = datetime.now(timezone.utc)
-    now = _timestamp(current)
+    current = now or datetime.now(timezone.utc)
+    timestamp = _timestamp(current)
     normalized_actions = _normalize_actions(actions)
     request_fingerprint = _workflow_request_fingerprint(
         project_id=project_id,
@@ -1034,6 +1070,9 @@ def create_workflow_run(
         actions=normalized_actions,
     )
     run_metadata = dict(metadata or {})
+    run_metadata["owner_kind"] = owner_kind
+    if owner_kind == "server":
+        run_metadata["takeover_count"] = 0
     run_metadata["request_fingerprint"] = request_fingerprint
     if checked_idempotency_key:
         run_metadata["idempotency_key"] = checked_idempotency_key
@@ -1043,10 +1082,11 @@ def create_workflow_run(
         "project_id": project_id,
         "canvas_id": canvas_id,
         "status": "running",
+        "owner_kind": owner_kind,
         "resumable": True,
-        "created_at": now,
-        "started_at": now,
-        "updated_at": now,
+        "created_at": timestamp,
+        "started_at": timestamp,
+        "updated_at": timestamp,
         "completed_at": None,
         "actor_id": actor_id or None,
         "runner_id": checked_runner_id or None,
@@ -1090,15 +1130,8 @@ def create_workflow_run(
                         )
                     return existing
         existing_runs = _list_runs_in_transaction(conn, canvas_id=canvas_id)
-        for existing in existing_runs:
-            if existing.get("status") != "running":
-                continue
-            existing_runner_id = str(existing.get("runner_id") or "").strip()
-            lease_expires_at = _parse_timestamp(existing.get("lease_expires_at"))
-            if existing_runner_id and lease_expires_at and lease_expires_at > current:
-                raise WorkflowRunLeaseConflict(
-                    "another workflow runner is active on this canvas"
-                )
+        if any(_run_is_active(existing, current) for existing in existing_runs):
+            raise WorkflowRunLeaseConflict("another workflow runner is active on this canvas")
         for existing in existing_runs:
             if existing.get("status") not in RESUMABLE_RUN_STATUSES:
                 continue
@@ -1107,8 +1140,8 @@ def create_workflow_run(
             )
             existing["status"] = "interrupted" if was_leased_running else "cancelled"
             existing["resumable"] = was_leased_running
-            existing["updated_at"] = now
-            existing["completed_at"] = now
+            existing["updated_at"] = timestamp
+            existing["completed_at"] = timestamp
             existing_metadata = existing.get("metadata")
             existing_metadata = (
                 existing_metadata if isinstance(existing_metadata, dict) else {}
@@ -1120,7 +1153,108 @@ def create_workflow_run(
             existing["metadata"] = existing_metadata
             _write_run(conn, existing)
         _write_run(conn, payload)
+    count(f"workflow_run.created.owner_kind.{owner_kind}")
+    logger.info(
+        "workflow_run_created run_id=%s owner_kind=%s actions=%d",
+        run_id, owner_kind, len(normalized_actions),
+    )
     return payload
+
+
+def acquire_server_workflow_run(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    run_id: str,
+    runner_id: str,
+    now: datetime | None = None,
+    lease_seconds: int = WORKFLOW_RUN_LEASE_SECONDS,
+) -> dict[str, Any] | None:
+    """Acquire or renew a server driver's lease, taking over expired drivers."""
+    _validate_scope(canvas_id, run_id)
+    checked_runner_id = runner_id.strip()
+    if not RUNNER_ID_RE.match(checked_runner_id):
+        raise ValueError("invalid workflow run runner_id")
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        payload = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if payload is None:
+            return None
+        if payload["owner_kind"] != "server":
+            raise WorkflowRunOwnerConflict("workflow run is driven by another executor")
+        if payload["status"] in TERMINAL_RUN_STATUSES:
+            return {"run": payload, "acquired": False, "took_over": False}
+        stored_runner_id = str(payload.get("runner_id") or "").strip()
+        lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
+        if (
+            stored_runner_id
+            and stored_runner_id != checked_runner_id
+            and (lease_expires_at is None or lease_expires_at > current)
+        ):
+            raise WorkflowRunLeaseConflict(
+                "workflow run lease is not owned by this active runner"
+            )
+        took_over = bool(stored_runner_id and stored_runner_id != checked_runner_id)
+        timestamp = _timestamp(current)
+        if took_over:
+            payload["metadata"]["takeover_count"] += 1
+            payload["metadata"]["last_takeover_at"] = timestamp
+        payload["runner_id"] = checked_runner_id
+        payload["lease_expires_at"] = _timestamp(current + timedelta(seconds=lease_seconds))
+        payload["updated_at"] = timestamp
+        _write_run(conn, payload)
+        return {"run": payload, "acquired": True, "took_over": took_over}
+
+
+def mark_server_workflow_drive_enqueued(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    run_id: str,
+    now: datetime | None = None,
+    lease_seconds: int = WORKFLOW_RUN_LEASE_SECONDS,
+) -> int | None:
+    """Reserve a fresh drive scope once per expired-driver lease window."""
+    _validate_scope(canvas_id, run_id)
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if run is None or run["owner_kind"] != "server" or run["status"] != "running":
+            return None
+        expires = _parse_timestamp(run.get("lease_expires_at"))
+        if run.get("runner_id") and (expires is None or expires > current):
+            return None
+        metadata = run["metadata"]
+        marked = _parse_timestamp(metadata.get("drive_enqueued_at"))
+        if marked is not None and current < marked + timedelta(seconds=lease_seconds):
+            return None
+        generation = int(metadata.get("drive_generation") or 0) + 1
+        metadata["drive_generation"] = generation
+        metadata["drive_enqueued_at"] = _timestamp(current)
+        _write_run(conn, run)
+        return generation
+
+
+def list_server_workflow_runs_needing_driver(
+    *, project_dir: Path, now: datetime | None = None
+) -> list[dict[str, Any]]:
+    """List running server runs awaiting an initial driver or lease takeover."""
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        runs = _list_runs_in_transaction(conn, statuses={"running"})
+    return [
+        run for run in runs
+        if run["owner_kind"] == "server"
+        and (
+            not run.get("runner_id")
+            or (
+                (expires_at := _parse_timestamp(run.get("lease_expires_at"))) is not None
+                and expires_at <= current
+            )
+        )
+    ]
 
 
 def reconcile_workflow_runs_with_canvas_nodes(
@@ -1142,6 +1276,8 @@ def reconcile_workflow_runs_with_canvas_nodes(
             canvas_id=canvas_id,
             statuses=eligible_statuses,
         ):
+            if payload["owner_kind"] == "server":
+                continue
             actions = payload.get("actions")
             actions = actions if isinstance(actions, list) else []
             unfinished_node_ids = {
@@ -1212,6 +1348,8 @@ def reconcile_workflow_runs_with_canvas_results(
             canvas_id=canvas_id,
             statuses={"running", "failed", "interrupted"},
         ):
+            if payload["owner_kind"] == "server":
+                continue
             actions = payload.get("actions")
             actions = actions if isinstance(actions, list) else []
             changed = False
@@ -1285,6 +1423,8 @@ def interrupt_stale_workflow_runs(
             canvas_id=canvas_id,
             statuses={"running"},
         ):
+            if payload["owner_kind"] == "server":
+                continue
             lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
             updated_at = _parse_timestamp(payload.get("updated_at"))
             stale = (
@@ -1419,6 +1559,8 @@ def update_workflow_run(
     status: str | None = None,
     action_updates: list[dict[str, Any]] | None = None,
     runner_id: str = "",
+    owner_kind: str = "browser_legacy",
+    now: datetime | None = None,
 ) -> dict[str, Any] | None:
     _validate_scope(canvas_id, run_id)
     if status is not None and status not in RUN_STATUSES:
@@ -1426,11 +1568,17 @@ def update_workflow_run(
     checked_runner_id = runner_id.strip()
     if checked_runner_id and not RUNNER_ID_RE.match(checked_runner_id):
         raise ValueError("invalid workflow run runner_id")
+    current = now or datetime.now(timezone.utc)
+    timestamp = _timestamp(current)
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         payload = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
         if payload is None:
             return None
+        if payload["owner_kind"] != owner_kind and (
+            status != "cancelled" or action_updates
+        ):
+            raise WorkflowRunOwnerConflict("workflow run is driven by another executor")
         current_status = str(payload.get("status") or "")
         stored_runner_id = str(payload.get("runner_id") or "").strip()
         lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
@@ -1442,7 +1590,7 @@ def update_workflow_run(
                 or (
                     status != "cancelled"
                     and lease_expires_at is not None
-                    and lease_expires_at <= datetime.now(timezone.utc)
+                    and lease_expires_at <= current
                 )
             )
             and status != "cancelled"
@@ -1457,14 +1605,12 @@ def update_workflow_run(
             # Never reopen a terminal run; recovery starts a fresh run and explicitly
             # cancels the old failed/interrupted record.
             if status == "cancelled" and current_status in {"failed", "interrupted"}:
-                now = _now()
                 payload["status"] = "cancelled"
                 payload["resumable"] = False
-                payload["updated_at"] = now
-                payload["completed_at"] = now
+                payload["updated_at"] = timestamp
+                payload["completed_at"] = timestamp
                 _write_run(conn, payload)
             return payload
-        now = _now()
         actions = payload.get("actions")
         actions = actions if isinstance(actions, list) else []
         by_key = {
@@ -1497,18 +1643,24 @@ def update_workflow_run(
                     f"terminal workflow action cannot transition from "
                     f"{current_node_status} to {node_status}"
                 )
-            if (
-                action in GENERATION_ACTIONS
-                and node_status == "completed"
-                and item.get("artifact_status") != "valid"
-            ):
-                # Browser callbacks are delivery hints, not completion authority.
-                # Durable task reconciliation below is the only path that can mark
-                # a generation action completed.
-                node_status = "running"
+            artifact_error = None
+            if action in GENERATION_ACTIONS and node_status == "completed":
+                if owner_kind == "server":
+                    artifact_status, artifact_error = _validate_action_artifact(
+                        action=action,
+                        task_result=update.get("result"),
+                        history_record=None,
+                        project_dir=project_dir,
+                    )
+                    item["artifact_status"] = artifact_status
+                    if artifact_status != "valid":
+                        node_status = "failed"
+                elif item.get("artifact_status") != "valid":
+                    # Browser callbacks are delivery hints, not completion authority.
+                    node_status = "running"
             item["status"] = node_status
-            item["updated_at"] = now
-            item["error"] = str(update.get("error") or "").strip() or None
+            item["updated_at"] = timestamp
+            item["error"] = artifact_error or str(update.get("error") or "").strip() or None
             if "phase" in update:
                 phase = str(update.get("phase") or "").strip()
                 if phase and phase not in NODE_PHASES:
@@ -1556,7 +1708,7 @@ def update_workflow_run(
                     accepted_status = "running"
             payload["status"] = accepted_status
             if accepted_status in TERMINAL_RUN_STATUSES:
-                payload["completed_at"] = now
+                payload["completed_at"] = timestamp
                 payload["resumable"] = accepted_status in {"failed", "interrupted"}
             if accepted_status == "failed":
                 for item in actions:
@@ -1565,7 +1717,7 @@ def update_workflow_run(
                         "running",
                     }:
                         item["status"] = "blocked"
-                        item["updated_at"] = now
+                        item["updated_at"] = timestamp
                         item["error"] = item.get("error") or "workflow failed"
             if accepted_status == "cancelled":
                 for item in actions:
@@ -1574,15 +1726,15 @@ def update_workflow_run(
                         "skipped",
                     }:
                         item["status"] = "skipped"
-                        item["updated_at"] = now
+                        item["updated_at"] = timestamp
                         item["error"] = "workflow cancelled"
                 metadata = payload.get("metadata")
                 metadata = metadata if isinstance(metadata, dict) else {}
-                metadata["cancel_requested_at"] = now
+                metadata["cancel_requested_at"] = timestamp
                 payload["metadata"] = metadata
         if checked_runner_id and payload.get("status") == "running":
-            payload["lease_expires_at"] = _lease_expires_at(datetime.now(timezone.utc))
-        payload["updated_at"] = now
+            payload["lease_expires_at"] = _lease_expires_at(current)
+        payload["updated_at"] = timestamp
         _write_run(conn, payload)
         return payload
 
@@ -1647,7 +1799,7 @@ def reconcile_workflow_runs_with_tasks(
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         for payload in _list_runs_in_transaction(conn, canvas_id=canvas_id):
-            if payload.get("status") == "cancelled":
+            if payload["owner_kind"] == "server" or payload.get("status") == "cancelled":
                 continue
             actions = payload.get("actions")
             actions = actions if isinstance(actions, list) else []

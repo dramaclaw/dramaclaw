@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 
+from novelvideo.freezone.agent_canvas_metrics import count, observe
 from novelvideo.task_backend.subprocesses import (
     RestrictedSubprocessPolicy,
     _has_network_argument,
@@ -222,6 +223,7 @@ class CanvasCorePool:
         raise _WorkerError(error["code"], error["message"])
 
     def call(self, op: str, payload: dict) -> dict:
+        started = time.monotonic()
         timeout_seconds = self.call_timeout_seconds
         child = None
         discard = True
@@ -239,11 +241,13 @@ class CanvasCorePool:
             discard = child.calls >= self.max_calls_per_child
             return result
         except CanvasCoreError as exc:
+            count(f"canvas_core.{op}.error.{exc.code}")
             _log_failure(op, exc)
             raise
         finally:
             if child is not None:
                 self._release(child, discard=discard)
+            observe(f"canvas_core.{op}.ms", (time.monotonic() - started) * 1000)
 
     def warm(self) -> None:
         children = []

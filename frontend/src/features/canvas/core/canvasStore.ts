@@ -1155,7 +1155,7 @@ function normalizeNodes(rawNodes: CanvasNode[], defaults: NodeDataDefaults): Can
       // Keep generation state only when there is a recoverable handle: either a
       // canvasAiGateway job id (Canvas.tsx export poll) or a freezone task key
       // (resumeNodeGeneration). Otherwise an interrupted run would spin forever.
-      if ('isGenerating' in mergedData && mergedData.isGenerating) {
+      if ('isGenerating' in mergedData && mergedData.isGenerating && mergedData.generationOwner !== 'server') {
         const generationJobId =
           typeof (mergedData as { generationJobId?: unknown }).generationJobId === 'string'
             ? (mergedData as { generationJobId?: string }).generationJobId?.trim() ?? ''

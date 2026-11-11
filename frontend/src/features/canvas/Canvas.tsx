@@ -1504,8 +1504,7 @@ export function Canvas({
 
             const currentData = currentNode.data as Record<string, unknown>;
             const jobId = typeof currentData.generationJobId === 'string' ? currentData.generationJobId : '';
-            const isGenerating = currentData.isGenerating === true;
-            if (!jobId || !isGenerating) {
+            if (!nodeOwnsLiveGenerationJob(currentNode)) {
               break;
             }
 
@@ -1513,6 +1512,8 @@ export function Canvas({
               console.warn('[GenerationJob] poll failed', { nodeId: pendingNode.id, jobId, error });
               return null;
             });
+            const latestNode = useCanvasStore.getState().nodes.find(node => node.id === pendingNode.id);
+            if (!latestNode || !nodeOwnsLiveGenerationJob(latestNode)) break;
             if (!status) {
               await sleep(GENERATION_JOB_POLL_INTERVAL_MS);
               continue;
@@ -1566,6 +1567,8 @@ export function Canvas({
                 }
               }
               const previewImageUrl = imageUrl;
+              const latestAfterPrepare = useCanvasStore.getState().nodes.find(node => node.id === pendingNode.id);
+              if (!latestAfterPrepare || !nodeOwnsLiveGenerationJob(latestAfterPrepare)) break;
 
               updateNodeData(pendingNode.id, {
                 imageUrl,

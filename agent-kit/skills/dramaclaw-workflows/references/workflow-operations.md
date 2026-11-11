@@ -82,6 +82,7 @@ Missing live queue information is advisory; execution admission still enforces q
 (the previous `observation_token`). It reconciles durable tasks and artifact evidence, then returns
 progress, counts, terminal state, and per-node recovery decisions. Bounded waiting reduces agent
 polling; this is not a continuously running background scheduler.
+`freezone_cancel_workflow_run` cancels a run and its submitted generation; use only when the user asks to stop it, and never resubmit.
 
 Transient query failures may be retried as reads of the same run. An ambiguous generation timeout
 requires reconciliation before any retry. `retry_after_confirmation` requires authorization and the

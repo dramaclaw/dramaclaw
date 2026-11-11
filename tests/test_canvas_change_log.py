@@ -322,3 +322,39 @@ def test_clear_failure_is_logged_without_raising(tmp_path, changes, monkeypatch,
 def test_clear_missing_log_creates_no_directory(tmp_path, changes):
     changes.clear_canvas_changes(tmp_path, "board")
     assert not change_dir(tmp_path).exists()
+
+
+def test_publish_metrics_record_pruning_and_remaining_size(
+    tmp_path, changes, monkeypatch, caplog
+):
+    from novelvideo.freezone import agent_canvas_metrics as metrics
+
+    class PublishClock:
+        @staticmethod
+        def now(tz):
+            return datetime(2026, 1, 1, tzinfo=tz)
+
+    monkeypatch.setattr(changes, "datetime", PublishClock)
+    monkeypatch.setenv("DRAMACLAW_CANVAS_CHANGE_LOG_MAX_ENTRIES", "2")
+    before = metrics.metrics_snapshot()
+    observed = metrics.observations_snapshot()
+    with caplog.at_level(logging.INFO, logger="novelvideo.freezone.canvas_changes"):
+        for revision in (1, 2, 3):
+            save(tmp_path, revision)
+    after = metrics.metrics_snapshot()
+    assert after["canvas_change.published"] - before.get("canvas_change.published", 0) == 3
+    assert after["canvas_change_log.pruned"] - before.get("canvas_change_log.pruned", 0) == 1
+    sizes = metrics.observations_snapshot()
+    entry_before = observed.get("canvas_change_log.entries", {})
+    assert sizes["canvas_change_log.entries"]["count"] == entry_before.get("count", 0) + 3
+    assert sizes["canvas_change_log.entries"]["total"] == entry_before.get("total", 0) + 5
+    entry_bytes = (change_dir(tmp_path) / "000000000003.json").stat().st_size
+    byte_before = observed.get("canvas_change_log.bytes", {})
+    assert sizes["canvas_change_log.bytes"]["count"] == byte_before.get("count", 0) + 3
+    assert (
+        sizes["canvas_change_log.bytes"]["total"] == byte_before.get("total", 0) + entry_bytes * 5
+    )
+    assert len(entries(tmp_path)) == 2
+    assert [record.getMessage() for record in caplog.records] == [
+        f"canvas_change_log canvas=board entries=2 bytes={entry_bytes * 2} pruned=1"
+    ]

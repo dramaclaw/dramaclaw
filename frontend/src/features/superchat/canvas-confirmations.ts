@@ -23,7 +23,7 @@ type CanvasConfirmationScope = {
 
 type CanvasConfirmationDecisionResult = {
   confirmation_id: string;
-  status: "executed" | "submitted" | "refused";
+  status: "executed" | "submitted" | "refused" | "running" | "already_completed";
 };
 
 function confirmationsPath(projectId: string, canvasId: string): string {

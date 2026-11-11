@@ -174,7 +174,6 @@ try:
         resolve_clarification_result,
         put_pending_clarification_event,
         put_pending_canvas_command,
-        put_or_reuse_pending_canvas_command,
         put_pending_canvas_context,
         put_pending_skill_studio_event,
         wait_clarification_result,
@@ -196,7 +195,6 @@ except Exception as exc:
     resolve_clarification_result = None
     put_pending_clarification_event = None
     put_pending_canvas_command = None
-    put_or_reuse_pending_canvas_command = None
     put_pending_canvas_context = None
     put_pending_skill_studio_event = None
     wait_clarification_result = None
@@ -572,7 +570,22 @@ def _maybe_json(text: str) -> Any:
 def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, Any]:
     if _SHARED_API_ERRORS is None:
         return {"ok": False, "status": "failed", "status_code": status_code, "error": "HTTP request failed"}
-    return _SHARED_API_ERRORS._http_error_result(status_code, text, reason)
+    result = _SHARED_API_ERRORS._http_error_result(status_code, text, reason)
+    if status_code == 409 and result.get("code") in {
+        "canvas_open_required", "workflow_already_running",
+    }:
+        data = _maybe_json(text)
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if isinstance(detail, dict):
+            if isinstance(detail.get("blocked"), list):
+                result["blocked"] = [
+                    {key: item[key] for key in ("node_id", "action", "label", "reason")
+                     if key in item}
+                    for item in detail["blocked"] if isinstance(item, dict)
+                ]
+            if isinstance(detail.get("run_id"), str):
+                result["run_id"] = detail["run_id"]
+    return result
 
 
 def _scope_meta(project: str, canvas: str | None = None) -> dict[str, Any]:
@@ -5574,7 +5587,18 @@ def _create_canvas_confirmation(
         body={"agent_id": agent_id, "turn_id": turn_id, "commands": commands},
     )
     if not response.get("ok"):
-        return tool_result(_canvas_executor_failure(response))
+        failure = _canvas_executor_failure(response)
+        code = response.get("code")
+        if code in {"canvas_open_required", "workflow_plan_invalid"}:
+            failure["canvas_apply_status"] = "not_applied"
+            if "blocked" in response:
+                failure["blocked"] = response["blocked"]
+            failure["agent_instruction"] = (
+                _canvas_open_required_instruction(response.get("blocked", []))
+                if code == "canvas_open_required"
+                else _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS[code]
+            )
+        return tool_result(failure)
     data = response["data"]
     card = bool(turn_id) and data["browser_open"] is True
     paid = "paid_generation" in data["kinds"]
@@ -5623,66 +5647,6 @@ def _create_canvas_confirmation(
     })
 
 
-def _workflow_run_turn_key(project: str, canvas: str) -> str | None:
-    """Reuse the durable bridge receipt for the sole run request in this turn."""
-    turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
-    if not turn_id or canvas_command_idempotency_key is None:
-        return None
-    return canvas_command_idempotency_key(
-        project_id=project,
-        canvas_id=canvas,
-        commands=[{"workflow_run_turn": turn_id}],
-    )
-
-
-def _workflow_run_timeout_result(result: dict[str, Any]) -> dict[str, Any]:
-    # A missing receipt cannot prove that persistence or execution did not happen.
-    return {
-        **result,
-        "cancelled": False,
-        "user_message": "工作流提交结果尚未确认，请查看画布状态。",
-        "agent_instruction": (
-            "Stop this turn; do not call freezone_run_workflow again. The original request "
-            "may already be running. Inspect its existing canvas status before "
-            "any user-requested recovery."
-        ),
-    }
-
-
-def _workflow_run_missing_turn_result() -> str:
-    return tool_result({
-        "ok": False,
-        "tool_call_status": "failed",
-        "canvas_apply_status": "failed",
-        "applied": False,
-        "message": "Workflow run requires a stable turn identity; nothing was submitted.",
-        "agent_instruction": "Stop this turn and report the workflow submission failure.",
-    })
-
-
-def _put_frontend_canvas_command(
-    *,
-    key: str,
-    project: str,
-    canvas: str,
-    commands: list[Any],
-    envelope: dict[str, Any],
-    reuse_live_request: bool,
-    bridge_dir: Path | None = None,
-) -> tuple[str, dict[str, Any] | None]:
-    arguments = {
-        "key": key,
-        "project_id": project,
-        "canvas_id": canvas,
-        "commands": commands,
-        "envelope": envelope,
-        "bridge_dir": bridge_dir,
-    }
-    if reuse_live_request:
-        return put_or_reuse_pending_canvas_command(**arguments)
-    return key, put_pending_canvas_command(**arguments)
-
-
 def _canvas_agent_identity() -> tuple[str, str | None]:
     profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
     agent_id = (
@@ -5724,7 +5688,6 @@ def _dispatch_mcp_approved_frontend_commands(
     if (
         canvas_command_bridge_key is None
         or put_pending_canvas_command is None
-        or put_or_reuse_pending_canvas_command is None
         or wait_canvas_command_result is None
     ):
         return tool_error(
@@ -5745,12 +5708,7 @@ def _dispatch_mcp_approved_frontend_commands(
         and str(command["data"].get("workflowInstanceId") or "").strip()
         for command in commands
     )
-    is_workflow_run = _commands_include_type(commands, "run_workflow")
-    if is_workflow_run:
-        key = _workflow_run_turn_key(project, canvas)
-        if key is None:
-            return _workflow_run_missing_turn_result()
-    elif is_workflow_batch and canvas_command_idempotency_key is not None:
+    if is_workflow_batch and canvas_command_idempotency_key is not None:
         key = canvas_command_idempotency_key(
             project_id=project,
             canvas_id=canvas,
@@ -5767,13 +5725,12 @@ def _dispatch_mcp_approved_frontend_commands(
     # which the API's candidate-path resolver never polls, so the approval card
     # and the browser refresh both disappear.
     bridge_dir = Path(bridge_root) if bridge_root else None
-    key, immediate_result = _put_frontend_canvas_command(
+    immediate_result = put_pending_canvas_command(
         key=key,
-        project=project,
-        canvas=canvas,
+        project_id=project,
+        canvas_id=canvas,
         commands=commands,
         envelope=envelope,
-        reuse_live_request=is_workflow_run,
         bridge_dir=bridge_dir,
     )
     if immediate_result is not None:
@@ -5804,15 +5761,13 @@ def _dispatch_mcp_approved_frontend_commands(
             "them to keep the Freezone page open or retry."
         ),
     }
-    if is_workflow_run:
-        timeout_result = _workflow_run_timeout_result(timeout_result)
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
         # A workflow confirmation is a durable project task. A tool-level wait
         # timeout is not its business outcome; keep the bridge pending so a late
         # browser result can still complete that task safely.
-        timeout_result=None if is_workflow_batch or is_workflow_run else timeout_result,
+        timeout_result=None if is_workflow_batch else timeout_result,
         bridge_dir=bridge_dir,
     )
     if resolved is not None:
@@ -5838,7 +5793,6 @@ def _dispatch_frontend_canvas_commands(
     if (
         canvas_command_bridge_key is None
         or put_pending_canvas_command is None
-        or put_or_reuse_pending_canvas_command is None
         or wait_canvas_command_result is None
     ):
         return tool_error(
@@ -5854,15 +5808,9 @@ def _dispatch_frontend_canvas_commands(
         "canvas_id": canvas,
         "commands": commands,
     }
-    is_workflow_run = _commands_include_type(commands, "run_workflow")
-    if is_workflow_run:
-        key = _workflow_run_turn_key(project, canvas)
-        if key is None:
-            return _workflow_run_missing_turn_result()
-    else:
-        key = canvas_command_bridge_key(
-            project_id=project, canvas_id=canvas, commands=commands
-        )
+    key = canvas_command_bridge_key(
+        project_id=project, canvas_id=canvas, commands=commands
+    )
     is_workflow_batch = any(
         isinstance(command, dict)
         and command.get("type") == "create_node"
@@ -5870,13 +5818,12 @@ def _dispatch_frontend_canvas_commands(
         and str(command["data"].get("workflowInstanceId") or "").strip()
         for command in commands
     )
-    key, immediate_result = _put_frontend_canvas_command(
+    immediate_result = put_pending_canvas_command(
         key=key,
-        project=project,
-        canvas=canvas,
+        project_id=project,
+        canvas_id=canvas,
         commands=commands,
         envelope=envelope,
-        reuse_live_request=is_workflow_run,
     )
     if immediate_result is not None:
         return tool_result(
@@ -5906,12 +5853,10 @@ def _dispatch_frontend_canvas_commands(
             "them to retry after checking the canvas connection."
         ),
     }
-    if is_workflow_run:
-        timeout_result = _workflow_run_timeout_result(timeout_result)
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
-        timeout_result=None if is_workflow_batch or is_workflow_run else timeout_result,
+        timeout_result=None if is_workflow_batch else timeout_result,
     )
     if resolved is not None:
         return tool_result(
@@ -5940,6 +5885,19 @@ _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS = {
         "Read the canvas again and ask the user again if it is still wanted."
     ),
     "already_handled": "This confirmation was already decided. Do not retry.",
+    "canvas_open_required": (
+        "Ask the user to open this canvas, then call freezone_confirm_canvas_action again "
+        "with the same confirmation_id within 30 minutes. Do not retry on your own. "
+        "Blocked actions: {actions}."
+    ),
+    "workflow_plan_invalid": (
+        "Nothing ran. Explain the server message and fix the canvas or ask the user. "
+        "Do not retry unchanged."
+    ),
+    "workflow_already_running": (
+        "Another workflow run is active. Observe {run_id} with freezone_observe_workflow_run. "
+        "Confirm again only after it ends and only if still wanted."
+    ),
     "canvas_browser_required": (
         "Ask the user to open this canvas, then call freezone_confirm_canvas_action again "
         "with the same confirmation_id within 30 minutes. Do not retry on your own."
@@ -5979,9 +5937,13 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
             "ok": False, "status": "confirmation_failed", "code": code,
             "tool_call_status": "failed", "canvas_apply_status": "not_applied", "applied": False,
             **scope, "errors": [message], "message": message,
+            **{key: response[key] for key in ("blocked", "run_id") if key in response},
             "agent_instruction": _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS.get(
                 code,
                 "This confirmation cannot be used here and nothing was executed. Do not retry.",
+            ).format(
+                actions=", ".join(item["label"] for item in response.get("blocked", [])),
+                run_id=response.get("run_id", ""),
             ),
         })
     data = response["data"]
@@ -5989,6 +5951,28 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
         return tool_result({
             **_server_canvas_command_result(project, canvas, data["result"], [], slim_result=True),
             "confirmation_id": confirmation_id,
+        })
+    if data["status"] == "running":
+        return tool_result({
+            "ok": True, "status": "running", "tool_call_status": "completed",
+            "canvas_apply_status": "running", "applied": False, **scope,
+            "run_id": data["run_id"], "actions": data["actions"],
+            "agent_instruction": (
+                f"The confirmed workflow is running on the server as {data['run_id']}. "
+                "Do not call the run tool again. To report progress or results, call "
+                "freezone_observe_workflow_run with this run_id (wait_seconds up to 20; pass "
+                "the previous observation_token as after). Report outcomes only from a "
+                "terminal observation. Call freezone_cancel_workflow_run only if the user "
+                "asks to stop it."
+            ),
+        })
+    if data["status"] == "already_completed":
+        return tool_result({
+            "ok": True, "status": "already_completed", "tool_call_status": "completed",
+            "canvas_apply_status": "not_applied", "applied": False, **scope,
+            "agent_instruction": (
+                "Nothing ran: every target already has a current result. Do not call it again."
+            ),
         })
     if data["status"] == "submitted":
         return tool_result({
@@ -6086,11 +6070,42 @@ def _canvas_browser_required_error(project: str, canvas: str) -> dict[str, Any] 
     }
 
 
+def _canvas_open_required_instruction(blocked: list[dict[str, Any]]) -> str:
+    actions = ", ".join(item["label"] for item in blocked)
+    return (
+        f"These actions only run in the open canvas: {actions}. "
+        "Ask the user to open this canvas, then call the tool again afterwards. "
+        "Do not retry on your own."
+    )
+
+
 def _dispatch_server_host_commands(
     *, project: str, canvas: str, commands: list[Any], slim_result: bool,
 ) -> str:
     error = _canvas_browser_required_error(project, canvas)
     if error is not None:
+        blocked = [
+            {
+                "node_id": command.get("node_id"),
+                "action": command.get("action") or "run_workflow",
+                "label": command.get("action") or "run_workflow",
+                "reason": "action_not_on_server",
+            }
+            for command in commands
+            if command.get("type") == "run_workflow" or (
+                command.get("type") == "run_node_action"
+                and not str(command.get("action") or "").startswith("open_")
+            )
+        ]
+        if blocked:
+            message = "这些动作需要打开画布才能运行：" + ", ".join(
+                item["label"] for item in blocked
+            )
+            error.update(
+                code="canvas_open_required", blocked=blocked,
+                canvas_apply_status="not_applied", message=message, errors=[message],
+                agent_instruction=_canvas_open_required_instruction(blocked),
+            )
         return tool_result(error)
     dispatch = (
         _dispatch_mcp_approved_frontend_commands
@@ -6227,10 +6242,6 @@ def _emit_canvas_commands(
     if shape_error:
         return shape_error
     executor = _agent_canvas_executor()
-    if executor == "server" and _requires_frontend_canvas_executor(commands):
-        browser_error = _canvas_browser_required_error(project, canvas)
-        if browser_error is not None:
-            return tool_result(browser_error)
     recommendation_error = _resolve_canvas_generation_recommendations(project, canvas, commands)
     if recommendation_error is not None:
         return tool_result(recommendation_error)
@@ -7479,6 +7490,36 @@ def _handle_observe_workflow_run(args: dict[str, Any], **_: Any) -> str:
         )
     payload, error = _workflow_draft_response(response)
     return tool_result(payload if payload is not None else error)
+
+
+def _handle_cancel_workflow_run(args: dict[str, Any], **_: Any) -> str:
+    project_id, canvas_id, error = _workflow_draft_scope(args)
+    if error:
+        return tool_result({**error, "retryable": False})
+    run_id = str(args.get("run_id") or "").strip()
+    if not run_id:
+        return tool_result({
+            "ok": False, "status": "invalid_workflow_cancellation",
+            "error": "run_id is required", "retryable": False,
+        })
+    path = (
+        f"/api/v1/projects/{quote(project_id, safe='')}/freezone/canvases/"
+        f"{quote(canvas_id, safe='')}/workflow-runs/{quote(run_id, safe='')}"
+    )
+    try:
+        response = _request("PATCH", path, body={"status": "cancelled"})
+    except TimeoutError as exc:
+        response = {"ok": False, "error": str(exc) or "Workflow cancellation timed out"}
+    payload, error = _workflow_draft_response(response)
+    if error:
+        return tool_result({
+            "ok": False, "status": "workflow_cancellation_failed", "run_id": run_id,
+            "error": error.get("message") or error.get("error") or "Workflow cancellation failed",
+            "retryable": False,
+        })
+    return tool_result({
+        "ok": True, "status": "cancelled", "run_id": run_id, "run_status": payload["status"],
+    })
 
 
 def _handle_get_workflow_capabilities(args: dict[str, Any], **_: Any) -> str:
@@ -9279,6 +9320,9 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
 }
 
 _CANVAS_RESULT_FIELDS = (
+    "blocked",
+    "run_id",
+    "actions",
     "confirmation_id",
     "kinds",
     "targets",
@@ -9335,6 +9379,7 @@ _WORKFLOW_RESULT_FIELDS = (
 
 _RESULT_ARRAY_FIELDS = frozenset(
     {
+        "blocked",
         "issues",
         "progress",
         "problems",
@@ -9571,6 +9616,7 @@ _STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     **_STORY_RESULT_FIELDS,
+    "freezone_cancel_workflow_run": ("run_id", "run_status"),
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -9865,6 +9911,7 @@ _STUDIO_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     **_STORY_SUCCESS_REQUIRED,
     **(_STUDIO_RESULT_SUCCESS_REQUIRED if _OPENFILM_STUDIO_ENABLED else {}),
+    "freezone_cancel_workflow_run": ("run_id", "run_status"),
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -12580,6 +12627,18 @@ TOOLS = (
             reject_unknown=True,
         ),
         _handle_observe_workflow_run,
+    ),
+    (
+        "freezone_cancel_workflow_run",
+        _schema(
+            "freezone_cancel_workflow_run",
+            "Cancel a workflow run and its submitted generation. Use only when the user asks "
+            "to stop it. This tool never resubmits generation.",
+            {**_SCOPE_PROPS, "run_id": {"type": "string"}},
+            ["run_id"],
+            reject_unknown=True,
+        ),
+        _handle_cancel_workflow_run,
     ),
     (
         "freezone_get_workflow_capabilities",

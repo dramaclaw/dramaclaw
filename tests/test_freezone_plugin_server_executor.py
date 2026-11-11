@@ -1,6 +1,6 @@
 """Agent tools select the API executor without duplicating canvas mutations."""
 
-import time
+import json
 from pathlib import Path
 
 import pytest
@@ -106,21 +106,56 @@ def test_external_mcp_commands_post_marked_envelope(agent, monkeypatch, profile,
     assert not list(directory.iterdir())
 
 
-@pytest.mark.parametrize("kind", ["run_node_action", "run_workflow"])
-def test_host_commands_without_browser_fail_immediately(agent, monkeypatch, kind):
+@pytest.mark.parametrize("command", [
+    {"type": "run_node_action", "node_id": "n1", "action": "generate_image"},
+    {"type": "run_workflow", "node_ids": ["n1"]},
+])
+def test_paid_runs_without_browser_create_confirmation(agent, monkeypatch, command):
     plugin, calls, _, directory = agent
-    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_: None)
-    monkeypatch.setattr(plugin, "_resolve_canvas_generation_recommendations", lambda *_: pytest.fail("browser required before preflight"))
-    started = time.monotonic()
-    result = plugin._emit_canvas_commands("p", "c", [{"type": kind, "node_id": "n"}])
-    assert time.monotonic() - started < 0.5
-    assert result["code"] == "canvas_browser_required"
-    assert result["canvas_apply_status"] == "browser_required"
-    assert result["message"] == "需要打开画布才能运行"
-    assert "retry" in result["agent_instruction"]
-    assert not result["ok"]
-    assert not list(directory.iterdir())
-    assert not [call for call in calls if call[0] == "POST"]
+    monkeypatch.setattr(plugin, "_resolve_canvas_generation_recommendations", lambda *_: None)
+    result = plugin._emit_canvas_commands("p", "c", [command])
+    assert result["code"] == "canvas_confirmation_required"
+    assert result["canvas_apply_status"] == "awaiting_confirmation"
+    assert result["confirmation_id"] == CONFIRMATION_ID
+    assert calls == [
+        ("GET", "/api/v1/config", None),
+        ("POST", CONFIRMATION_PATH, {
+            "agent_id": "main", "turn_id": None, "commands": [command],
+        }),
+    ]
+    assert list(directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("commands,code,message,blocked", [
+    ([{"type": "run_node_action", "node_id": "n1", "action": "run_matting_tool"}],
+     "canvas_open_required", "这些动作需要打开画布才能运行：run_matting_tool",
+     [{"node_id": "n1", "action": "run_matting_tool", "label": "run_matting_tool",
+       "reason": "action_not_on_server"}]),
+    ([{"type": "html_artifact", "action": "create", "title": "Preview", "html": "<p>Hello</p>"}],
+     "canvas_browser_required", "需要打开画布才能运行", None),
+    ([{"type": "run_node_action", "node_id": "n1", "action": "open_editor"}],
+     "canvas_browser_required", "需要打开画布才能运行", None),
+])
+def test_free_ui_commands_require_open_canvas(agent, commands, code, message, blocked):
+    plugin, calls, _, directory = agent
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": commands})
+    assert result["ok"] is False
+    assert result["code"] == code
+    assert result["message"] == message
+    assert result.get("blocked") == blocked
+    if blocked is not None:
+        assert result["canvas_apply_status"] == "not_applied"
+        assert result["applied"] is False
+        assert result["agent_instruction"] == (
+            "These actions only run in the open canvas: run_matting_tool. "
+            "Ask the user to open this canvas, then call the tool again afterwards. "
+            "Do not retry on your own."
+        )
+    assert calls == [
+        ("GET", "/api/v1/config", None),
+        ("GET", "/api/v1/projects/p/freezone/canvases/c/presence", None),
+    ]
+    assert list(directory.iterdir()) == []
 
 
 @pytest.mark.parametrize("external", [False, True])
@@ -411,7 +446,10 @@ def _tool(plugin, name, args):
     handler = next(handler for tool, _schema, handler in plugin.TOOLS if tool == name)
     result = handler(args)
     structured = _assert_real_mcp_output(plugin, name, result)
-    for key in ("confirmation_id", "kinds", "targets", "expires_at", "confirmation_via"):
+    for key in (
+        "confirmation_id", "kinds", "targets", "expires_at", "confirmation_via",
+        "blocked", "run_id", "actions", "run_status",
+    ):
         if key in result:
             assert structured[key] == result[key]
     return result
@@ -500,13 +538,19 @@ def test_paid_conversation_mentions_credits_without_estimate(agent, monkeypatch)
     ))
 
 
-def test_paid_command_without_browser_does_not_create_confirmation(agent):
+def test_paid_command_without_browser_creates_confirmation(agent):
     plugin, calls, _, directory = agent
     result = _tool(plugin, "freezone_emit_canvas_command", {"commands": [
         {"type": "run_node_action", "node_id": "n1", "action": "generate_image"},
     ]})
-    assert result["code"] == "canvas_browser_required"
-    assert [call for call in calls if call[0] == "POST"] == []
+    assert result["code"] == "canvas_confirmation_required"
+    assert result["confirmation_id"] == CONFIRMATION_ID
+    assert calls == [
+        ("GET", "/api/v1/config", None),
+        ("POST", CONFIRMATION_PATH, {"agent_id": "main", "turn_id": None, "commands": [
+            {"type": "run_node_action", "node_id": "n1", "action": "generate_image"},
+        ]}),
+    ]
     assert list(directory.iterdir()) == []
 
 
@@ -622,6 +666,13 @@ def test_cancel_refuses_via_decision_route(agent, monkeypatch):
     ("targets_changed", "The target nodes changed, so the confirmation was voided and nothing "
      "was executed. Read the canvas again and ask the user again if it is still wanted."),
     ("already_handled", "This confirmation was already decided. Do not retry."),
+    ("canvas_open_required", "Ask the user to open this canvas, then call "
+     "freezone_confirm_canvas_action again with the same confirmation_id within 30 minutes. "
+     "Do not retry on your own. Blocked actions: Image generation, Workflow."),
+    ("workflow_plan_invalid", "Nothing ran. Explain the server message and fix the canvas "
+     "or ask the user. Do not retry unchanged."),
+    ("workflow_already_running", "Another workflow run is active. Observe run_1 with "
+     "freezone_observe_workflow_run. Confirm again only after it ends and only if still wanted."),
     ("canvas_browser_required", "Ask the user to open this canvas, then call "
      "freezone_confirm_canvas_action again with the same confirmation_id within 30 minutes. "
      "Do not retry on your own."),
@@ -633,16 +684,22 @@ def test_confirmation_errors_preserve_code_and_instruction(
     agent, monkeypatch, tool, code, instruction,
 ):
     plugin, calls, _, _ = agent
-    _respond(agent, monkeypatch, "/decision", {
-        "ok": False, "status_code": 409, "code": code, "message": "Decision failed",
-    })
+    extra = {}
+    if code == "canvas_open_required":
+        extra = {"blocked": BLOCKED}
+    elif code == "workflow_already_running":
+        extra = {"run_id": "run_1"}
+    _respond(agent, monkeypatch, "/decision", plugin._http_error_result(
+        409, json.dumps({"detail": {"code": code, "message": "Decision failed", **extra}}),
+        "Conflict",
+    ))
     result = _tool(plugin, tool, {"confirmation_id": CONFIRMATION_ID})
     assert result == {
         "ok": False, "status": "confirmation_failed", "code": code,
         "tool_call_status": "failed", "canvas_apply_status": "not_applied", "applied": False,
         "confirmation_id": CONFIRMATION_ID, "project_id": "p", "canvas_id": "c",
         "errors": ["Decision failed"], "message": "Decision failed",
-        "agent_instruction": instruction,
+        "agent_instruction": instruction, **extra,
     }
     assert calls == [("POST", f"{CONFIRMATION_PATH}/{CONFIRMATION_ID}/decision", {
         "decision": "confirmed" if tool == "freezone_confirm_canvas_action" else "refused",
@@ -701,3 +758,150 @@ def test_confirmation_policy_unavailable_fails_without_dispatch(agent, monkeypat
     assert "Canvas command bridge is unavailable" in result["error"]
     assert [call for call in calls if call[0] == "POST"] == []
     assert list(directory.iterdir()) == []
+
+
+BLOCKED = [
+    {"node_id": "n1", "action": "generate_image", "label": "Image generation",
+     "reason": "action_parameters"},
+    {"node_id": None, "action": "run_workflow", "label": "Workflow",
+     "reason": "mixed_commands"},
+]
+
+
+@pytest.mark.parametrize("code,extra,instruction", [
+    ("canvas_open_required", {"blocked": BLOCKED},
+     "These actions only run in the open canvas: Image generation, Workflow. "
+     "Ask the user to open this canvas, then call the tool again afterwards. "
+     "Do not retry on your own."),
+    ("workflow_plan_invalid", {}, "Nothing ran. Explain the server message and fix the canvas "
+     "or ask the user. Do not retry unchanged."),
+])
+def test_creation_rejection_preserves_http_details(agent, monkeypatch, code, extra, instruction):
+    plugin, calls, _, directory = agent
+    _respond(agent, monkeypatch, "/confirmations", plugin._http_error_result(
+        409, json.dumps({"detail": {"code": code, "message": "Cannot run", **extra}}),
+        "Conflict",
+    ))
+    result = _tool(plugin, "freezone_emit_canvas_command", {"commands": DELETE})
+    assert result == {
+        "ok": False, "tool_call_status": "failed", "canvas_apply_status": "not_applied",
+        "applied": False, "errors": ["Cannot run"], "message": "Cannot run", "code": code,
+        "agent_instruction": instruction, **extra,
+    }
+    assert calls == [
+        ("GET", "/api/v1/config", None),
+        ("POST", CONFIRMATION_PATH, {"agent_id": "main", "turn_id": None, "commands": DELETE}),
+    ]
+    assert list(directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("status,extra,instruction", [
+    ("running", {"run_id": "run_1", "actions": [
+        {"node_id": "n1", "action": "generate_image", "label": "Image generation"},
+    ]}, "The confirmed workflow is running on the server as run_1. "
+     "Do not call the run tool again. To report progress or results, call "
+     "freezone_observe_workflow_run with this run_id (wait_seconds up to 20; pass the previous "
+     "observation_token as after). Report outcomes only from a terminal observation. "
+     "Call freezone_cancel_workflow_run only if the user asks to stop it."),
+    ("already_completed", {}, "Nothing ran: every target already has a current result. "
+     "Do not call it again."),
+])
+def test_confirm_server_run_result(agent, monkeypatch, status, extra, instruction):
+    plugin, calls, _, directory = agent
+    _respond(agent, monkeypatch, "/decision", {"ok": True, "data": {
+        "confirmation_id": CONFIRMATION_ID, "status": status, **extra,
+    }})
+    result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    assert result == {
+        "ok": True, "status": status, "tool_call_status": "completed",
+        "canvas_apply_status": "running" if status == "running" else "not_applied",
+        "applied": False, "confirmation_id": CONFIRMATION_ID, "project_id": "p",
+        "canvas_id": "c", "agent_instruction": instruction, **extra,
+    }
+    assert calls == [("POST", f"{CONFIRMATION_PATH}/{CONFIRMATION_ID}/decision", {
+        "decision": "confirmed", "via": "conversation", "agent_id": "main", "turn_id": None,
+    })]
+    assert list(directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("run_status", ["cancelled", "completed"])
+@pytest.mark.parametrize("args,path", [
+    ({"run_id": "run_1"}, "/api/v1/projects/p/freezone/canvases/c/workflow-runs/run_1"),
+    ({"project_id": "p /?", "canvas_id": "c /?", "run_id": "run /?"},
+     "/api/v1/projects/p%20%2F%3F/freezone/canvases/c%20%2F%3F/workflow-runs/run%20%2F%3F"),
+])
+def test_cancel_workflow_run_patches_status(agent, monkeypatch, args, path, run_status):
+    plugin, calls, _, _ = agent
+
+    def request(method, request_path, **kwargs):
+        calls.append((method, request_path, kwargs))
+        return {"ok": True, "data": {"run_id": args["run_id"], "status": run_status}}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = _tool(plugin, "freezone_cancel_workflow_run", args)
+    assert result == {
+        "ok": True, "status": "cancelled", "run_id": args["run_id"], "run_status": run_status,
+    }
+    assert calls == [("PATCH", path, {"body": {"status": "cancelled"}})]
+
+
+@pytest.mark.parametrize("response", [
+    {"ok": False, "message": "Run cannot be cancelled"},
+    {"ok": False, "error": "Run cannot be cancelled"},
+])
+def test_cancel_workflow_run_failure_is_not_retryable(agent, monkeypatch, response):
+    plugin, _, _, _ = agent
+    monkeypatch.setattr(plugin, "_request", lambda *_, **__: response)
+    result = _tool(plugin, "freezone_cancel_workflow_run", {"run_id": "run_1"})
+    assert result == {
+        "ok": False, "status": "workflow_cancellation_failed", "run_id": "run_1",
+        "error": "Run cannot be cancelled", "retryable": False,
+    }
+
+
+@pytest.mark.parametrize("args", [{}, {"run_id": ""}, {"run_id": "  "}])
+def test_cancel_workflow_run_requires_id(agent, args):
+    plugin, calls, _, _ = agent
+    result = _tool(plugin, "freezone_cancel_workflow_run", args)
+    assert result == {
+        "ok": False, "status": "invalid_workflow_cancellation", "error": "run_id is required",
+        "retryable": False,
+    }
+    assert calls == []
+
+
+def test_cancel_workflow_run_requires_scope(agent, monkeypatch):
+    plugin, calls, _, _ = agent
+    monkeypatch.delenv("DRAMACLAW_PROJECT_ID")
+    monkeypatch.delenv("DRAMACLAW_CANVAS_ID")
+    result = _tool(plugin, "freezone_cancel_workflow_run", {"run_id": "run_1"})
+    assert result["ok"] is False
+    assert result["status"] == "workflow_draft_scope_required"
+    assert result["retryable"] is False
+    assert calls == []
+
+
+def test_cancel_workflow_run_schema_matches_observe_scope(agent):
+    plugin, _, _, _ = agent
+    schemas = {name: schema for name, schema, _ in plugin.TOOLS}
+    cancel = schemas["freezone_cancel_workflow_run"]["parameters"]
+    observe = schemas["freezone_observe_workflow_run"]["parameters"]
+    assert cancel == {
+        "type": "object", "additionalProperties": False, "required": ["run_id"],
+        "properties": {key: value for key, value in observe["properties"].items()
+                       if key not in {"wait_seconds", "after"}},
+    }
+
+
+def test_cancel_workflow_run_timeout_is_not_retryable(agent, monkeypatch):
+    plugin, _, _, _ = agent
+
+    def timeout(*_args, **_kwargs):
+        raise TimeoutError("Cancellation timed out")
+
+    monkeypatch.setattr(plugin, "_request", timeout)
+    result = _tool(plugin, "freezone_cancel_workflow_run", {"run_id": "run_1"})
+    assert result == {
+        "ok": False, "status": "workflow_cancellation_failed", "run_id": "run_1",
+        "error": "Cancellation timed out", "retryable": False,
+    }

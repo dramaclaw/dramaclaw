@@ -2880,6 +2880,49 @@ async def test_put_canvas_allows_manual_clear_with_flag(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("save_source", ["agent_confirmed", "workflow_result"])
+@pytest.mark.parametrize("nodes", [[], [{"id": "new"}]])
+async def test_put_canvas_rejects_reserved_save_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    save_source: str,
+    nodes: list[dict],
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path)
+    canvas_file = _canvas_state_dir(tmp_path) / "freezone" / "canvases" / "default.json"
+    canvas_file.parent.mkdir(parents=True)
+    canvas_file.write_text(
+        json.dumps({"revision": 3, "nodes": [{"id": "old"}], "edges": []}),
+        encoding="utf-8",
+    )
+    app = FastAPI()
+    app.include_router(freezone_routes.router)
+    app.dependency_overrides[freezone_routes.get_api_user] = lambda: {
+        "id": "owner_1", "username": "admin",
+    }
+
+    response = TestClient(app).put(
+        "/projects/proj_freezone/freezone/canvases/default",
+        json={
+            "nodes": nodes,
+            "edges": [],
+            "base_revision": 3,
+            "save_source": save_source,
+            "allow_empty_overwrite": True,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {
+        "code": "canvas_save_source_reserved", "save_source": save_source,
+    }
+    saved = json.loads(canvas_file.read_text(encoding="utf-8"))
+    assert saved["revision"] == 3
+    assert saved["nodes"] == [{"id": "old"}]
+    assert not list((canvas_file.parent / "_history").glob("default.rev*.json"))
+
+
+@pytest.mark.asyncio
 async def test_canvas_history_list_and_restore(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
