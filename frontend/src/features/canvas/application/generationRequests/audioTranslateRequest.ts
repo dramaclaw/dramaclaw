@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { textTranslateWireBody } from './nodeContextWire';
 import { isAudioNode, type CanvasNode } from '../../domain/canvasNodes';
 import { deriveAudioText } from '../../nodes/audioGenerationText';
 import type { WorkflowProductOperationContext } from '../workflowExecutionActivity';
@@ -32,14 +33,8 @@ export function buildAudioTranslateRequest(ctx: AudioTranslateRequestContext): A
   }
   return { ok: true, request: { method: 'POST',
     path: `projects/${encodeURIComponent(ctx.projectId)}/freezone/text/translate`,
-    body: { text, node_type: 'audio',
-      ...(ctx.canvasId ? { canvas_id: ctx.canvasId } : {}),
-      ...(ctx.nodeId ? { node_id: ctx.nodeId } : {}),
-      ...(ctx.productOperation?.generationAttemptId ? {
-        product_operation_id: ctx.productOperation.operationId,
-        generation_attempt_id: ctx.productOperation.generationAttemptId,
-      } : {}),
-    },
+    body: textTranslateWireBody({ text, nodeType: 'audio', canvasId: ctx.canvasId,
+      nodeId: ctx.nodeId, productOperation: ctx.productOperation }),
   } };
 }
 

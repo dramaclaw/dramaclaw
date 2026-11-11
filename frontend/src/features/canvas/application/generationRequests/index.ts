@@ -16,3 +16,4 @@ export * from './worldGenerationRequest';
 export * from './worldGenerationResult';
 export * from './worldGenerationUpstream';
 export * from './recipeCompileRequest';
+export * from './nodeContextWire';

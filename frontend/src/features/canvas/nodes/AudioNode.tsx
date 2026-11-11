@@ -43,9 +43,11 @@ import { useNodeGenerationTaskState } from '@/features/canvas/application/useNod
 import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { AudioOperationsPanel } from '@/features/canvas/nodes/AudioOperationsPanel';
-import { deriveAudioText, useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
+import { useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
 import { createInFlightRequestCache } from '@/features/canvas/nodes/inFlightRequestCache';
-import { translateNodeText } from '@/features/canvas/application/translateText';
+import { awaitTranslatedText } from '@/features/canvas/application/translateText';
+import { buildAudioTranslateRequest, audioTranslateResultPatch } from '@/features/canvas/application/generationRequests/audioTranslateRequest';
+import { workflowProductOperation } from '@/features/canvas/application/workflowExecutionActivity';
 import {
   publishNodeActionAccepted,
   publishNodeActionError,
@@ -57,7 +59,7 @@ import {
   hasMainlineContexts,
   NodeContextBadges,
 } from '@/features/freezone/context/NodeContextBadges';
-import { fetchFreezoneAudioReferences, uploadFreezoneImage } from '@/api/ops';
+import { fetchFreezoneAudioReferences, uploadFreezoneImage, sendGenerationWireRequest, type FreezoneJobRef } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
 import { VoiceSelectionModal } from './VoiceSelectionModal';
 import { isVoicePrerequisiteError } from './audioVoicePrerequisite';
@@ -148,19 +150,17 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         publishNodeActionAccepted(requestId, id, action);
         void (async () => {
           const project = readUrl().project;
-          if (!project) throw new Error('缺少项目 ID，无法翻译音频文本');
-          const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
-          if (latest?.type !== CANVAS_NODE_TYPES.audio) {
-            throw new Error('音频节点不存在');
-          }
-          const text = deriveAudioText(latest.data as AudioNodeData).trim();
-          if (!text) throw new Error('音频节点没有可翻译文本');
-          const translated = await translateNodeText(project, {
-            text,
+          const decision = buildAudioTranslateRequest({
+            nodes: useCanvasStore.getState().nodes,
             nodeId: id,
-            nodeType: 'audio',
+            projectId: project,
+            canvasId: readUrl().canvas ?? 'default',
+            productOperation: workflowProductOperation(id) ?? null,
           });
-          updateNodeData(id, { text: translated });
+          if (!decision.ok) throw new Error(decision.message);
+          const ref = await sendGenerationWireRequest<FreezoneJobRef>(decision.request);
+          const translated = await awaitTranslatedText(project ?? '', ref);
+          updateNodeData(id, audioTranslateResultPatch(translated));
           publishNodeActionSuccess(requestId, id, action, { text: translated });
         })().catch((error) => publishNodeActionError(requestId, id, action, error));
         return;

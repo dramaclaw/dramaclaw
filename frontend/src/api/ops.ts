@@ -1,5 +1,6 @@
 import { coerceAudioReferences } from "@/features/canvas/domain/audioReferences";
 import type { FreezoneAudioVoiceRef, FreezoneAudioReferencesResult } from "@/features/canvas/domain/audioReferences";
+import { nodeContextWireFields, textTranslateWireBody } from '@/features/canvas/application/generationRequests/nodeContextWire';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { z } from "zod";
@@ -208,16 +209,7 @@ export async function sendGenerationWireRequest<T>(
  * emitting keys only when present so legacy callers stay byte-identical.
  */
 function nodeContextBody(ctx: FreezoneNodeContext): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (ctx.canvasId) out.canvas_id = ctx.canvasId;
-  if (ctx.nodeId) out.node_id = ctx.nodeId;
-  if (ctx.modelParams) out.model_params = ctx.modelParams;
-  const operation = workflowProductOperation(ctx.nodeId);
-  if (operation?.generationAttemptId) {
-    out.product_operation_id = operation.operationId;
-    out.generation_attempt_id = operation.generationAttemptId;
-  }
-  return out;
+  return nodeContextWireFields({ ...ctx, productOperation: workflowProductOperation(ctx.nodeId) ?? null });
 }
 
 /** One recorded generation attempt for a node (see generation-history GET). */
@@ -2319,11 +2311,9 @@ export async function submitFreezoneTextTranslate(
     `projects/${encodeURIComponent(project)}/freezone/text/translate`,
     {
       method: "POST",
-      json: {
-        text: payload.text,
-        node_type: payload.nodeType ?? "generic",
-        ...nodeContextBody(payload),
-      },
+      json: textTranslateWireBody({
+        ...payload, productOperation: workflowProductOperation(payload.nodeId) ?? null,
+      }),
     },
   );
 }
