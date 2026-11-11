@@ -62,7 +62,7 @@ import {
 import { fetchFreezoneAudioReferences, uploadFreezoneImage, sendGenerationWireRequest, type FreezoneJobRef } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
 import { VoiceSelectionModal } from './VoiceSelectionModal';
-import { isVoicePrerequisiteError } from './audioVoicePrerequisite';
+import { audioGenerationActionResult, audioGenerationHookError, audioGenerationOutcomePatch } from '@/features/canvas/application/generationRequests/audioGenerationResult';
 
 type AudioNodeProps = NodeProps & {
   id: string;
@@ -113,36 +113,19 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         publishNodeActionAccepted(requestId, id, action);
         void generate()
           .then((output) => {
-            if (output.skipped) {
-              publishNodeActionSuccess(requestId, id, action, output);
-              return;
-            }
             const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
-            const latestAudioUrl = latest?.type === CANVAS_NODE_TYPES.audio
-              && typeof latest.data.audioUrl === 'string'
-              ? latest.data.audioUrl
-              : undefined;
-            publishNodeActionSuccess(requestId, id, action, {
-              ...(output.audioUrl ? { audioUrl: output.audioUrl } : {}),
-              ...(latestAudioUrl ? { audioUrl: latestAudioUrl } : {}),
-            });
+            const result = audioGenerationActionResult({ hookOutput: output,
+              latestNodeData: latest?.type === CANVAS_NODE_TYPES.audio ? latest.data : undefined });
+            if (result.status === 'success') publishNodeActionSuccess(requestId, id, action, result.output);
           })
           .catch((error) => {
-            if (isVoicePrerequisiteError(error)) {
-              updateNodeData(id, {
-                isGenerating: false,
-                generationStartedAt: null,
-                voiceAvailable: false,
-                generationError: '未选择可用自定义声线，已跳过生成', // i18n-exempt -- workflow payload
-              });
-              publishNodeActionSuccess(requestId, id, action, {
-                skipped: true,
-                reason: 'missing_custom_voice',
-                agent_instruction: '未选择自定义声线，本音频节点已跳过，继续其它工作流节点。', // i18n-exempt -- agent protocol
-              });
-              return;
-            }
-            publishNodeActionError(requestId, id, action, error);
+            const hookError = audioGenerationHookError(error);
+            for (const patch of audioGenerationOutcomePatch({
+              outcome: { kind: 'failed', ...hookError }, translate: t,
+            }).patches.slice(1)) updateNodeData(id, patch);
+            const result = audioGenerationActionResult({ hookError, latestNodeData: undefined });
+            if (result.status === 'success') publishNodeActionSuccess(requestId, id, action, result.output);
+            else publishNodeActionError(requestId, id, action, result.error);
           });
         return;
       }
@@ -172,7 +155,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         publishNodeActionSuccess(requestId, id, action, { openedUiAction: true });
       }
     });
-  }, [generate, id, updateNodeData]);
+  }, [generate, id, t, updateNodeData]);
 
 
   // 任务流(SSE)回报失败时把错误持久化进节点数据 + 清 isGenerating——覆盖刷新后、

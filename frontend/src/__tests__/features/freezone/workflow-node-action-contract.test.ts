@@ -106,13 +106,16 @@ describe("dynamic workflow node action contract", () => {
     const source = readSource("src/features/canvas/nodes/useAudioGeneration.ts");
     const speechTextSource = readSource("src/features/canvas/application/audioSpeechText.ts");
     const compile = source.indexOf("await compileWorkflowNodePrompt({");
-    const submitSpeech = source.indexOf("submitFreezoneAudioSpeech(project");
+    const requestSource = readSource("src/features/canvas/application/generationRequests/audioGenerationRequest.ts");
+    const build = source.indexOf("buildAudioGenerationRequest(");
+    const submit = source.indexOf("await sendGenerationWireRequest");
 
     expect(compile).toBeGreaterThan(-1);
-    expect(submitSpeech).toBeGreaterThan(compile);
-    expect(source).toContain("const compiledPrompt = directVoiceRecipe");
-    expect(source).toContain("catalog.recipeId === 'drama-shot-voice'");
-    expect(source).toContain("resolveSafeSpeechSubmissionText");
+    expect(build).toBeGreaterThan(compile);
+    expect(submit).toBeGreaterThan(build);
+    expect(source).toContain("audioPromptCompileMetadataPatch(");
+    expect(requestSource).toContain("'drama-shot-voice'");
+    expect(requestSource).toContain("resolveSafeSpeechSubmissionText");
     expect(speechTextSource).toContain("compileMode === 'timeout_fallback'");
     expect(speechTextSource).toContain("extractExplicitSpeakableAudioText(compiledPrompt)");
   });
@@ -134,8 +137,9 @@ describe("dynamic workflow node action contract", () => {
   it("does not persist timeout fallback production instructions as speech text", () => {
     const source = readSource("src/features/canvas/nodes/useAudioGeneration.ts");
 
-    expect(source).toContain("workflowRecipeCompiledPrompt: compiledPrompt");
-    expect(source).toContain("text: persistedPrompt");
-    expect(source).toContain("safeFallbackPrompt: speechFallbackPrompt");
+    const requestSource = readSource("src/features/canvas/application/generationRequests/audioGenerationRequest.ts");
+    expect(source).toContain("audioPromptCompileMetadataPatch(");
+    expect(requestSource).toContain("resolveSafeSpeechSubmissionText");
+    expect(requestSource).toContain("safeFallbackPrompt: input.fallbackPrompt");
   });
 });

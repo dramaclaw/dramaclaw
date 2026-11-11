@@ -1,5 +1,6 @@
 import { coerceAudioReferences } from "@/features/canvas/domain/audioReferences";
-import type { FreezoneAudioVoiceRef, FreezoneAudioReferencesResult } from "@/features/canvas/domain/audioReferences";
+export type { FreezoneAudioVoiceRef } from "@/features/canvas/domain/audioReferences";
+import type { FreezoneAudioReferencesResult } from "@/features/canvas/domain/audioReferences";
 import { nodeContextWireFields, textTranslateWireBody } from '@/features/canvas/application/generationRequests/nodeContextWire';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
@@ -2047,100 +2048,6 @@ export async function fetchFreezoneAudioReferences(
     `projects/${encodeURIComponent(project)}/freezone/audio/references`,
   );
   return coerceAudioReferences(payload);
-}
-
-export interface FreezoneAudioSpeechPayload extends FreezoneNodeContext {
-  /** 要合成的台词 / 旁白文本。 */
-  text: string;
-  /** preset 无需参考音频；clone 使用 voiceRef 克隆声音。 */
-  speechMode?: "preset" | "clone";
-  presetModel?: string;
-  presetVoice?: string;
-  /** 情绪提示词，留空则用项目解说风格。例："紧张、压低声音、带一点恐惧感"。 */
-  emotionPrompt?: string;
-  /** 声线引用；不传则用项目默认解说人。 */
-  voiceRef?: FreezoneAudioVoiceRef | null;
-  /** 目标 beat;给定后生成的音频会带上 beat_audio slot_target,可直接 commit。 */
-  targetEpisode?: number;
-  targetBeat?: number;
-}
-
-export async function submitFreezoneAudioSpeech(
-  project: string,
-  payload: FreezoneAudioSpeechPayload,
-): Promise<FreezoneJobRef> {
-  const voiceRefBody = payload.voiceRef
-    ? {
-        scope: payload.voiceRef.scope,
-        character_name: payload.voiceRef.characterName ?? "",
-        identity_id: payload.voiceRef.identityId ?? "",
-        slot: payload.voiceRef.slot ?? "",
-        voice_id: payload.voiceRef.voiceId ?? "",
-      }
-    : null;
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/audio/speech`,
-    {
-      method: "POST",
-      json: {
-        ...nodeContextBody(payload),
-        text: payload.text,
-        speech_mode: payload.speechMode ?? "clone",
-        preset_model: payload.presetModel ?? "edge-tts",
-        preset_voice: payload.presetVoice ?? "Serena",
-        emotion_prompt: payload.emotionPrompt ?? "",
-        voice_ref: voiceRefBody,
-        target_episode: payload.targetEpisode,
-        target_beat: payload.targetBeat,
-      },
-    },
-  );
-}
-
-// /freezone/audio/eleven-music ------------------------------------------- //
-
-/**
- * 文本生成音乐请求。除 input 外全部可选，不传走后端默认。
- * model / response_format / output_format 不需要前端传（走后端默认 LingShan-MU-11 / mp3 /
- * mp3_44100_128），故不在此暴露。
- */
-export interface FreezoneAudioMusicPayload extends FreezoneNodeContext {
-  /** 音乐描述 prompt（风格、乐器、氛围等）；映射到后端 `input`。 */
-  prompt: string;
-  /** 生成长度（毫秒），范围 3000–600000，留空走后端默认 30000。 */
-  musicLengthMs?: number;
-  /** 是否强制纯音乐，留空走后端默认 true。 */
-  forceInstrumental?: boolean;
-  /** 是否严格遵守音乐段落时长策略，留空走后端默认 true。 */
-  respectSectionsDurations?: boolean;
-  /** 目标 beat;给定后生成的音频会带上 beat_audio slot_target,可直接 commit。 */
-  targetEpisode?: number;
-  targetBeat?: number;
-}
-
-/**
- * 文本生成音乐。返回异步任务句柄，结果用
- * fetchFreezoneJobResult('freezone_audio_eleven_music') 取。
- */
-export async function submitFreezoneAudioMusic(
-  project: string,
-  payload: FreezoneAudioMusicPayload,
-): Promise<FreezoneJobRef> {
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/audio/eleven-music`,
-    {
-      method: "POST",
-      json: {
-        ...nodeContextBody(payload),
-        input: payload.prompt,
-        music_length_ms: payload.musicLengthMs,
-        force_instrumental: payload.forceInstrumental,
-        respect_sections_durations: payload.respectSectionsDurations,
-        target_episode: payload.targetEpisode,
-        target_beat: payload.targetBeat,
-      },
-    },
-  );
 }
 
 // /freezone/audio/voices ------------------------------------------------- //
