@@ -6070,3 +6070,30 @@ async def test_server_media_enqueue_refuses_wrong_canvas(server_media, canvas_id
     assert caught.value.status_code == 409
     assert caught.value.detail == "server workflow media link does not match the submitted node"
     assert server_media.enqueued == []
+
+
+@pytest.mark.parametrize("action", ["translate_text", "generate_audio"])
+def test_translate_media_claim_only_matches_translate_action(tmp_path, monkeypatch, action):
+    from novelvideo.freezone import workflow_runs as store
+
+    monkeypatch.setattr(store.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(store.uuid, "uuid4", lambda: SimpleNamespace(hex="3" * 32))
+    run = store.create_workflow_run(
+        project_dir=tmp_path, project_id="project", canvas_id="default", owner_kind="server",
+        actions=[{"node_id": "n", "action": action, "generation_attempt_id": "attempt-1"}],
+    )
+    claim = dict(project_dir=tmp_path, project_id="project", canvas_id="default",
+                 run_id=run["run_id"], node_id="n", operation_id="", attempt_id="attempt-1",
+                 task_type="freezone_text_translate", fingerprint="a" * 64)
+    if action == "generate_audio":
+        with pytest.raises(ValueError):
+            store.claim_workflow_media_action(**claim)
+        return
+    assert store.claim_workflow_media_action(**claim) == {
+        "job_id": "3" * 16, "claimed_at": 1000.0, "created": True, "run_id": run["run_id"],
+    }
+    row = store.read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"],
+    )["actions"][0]
+    assert row["task_type"] == "freezone_text_translate"
+    assert row["job_id"] == "3" * 16

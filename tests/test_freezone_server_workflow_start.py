@@ -239,3 +239,30 @@ async def test_noop_start_keeps_attempt_identity_without_operations(setup):
     ]
     assert [a["product_operation_id"] for a in run["actions"]] == [None, None]
     assert [q["task_type"] for q in setup.queued] == ["freezone_workflow_drive"]
+
+
+async def test_audio_translate_on_text_is_refused(setup):
+    setup.plan["actions"] = [dict(setup.plan["actions"][1], action="translate_text")]
+    assert await check(setup) == {"status": "blocked", "plan": setup.plan, "blocked": [{
+        "node_id": "text", "action": "translate_text", "label": "Text",
+        "reason": "action_not_on_server",
+    }]}
+
+
+async def test_image_audio_translate_batch_is_runnable(setup):
+    setup.canvas["nodes"][1]["type"] = "audioNode"
+    canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), setup.canvas)
+    setup.plan["actions"] = [setup.plan["actions"][0],
+                             dict(setup.plan["actions"][1], action="generate_audio"),
+                             dict(setup.plan["actions"][1], action="translate_text")]
+    register_port("usage_meter", NoOpUsageMeter())
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": []}
+    actions = start._server_run_actions(setup.canvas, setup.plan, "confirmation")
+    assert actions == [
+        {"node_id": "image", "action": "generate_image", "recipe_id": "image-recipe",
+         "recipe_version": "1.2.0", "generation_attempt_id": "confirmation:image:generate_image"},
+        {"node_id": "text", "action": "generate_audio", "recipe_id": "text-recipe",
+         "recipe_version": "1.2.0", "generation_attempt_id": "confirmation:text:generate_audio"},
+        {"node_id": "text", "action": "translate_text", "recipe_id": "text-recipe",
+         "recipe_version": "1.2.0", "generation_attempt_id": "confirmation:text:translate_text"},
+    ]

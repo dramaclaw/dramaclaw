@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import threading
 import time
+from typing import Any
 import uuid
 
 from novelvideo.freezone.agent_canvas_metrics import count, observe
@@ -175,7 +176,7 @@ class CanvasCorePool:
             self._total -= 1
             self._condition.notify_all()
 
-    def _exchange(self, child: _Child, op: str, payload: dict, timeout_seconds: float) -> dict:
+    def _exchange(self, child: _Child, op: str, payload: dict, timeout_seconds: float) -> Any:
         process = child.process
         assert process.stdin is not None and process.stdout is not None
         request_id = str(uuid.uuid4())
@@ -208,7 +209,7 @@ class CanvasCorePool:
             message = json.loads(response)
             if not isinstance(message, dict) or message.get("id") != request_id:
                 raise ValueError("response id mismatch")
-            if message.get("ok") is True and isinstance(message.get("result"), dict):
+            if message.get("ok") is True and "result" in message:
                 return message["result"]
             error = message.get("error")
             if (
@@ -223,6 +224,13 @@ class CanvasCorePool:
         raise _WorkerError(error["code"], error["message"])
 
     def call(self, op: str, payload: dict) -> dict:
+        return self._call(op, payload, any_result=False)
+
+    def call_value(self, op: str, payload: dict) -> Any:
+        """Like ``call``, but the worker result may be any JSON value (null, bool, ...)."""
+        return self._call(op, payload, any_result=True)
+
+    def _call(self, op: str, payload: dict, *, any_result: bool) -> Any:
         started = time.monotonic()
         timeout_seconds = self.call_timeout_seconds
         child = None
@@ -237,6 +245,8 @@ class CanvasCorePool:
                 raise
             except (OSError, ValueError) as exc:
                 raise CanvasCoreError("canvas_core_crashed", "Canvas core pipe closed") from exc
+            if not any_result and not isinstance(result, dict):
+                raise CanvasCoreError("canvas_core_protocol", "Invalid canvas core response")
             child.calls += 1
             discard = child.calls >= self.max_calls_per_child
             return result

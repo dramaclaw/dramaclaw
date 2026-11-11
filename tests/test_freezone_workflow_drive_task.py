@@ -34,6 +34,10 @@ async def test_drive_task_factory_and_result(tmp_path, monkeypatch):
         def supports(self, action):
             return True
 
+        async def lane_capacity(self, lane):
+            assert lane == 'default'
+            return None
+
         async def run_action(self, **kwargs):
             return {'status': 'completed', 'output': {}}
 

@@ -47,6 +47,7 @@ _WORKFLOW_MEDIA_ACTIONS = {
     "freezone_video_gen": {"generate_video", "generate_text_video"},
     "freezone_audio_speech": {"generate_audio"},
     "freezone_audio_eleven_music": {"generate_audio"},
+    "freezone_text_translate": {"translate_text"},
 }
 
 RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")

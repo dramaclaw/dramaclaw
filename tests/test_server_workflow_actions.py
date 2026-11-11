@@ -40,7 +40,10 @@ class FakeHost:
                        "edges": []}
         self.patches = []
         self.requests = []
+        self.task = TASK
         self.responses = [TASK]
+        self.result = {}
+        self.result_tasks = []
         self.media_links = []
         self.statuses = [{"status": "running"},
                          {"status": "completed", "result": {"output_url": URL}}]
@@ -69,7 +72,7 @@ class FakeHost:
             self.held = False
             raise ActionLeaseLost()
         self.patches.append(deepcopy(patch))
-        self.data.update(patch)
+        next(n["data"] for n in self.canvas["nodes"] if n["id"] == node_id).update(patch)
 
     async def request(self, method, path, body, *, media_link=None):
         self.requests.append({"method": method, "path": path, "body": deepcopy(body)})
@@ -80,11 +83,15 @@ class FakeHost:
         return response
 
     async def task_status(self, task):
-        assert task == TASK
+        assert task == self.task
         return self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
 
+    async def job_result(self, task):
+        self.result_tasks.append(task)
+        return deepcopy(self.result)
+
     async def job_result_url(self, task):
-        assert task == TASK
+        assert task == self.task
         return self.fallback
 
     async def lane_capacity(self, lane):
@@ -100,7 +107,7 @@ def setup_runner():
     host = FakeHost()
 
     async def core_call(op, payload):
-        return await asyncio.to_thread(pool.call, op, payload)
+        return await asyncio.to_thread(pool.call_value, op, payload)
 
     runner = WorkflowActionRunner(
         host=host, project_id="project", canvas_id="default", run_id="run-1",
@@ -500,3 +507,332 @@ async def test_completed_image_patch_stays_unchanged(setup_runner):
         "workflowResultStale": False, "workflowInvalidatedAt": None,
         "workflowInvalidationReason": None, "workflowGeneratedAt": "1970-01-01T00:00:00.000Z",
     }]
+
+
+AUDIO_URL = "/api/projects/project/static/fz/audio.mp3"
+AUDIO_TASK = {"task_key": "freezone_audio_speech:project:j1",
+              "task_type": "freezone_audio_speech", "job_id": "j1"}
+TRANSLATE_TASK = {"task_key": "freezone_text_translate:project:j1",
+                  "task_type": "freezone_text_translate", "job_id": "j1"}
+MISSING_NARRATION = (
+    "旁白节点缺少上游生成的文本，已停止提交 TTS 请求；请先完成剧本/Beat 文本生成后重试。"
+)
+SPEECH_BODY = {
+    "canvas_id": "default", "node_id": "n", "text": "Hello", "speech_mode": "preset",
+    "preset_model": "edge-tts", "preset_voice": "Serena", "emotion_prompt": "",
+    "voice_ref": {"scope": "project_narrator", "character_name": "", "identity_id": "",
+                  "slot": "", "voice_id": ""},
+}
+
+
+def audio_host(host, *, translate=False):
+    host.canvas["nodes"][0].update(type="audioNode", data={
+        "text": "Hello", "audioUrl": None, "speechMode": "preset",
+    })
+    host.task = TRANSLATE_TASK if translate else AUDIO_TASK
+    host.responses = [host.task]
+    host.statuses = [{"status": "completed", "result": {"output_url": "ignored"}}]
+    host.result = {"translated_text": "你好"} if translate else {"url": AUDIO_URL}
+
+
+async def test_audio_speech_submission_and_artifact(setup_runner, tmp_path):
+    host, runner, run, phases, accepted = setup_runner
+    audio_host(host)
+    assert runner.supports("generate_audio") is True
+    result = await run("generate_audio", generation_attempt_id="attempt-1")
+    assert result == {"status": "completed", "output": {"audioUrl": AUDIO_URL},
+                      "artifact": {"audio_url": AUDIO_URL}}
+    assert host.requests == [{"method": "POST", "path": "projects/project/freezone/audio/speech",
+                              "body": SPEECH_BODY}]
+    assert host.media_links == [{"run_id": "run-1", "node_id": "n",
+                                 "generation_attempt_id": "attempt-1"}]
+    assert accepted == [AUDIO_TASK]
+    assert phases == ["submitting", "generating"]
+    assert {"generationTaskKey": AUDIO_TASK["task_key"],
+            "generationTaskType": AUDIO_TASK["task_type"],
+            "generationTaskJobId": "j1"} in host.patches
+    assert host.result_tasks == [AUDIO_TASK]
+    assert host.data["audioUrl"] == AUDIO_URL
+    assert_cleared(host)
+    assert_durable(tmp_path, "generate_audio", result["artifact"])
+
+
+async def test_audio_stop_during_submission_keeps_accepted_task(setup_runner):
+    host, _, run, _, accepted = setup_runner
+    audio_host(host)
+    submit = host.request
+
+    async def request_then_stop(*args, **kwargs):
+        response = await submit(*args, **kwargs)
+        host.stopped = True
+        return response
+
+    host.request = request_then_stop
+    result = await run("generate_audio", generation_attempt_id="attempt-1")
+    assert result["status"] != "completed"
+    assert accepted == [AUDIO_TASK]
+
+
+async def test_audio_music(setup_runner):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.data.update(audioKind="music", text="Calm piano", musicLengthMs=12000)
+    host.task = {**AUDIO_TASK, "task_type": "freezone_audio_eleven_music",
+                 "task_key": "freezone_audio_eleven_music:project:j1"}
+    host.responses = [host.task]
+    assert (await run("generate_audio"))["output"] == {"audioUrl": AUDIO_URL}
+    assert host.requests == [{"method": "POST",
+                              "path": "projects/project/freezone/audio/eleven-music", "body": {
+                                  "canvas_id": "default", "node_id": "n", "input": "Calm piano",
+                                  "music_length_ms": 12000, "force_instrumental": True,
+                                  "respect_sections_durations": True}}]
+    assert host.result_tasks == [host.task]
+    assert_cleared(host)
+
+
+# The submitted text goes through the shared request builder, which puts each
+# speakable line in its own paragraph exactly as the browser submission does.
+@pytest.mark.parametrize("data,expected,body_text", [
+    ({"content": " Content ", "text": "Text"}, "Content", "Content"),
+    ({"text": " Spoken words "}, "Spoken words", "Spoken words"),
+    ({"scriptResult": {"rows": [
+        {"narration": " First ", "voiceover": "ignored"}, {"voiceover": "Second"},
+        {"dialogue": "Third"}, {}, None,
+    ]}}, "First\nSecond\nThird", "First\n\nSecond\n\nThird"),
+])
+async def test_audio_hydrates_incoming_edge_order(setup_runner, data, expected, body_text):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.data["text"] = " "
+    host.canvas["nodes"] += [
+        {"id": "last", "type": "textAnnotationNode", "position": {"x": 0, "y": 0},
+         "data": {"content": "Last"}},
+        {"id": "empty", "type": "textAnnotationNode", "position": {"x": 0, "y": 0}, "data": {}},
+        {"id": "first", "type": "scriptNode", "position": {"x": 0, "y": 0}, "data": data},
+    ]
+    host.canvas["edges"] = [{"id": name, "source": name, "target": "n"}
+                               for name in ("empty", "first", "last")]
+    assert (await run("generate_audio"))["status"] == "completed"
+    assert host.patches[0] == {"text": expected}
+    assert host.requests[0]["body"]["text"] == body_text
+
+
+async def test_audio_missing_narration_fails_without_submission(setup_runner):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.data["text"] = ""
+    assert await run("generate_audio") == {"status": "failed", "error": MISSING_NARRATION}
+    assert host.requests == []
+    assert host.data["generationOwner"] is None
+    assert host.data["generationRunId"] is None
+
+
+async def test_audio_missing_voice_skips_without_submission(setup_runner):
+    host, _, run, _, accepted = setup_runner
+    audio_host(host)
+    host.data.update(voicePolicyConfirmed=True, voiceAvailable=False)
+    assert await run("generate_audio") == {
+        "status": "skipped", "output": {"skipped": True, "reason": "missing_custom_voice"},
+    }
+    assert host.requests == []
+    assert accepted == []
+    assert_cleared(host)
+
+
+@pytest.mark.parametrize("source", ["submission", "task"])
+async def test_audio_voice_prerequisite_skips(setup_runner, source):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    if source == "submission":
+        # Set public error attributes so this fixture also runs against the pre-step runner.
+        error = ServerActionHttpError("HTTP 409: 请先配置或选择声线")
+        error.status_code = 409
+        error.info = {"name": "HttpError", "message": "请先配置或选择声线", "status": 409,
+                      "display": "请先配置或选择声线", "details": None,
+                      "requestId": None, "referenceIssues": []}
+        host.responses = [error]
+    else:
+        host.statuses = [{"status": "failed", "error": "请先配置或选择声线"}]
+    assert await run("generate_audio") == {"status": "skipped", "output": {
+        "skipped": True, "reason": "missing_custom_voice",
+        "agent_instruction": "未选择自定义声线，本音频节点已跳过，继续其它工作流节点。",
+    }}
+    assert host.data["voiceAvailable"] is False
+    assert host.data["generationError"] == "未选择可用自定义声线，已跳过生成"
+    assert host.data["generationTaskKey"] is None
+    assert_cleared(host)
+
+
+@pytest.mark.parametrize("recipe", [False, True, "literal"])
+async def test_audio_recipe_and_product_operation(setup_runner, recipe):
+    host, _, run, phases, _ = setup_runner
+    audio_host(host)
+    if recipe:
+        host.data.update(workflowCatalog={"recipeId": "drama-shot-voice" if recipe == "literal"
+                                         else "r"}, voiceAvailable=True,
+                         voiceRef={"scope": "user_custom", "voiceId": "voice-1"})
+    if recipe is True:
+        host.responses.insert(0, {"prompt": "Compiled narration", "compile_mode": "model",
+                                  "recipe_ids": ["r"]})
+    assert (await run("generate_audio", generation_attempt_id="attempt-1",
+                      product_operation_id="operation-1" if recipe else None)
+            )["status"] == "completed"
+    assert host.media_links == ([None, None] if recipe is True else [None] if recipe else [{
+        "run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1",
+    }])
+    if recipe:
+        assert host.requests[-1]["body"]["product_operation_id"] == "operation-1"
+        assert host.requests[-1]["body"]["generation_attempt_id"] == "attempt-1"
+    if recipe is True:
+        assert host.requests[0]["path"] == "freezone/recipes/compile"
+        assert host.requests[0]["body"]["product_operation_id"] == "operation-1"
+        assert host.data["workflowRecipeCompiledPrompt"] == "Compiled narration"
+        assert phases == ["compiling_recipe", "submitting", "generating"]
+    else:
+        assert [r["path"] for r in host.requests] == ["projects/project/freezone/audio/speech"]
+
+
+@pytest.mark.parametrize("action", ["generate_audio", "translate_text"])
+async def test_audio_takeover_existing_task_never_submits(setup_runner, action):
+    host, _, run, phases, accepted = setup_runner
+    audio_host(host, translate=action == "translate_text")
+    host.data.update(isGenerating=True, generationOwner="server", generationRunId="run-1",
+                     generationTaskKey=host.task["task_key"])
+    host.data["text"] = ""  # Existing tasks require neither hydration nor a valid new request.
+    assert (await run(action, existing_task=host.task))["status"] == "completed"
+    assert host.requests == []
+    assert host.result_tasks == [host.task]
+    assert accepted == []
+    assert phases == ["generating"]
+    assert host.data["generationOwner"] is None
+
+
+@pytest.mark.parametrize("action", ["generate_audio", "translate_text"])
+@pytest.mark.parametrize("recipe", [False, True])
+@pytest.mark.parametrize("recovering", [False, True])
+async def test_audio_missing_task_resubmits_identical_body(
+    setup_runner, action, recipe, recovering,
+):
+    host, _, run, _, accepted = setup_runner
+    audio_host(host, translate=action == "translate_text")
+    if recipe and action == "generate_audio":
+        host.data.update(workflowCatalog={"recipeId": "r"}, voiceAvailable=True,
+                         voiceRef={"scope": "user_custom", "voiceId": "voice-1"})
+        host.responses.insert(0, {"prompt": "New narration", "compile_mode": "model",
+                                  "recipe_ids": ["r"]})
+    kwargs = {"generation_attempt_id": "attempt-1",
+              "product_operation_id": "operation-1" if recipe and action == "generate_audio"
+              else None}
+    assert (await run(action, **kwargs))["status"] == "completed"
+    first = deepcopy(host.requests[-1])
+    host.requests.clear()
+    accepted.clear()
+    if action == "translate_text":
+        host.data["text"] = "Hello"
+    host.statuses = [None, {"status": "completed", "result": {}}]
+    host.responses = ([
+        ServerActionHttpError("HTTP 503: workflow media submission is still starting"),
+        ServerActionHttpError("HTTP 503: workflow media submission is being recovered"),
+    ]
+                      if recovering else []) + [host.task]
+    assert (await run(action, existing_task=host.task, **kwargs))["status"] == "completed"
+    assert host.requests == [first] * (3 if recovering else 1)
+    assert accepted == [host.task]
+
+
+@pytest.mark.parametrize("status,error", [
+    ("failed", "Audio failed"), ("cancelled", "任务已取消"), ("running", "音频生成超时"),
+])
+async def test_audio_terminal_failure_clears_stale_descriptor(setup_runner, status, error):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.statuses = [{"status": status, "error": "Audio failed" if status == "failed" else None}]
+    assert await run("generate_audio") == {"status": "failed", "error": error}
+    assert host.data["generationTaskKey"] is None
+    assert host.data["generationTaskType"] is None
+    assert host.data["generationTaskJobId"] is None
+    assert_cleared(host)
+
+
+async def test_audio_translate_writes_only_text(setup_runner, tmp_path):
+    host, runner, run, phases, accepted = setup_runner
+    audio_host(host, translate=True)
+    assert runner.supports("translate_text") is True
+    assert await run("translate_text", generation_attempt_id="attempt-1") == {
+        "status": "completed", "output": {"text": "你好"}, "artifact": {"content": "你好"},
+    }
+    assert host.requests == [{"method": "POST", "path": "projects/project/freezone/text/translate",
+                              "body": {"text": "Hello", "node_type": "audio",
+                                       "canvas_id": "default", "node_id": "n"}}]
+    assert host.media_links == [{"run_id": "run-1", "node_id": "n",
+                                 "generation_attempt_id": "attempt-1"}]
+    assert host.patches == [{"text": "你好", "generationOwner": None, "generationRunId": None}]
+    assert host.result_tasks == [TRANSLATE_TASK]
+    assert accepted == [TRANSLATE_TASK]
+    assert phases == ["submitting", "generating"]
+    assert_durable(tmp_path, "translate_text", {"content": "你好"})
+
+
+@pytest.mark.parametrize("data", [{}, {"translated_text": ""}, {"translated_text": None},
+                                  {"translated_text": 4}, {"translated_text": "   "}])
+async def test_audio_translate_missing_result_fails(setup_runner, data):
+    host, _, run, _, _ = setup_runner
+    audio_host(host, translate=True)
+    host.result = data
+    assert await run("translate_text") == {"status": "failed", "error": "翻译任务未返回译文"}
+    assert host.data["text"] == "Hello"
+    assert host.data["generationOwner"] is None
+    assert not any("generationTaskKey" in p for p in host.patches)
+
+
+async def test_audio_translate_defensively_refuses_text_node(setup_runner):
+    host, _, run, _, _ = setup_runner
+    host.canvas["nodes"][0]["type"] = "textAnnotationNode"
+    assert await run("translate_text") == {
+        "status": "failed", "error": "Unsupported server action: translate_text",
+    }
+    assert host.requests == []
+
+
+async def test_audio_recipe_submission_uses_captured_snapshot(setup_runner):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.data.update(workflowCatalog={"recipeId": "r"}, voiceAvailable=True,
+                     voiceRef={"scope": "user_custom", "voiceId": "voice-1"})
+    host.responses.insert(0, {"prompt": "New narration", "compile_mode": "model",
+                              "recipe_ids": ["r"]})
+    request = host.request
+
+    async def edit_during_compile(method, path, body, **kwargs):
+        result = await request(method, path, body, **kwargs)
+        if path == "freezone/recipes/compile":
+            host.data["text"] = "Changed during compilation"
+        return result
+
+    host.request = edit_during_compile
+    assert (await run("generate_audio"))["status"] == "completed"
+    assert host.requests[-1]["body"]["text"] == "Hello"
+    assert host.data["text"] == "Hello"
+
+
+async def test_audio_busy_refusal_clears_owner(setup_runner):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.data.update(isGenerating=True, generationOwner="server", generationRunId="run-1")
+    assert await run("generate_audio") == {
+        "status": "failed", "error": "Audio generation is already in progress.",
+    }
+    assert host.requests == []
+    assert host.data["generationOwner"] is None
+    assert host.data["generationRunId"] is None
+
+
+async def test_audio_compile_failure_clears_node(setup_runner):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.data.update(workflowCatalog={"recipeId": "r"}, voiceAvailable=True,
+                     voiceRef={"scope": "user_custom", "voiceId": "voice-1"})
+    host.responses = [ServerActionHttpError("HTTP 400: bad recipe")]
+    assert await run("generate_audio") == {"status": "failed", "error": "HTTP 400: bad recipe"}
+    assert [r["path"] for r in host.requests] == ["freezone/recipes/compile"]
+    assert_cleared(host)

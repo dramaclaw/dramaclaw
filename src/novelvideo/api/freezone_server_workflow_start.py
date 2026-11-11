@@ -15,7 +15,7 @@ from novelvideo.api.freezone_server_workflow_host import InProcessActionHost
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
 from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
-from novelvideo.freezone.server_workflow_actions import SERVER_WORKFLOW_ACTIONS
+from novelvideo.freezone.server_workflow_actions import server_action_supported
 from novelvideo.freezone.server_workflow_index import (
     enqueue_server_workflow_drive,
     register_server_workflow_run,
@@ -44,7 +44,7 @@ def _server_run_actions(canvas: dict, plan: dict, idempotency_key: str) -> list[
     nodes = {node["id"]: node for node in canvas.get("nodes", [])}
     actions = []
     # workflowInvalidation.ts includes HTML and Skill actions in generation identities.
-    generation_actions = GENERATION_ACTIONS | {"generate_html", "run_skill"}
+    generation_actions = GENERATION_ACTIONS | {"generate_html", "run_skill", "translate_text"}
     for planned in plan["actions"]:
         node_id, name = planned["node_id"], planned["action"]
         catalog = nodes.get(node_id, {}).get("data", {}).get("workflowCatalog")
@@ -92,9 +92,12 @@ async def check_server_workflow(
     metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
     refused = []
     run_actions = _server_run_actions(canvas, plan, "canvas-confirmation:preflight")
+    nodes = {node["id"]: node for node in canvas.get("nodes", [])}
     for action, run_action in zip(plan["actions"], run_actions):
         reason = None
-        if action["action"] not in SERVER_WORKFLOW_ACTIONS:
+        if not server_action_supported(
+            action["action"], nodes.get(action["node_id"], {}).get("type"),
+        ):
             reason = "action_not_on_server"
         elif metered:
             try:

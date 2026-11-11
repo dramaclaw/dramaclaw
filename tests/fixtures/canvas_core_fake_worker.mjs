@@ -20,6 +20,9 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     case 'sleep': await new Promise(() => {}); break;
     case 'crash': process.exit(1); break;
     case 'garbage': console.log('not-json'); continue;
+    case 'null_result': result = null; break;
+    case 'bool_result': result = true; break;
+    case 'no_result': console.log(JSON.stringify({ id, ok: true })); continue;
     case 'wrong_id': console.log(JSON.stringify({ id: 'wrong', ok: true, result: {} })); continue;
     case 'fail':
       console.log(JSON.stringify({ id, ok: false,

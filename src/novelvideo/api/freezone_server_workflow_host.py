@@ -7,22 +7,28 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 import contextvars
+import json
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 import uuid
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from starlette.responses import Response
 
 from novelvideo.api.schemas import (
     CanvasPayload,
+    FreezoneAudioMusicRequest,
+    FreezoneAudioSpeechRequest,
     FreezoneGenRequest,
     FreezoneJobAcceptedResponse,
     FreezoneRecipeCompileRequest,
     FreezoneRecipeCompileResponse,
     FreezoneRecipeTextGenerateResponse,
+    FreezoneTextTranslateRequest,
 )
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
@@ -152,27 +158,37 @@ class InProcessActionHost:
     ) -> dict:
         from novelvideo.api.routes import freezone as routes
 
-        gen_path = f"projects/{quote(self.ctx.project_id, safe='')}/freezone/gen"
-        if method != "POST":
+        prefix = f"projects/{quote(self.ctx.project_id, safe='')}/freezone/"
+        dispatch = {
+            "gen": (FreezoneGenRequest, FreezoneJobAcceptedResponse,
+                    partial(routes.freezone_gen, self.ctx.project_id)),
+            "audio/speech": (FreezoneAudioSpeechRequest, FreezoneJobAcceptedResponse,
+                             partial(routes.freezone_audio_speech, self.ctx.project_id)),
+            "audio/eleven-music": (
+                FreezoneAudioMusicRequest, FreezoneJobAcceptedResponse,
+                partial(routes.freezone_audio_eleven_music, self.ctx.project_id),
+            ),
+            "text/translate": (FreezoneTextTranslateRequest, FreezoneJobAcceptedResponse,
+                               partial(routes.freezone_text_translate, self.ctx.project_id)),
+            "freezone/recipes/compile": (
+                FreezoneRecipeCompileRequest, FreezoneRecipeCompileResponse,
+                routes.compile_freezone_recipe,
+            ),
+            "freezone/recipes/generate-text": (
+                FreezoneRecipeCompileRequest, FreezoneRecipeTextGenerateResponse,
+                routes.generate_freezone_recipe_text,
+            ),
+        }
+        key = path[len(prefix):] if path.startswith(prefix) else path
+        if method != "POST" or key not in dispatch or not path.startswith((
+            prefix, "freezone/recipes/",
+        )):
             raise ServerActionHttpError(f"Unsupported action request: {method} {path}")
-        if path == gen_path:
-            request_model = FreezoneGenRequest
-            response_model = FreezoneJobAcceptedResponse
-            handler = partial(routes.freezone_gen, self.ctx.project_id)
-        elif path == "freezone/recipes/compile":
-            request_model = FreezoneRecipeCompileRequest
-            response_model = FreezoneRecipeCompileResponse
-            handler = routes.compile_freezone_recipe
-        elif path == "freezone/recipes/generate-text":
-            request_model = FreezoneRecipeCompileRequest
-            response_model = FreezoneRecipeTextGenerateResponse
-            handler = routes.generate_freezone_recipe_text
-        else:
-            raise ServerActionHttpError(f"Unsupported action request: {method} {path}")
+        request_model, response_model, handler = dispatch[key]
         try:
             parsed = request_model(**body)
         except ValidationError as exc:
-            raise ServerActionHttpError(f"HTTP 422: {exc}") from exc
+            raise ServerActionHttpError(f"HTTP 422: {exc}", status_code=422) from exc
 
         async def request_in_usage_context():
             get_usage_meter().clear_llm_usage_context()
@@ -187,8 +203,31 @@ class InProcessActionHost:
             detail = exc.detail
             if isinstance(detail, dict):
                 detail = detail.get("message") or detail.get("code") or str(detail)
-            raise ServerActionHttpError(f"HTTP {exc.status_code}: {detail}") from exc
+            raise ServerActionHttpError(
+                f"HTTP {exc.status_code}: {detail}", status_code=exc.status_code,
+                info=self._error_info(exc.status_code, exc.detail),
+            ) from exc
+        if isinstance(response, Response):
+            status = response.status_code
+            response = json.loads(response.body)
+            if status >= 400:
+                message = response.get("error") or response.get("message") or response.get("code")
+                raise ServerActionHttpError(
+                    f"HTTP {status}: {message}", status_code=status,
+                    info=self._error_info(status, response),
+                )
         return response_model.model_validate(response).model_dump()["data"]
+
+    @staticmethod
+    def _error_info(status: int, detail) -> dict:
+        body = detail if isinstance(detail, dict) else {"message": str(detail)}
+        message = body.get("error") or body.get("message") or body.get("code") or str(detail)
+        return {
+            "name": "HttpError", "message": message, "status": status,
+            "display": message, "details": body.get("details"),
+            "requestId": body.get("request_id"),
+            "referenceIssues": body.get("reference_issues") or [],
+        }
 
     async def task_status(self, task: dict) -> dict | None:
         state = await asyncio.to_thread(
@@ -199,7 +238,7 @@ class InProcessActionHost:
             return None
         return {"status": state.status, "result": state.result, "error": state.error}
 
-    async def job_result_url(self, task: dict) -> str | None:
+    async def job_result(self, task: dict) -> dict | None:
         from novelvideo.api.routes import freezone as routes
 
         try:
@@ -208,7 +247,11 @@ class InProcessActionHost:
             )
         except HTTPException:
             return None
-        return result.get("url")
+        return result.get("data")
+
+    async def job_result_url(self, task: dict) -> str | None:
+        result = await self.job_result(task)
+        return result.get("url") if result else None
 
     async def lane_capacity(self, lane: str) -> int | None:
         from novelvideo.api.routes.tasks import get_project_task_limits
@@ -223,8 +266,8 @@ class InProcessActionHost:
 def build_server_action_runner(
     *, ctx: ProjectContext, run: dict, runner_id: str, assert_lease: Callable[[], None],
 ) -> WorkflowActionRunner:
-    async def core_call(op: str, payload: dict) -> dict:
-        return await asyncio.to_thread(get_canvas_core_pool().call, op, payload)
+    async def core_call(op: str, payload: dict) -> Any:
+        return await asyncio.to_thread(get_canvas_core_pool().call_value, op, payload)
 
     return WorkflowActionRunner(
         host=InProcessActionHost(ctx=ctx, canvas_id=run["canvas_id"], assert_lease=assert_lease),

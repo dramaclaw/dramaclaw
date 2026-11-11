@@ -275,7 +275,7 @@ async def drive_server_workflow_run(
             )
             retry_count = item.get("retry_count", 0)
             while not should_stop():
-                if name in store.GENERATION_ACTIONS:
+                if runner.supports(name):
                     started = now()
                     waiting = False
                     while not should_stop():

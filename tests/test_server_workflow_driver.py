@@ -601,3 +601,19 @@ async def test_text_takeover_does_not_repeat_sent_request(tmp_path, status, phas
         assert action["status"] == "completed"
         assert runner.calls == [("text", None)]
         assert interruptions == []
+
+
+async def test_translate_waits_for_capacity_before_submission(tmp_path, monkeypatch):
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{"node_id": "one", "action": "translate_text"}],
+                      levels=[[0]])
+    runner = FakeRunner(scope, capacity=[0])
+    monkeypatch.setattr(driver, "WORKFLOW_CAPACITY_TIMEOUT_SECONDS", 4)
+    assert (await drive(scope, clock, runner))["status"] == "failed"
+    assert runner.calls == []
+    assert runner.snapshots[1]["actions"][0]["phase"] == "waiting_capacity"
+    assert store.read_workflow_run(**scope)["actions"][0]["error"] == (
+        "workflow lane capacity timed out"
+    )

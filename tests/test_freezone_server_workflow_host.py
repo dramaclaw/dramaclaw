@@ -229,16 +229,18 @@ async def test_task_lookup_and_result_url(host, context, monkeypatch):
     async def job_result(project, task_type, job_id, user):
         assert (project, task_type, job_id) == ("project", "freezone_gen", "j1")
         assert "scopes" not in user
-        return {"ok": True, "url": "/static/a.png"}
+        return {"ok": True, "data": {"url": "/static/a.png", "size": 12}}
 
     monkeypatch.setattr(routes, "freezone_job_result", job_result)
     assert await host.job_result_url(TASK) == "/static/a.png"
+    assert await host.job_result(TASK) == {"url": "/static/a.png", "size": 12}
 
     async def missing(*args):
         raise HTTPException(404, "not found")
 
     monkeypatch.setattr(routes, "freezone_job_result", missing)
     assert await host.job_result_url(TASK) is None
+    assert await host.job_result(TASK) is None
 
 
 async def test_clear_generation_markers_only_for_this_run(context):
@@ -330,7 +332,8 @@ async def test_media_link_clears_after_handler_error(host, monkeypatch):
     assert store.get_server_workflow_media_link() is None
 
 
-async def test_real_media_route_takeover_never_reserves_again(context, monkeypatch):
+@pytest.mark.parametrize("audio", [False, True])
+async def test_real_media_route_takeover_never_reserves_again(context, monkeypatch, audio):
     from novelvideo.api import freezone_server_workflow_host as host_module
     from novelvideo.freezone import workflow_runs as store
     from novelvideo.freezone.canvas_core_pool import CanvasCorePool
@@ -343,11 +346,21 @@ async def test_real_media_route_takeover_never_reserves_again(context, monkeypat
     canvas["nodes"] = [{"id": "n", "type": "imageGenNode", "position": {"x": 0, "y": 0},
                         "data": {"prompt": "A ship", "model": "image-model"}}]
     canvas_store.atomic_write_json(canvas_store.canvas_path(context.state_dir, "default"), canvas)
+    if audio:
+        canvas["nodes"][0].update(type="audioNode", data={"text": "Hello", "audioUrl": None,
+                                                        "speechMode": "preset"})
+        canvas_store.atomic_write_json(
+            canvas_store.canvas_path(context.state_dir, "default"), canvas,
+        )
     run = store.create_workflow_run(
         project_dir=context.state_dir, project_id="project", canvas_id="default",
-        owner_kind="server", actions=[{"node_id": "n", "action": "generate_image",
-                                       "generation_attempt_id": "attempt-1"}],
+        owner_kind="server", actions=[{
+            "node_id": "n", "action": "generate_audio" if audio else "generate_image",
+            "generation_attempt_id": "attempt-1",
+        }],
     )
+    task_type = "freezone_audio_speech" if audio else "freezone_gen"
+    canvas_id = "default"
     tasks, enqueued = {}, []
     model = {"id": "image-model", "apiModel": "image-model", "providerId": "openai"}
 
@@ -366,7 +379,8 @@ async def test_real_media_route_takeover_never_reserves_again(context, monkeypat
     async def enqueue(ctx, *, task_type, scope, **kwargs):
         assert ctx.requester_user_id == "requester-id"
         await get_usage_meter().reserve_feature_start_credits(
-            user_id=ctx.requester_user_id, feature_key="image", product_surface="freezone",
+            user_id=ctx.requester_user_id, feature_key="speech" if audio else "image",
+            product_surface="freezone",
             project_id=ctx.project_id, task_type=task_type, task_id="media-task",
         )
         enqueued.append(task_type)
@@ -389,15 +403,24 @@ async def test_real_media_route_takeover_never_reserves_again(context, monkeypat
     ))
     monkeypatch.setattr(routes, "get_task_manager", lambda: manager)
     monkeypatch.setattr(host_module, "get_task_manager", lambda: manager)
-    host = InProcessActionHost(ctx=context, canvas_id="default", assert_lease=lambda: None)
+    async def projection(**kwargs):
+        return {}
+
+    async def job_result(*args):
+        return {"ok": True, "data": {"url": "/static/a.mp3"}}
+
+    if audio:
+        monkeypatch.setattr(routes, "_task_projection_payload", projection)
+        monkeypatch.setattr(routes, "freezone_job_result", job_result)
+    host = InProcessActionHost(ctx=context, canvas_id=canvas_id, assert_lease=lambda: None)
     pool = CanvasCorePool(BUNDLE, size=1)
 
     async def core(op, payload):
-        return await asyncio.to_thread(pool.call, op, payload)
+        return await asyncio.to_thread(pool.call_value, op, payload)
 
     def runner():
         return WorkflowActionRunner(
-            host=host, project_id="project", canvas_id="default", run_id=run["run_id"],
+            host=host, project_id="project", canvas_id=canvas_id, run_id=run["run_id"],
             core_call=core,
         )
 
@@ -407,17 +430,18 @@ async def test_real_media_route_takeover_never_reserves_again(context, monkeypat
     async def ignore(value):
         pass
 
-    args = dict(node_id="n", action="generate_image", generation_attempt_id="attempt-1",
+    args = dict(node_id="n", action="generate_audio" if audio else "generate_image",
+                generation_attempt_id="attempt-1",
                 on_phase=ignore, should_stop=lambda: False)
     try:
-        with RecordingUsageMeter({"freezone_gen"}).registered() as meter:
+        with RecordingUsageMeter({task_type}).registered() as meter:
             with pytest.raises(RuntimeError, match="drive died before acceptance"):
                 await runner().run_action(**args, existing_task=None, on_accepted=died)
             row = store.read_workflow_run(
-                project_dir=context.state_dir, canvas_id="default", run_id=run["run_id"],
+                project_dir=context.state_dir, canvas_id=canvas_id, run_id=run["run_id"],
             )["actions"][0]
             assert row["job_id"] is not None
-            assert enqueued == ["freezone_gen"]
+            assert enqueued == [task_type]
             assert [name for name, _ in meter.calls if name == "reserve_feature_start_credits"] == [
                 "reserve_feature_start_credits",
             ]
@@ -425,8 +449,9 @@ async def test_real_media_route_takeover_never_reserves_again(context, monkeypat
             task = {key: row[key] for key in ("task_key", "task_type", "job_id")}
             result = await runner().run_action(**args, existing_task=task, on_accepted=ignore)
             assert result["status"] == "completed"
-            assert result["artifact"] == {"output_url": "/static/a.png"}
-            assert enqueued == ["freezone_gen"]
+            assert result["artifact"] == ({"audio_url": "/static/a.mp3"} if audio
+                                          else {"output_url": "/static/a.png"})
+            assert enqueued == [task_type]
             assert [name for name, _ in meter.calls if name in {
                 "reserve_current_model_call_credit", "reserve_feature_start_credits",
             }] == []
@@ -559,4 +584,52 @@ async def test_text_takeover_uses_host_without_reserving_credit(context, monkeyp
         "content": "Previous content", "isGenerating": False, "generationStartedAt": None,
         "generationTaskKey": None, "generationTaskType": None, "generationTaskJobId": None,
         "generationOwner": None, "generationRunId": None,
+    }
+
+
+@pytest.mark.parametrize("path,handler,model,body", [
+    ("audio/speech", "freezone_audio_speech", "FreezoneAudioSpeechRequest", {"text": "Hello"}),
+    ("audio/eleven-music", "freezone_audio_eleven_music", "FreezoneAudioMusicRequest",
+     {"input": "Calm piano"}),
+    ("text/translate", "freezone_text_translate", "FreezoneTextTranslateRequest",
+     {"text": "Hello"}),
+])
+@pytest.mark.parametrize("json_response", [False, True])
+async def test_audio_transport_dispatch(
+    host, monkeypatch, path, handler, model, body, json_response,
+):
+    from starlette.responses import JSONResponse
+
+    async def submit(project, parsed, user):
+        assert project == "project"
+        assert type(parsed).__name__ == model
+        assert parsed.model_dump().items() >= body.items()
+        assert user == {"id": "requester-id", "user_id": "requester-id", "username": ""}
+        result = {"ok": True, "data": {**TASK, "extra": "drop"}}
+        return JSONResponse(result) if json_response else result
+
+    monkeypatch.setattr(routes, handler, submit)
+    assert await host.request("POST", f"projects/project/freezone/{path}", body) == TASK
+
+
+@pytest.mark.parametrize("returned", [False, True])
+async def test_audio_transport_structured_error(host, monkeypatch, returned):
+    from starlette.responses import JSONResponse
+
+    async def submit(*args):
+        body = {"ok": False, "code": "voice_required", "error": "请先配置或选择声线"}
+        if returned:
+            return JSONResponse(body, status_code=409)
+        raise HTTPException(409, body)
+
+    monkeypatch.setattr(routes, "freezone_audio_speech", submit)
+    with pytest.raises(ServerActionHttpError) as caught:
+        await host.request("POST", "projects/project/freezone/audio/speech", {"text": "Hello"})
+    assert str(caught.value) == ("HTTP 409: 请先配置或选择声线" if returned else
+                                "HTTP 409: voice_required")
+    assert caught.value.status_code == 409
+    assert caught.value.info == {
+        "name": "HttpError", "message": "请先配置或选择声线", "status": 409,
+        "display": "请先配置或选择声线", "details": None, "requestId": None,
+        "referenceIssues": [],
     }
