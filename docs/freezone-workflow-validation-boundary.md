@@ -1,5 +1,40 @@
 # Freezone 工作流校验与确认边界
 
+## 草稿准备契约与诊断
+
+`freezone_prepare_workflow_draft` 的工具 Schema 同时要求 `operation_id` 和结构化
+`intent`，嵌套字段继续引用公开 WorkflowIntent Schema。已有合法调用保持兼容；旧客户端
+漏参仍由处理函数拒绝，不自动补写模型决策或放宽后端校验。
+通用 `freezone_prepare_workflow` 的 Schema 声明 `intent` / `plan` 必须且只能提供一个，
+与已有处理函数保持一致；完整 Plan 入口继续要求 `operation_id` 和 `plan`。
+
+推荐模型在 Intent 中填写 `inputs.image_model` / `inputs.video_model`，完整 Plan 使用
+`nodes[].data.model`；不要把模型字段写进 Intent items。共享规划说明同时用于规划包和
+草稿工具描述。推荐值仍必须通过当前用户目录、模型能力、权限、计费准入及用户确认。
+
+三个草稿准备入口在工具返回后记录 `workflow_draft.<prepare|intent|plan>` 计数：
+`calls`、`outcome.<success|rejected|clarification|exception|unknown>`、耗时区间，以及固定
+白名单内的错误码和归一化字段路径。可从既有 `/diagnostics/evidence` 的 `counters` 读取。
+日志 `workflow_draft.prepare` 另外包含毫秒耗时与服务端操作 ID 的不可逆摘要，可按摘要
+关联多次调用，计算每次准入的调用次数；缺少合法操作 ID 时不生成关联摘要。
+
+诊断不记录提示词、原始错误正文、素材、用户自定义节点 ID、密钥或完整请求。字段路径
+中的节点标识替换为 `*`，数组位置统一为 `[]`。诊断计数单次批量写入，进程锁和 SQLite
+锁各等待最多 50ms；忙时跳过计数、保留日志。诊断失败不会改变原工具返回值或异常，
+也不决定是否重试、修补方案、保存草稿或创建画布。此阶段不改变默认规划或重试策略。
+
+## 执行边界
+
+准备或修改草稿的成功结果表示等待用户确认，不要求画布写入回执；只有确认创建等
+实际画布写入仍受回执检查约束。同一轮后续写入失败或草稿修订失败，不能被先前
+草稿准备成功的状态掩盖。
+
+模型兼容性预检返回的 `affected_node_ids` 属于尚未落图的 Plan。参数确认使用
+服务端返回的问题；兼容旧调用传入这些编号时，必须与该作用域的预检目标完整匹配，
+不能用它们跳过普通画布视频节点的模式校验。预检证明只在确认卡成功保存后消耗，
+参数校验或保存失败可修正后重试；已保存的卡通过同一个 `clarification_id` 恢复。
+证明继续受项目、画布、有效期和并发防重复约束，不构成运行媒体生成的授权。
+
 工作流计划、Agent 返回的 `compiled.ok` 和工具成功消息均不是执行授权或完成凭证。
 
 - 草稿创建、修改及领取确认任务时，API 使用已认证用户的 Skill/Recipe 目录重新校验计划。

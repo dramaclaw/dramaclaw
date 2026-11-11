@@ -678,9 +678,14 @@ def _codex_freezone_clarification_answered(event: Any) -> bool:
 
 
 def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
-    """Return a successfully prepared workflow draft carried by a Codex event."""
+    """Recognize a persisted draft awaiting approval, never a canvas commit."""
 
-    if _codex_freezone_tool_name(event) not in _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS:
+    tool_name = _codex_freezone_tool_name(event)
+    if tool_name in _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS:
+        expected_status = "workflow_draft_ready"
+    elif tool_name == "freezone_patch_workflow_draft":
+        expected_status = "workflow_draft_updated"
+    else:
         return None
     status = str(getattr(event, "status", "") or "").strip().lower()
     if status not in {"completed", "success", "succeeded"} or getattr(
@@ -691,8 +696,12 @@ def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
         for payload in _json_objects_from_codex_tool_value(value):
             if (
                 payload.get("ok") is True
-                and str(payload.get("status") or "") == "workflow_draft_ready"
+                and payload.get("status") == expected_status
+                and not payload.get("errors")
                 and str(payload.get("draft_id") or "").strip()
+                and type(payload.get("revision")) is int
+                and payload["revision"] > 0
+                and payload.get("draft_status", "ready") == "ready"
             ):
                 return payload
     return None

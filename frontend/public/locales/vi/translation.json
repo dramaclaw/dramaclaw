@@ -7222,7 +7222,11 @@
       "threeDWorldNode": "Thế giới 3D",
       "skillNode": "Kỹ năng",
       "styleNode": "Phong cách",
-      "htmlArtifactNode": "Trang web"
+      "htmlArtifactNode": "Trang web",
+      "previzNode": "Previz Stage",
+      "videoBreakdownNode": "Phân tích từng khung hình",
+      "vectorSvgNode": "Ảnh vector · SVG",
+      "animatedGifNode": "Ảnh động · GIF"
     },
     "exportResult": {
       "generic": "Ảnh kết quả",

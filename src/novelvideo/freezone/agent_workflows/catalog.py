@@ -1959,7 +1959,8 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
             ),
         },
         "message": (
-            "已加载完整 Workflow Skill 包，可直接规划 freezone_workflow_plan.v1。"
+            "已加载 Workflow Skill 规划包；普通流程提交结构化 Intent，"
+            "精确节点或依赖图需求提交完整 Plan；两者都先准备草稿、确认后落图。"
             if input_contract["ready_for_planning"]
             else "已加载 Workflow Skill，但必须先补全或修正 input_contract。"
         ),
