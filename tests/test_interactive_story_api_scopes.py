@@ -58,7 +58,7 @@ def story_api(tmp_path, monkeypatch):
             outline=outline,
         )
     )
-    auth = LocalAuthSession()
+    auth = LocalAuthSession(tmp_path / "agent_sessions")
     monkeypatch.setitem(registry._PORTS, "auth_session", auth)
     monkeypatch.setitem(registry._PORTS, "auth", FileAuthPort())
     monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "false")
