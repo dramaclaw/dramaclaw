@@ -1508,35 +1508,6 @@ export async function submitFreezoneFrameFromContext(
   );
 }
 
-// /freezone/image-to-3gs --------------------------------------------------- //
-
-/** SHARP / 3GS 来源类型；master/reverse 单面 SOG，pano 用 360 全景生成。 */
-export type FreezoneImageTo3GSKind = "master" | "reverse" | "pano";
-
-export interface FreezoneImageTo3GSPayload extends FreezoneNodeContext {
-  /** 源图静态地址，通常来自 Freezone 图片节点。 */
-  sourceUrl: string;
-  /** 默认 master；当前 3D 世界节点仅使用 master。 */
-  sourceKind?: FreezoneImageTo3GSKind;
-}
-
-export async function submitFreezoneImageTo3GS(
-  project: string,
-  payload: FreezoneImageTo3GSPayload,
-): Promise<FreezoneJobRef> {
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/image-to-3gs`,
-    {
-      method: "POST",
-      json: {
-        source_url: payload.sourceUrl,
-        source_kind: payload.sourceKind ?? "master",
-        ...nodeContextBody(payload),
-      },
-    },
-  );
-}
-
 // /freezone/extract-frames ------------------------------------------------ //
 
 export interface FreezoneExtractPayload {

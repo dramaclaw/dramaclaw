@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { FreezoneImageTo3GSKind } from '@/api/ops';
+import { nodeContextWireFields } from './nodeContextWire';
+
 import type { CanvasEnvironment } from '../../core/environment';
 import type { CanvasNode, ThreeDWorldNodeData } from '../../domain/canvasNodes';
 import { directorPanoSourceFromCanvasNode, imageUrlFromCanvasNode, isPanoImageCanvasNode } from '../../domain/directorWorldSources';
 import type { DirectorWorldSource } from '@/features/viewer-kit/three-d/directorManifest';
 import type { WorkflowProductOperationContext } from '../workflowExecutionActivity';
 
+export type FreezoneImageTo3GSKind = 'master' | 'reverse' | 'pano';
 export type DirectorImageSourceKind = 'master' | 'pano';
 export interface WorldGenerationRequestContext {
   nodeId: string;
@@ -26,14 +28,13 @@ export interface WorldGenerationRequestContext {
 }
 export type WorldGenerationRequestResult =
   | { ok: false; code: 'model_access_blocked' | 'no_project' | 'no_upstream' | 'generation_in_progress'
-      | 'text_unsupported' | 'missing_source_node' | 'missing_source_url' | 'inline_media_reference';
+      | 'text_unsupported' | 'missing_source_node' | 'missing_source_url';
       patches: Partial<ThreeDWorldNodeData>[] }
   | { ok: true; sourceNodeId: string; sourceUrl: string; sourceKind: FreezoneImageTo3GSKind;
       rawPanoSource: DirectorWorldSource | null;
       request: { method: 'POST'; path: string; body: Record<string, unknown> } };
 export type WorldGenerationPreparedRequest = Extract<WorldGenerationRequestResult, { ok: true }>;
 
-// Moved verbatim from ThreeDWorldNode; the component also imports this helper.
 export function imageTo3gsKindForSource(
   sourceNode: CanvasNode | null,
   visibleSourceKind: DirectorImageSourceKind,
@@ -49,9 +50,16 @@ export function imageTo3gsKindForSource(
     : 'master';
 }
 
+export function worldVisibleSourceKind(
+  data: ThreeDWorldNodeData,
+  sourceNode: CanvasNode | null,
+): DirectorImageSourceKind {
+  if (data.plyKind === 'pano' || data.plyKind === 'master') return data.plyKind;
+  return sourceNode && isPanoImageCanvasNode(sourceNode) ? 'pano' : 'master';
+}
+
 /**
  * handleSubmit guard order, raw pano preparation, and the image-to-3gs wire request.
- * The browser forwards inline URLs; this pure request boundary refuses data: and blob: media.
  * Refusals return the exact ordered writes (usually none), then the caller publishes
  * success with an empty handler output and any latest stored world URLs.
  */
@@ -67,10 +75,7 @@ export function buildWorldGenerationRequest(ctx: WorldGenerationRequestContext):
   if (!sourceNode) return { ok: false, code: 'missing_source_node', patches: [] };
   const sourceUrl = imageUrlFromCanvasNode(sourceNode);
   if (!sourceUrl) return { ok: false, code: 'missing_source_url', patches: [] };
-  if (/^\s*(?:data|blob):/i.test(sourceUrl)) return { ok: false, code: 'inline_media_reference', patches: [] };
-  const inferredImageSourceKind: DirectorImageSourceKind = isPanoImageCanvasNode(sourceNode) ? 'pano' : 'master';
-  const selectedImageSourceKind = ctx.data.plyKind === 'pano' || ctx.data.plyKind === 'master'
-    ? ctx.data.plyKind : inferredImageSourceKind;
+  const selectedImageSourceKind = worldVisibleSourceKind(ctx.data, sourceNode);
   const sourceKind = imageTo3gsKindForSource(sourceNode, selectedImageSourceKind);
   const rawPanoSource = sourceKind === 'pano'
     ? directorPanoSourceFromCanvasNode(sourceNode) ?? {
@@ -86,12 +91,7 @@ export function buildWorldGenerationRequest(ctx: WorldGenerationRequestContext):
   return { ok: true, sourceNodeId: sourceNode.id, sourceUrl, sourceKind, rawPanoSource,
     request: { method: 'POST', path: `projects/${encodeURIComponent(ctx.projectId)}/freezone/image-to-3gs`, body: {
       source_url: sourceUrl, source_kind: sourceKind,
-      ...(ctx.canvasId ? { canvas_id: ctx.canvasId } : {}),
-      ...(ctx.nodeId ? { node_id: ctx.nodeId } : {}),
-      ...(ctx.productOperation?.generationAttemptId ? {
-        product_operation_id: ctx.productOperation.operationId,
-        generation_attempt_id: ctx.productOperation.generationAttemptId,
-      } : {}),
+      ...nodeContextWireFields({ canvasId: ctx.canvasId, nodeId: ctx.nodeId, productOperation: ctx.productOperation }),
     } },
   };
 }

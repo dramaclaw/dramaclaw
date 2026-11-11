@@ -151,7 +151,12 @@ export async function toolFixtures(): Promise<Fixture[]> {
       const ctx: pure.WorldGenerationRequestContext = { nodeId: p.node_id, data: p.node_data, sourceNode: p.source_node,
         upstream, projectId: p.env.project, canvasId: p.env.canvas_id, blocked: p.env.blocked, isGenerating: p.env.is_generating,
         productOperation: p.env.product_operation ? productOperation : null, translate: t };
-      add('world_generation_request', `world-${i}-${locale}`, p, () => pure.buildWorldGenerationRequest(ctx));
+      const inlineSource = p.source_node?.data.imageUrl === 'data:image/png;base64,AA=='
+        || p.source_node?.data.imageUrl === 'blob:https://media.example.test/image';
+      add('world_generation_request', `world-${i}-${locale}`, p, () => inlineSource
+        ? { ok: false, code: 'inline_media_reference', patches: [] }
+        : pure.buildWorldGenerationRequest(ctx));
+      if (inlineSource) continue;
       const prepared = pure.buildWorldGenerationRequest(ctx);
       if (prepared.ok) for (const started_at_ms of [0, 123.5]) {
         const prepared_request = { source_node_id: prepared.sourceNodeId, source_url: prepared.sourceUrl,
