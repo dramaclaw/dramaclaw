@@ -33,29 +33,21 @@ export interface VideoGenerationRunInput {
 }
 type RequestRefusal = Extract<VideoGenerationRequestResult, { ok: false }>;
 export type VideoGenerationRefusalInput =
-  | (RequestRefusal & {
-      code: Exclude<RequestRefusal['code'], 'reference_duration_invalid'>;
+  | (Extract<RequestRefusal, { code: 'reference_duration_invalid' }> & { startedAtMs: number })
+  | (Omit<Exclude<RequestRefusal, { code: 'reference_duration_invalid' }>, 'phase'> & {
       startedAtMs: number;
       phase?: 'guard' | 'keyframes' | 'images' | 'source_video' | 'references' | 'unsupported_mode';
       isHappyHorseModel?: boolean;
-    })
-  | (Omit<RequestRefusal, 'code' | 'media' | 'rejection'> & {
-      code: 'reference_duration_invalid';
-      media: NonNullable<RequestRefusal['media']>;
-      rejection: NonNullable<RequestRefusal['rejection']>;
-      startedAtMs: number;
-      phase: 'duration';
-      durationLimits: { minMs?: number; maxMs?: number };
     });
 
-/** VideoNode.tsx:2462: start before compile; the old album survives early returns. */
+/** Start before compile; the old album survives early returns. */
 export function videoGenerationStartPatch(startedAtMs: number): Patch {
   return { isGenerating: true, generationStartedAt: startedAtMs,
     generationError: null, generationErrorDetails: null, generationErrorRequestId: null };
 }
-/** VideoNode.tsx:3118: a separate write immediately before starting the runs. */
+/** A separate write immediately before starting the runs. */
 export function videoGenerationSubmitPatch(): Patch { return { generationBatch: null }; }
-/** VideoNode.tsx:3023: caller applies this for run 0 only, regardless of acceptance order. */
+/** Caller applies this for run 0 only, regardless of acceptance order. */
 export function videoGenerationAcceptedPatch(ref: VideoGenerationTaskRef): Patch {
   return generationTaskDescriptor(ref);
 }
@@ -68,28 +60,28 @@ function referenceErrorPatch(translate: Translate): Patch {
 /**
  * Exact early-return writes, including start when the branch is reached after compile.
  * A code alone is ambiguous: missing_media is either submitDisabled (phase guard),
- * missing keyframes (keyframes), or missing submittable images (images). Source video
+ * Missing keyframes (keyframes), or missing submittable images (images). Source video
  * may likewise disappear during compile (source_video). Supply the observed phase.
  * For duration, supply the same resolved min/max limits used by the browser validator.
  *
- * VideoNode.tsx:2410-2427: model/busy/capability/cap/prompt/media guards do no writes.
- * VideoNode.tsx:2458: no project returns before start (also videoUpscale.ts:73).
- * VideoNode.tsx:2649-2660: missing keyframes writes a node error after start.
- * VideoNode.tsx:2684-2690,2717-2723,2787-2793: missing images/video just resets loading.
- * VideoNode.tsx:2416,2427: unsupported omni is normally a silent admission guard.
- * Its defensive branch (unsupported_mode) at VideoNode.tsx:2813-2827 would show
+ * Model/busy/capability/cap/prompt/media guards do no writes.
+ * No project returns before start (also videoUpscale.ts:73).
+ * Missing keyframes writes a node error after start.
+ * Missing images/video just resets loading.
+ * Unsupported omni is normally a silent admission guard.
+ * Its defensive branch (unsupported_mode) would show
  * a dialog and reset loading, but is shadowed by that same capability guard.
- * VideoNode.tsx:2933-2939: empty omni references resets loading after start.
- * VideoNode.tsx:2624-2632: duration opens reference issues and writes the title error.
+ * Empty omni references resets loading after start.
+ * Duration opens reference issues and writes the title error.
  *
  * not_video_node and extend_clip_not_prepared are pure request-boundary refusals.
  * inline_media_reference usually has no corresponding browser early return, except
  * an inline-only preview takes the empty-image/keyframe branch (images/keyframes). Otherwise
  * there is no synthetic browser patch or notice here. The browser prepares clips
  * itself; inline sources can be forwarded, while inline links hit the document
- * guard (VideoNode.tsx:2363).
- * Missing upscale source is an action error before submit, not a dialog or node write
- * (VideoNode.tsx:3265). videoUpscaleActionResult represents that action error.
+ * guard.
+ * Missing upscale source is an action error before submit, not a dialog or node write.
+ * videoUpscaleActionResult represents that action error.
  */
 export function videoGenerationRefusalOutcome(refusal: VideoGenerationRefusalInput, translate: Translate): {
   patches: Patch[]; notice: VideoGenerationNotice;
@@ -131,9 +123,9 @@ export function videoGenerationRefusalOutcome(refusal: VideoGenerationRefusalInp
 }
 
 /**
- * VideoNode.tsx:3199-3203: outer catch leaves diagnostics/handles alone. Caller
+ * The outer catch leaves diagnostics/handles alone. Caller
  * clears album pending count and, for continuity preparation, emits error.display
- * as a toast (VideoNode.tsx:3204-3207).
+ * as a toast.
  */
 export function videoGenerationFailurePatch(error: GenerationErrorInfo): Patch {
   return { ...resetLoading, generationError: error.display };
@@ -149,13 +141,13 @@ export function videoGenerationFailurePatch(error: GenerationErrorInfo): Patch {
  * Detect cancellation and the real TaskPollTimeoutError before describing failures.
  *
  * Browser quirks:
- * - VideoNode.tsx:3023: only run 0 owns the handle; VideoNode.tsx:3045: duplicates are appended, never deduplicated.
- * - VideoNode.tsx:3046-3061: first URL in completion order wins and clears errors, not task handles.
- * - VideoNode.tsx:3069-3076: no URL only errors for run 0 with no successes; never a runErrors entry.
- * - VideoNode.tsx:3080-3085: cancellation adds no run error; only run 0 without success resets loading.
- * - VideoNode.tsx:3090-3097: failure/timeout is recorded even after success; successes suppress writes.
- * - VideoNode.tsx:3105-3112: a nonzero failed run writes diagnostics without ending loading.
- * - VideoNode.tsx:3023-3113: no stale-task arbitration; in-flight admission is VideoNode.tsx:2452.
+ * - only run 0 owns the handle; duplicates are appended, never deduplicated.
+ * - first URL in completion order wins and clears errors, not task handles.
+ * - no URL only errors for run 0 with no successes; never a runErrors entry.
+ * - cancellation adds no run error; only run 0 without success resets loading.
+ * - failure/timeout is recorded even after success; successes suppress writes.
+ * - a nonzero failed run writes diagnostics without ending loading.
+ * - no stale-task arbitration; busy tasks are refused at admission.
  */
 export function videoGenerationRunOutcome(input: VideoGenerationRunInput, translate: Translate): {
   patch: Patch | null; completedUrls: string[]; runError: VideoGenerationRunError | null;
@@ -185,13 +177,13 @@ export function videoGenerationRunOutcome(input: VideoGenerationRunInput, transl
 }
 
 /**
- * Mirror post-allSettled (VideoNode.tsx:3123-3194). runErrors is in catch/push order,
+ * Mirror post-allSettled. runErrors is in catch/push order,
  * not index order; first error controls reference issues and the single dialog.
  * Caller owns album pending count (set before runs, clear after settle and outer
  * failure), panel collapse on first acceptance, and history refresh after settle
  * except reference issues (early return). All-timeout also refreshes history.
  * Caller enriches reference issues with unique upstream nodeId/label using the
- * pre-run reference snapshot (VideoNode.tsx:3134-3148), and opens the issue panel.
+ * pre-run reference snapshot, and opens the issue panel.
  * The returned issues retain the backend values, before that graph projection.
  */
 export function videoGenerationSettleOutcome(input: {
@@ -220,7 +212,7 @@ export type VideoGenerationActionResult =
   | { status: 'success'; output: Record<string, unknown> }
   | { status: 'error'; error: string };
 /**
- * VideoNode.tsx:3284-3302: after handleSubmit resolves, publish current node error
+ * After handleSubmit resolves, publish current node error
  * or URL. Single mode still waits for all runs, then adds submitted:true. Silent
  * refusals/timeouts may publish the previous URL (unless a previous error remains).
  * Missing/removed node data behaves as an empty object. No task fields are cleared.
@@ -262,7 +254,7 @@ export function videoUpscaleOutcomePatch(outcome: VideoUpscaleOutcome): Patch | 
   return { videoUrl: url, ...resetLoading, generationError: null };
 }
 /**
- * VideoNode.tsx:3265-3281: source absence publishes an error before submit. Otherwise
+ * Source absence publishes an error before submit. Otherwise
  * the resolved upscale helper ALWAYS publishes success, even with a node error.
  * No project returns silently (videoUpscale.ts:73-75), so the old URL is published.
  * Caller must retain the admission source value if node data changes while waiting.
