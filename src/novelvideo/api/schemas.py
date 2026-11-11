@@ -1631,6 +1631,10 @@ class FreezoneVideoEraseRequest(BaseModel):
 class FreezoneVideoUpscaleRequest(BaseModel):
     """视频增强请求。模型由媒体目录能力动态选择。"""
 
+    enhancement_model: Literal["standard", "topaz"] = Field(
+        default="standard",
+        description="增强方案；旧请求保持标准方案",
+    )
     source_url: str = Field(description="待高清处理视频的静态地址")
     resolution: Literal["1080p", "2k", "4k"] = Field(
         default="1080p",
@@ -1887,7 +1891,6 @@ class FreezoneVideoComposeStudioRequest(FreezoneVideoComposeRequest):
         default=False,
         description="重新生成 film.html；默认复用上次的成片目录以保留 Studio 内编辑",
     )
-
 
 
 class FreezoneStudioFilmEditRequest(BaseModel):
