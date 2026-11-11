@@ -654,3 +654,26 @@ async def test_image_tool_uses_default_capacity(tmp_path):
     runner.lane_capacity = recorded
     assert (await drive(scope, clock, runner))["status"] == "completed"
     assert lanes == ["default", "default"]
+
+
+async def test_generate_world_uses_world_lane_capacity(tmp_path, monkeypatch):
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{"node_id": "one", "action": "generate_3gs_world"}],
+                      levels=[[0]])
+    lanes = []
+
+    class WorldRunner(FakeRunner):
+        async def lane_capacity(self, lane):
+            lanes.append(lane)
+            return 0 if lane == "world" else 1
+
+    monkeypatch.setattr(driver, "WORKFLOW_CAPACITY_TIMEOUT_SECONDS", 4)
+    runner = WorldRunner(scope)
+    assert (await drive(scope, clock, runner))["status"] == "failed"
+    assert runner.calls == []
+    assert set(lanes) == {"world"}
+    assert store.read_workflow_run(**scope)["actions"][0]["error"] == (
+        "workflow lane capacity timed out"
+    )

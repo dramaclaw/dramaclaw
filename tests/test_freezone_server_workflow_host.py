@@ -869,3 +869,116 @@ async def test_image_tool_claim_rejects_generation_row(context, monkeypatch):
                 claim_canvas_id="default", claim_node_id="n",
             )
     assert caught.value.status_code == 409
+
+
+async def test_world_request_dispatch_and_media_link(host, monkeypatch):
+    from novelvideo.api.schemas import FreezoneImageTo3GSRequest
+    from novelvideo.freezone.workflow_runs import get_server_workflow_media_link
+
+    link = {"run_id": "run", "canvas_id": "default", "node_id": "n",
+            "generation_attempt_id": "attempt"}
+    task = {**TASK, "task_type": "freezone_image_to_3gs"}
+
+    async def world(project, body, user):
+        assert project == "project"
+        assert isinstance(body, FreezoneImageTo3GSRequest)
+        assert body.node_id == "n"
+        assert get_server_workflow_media_link() == link
+        return {"ok": True, "data": {**task, "scope": "j1", "scene_id": "scene",
+                                     "step": "single_face_sharp"}}
+
+    monkeypatch.setattr(routes, "freezone_image_to_3gs", world)
+    result = await host.request("POST", "projects/project/freezone/image-to-3gs", {
+        "source_url": "/static/source.png", "source_kind": "master", "canvas_id": "default",
+        "node_id": "n",
+    }, media_link=link)
+    assert {key: result[key] for key in task} == task
+    assert get_server_workflow_media_link() is None
+
+
+@pytest.mark.parametrize("linked,action", [
+    (True, "generate_3gs_world"), (False, "generate_3gs_world"), (True, "generate_image"),
+])
+async def test_world_route_claim_and_browser_payload(context, monkeypatch, linked, action):
+    from novelvideo.api.schemas import FreezoneImageTo3GSRequest
+    from novelvideo.freezone import workflow_runs as store
+    from novelvideo.ports import get_usage_meter
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    root = context.state_dir
+    source = root / "source.png"
+    source.write_bytes(b"fake image; never run SHARP")
+    canvas_store.ensure_default_canvas(root, project_id="project")
+    run = store.create_workflow_run(
+        project_dir=root, project_id="project", canvas_id="default", owner_kind="server",
+        actions=[{"node_id": "n", "action": action, "generation_attempt_id": "attempt"}],
+    )
+    link = {"run_id": run["run_id"], "canvas_id": "default", "node_id": "n",
+            "generation_attempt_id": "attempt"} if linked else None
+    tasks, enqueued = {}, []
+    fresh_ids = iter(["fresh-1", "fresh-2"])
+
+    async def resolve(project, user):
+        return context, "", project, root, str(context.output_dir)
+
+    async def enqueue(ctx, *, task_type, queue_kind, scope, payload, **kwargs):
+        assert task_type == "freezone_image_to_3gs" and queue_kind == "world"
+        await get_usage_meter().reserve_feature_start_credits(
+            user_id=ctx.requester_user_id, feature_key=payload["billing"]["feature_key"],
+            product_surface="freezone", project_id=ctx.project_id, task_type=task_type,
+            task_id="world-task",
+        )
+        enqueued.append(payload.copy())
+        state = SimpleNamespace(task_id="world-task", status="running", metadata={
+            "backend": "celery", "queue": "world",
+        })
+        tasks[scope] = state
+        return SimpleNamespace(task_state=state, backend="celery", queue="world")
+
+    monkeypatch.setattr(routes, "_resolve_freezone_project", resolve)
+    monkeypatch.setattr(routes, "resolve_static_url_to_path", lambda *args: source)
+    monkeypatch.setattr(routes, "_new_job_id", lambda: next(fresh_ids))
+    monkeypatch.setattr(routes, "get_task_backend", lambda: SimpleNamespace(enqueue_project_task=enqueue))
+    monkeypatch.setattr(routes, "get_task_manager", lambda: SimpleNamespace(
+        get_task_for_project=lambda ctx, kind, episode, **kw: tasks.get(kw["scope"]),
+    ))
+    body = FreezoneImageTo3GSRequest(source_url="/static/source.png", source_kind="master",
+                                    canvas_id="default", node_id="n")
+    with RecordingUsageMeter().registered() as meter:
+        with store.server_workflow_media_link(link):
+            if action != "generate_3gs_world":
+                with pytest.raises(HTTPException) as caught:
+                    await routes.freezone_image_to_3gs("project", body, {})
+                assert caught.value.status_code == 409
+                assert enqueued == meter.calls == []
+                return
+            first = (await routes.freezone_image_to_3gs("project", body, {}))["data"]
+            second = (await routes.freezone_image_to_3gs("project", body, {}))["data"]
+        reservations = [c for c in meter.calls if c[0] == "reserve_feature_start_credits"]
+    assert len(enqueued) == len(reservations) == (1 if linked else 2)
+    assert all(c[1]["feature_key"] == "freezone.image_to_3gs" for c in reservations)
+    assert first["scope"] == first["job_id"]
+    assert second["scope"] == second["job_id"]
+    assert (first["job_id"] == second["job_id"]) is linked
+    if linked:
+        row = store.read_workflow_run(project_dir=root, canvas_id="default",
+                                      run_id=run["run_id"])["actions"][0]
+        assert row["job_id"] == first["job_id"]
+        assert row["task_type"] == "freezone_image_to_3gs"
+    else:
+        assert [first["job_id"], second["job_id"]] == ["fresh-1", "fresh-2"]
+        assert first == {"task_type": "freezone_image_to_3gs", "job_id": "fresh-1",
+                         "scope": "fresh-1", "scene_id": first["scene_id"],
+                         "step": "single_face_sharp", "task_id": "world-task",
+                         "task_key": routes.project_task_state_key(
+                             "freezone_image_to_3gs", "project", 0, scope="fresh-1"),
+                         "backend": "celery", "queue": "world"}
+    assert enqueued[0] == {
+        "job_id": first["job_id"], "scene_id": first["scene_id"], "source_path": str(source),
+        "source_kind": "master", "params": {"image_path": str(source), "source_kind": "master",
+            "face_name": "front", "depth_meters": 8.0, "device": "auto", "face_size": 768,
+            "internal_size": 1536, "max_gaussians_per_face": 1_000_000, "timeout_seconds": 1800,
+            "source_url": "/static/source.png"},
+        "project_dir": str(root), "canvas_id": "default", "node_id": "n",
+        "billing": {"feature_key": "freezone.image_to_3gs", "operation": "master"},
+    }

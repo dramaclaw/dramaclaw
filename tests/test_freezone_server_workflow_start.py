@@ -309,3 +309,24 @@ async def test_image_tool_batch_refuses_scene_matting_and_text_source(setup):
             "run_scene360_tool", "run_matting_tool", "run_upscale_tool",
         ]
     ]
+
+
+@pytest.mark.parametrize("node_type,catalog,metered,reason", [
+    ("threeDWorldNode", {}, False, None),
+    ("threeDWorldNode", "invalid", False, None),
+    ("imageGenNode", {}, False, "action_not_on_server"),
+    ("threeDWorldNode", {"recipeId": " world "}, False, "world_recipe"),
+    ("threeDWorldNode", {"recipeId": " world "}, True, "world_recipe"),
+])
+async def test_world_admission_and_attempt(setup, node_type, catalog, metered, reason):
+    setup.canvas["nodes"][1].update(type=node_type, data={"workflowCatalog": catalog})
+    setup.plan["actions"][1].update(action="generate_3gs_world")
+    canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), setup.canvas)
+    if not metered:
+        register_port("usage_meter", NoOpUsageMeter())
+    result = await check(setup)
+    assert result == {"status": "runnable", "plan": setup.plan, "refused": ([{
+        "node_id": "text", "action": "generate_3gs_world", "label": "Text", "reason": reason,
+    }] if reason else [])}
+    actions = start._server_run_actions(setup.canvas, setup.plan, "confirmation")
+    assert actions[1]["generation_attempt_id"] == "confirmation:text:generate_3gs_world"

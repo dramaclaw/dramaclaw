@@ -59,6 +59,17 @@ export async function serveWorldGenerationRequest(payload: unknown) {
 export async function serveWorldGenerationPatch(payload: unknown) {
   const { input, phase, locale } = p.patch(payload);
   switch (phase) {
+    case 'labels': {
+      p.fields(input, ['phase', 'locale']);
+      return runServerRequest(locale, async () => {
+        const translate = await createServerTranslate(locale);
+        return {
+          pano_3dgs: translate('node.threeDWorld.pano3dgsLabel'),
+          image_3dgs: translate('node.threeDWorld.image3dgsLabel'),
+          world_url_missing: translate('node.threeDWorld.worldUrlMissing'),
+        };
+      });
+    }
     case 'source_kind': {
       p.fields(input, ['phase', 'locale', 'source_node', 'visible_source_kind']);
       const sourceNode = p.nullable(input.source_node, node), visible = p.choice(input.visible_source_kind, ['master', 'pano']);

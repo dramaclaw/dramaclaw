@@ -1066,6 +1066,16 @@ async def _start_or_enqueue_freezone_image_to_3gs(
             "operation": source_kind,
         },
     }
+    if ctx is not None and (link := get_server_workflow_media_link()) is not None:
+        data = (await _enqueue_claimed_workflow_media(
+            ctx=ctx, project_dir=project_dir, task_type=task_type, queue_kind="world",
+            payload=payload, job_id=job_id,
+            claim_canvas_id=link["canvas_id"], claim_node_id=link["node_id"],
+        ))["data"]
+        return {
+            "task_id": data.get("task_id"), "task_key": data["task_key"],
+            "backend": data["backend"], "queue": data["queue"], "job_id": data["job_id"],
+        }
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -7314,12 +7324,13 @@ async def freezone_image_to_3gs(
         _handle_task_start_runtime_error("failed to start image-to-3gs task", exc)
         raise HTTPException(503, f"failed to start image-to-3gs task: {exc}") from exc
 
+    effective_job_id = task_data.pop("job_id", job_id)
     return {
         "ok": True,
         "data": {
             "task_type": "freezone_image_to_3gs",
-            "job_id": job_id,
-            "scope": job_id,
+            "job_id": effective_job_id,
+            "scope": effective_job_id,
             "scene_id": scene_id,
             "step": step,
             **task_data,

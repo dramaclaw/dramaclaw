@@ -24,6 +24,8 @@ from novelvideo.api.schemas import (
     FreezoneAudioMusicRequest,
     FreezoneAudioSpeechRequest,
     FreezoneGenRequest,
+    FreezoneImageTo3GSRequest,
+    FreezoneStageAssetAcceptedResponse,
     FreezoneOutpaintRequest,
     FreezoneUpscaleRequest,
     FreezoneTemplateEditRequest,
@@ -203,6 +205,8 @@ class InProcessActionHost:
 
         prefix = f"projects/{quote(self.ctx.project_id, safe='')}/freezone/"
         dispatch = {
+            "image-to-3gs": (FreezoneImageTo3GSRequest, FreezoneStageAssetAcceptedResponse,
+                             partial(routes.freezone_image_to_3gs, self.ctx.project_id)),
             "outpaint": (FreezoneOutpaintRequest, FreezoneJobAcceptedResponse,
                          partial(routes.freezone_outpaint, self.ctx.project_id)),
             "upscale": (FreezoneUpscaleRequest, FreezoneJobAcceptedResponse,

@@ -1346,3 +1346,204 @@ async def test_image_tool_stop_during_wait_clears_child(setup_runner):
     }
     assert host.patches[-1] == CLEAR
     assert set(host.patch_nodes) == {TOOL_CHILD}
+
+
+WORLD_TASK = {"task_key": "world:project:j1", "task_type": "freezone_image_to_3gs", "job_id": "j1"}
+WORLD_URL = "/api/projects/project/static/world.sog"
+
+
+def world_canvas(host, data=None, source_data=None):
+    host.canvas = {"nodes": [
+        {"id": "n", "type": "threeDWorldNode", "position": {"x": 0, "y": 0},
+         "data": data or {}},
+        {"id": "image", "type": "imageGenNode", "position": {"x": 0, "y": 0},
+         "data": {"imageUrl": URL} if source_data is None else source_data},
+    ], "edges": [{"id": "edge", "source": "image", "target": "n"}]}
+    host.task = WORLD_TASK
+    host.responses = [WORLD_TASK]
+    host.statuses = [{"status": "completed", "result": {"ply_url": WORLD_URL}}]
+
+
+@pytest.mark.parametrize("pano", [False, True])
+async def test_world_happy_path(setup_runner, tmp_path, pano, caplog):
+    import logging
+
+    host, runner, run, phases, accepted = setup_runner
+    world_canvas(host, {"plyKind": "pano"} if pano else {})
+    source = deepcopy(host.canvas["nodes"][1])
+    patch_node = host.patch_node
+
+    async def ordered_patch(node_id, patch):
+        if "taskKey" in patch and patch["taskKey"]:
+            assert accepted == [WORLD_TASK]
+        await patch_node(node_id, patch)
+
+    host.patch_node = ordered_patch
+    with caplog.at_level(logging.INFO):
+        result = await run("generate_3gs_world", generation_attempt_id="attempt")
+    kind = "pano" if pano else "master"
+    assert host.requests == [{"method": "POST", "path": "projects/project/freezone/image-to-3gs",
+                              "body": {"source_url": URL, "source_kind": kind,
+                                       "canvas_id": "default", "node_id": "n"}}]
+    assert host.media_links == [{"run_id": "run-1", "canvas_id": "default", "node_id": "n",
+                                 "generation_attempt_id": "attempt"}]
+    start, accepted_patch, done = host.patches
+    assert start.items() >= {"isGenerating": True, "generationOwner": "server",
+                             "generationRunId": "run-1", "sourceNodeId": "image",
+                             "plyKind": kind, "previewImageUrl": URL}.items()
+    assert accepted_patch == {"taskKey": WORLD_TASK["task_key"],
+                              "generationTaskKey": WORLD_TASK["task_key"],
+                              "generationTaskType": WORLD_TASK["task_type"],
+                              "generationTaskJobId": "j1"}
+    assert phases == ["submitting", "generating"]
+    assert host.data["plyUrl"] == WORLD_URL
+    generated = next(s for s in host.data["sources"] if s["id"].startswith("generated-sog:"))
+    assert generated["id"] == host.data["activeSourceId"] == f"generated-sog:{kind}:0"
+    assert generated["label"] == ("360 3DGS" if pano else "图片 3DGS")
+    assert done.items() >= {"workflowResultStale": False, "workflowGeneratedAt": "1970-01-01T00:00:00.000Z"}.items()
+    assert_cleared(host)
+    output = {"plyUrl": WORLD_URL, **({"panoUrl": URL} if pano else {})}
+    assert result == {"status": "completed", "output": output, "artifact": {"output_url": WORLD_URL}}
+    if pano:
+        assert start["sources"][0]["pano_url"] == start["panoUrl"] == URL
+        assert host.data["panoUrl"] == URL
+    assert host.canvas["nodes"][1] == source
+    assert set(host.patch_nodes) == {"n"}
+    assert_durable(tmp_path, "generate_3gs_world", result["artifact"])
+    logs = [r.getMessage() for r in caplog.records if r.name.endswith("server_workflow_actions")]
+    assert logs == ["run_id=run-1 node_id=n action=generate_3gs_world outcome=started",
+                    "run_id=run-1 node_id=n action=generate_3gs_world outcome=completed"]
+
+
+@pytest.mark.parametrize("failure,message", [
+    ("failed", "Sharp3DUnavailable: SHARP unavailable"), ("cancelled", "任务已取消"),
+    ("missing", "未能在 task.result 中找到 3D 世界地址"), ("http", "HTTP 503: unavailable"),
+])
+async def test_world_failures(setup_runner, failure, message):
+    host, _, run, _, _ = setup_runner
+    world_canvas(host, {"plyUrl": "/static/old.sog"})
+    if failure == "http":
+        host.responses = [ServerActionHttpError(message)]
+    elif failure == "missing":
+        host.statuses = [{"status": "completed", "result": {}}]
+    else:
+        host.statuses = [{"status": failure, "error": message if failure == "failed" else None}]
+    assert await run("generate_3gs_world") == {"status": "failed", "error": message}
+    assert host.data["errorMessage"] == f"生成失败: {message}"
+    assert host.data["taskKey"] is None
+    assert_cleared(host)
+    if failure in {"failed", "cancelled"}:
+        assert all(host.data[key] is None for key in (
+            "generationTaskKey", "generationTaskType", "generationTaskJobId"))
+    elif failure == "missing":
+        assert host.data["generationTaskKey"] == WORLD_TASK["task_key"]
+    assert set(host.patch_nodes) == {"n"}
+
+
+@pytest.mark.parametrize("case,message", [
+    ("no_upstream", "3D 世界节点没有可用的上游图片"),
+    ("text", "文生 3D 模型尚未对接，请连接图片节点"),
+    ("missing_url", "3D 世界节点没有可用的上游图片"),
+    ("inline", "上游图片没有可用的地址"),
+    ("busy", "节点正在生成中"),
+])
+async def test_world_guards_without_submission(setup_runner, case, message):
+    host, _, run, _, _ = setup_runner
+    world_canvas(host)
+    if case == "no_upstream":
+        host.canvas["edges"] = []
+    elif case == "text":
+        host.canvas["nodes"][1].update(type="textAnnotationNode", data={"content": "A world"})
+    elif case == "missing_url":
+        host.canvas["nodes"][1]["data"] = {}
+    elif case == "inline":
+        host.canvas["nodes"][1]["data"]["imageUrl"] = "data:image/png;base64,AA=="
+    else:
+        host.data["isGenerating"] = True
+    assert await run("generate_3gs_world") == {"status": "failed", "error": message}
+    assert host.requests == []
+    assert host.patches == ([{"errorMessage": message}] if case == "text" else [])
+
+
+@pytest.mark.parametrize("has_task", [False, True])
+async def test_world_takeover(setup_runner, has_task):
+    host, _, run, phases, accepted = setup_runner
+    world_canvas(host)
+    if has_task:
+        host.data.update(isGenerating=True, generationOwner="server", generationRunId="run-1",
+                         sourceNodeId="image", plyKind="master")
+        host.statuses.insert(0, {"status": "running"})
+        result = await run("generate_3gs_world", existing_task=WORLD_TASK)
+        assert host.requests == accepted == []
+        assert len(host.patches) == 1
+        assert phases == ["generating"]
+    else:
+        patch = host.patch_node
+
+        async def stop_after_start(node_id, value):
+            await patch(node_id, value)
+            if value.get("isGenerating"):
+                raise ActionLeaseLost()
+
+        host.patch_node = stop_after_start
+        assert await run("generate_3gs_world") == {"status": "stopped"}
+        assert host.requests == []
+        assert host.data["sourceNodeId"] == "image"
+        host.patch_node = patch
+        result = await run("generate_3gs_world")
+        assert host.requests[0]["body"] == {"source_url": URL, "source_kind": "master",
+                                            "canvas_id": "default", "node_id": "n"}
+        assert len(host.requests) == 1
+    assert result["output"] == {"plyUrl": WORLD_URL}
+
+
+async def test_world_takeover_rebuilds_identical_body(setup_runner):
+    host, _, run, _, _ = setup_runner
+    world_canvas(host, {"plyKind": "pano"})
+    request = host.request
+
+    async def lost_acceptance(*args, **kwargs):
+        await request(*args, **kwargs)
+        raise ActionLeaseLost()
+
+    host.request = lost_acceptance
+    assert await run("generate_3gs_world") == {"status": "stopped"}
+    first = deepcopy(host.requests[0])
+    host.request = request
+    host.responses = [WORLD_TASK]
+    assert (await run("generate_3gs_world"))["status"] == "completed"
+    assert host.requests == [first, first]
+
+
+async def test_world_poll_timeout_only_clears_owner(setup_runner):
+    host, _, run, _, _ = setup_runner
+    world_canvas(host, {"generationOwner": "server", "generationRunId": "run-1",
+                        "isGenerating": True, "taskKey": WORLD_TASK["task_key"]})
+    before = deepcopy(host.data)
+    host.statuses = [{"status": "running"}]
+    assert await run("generate_3gs_world", existing_task=WORLD_TASK) == {
+        "status": "failed", "error": "3D 世界生成超时"}
+    assert host.patches == [{"generationOwner": None, "generationRunId": None}]
+    assert host.data == {**before, **host.patches[0]}
+
+
+async def test_world_stop_during_wait(setup_runner):
+    host, _, run, _, _ = setup_runner
+    world_canvas(host)
+    host.statuses = [{"status": "running"}]
+
+    async def stop(seconds):
+        host.stopped = True
+
+    host.sleep = stop
+    setup_runner[1].sleep = stop
+    assert await run("generate_3gs_world") == {"status": "stopped"}
+    assert host.patches[-1] == {**CLEAR, "taskKey": None}
+
+
+async def test_world_product_operation_refused_without_effects(setup_runner):
+    host, _, run, _, _ = setup_runner
+    world_canvas(host)
+    assert await run("generate_3gs_world", product_operation_id="recipe") == {
+        "status": "failed", "error": "工作流动作 generate_3gs_world 需要打开画布运行"}
+    assert host.patches == host.requests == []

@@ -59,6 +59,7 @@ IMAGE_TOOL_NODE_TYPES = frozenset({"imageGenNode", "uploadNode", "imageNode", "e
 
 SERVER_WORKFLOW_ACTIONS = IMAGE_TOOL_SERVER_ACTIONS | frozenset({
     "generate_image", "generate_text", "generate_audio", "translate_text", "generate_video",
+    "generate_3gs_world",
 })
 
 
@@ -67,10 +68,15 @@ def server_action_supported(action: str, node_type: str | None) -> bool:
         (action not in IMAGE_TOOL_SERVER_ACTIONS or node_type in IMAGE_TOOL_NODE_TYPES)
         and (action != "translate_text" or node_type == "audioNode")
         and (action != "generate_video" or node_type == "videoNode")
+        and (action != "generate_3gs_world" or node_type == "threeDWorldNode")
     )
 
 
 def server_action_refusal(action: str, node: dict, edges: list[dict]) -> str | None:
+    if action == "generate_3gs_world" and node.get("type") == "threeDWorldNode":
+        catalog = (node.get("data") or {}).get("workflowCatalog")
+        if isinstance(catalog, dict) and str(catalog.get("recipeId") or "").strip():
+            return "world_recipe"
     if action != "generate_video" or node.get("type") != "videoNode":
         return None
     data = node.get("data") or {}
@@ -187,13 +193,15 @@ class WorkflowActionRunner:
                 return await execution.text()
             if action == "generate_audio":
                 return await execution.audio(existing_task)
-            if action == "translate_text" or action in IMAGE_TOOL_SERVER_ACTIONS:
+            if action in {"translate_text", "generate_3gs_world"} or action in IMAGE_TOOL_SERVER_ACTIONS:
                 canvas = await self.host.read_canvas()
                 node_type = next((node.get("type") for node in canvas["nodes"]
                                   if node["id"] == node_id), None)
                 if server_action_supported(action, node_type):
                     if action in IMAGE_TOOL_SERVER_ACTIONS:
                         return await execution.image_tool(action, existing_task)
+                    if action == "generate_3gs_world":
+                        return await execution.world(existing_task)
                     return await execution.audio_translate(existing_task)
             return {"status": "failed", "error": f"Unsupported server action: {action}"}
         except _ActionStopped:
@@ -203,7 +211,10 @@ class WorkflowActionRunner:
                     if target_id is not None:
                         data = await execution.node_data(target_id)
                         if execution.started or data.get("generationRunId") == self.run_id:
-                            await self.host.patch_node(target_id, dict(CLEAR_GENERATION))
+                            await self.host.patch_node(target_id, {
+                                **CLEAR_GENERATION,
+                                **({"taskKey": None} if action == "generate_3gs_world" else {}),
+                            })
             except ActionLeaseLost:
                 pass
             return {"status": "stopped"}
@@ -245,7 +256,7 @@ class _ActionExecution:
     async def core(self, op, payload):
         self.check()
         if op in {"audio_generation_patch", "audio_translate_patch", "video_generation_patch",
-                  "image_tool_patch"}:
+                  "image_tool_patch", "world_generation_patch"}:
             payload = {"locale": self.host.locale, **payload}
         result = await self.runner.core_call(op, payload)
         self.check()
@@ -372,6 +383,124 @@ class _ActionExecution:
         await self.patch_child({**await self.core("image_tool_patch", {
             "phase": "failure", "message": message,
         }), **_CLEAR_OWNER, **clear_task})
+        return {"status": "failed", "error": message}
+
+    async def world(self, existing_task):
+        kind = "stopped"
+        logger.info(
+            "run_id=%s node_id=%s action=generate_3gs_world outcome=started",
+            self.runner.run_id, self.node_id,
+        )
+        try:
+            result = await self.world_execute(existing_task)
+            kind = result["status"]
+            return result
+        finally:
+            logger.info(
+                "run_id=%s node_id=%s action=generate_3gs_world outcome=%s",
+                self.runner.run_id, self.node_id, kind,
+            )
+
+    async def world_execute(self, existing_task):
+        if self.product_operation:
+            return {"status": "failed", "error": "工作流动作 generate_3gs_world 需要打开画布运行"}
+        deadline = self.runner.monotonic() + self.runner.task_timeout_seconds
+        canvas = await self.host.read_canvas()
+        data = next((n["data"] for n in canvas["nodes"] if n["id"] == self.node_id), {})
+        selected = await self.core("world_generation_upstream", {
+            "canvas": canvas, "node_id": self.node_id, "env": {"locale": self.host.locale},
+        })
+        owned = existing_task is not None or (
+            data.get("generationOwner") == "server"
+            and data.get("generationRunId") == self.runner.run_id
+        )
+        upstream = selected["upstream"]
+        built = await self.core("world_generation_request", {
+            "node_id": self.node_id, "node_data": data, "source_node": selected["sourceNode"],
+            "upstream": {"node_id": upstream["nodeId"], "kind": upstream["kind"]}
+            if upstream else None,
+            "env": {"locale": self.host.locale, "project": self.runner.project_id,
+                    "canvas_id": self.runner.canvas_id, "blocked": False,
+                    "is_generating": False if owned else data.get("isGenerating") is True,
+                    "product_operation": None},
+        })
+        if built["ok"] is False:
+            patches = built["patches"]
+            for index, patch in enumerate(patches):
+                clear = (_CLEAR_OWNER if index == len(patches) - 1
+                         and data.get("generationOwner") == "server"
+                         and data.get("generationRunId") == self.runner.run_id else {})
+                await self.patch({**patch, **clear})
+            # Browser silent guards publish empty success; report that no task was submitted.
+            messages = {
+                "generation_in_progress": "节点正在生成中",
+                "no_upstream": "3D 世界节点没有可用的上游图片",
+                "missing_source_node": "3D 世界节点没有可用的上游图片",
+                "missing_source_url": "上游图片没有可用的地址",
+                "inline_media_reference": "上游图片没有可用的地址",
+            }
+            return {"status": "failed", "error": (
+                patches[-1].get("errorMessage") if patches else None
+            ) or messages.get(built["code"], built["code"])}
+        prepared = {
+            "source_node_id": built["sourceNodeId"], "source_url": built["sourceUrl"],
+            "source_kind": built["sourceKind"], "raw_pano_source": built["rawPanoSource"],
+            "request": built["request"],
+        }
+        if existing_task is None:
+            await self.patch({**await self.core("world_generation_patch", {
+                "phase": "start", "prepared_request": prepared, "node_data": data,
+                "started_at_ms": self.runner.now_ms(),
+            }), "generationOwner": "server", "generationRunId": self.runner.run_id})
+            self.started = True
+        task = existing_task
+        try:
+            if task is None or await self.host.task_status(task) is None:
+                await self.phase("submitting")
+                task = await self.submit_task(
+                    built["request"], deadline=deadline, timeout_message="3D 世界生成超时",
+                )
+                await self.on_accepted(task)
+                await self.patch(await self.core("world_generation_patch", {
+                    "phase": "accepted", "task": task,
+                }))
+        except ServerActionHttpError as exc:
+            return await self.world_failure(str(exc), task, "failed")
+        await self.phase("generating")
+        outcome = await self.wait_task(
+            task, timeout_message="3D 世界生成超时", failed_message="task failed",
+        )
+        if outcome.get("timed_out"):
+            await self.patch(dict(_CLEAR_OWNER))
+            return {"status": "failed", "error": "3D 世界生成超时"}
+        if outcome["kind"] != "completed":
+            return await self.world_failure(outcome["message"], task, outcome["kind"])
+        labels = await self.core("world_generation_patch", {"phase": "labels"})
+        sources = (await self.node_data()).get("sources")
+        done = await self.core("world_generation_patch", {
+            "phase": "success", "result": outcome.get("result") or None,
+            "generated_id": f"generated-sog:{built['sourceKind']}:{int(self.runner.now_ms())}",
+            "source_kind": built["sourceKind"], "raw_pano_source": built["rawPanoSource"],
+            "current_sources": sources if isinstance(sources, list) else [], "labels": labels,
+        })
+        if done["kind"] == "missing_world_url":
+            return await self.world_failure(done["message"], task, "completed")
+        await self.patch({**done["patch"], **_CLEAR_OWNER, **self.current_result_patch()})
+        # The browser action_result can publish stored URLs; return only this run's output.
+        url = done["output"].get("plyUrl")
+        return {"status": "completed", "output": done["output"],
+                **({"artifact": {"output_url": url}} if url else {})}
+
+    async def world_failure(self, message, task, kind):
+        failed = await self.core("world_generation_patch", {
+            "phase": "failure", "outcome": {"kind": "failed", "message": message},
+        })
+        data = await self.node_data()
+        clear_task = ({
+            "generationTaskKey": None, "generationTaskType": None, "generationTaskJobId": None,
+        } if kind in {"failed", "cancelled"} and task
+            and data.get("generationTaskKey") == task["task_key"] else {})
+        await self.patch({**failed["patches"][0], **_CLEAR_OWNER, **clear_task})
         return {"status": "failed", "error": message}
 
     async def image(self, existing_task):

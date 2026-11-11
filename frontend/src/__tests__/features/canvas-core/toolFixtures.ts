@@ -70,6 +70,11 @@ export async function toolFixtures(): Promise<Fixture[]> {
     const t = await createServerTranslate(locale);
     const patch = (op: string, phase: string, name: string, fields: Record<string, unknown>, expected: Fixture['expected']) =>
       add(op, `${phase}-${name}-${locale}`, { phase, locale, ...fields }, expected);
+    patch('world_generation_patch', 'labels', 'browser labels', {}, () => ({
+      pano_3dgs: t('node.threeDWorld.pano3dgsLabel'),
+      image_3dgs: t('node.threeDWorld.image3dgsLabel'),
+      world_url_missing: t('node.threeDWorld.worldUrlMissing'),
+    }));
     for (const action of actions) {
       const cases: { name: string; data?: Record<string, unknown>; project?: string | null; nodes?: CanvasNode[]; models?: unknown }[] = [
         { name: 'ordinary' }, { name: 'opaque fallbacks', data: { imageUrl: null, referenceImageUrl: url, aspectRatio: 2 } },

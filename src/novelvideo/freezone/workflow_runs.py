@@ -44,6 +44,7 @@ def get_server_workflow_media_link() -> dict[str, str] | None:
 
 
 _WORKFLOW_MEDIA_ACTIONS = {
+    "freezone_image_to_3gs": {"generate_3gs_world"},
     "freezone_edit": IMAGE_TOOL_SERVER_ACTIONS,
     "freezone_gen": {"generate_image"},
     "freezone_video_gen": {"generate_video", "generate_text_video"},
