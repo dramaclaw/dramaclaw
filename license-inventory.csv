@@ -3762,6 +3762,7 @@ src/novelvideo/freezone/video_node.py,Elastic-2.0,2026 SuperTale contributors,RE
 src/novelvideo/freezone/video_slowdown.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/vision_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_contract_generated.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/workflow_draft_delivery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_draft_diagnostics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_drafts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_external_inputs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
