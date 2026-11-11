@@ -241,6 +241,49 @@ async def test_noop_start_keeps_attempt_identity_without_operations(setup):
     assert [q["task_type"] for q in setup.queued] == ["freezone_workflow_drive"]
 
 
+@pytest.mark.parametrize('enqueue_fails', [False, True])
+async def test_start_counts_only_successfully_enqueued_drives(setup, monkeypatch, enqueue_fails):
+    register_port('usage_meter', NoOpUsageMeter())
+    if enqueue_fails:
+        async def full(*args, **kwargs):
+            raise RuntimeError('queue is full')
+
+        monkeypatch.setattr(start, 'enqueue_server_workflow_drive', full)
+    run = await launch(setup)
+    persisted = workflow_runs.read_workflow_run(
+        project_dir=setup.root, canvas_id='default', run_id=run['run_id'],
+    )
+    metadata = persisted['metadata']
+    assert metadata.get('drive_generation', 0) == (0 if enqueue_fails else 1)
+    assert metadata.get('drive_enqueue_failures', 0) == (1 if enqueue_fails else 0)
+    if enqueue_fails:
+        assert metadata['drive_last_enqueue_error'] == 'RuntimeError'
+    else:
+        assert setup.queued[0]['attempt'] == 1
+
+
+@pytest.mark.parametrize('enqueue_fails', [False, True])
+async def test_start_survives_drive_accounting_failure(setup, monkeypatch, caplog, enqueue_fails):
+    register_port('usage_meter', NoOpUsageMeter())
+
+    def broken(**kwargs):
+        raise RuntimeError('private diagnostic must not be logged')
+
+    if enqueue_fails:
+        async def full(*args, **kwargs):
+            raise RuntimeError('queue is full')
+
+        monkeypatch.setattr(start, 'enqueue_server_workflow_drive', full)
+    helper = ('record_server_workflow_drive_enqueue_failed' if enqueue_fails else
+              'acknowledge_server_workflow_drive')
+    monkeypatch.setattr(start, helper, broken, raising=False)
+    run = await launch(setup)
+    assert run['status'] == 'running'
+    assert any(f"run_id={run['run_id']}" in record.getMessage()
+               and record.levelname in {'WARNING', 'ERROR'} for record in caplog.records)
+    assert 'private diagnostic' not in caplog.text
+
+
 async def test_audio_translate_on_text_is_refused(setup):
     setup.plan["actions"] = [dict(setup.plan["actions"][1], action="translate_text")]
     assert await check(setup) == {"status": "blocked", "plan": setup.plan, "blocked": [{

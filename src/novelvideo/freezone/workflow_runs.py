@@ -1270,7 +1270,7 @@ def mark_server_workflow_drive_enqueued(
     now: datetime | None = None,
     lease_seconds: int = WORKFLOW_RUN_LEASE_SECONDS,
 ) -> int | None:
-    """Reserve a fresh drive scope once per expired-driver lease window."""
+    """Reserve a drive attempt number used as the drive task scope, once per lease window."""
     _validate_scope(canvas_id, run_id)
     current = now or datetime.now(timezone.utc)
     with _connect(project_dir) as conn:
@@ -1285,11 +1285,55 @@ def mark_server_workflow_drive_enqueued(
         marked = _parse_timestamp(metadata.get("drive_enqueued_at"))
         if marked is not None and current < marked + timedelta(seconds=lease_seconds):
             return None
-        generation = int(metadata.get("drive_generation") or 0) + 1
-        metadata["drive_generation"] = generation
+        attempt = max(
+            int(metadata.get("drive_attempt") or 0),
+            int(metadata.get("drive_generation") or 0),
+        ) + 1
+        metadata["drive_attempt"] = attempt
         metadata["drive_enqueued_at"] = _timestamp(current)
         _write_run(conn, run)
+        return attempt
+
+
+def acknowledge_server_workflow_drive(
+    *, project_dir: Path, canvas_id: str, run_id: str, attempt: int,
+) -> int | None:
+    """Count an enqueued drive once, ignoring already acknowledged or older attempts."""
+    _validate_scope(canvas_id, run_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if run is None or run["owner_kind"] != "server":
+            return None
+        metadata = run["metadata"]
+        if attempt <= int(metadata.get("drive_acknowledged_attempt") or 0):
+            return None
+        generation = int(metadata.get("drive_generation") or 0) + 1
+        metadata["drive_generation"] = generation
+        metadata["drive_acknowledged_attempt"] = attempt
+        _write_run(conn, run)
         return generation
+
+
+def record_server_workflow_drive_enqueue_failed(
+    *, project_dir: Path, canvas_id: str, run_id: str, attempt: int, error_kind: str,
+) -> None:
+    """Record the exception class for the current unacknowledged enqueue attempt."""
+    _validate_scope(canvas_id, run_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if run is None:
+            return
+        metadata = run["metadata"]
+        if (
+            metadata.get("drive_attempt") != attempt
+            or attempt <= int(metadata.get("drive_acknowledged_attempt") or 0)
+        ):
+            return
+        metadata["drive_enqueue_failures"] = int(metadata.get("drive_enqueue_failures") or 0) + 1
+        metadata["drive_last_enqueue_error"] = error_kind
+        _write_run(conn, run)
 
 
 def list_server_workflow_runs_needing_driver(

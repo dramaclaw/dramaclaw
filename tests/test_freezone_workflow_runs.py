@@ -1499,9 +1499,23 @@ def test_mark_server_drive_generation(tmp_path):
     )
     scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
     assert store.mark_server_workflow_drive_enqueued(**scope, now=now) == 1
+    assert store.read_workflow_run(**scope)['metadata'].get('drive_generation', 0) == 0
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=1) == 1
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=1) is None
+    assert store.read_workflow_run(**scope)['metadata']['drive_generation'] == 1
     assert store.mark_server_workflow_drive_enqueued(**scope, now=now) is None
     later = now + timedelta(seconds=store.WORKFLOW_RUN_LEASE_SECONDS)
     assert store.mark_server_workflow_drive_enqueued(**scope, now=later) == 2
+    store.record_server_workflow_drive_enqueue_failed(**scope, attempt=2, error_kind='RuntimeError')
+    metadata = store.read_workflow_run(**scope)['metadata']
+    assert metadata['drive_generation'] == 1
+    assert metadata['drive_enqueue_failures'] == 1
+    assert metadata['drive_last_enqueue_error'] == 'RuntimeError'
+    later += timedelta(seconds=store.WORKFLOW_RUN_LEASE_SECONDS)
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=later) == 3
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=3) == 2
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=2) is None
+    assert store.read_workflow_run(**scope)['metadata']['drive_generation'] == 2
     store.acquire_server_workflow_run(**scope, runner_id='driver', now=later)
     assert store.mark_server_workflow_drive_enqueued(**scope, now=later) is None
     store.update_workflow_run(
@@ -1525,6 +1539,64 @@ def test_mark_server_drive_generation(tmp_path):
     assert store.mark_server_workflow_drive_enqueued(
         project_dir=tmp_path, canvas_id='browser', run_id=browser['run_id'], now=now,
     ) is None
+
+
+def test_drive_attempt_migrates_existing_generation(tmp_path):
+    from novelvideo.freezone import workflow_runs as store
+
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'one', 'action': 'save'}], metadata={'drive_generation': 4},
+    )
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    assert store.mark_server_workflow_drive_enqueued(**scope) == 5
+    assert store.read_workflow_run(**scope)['metadata']['drive_generation'] == 4
+
+
+@pytest.mark.parametrize('owner_kind', ['server', 'browser_legacy'])
+def test_drive_acknowledgement_preserves_terminal_run_and_lease(tmp_path, owner_kind):
+    from novelvideo.freezone import workflow_runs as store
+
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind=owner_kind,
+        runner_id='driver', actions=[{'node_id': 'one', 'action': 'save'}],
+    )
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    before = store.update_workflow_run(**scope, status='cancelled', owner_kind=owner_kind)
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=1) == (
+        1 if owner_kind == 'server' else None
+    )
+    after = store.read_workflow_run(**scope)
+    for key in before.keys() - {'metadata'}:
+        assert after[key] == before[key]
+    assert after['metadata'].get('drive_generation', 0) == (owner_kind == 'server')
+    assert store.acknowledge_server_workflow_drive(
+        **{**scope, 'run_id': 'run_missing'}, attempt=1,
+    ) is None
+
+
+def test_drive_enqueue_failure_ignores_stale_and_acknowledged_attempts(tmp_path):
+    from novelvideo.freezone import workflow_runs as store
+
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'one', 'action': 'save'}],
+        metadata={'drive_attempt': 2, 'drive_acknowledged_attempt': 1, 'drive_generation': 1},
+    )
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    before = store.read_workflow_run(**scope)
+    for attempt in (1, 3):
+        store.record_server_workflow_drive_enqueue_failed(
+            **scope, attempt=attempt, error_kind='RuntimeError',
+        )
+        assert store.read_workflow_run(**scope) == before
+    store.acknowledge_server_workflow_drive(**scope, attempt=2)
+    acknowledged = store.read_workflow_run(**scope)
+    store.record_server_workflow_drive_enqueue_failed(**scope, attempt=2, error_kind='RuntimeError')
+    assert store.read_workflow_run(**scope) == acknowledged
+    store.record_server_workflow_drive_enqueue_failed(
+        **{**scope, 'run_id': 'run_missing'}, attempt=1, error_kind='RuntimeError',
+    )
 
 
 @pytest.mark.parametrize("owner,runner,elapsed,active", [

@@ -89,15 +89,15 @@ def unregister_server_workflow_run(run_id: str) -> None:
 
 
 async def enqueue_server_workflow_drive(
-    ctx: ProjectContext, *, canvas_id: str, run_id: str, generation: int, enqueue=None,
+    ctx: ProjectContext, *, canvas_id: str, run_id: str, attempt: int, enqueue=None,
 ) -> None:
     from novelvideo.task_backend.client import enqueue_project_task
 
     enqueue = enqueue or enqueue_project_task
     await enqueue(
         ctx, task_type="freezone_workflow_drive", product_surface="freezone_assistant",
-        queue_kind="default", scope=f"{run_id}:d{generation}",
-        payload={"canvas_id": canvas_id, "run_id": run_id},
+        queue_kind="default", scope=f"{run_id}:d{attempt}",
+        payload={"canvas_id": canvas_id, "run_id": run_id, "drive_attempt": attempt},
     )
 
 
@@ -131,10 +131,10 @@ async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=Non
                     results.append(dict(run_id=run_id, action="skipped"))
                     continue
             else:
-                generation = await asyncio.to_thread(
+                attempt = await asyncio.to_thread(
                     store.mark_server_workflow_drive_enqueued, **scope, now=current,
                 )
-                if generation is None:
+                if attempt is None:
                     results.append(dict(run_id=run_id, action="skipped"))
                     continue
             requester = entry["requester"]
@@ -199,11 +199,31 @@ async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=Non
                 await asyncio.to_thread(unregister_server_workflow_run, run_id)
                 results.append(dict(run_id=run_id, action="unregistered"))
             else:
-                await enqueue_server_workflow_drive(
-                    ctx, canvas_id=entry["canvas_id"], run_id=run_id, generation=generation,
-                    enqueue=enqueue,
-                )
-                results.append(dict(run_id=run_id, action="enqueued"))
+                try:
+                    await enqueue_server_workflow_drive(
+                        ctx, canvas_id=entry["canvas_id"], run_id=run_id, attempt=attempt,
+                        enqueue=enqueue,
+                    )
+                except Exception as exc:
+                    try:
+                        await asyncio.to_thread(
+                            store.record_server_workflow_drive_enqueue_failed,
+                            **scope, attempt=attempt, error_kind=type(exc).__name__,
+                        )
+                    except Exception:
+                        logger.warning("Server workflow enqueue failure recording deferred run_id=%s",
+                                       run_id)
+                    logger.warning("Server workflow enqueue deferred run_id=%s", run_id)
+                    results.append(dict(run_id=run_id, action="skipped"))
+                else:
+                    try:
+                        await asyncio.to_thread(
+                            store.acknowledge_server_workflow_drive, **scope, attempt=attempt,
+                        )
+                    except Exception:
+                        logger.warning("Server workflow drive acknowledgement deferred run_id=%s",
+                                       run_id)
+                    results.append(dict(run_id=run_id, action="enqueued"))
         except Exception:
             logger.exception("Server workflow recovery deferred run_id=%s", run_id)
             results.append(dict(run_id=run_id, action="skipped"))

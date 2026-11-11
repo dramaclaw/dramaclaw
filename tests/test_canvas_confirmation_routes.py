@@ -556,7 +556,7 @@ def test_server_paid_confirmation_starts_without_browser_once(setup, monkeypatch
     assert setup.queued == [{
         "task_type": "freezone_workflow_drive", "product_surface": "freezone_assistant",
         "queue_kind": "default", "scope": f"{run['run_id']}:d1",
-        "payload": {"canvas_id": "default", "run_id": run["run_id"]}}]
+        "payload": {"canvas_id": "default", "run_id": run["run_id"], "drive_attempt": 1}}]
     assert record(setup, created)["outcome"] == {"status": "running", "run_id": run["run_id"]}
     assert run["run_id"] in notices(setup)[0]["content"]
     assert "freezone_observe_workflow_run" in notices(setup)[0]["content"]
@@ -852,7 +852,11 @@ def test_first_enqueue_failure_keeps_index_for_recovery(setup, monkeypatch):
     assert response.json()["data"]["status"] == "running"
     indexed = server_workflow_index.list_server_workflow_runs()
     assert [item["run_id"] for item in indexed] == [run_id]
-    assert runs(setup)[0]["metadata"]["drive_generation"] == 1
+    metadata = runs(setup)[0]["metadata"]
+    assert metadata.get("drive_generation", 0) == 0
+    assert metadata["drive_attempt"] == 1
+    assert metadata["drive_enqueue_failures"] == 1
+    assert metadata["drive_last_enqueue_error"] == "RuntimeError"
     assert setup.queued == []
 
 

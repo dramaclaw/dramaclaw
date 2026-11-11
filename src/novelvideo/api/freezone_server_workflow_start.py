@@ -26,9 +26,11 @@ from novelvideo.freezone.server_workflow_index import (
 )
 from novelvideo.freezone.workflow_runs import (
     GENERATION_ACTIONS,
+    acknowledge_server_workflow_drive,
     create_workflow_run,
     mark_server_workflow_drive_enqueued,
     read_workflow_run,
+    record_server_workflow_drive_enqueue_failed,
 )
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
@@ -199,17 +201,35 @@ async def start_server_workflow_run(
                 "workflowResultStale": True, "workflowInvalidatedAt": timestamp,
                 "workflowInvalidationReason": action["invalidation_reason"],
             })
-    generation = await asyncio.to_thread(
+    attempt = await asyncio.to_thread(
         mark_server_workflow_drive_enqueued, project_dir=state_dir, canvas_id=canvas_id,
         run_id=run["run_id"], now=current,
     )
-    if generation is not None:
+    if attempt is not None:
         try:
             await enqueue_server_workflow_drive(
-                ctx, canvas_id=canvas_id, run_id=run["run_id"], generation=generation,
+                ctx, canvas_id=canvas_id, run_id=run["run_id"], attempt=attempt,
             )
-        except Exception:
+        except Exception as exc:
+            try:
+                await asyncio.to_thread(
+                    record_server_workflow_drive_enqueue_failed, project_dir=state_dir,
+                    canvas_id=canvas_id, run_id=run["run_id"], attempt=attempt,
+                    error_kind=type(exc).__name__,
+                )
+            except Exception:
+                logger.warning("Server workflow enqueue failure recording deferred run_id=%s",
+                               run["run_id"])
             logger.error("Server workflow enqueue deferred run_id=%s", run["run_id"])
+        else:
+            try:
+                await asyncio.to_thread(
+                    acknowledge_server_workflow_drive, project_dir=state_dir,
+                    canvas_id=canvas_id, run_id=run["run_id"], attempt=attempt,
+                )
+            except Exception:
+                logger.warning("Server workflow drive acknowledgement deferred run_id=%s",
+                               run["run_id"])
     logger.info("Server workflow run started run_id=%s actions=%d refused=%d",
                 run["run_id"], len(actions), len(refusals))
     return run

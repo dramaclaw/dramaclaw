@@ -397,7 +397,11 @@ async def _run_freezone_workflow_drive_async(
 ) -> dict[str, Any]:
     from novelvideo.freezone.paths import CANVAS_ID_RE
     from novelvideo.freezone.server_workflow_driver import drive_server_workflow_run
-    from novelvideo.freezone.workflow_runs import RUN_ID_RE, RUNNER_ID_RE
+    from novelvideo.freezone.workflow_runs import (
+        RUN_ID_RE,
+        RUNNER_ID_RE,
+        acknowledge_server_workflow_drive,
+    )
 
     payload = envelope.get("payload") or {}
     if not isinstance(payload, dict):
@@ -410,6 +414,17 @@ async def _run_freezone_workflow_drive_async(
         raise ValueError("workflow drive requires valid canvas_id and run_id")
     if not task_id or not RUNNER_ID_RE.fullmatch(runner_id):
         raise ValueError("workflow drive requires a valid task id")
+    if "drive_attempt" in payload:
+        attempt = payload["drive_attempt"]
+        if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+            raise ValueError("workflow drive requires a valid drive_attempt")
+        try:
+            await asyncio.to_thread(
+                acknowledge_server_workflow_drive, project_dir=Path(ctx.state_dir),
+                canvas_id=canvas_id, run_id=run_id, attempt=attempt,
+            )
+        except Exception:
+            logger.warning("Server workflow drive acknowledgement deferred run_id=%s", run_id)
     result = await drive_server_workflow_run(
         project_dir=Path(ctx.state_dir), canvas_id=canvas_id, run_id=run_id,
         runner_id=runner_id,
