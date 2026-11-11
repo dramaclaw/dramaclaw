@@ -61,7 +61,7 @@ def _agent_canvas_body(
         nodes=_preserve_view_state(output["nodes"], canvas.get("nodes", [])),
         edges=_preserve_view_state(output["edges"], canvas.get("edges", [])),
         base_revision=canvas.get("revision"),
-        save_source="manual_clear" if user_confirmed else "agent_patch",
+        save_source="agent_confirmed" if user_confirmed else "agent_patch",
         client_save_id=str(uuid.uuid4()),
     )
     return CanvasPayload(**known)

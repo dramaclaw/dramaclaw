@@ -98,6 +98,22 @@ def test_failed_child_replaced(pool, op, code, caplog):
     assert pool.call("ping", {})["pid"] != before
 
 
+def test_call_value_accepts_any_json_result(pool):
+    assert pool.call_value("null_result", {}) is None
+    assert pool.call_value("bool_result", {}) is True
+    assert pool.call_value("ping", {})["pid"]
+    with pytest.raises(CanvasCoreError) as error:
+        pool.call_value("no_result", {})
+    assert error.value.code == "canvas_core_protocol"
+
+
+@pytest.mark.parametrize("op", ["null_result", "bool_result"])
+def test_call_requires_object_result(pool, op):
+    with pytest.raises(CanvasCoreError) as error:
+        pool.call(op, {})
+    assert error.value.code == "canvas_core_protocol"
+
+
 @pytest.mark.parametrize(
     "op,code,message,level",
     [
@@ -244,3 +260,23 @@ def test_apply_commands(pool):
     result = pool.call("apply_commands", {"canvas": {"nodes": [{"id": "before"}], "edges": []}})
     assert result["status"] == "applied"
     assert result["canvas"]["nodes"] == [{"id": "before"}, {"id": "n-1"}]
+
+
+def test_call_metrics_include_success_and_failure_but_exclude_warm(pool):
+    from novelvideo.freezone import agent_canvas_metrics as metrics
+
+    before = metrics.observations_snapshot()
+    errors = metrics.metrics_snapshot().get("canvas_core.ping.error.canvas_core_unavailable", 0)
+    pool.warm()
+    assert metrics.observations_snapshot() == before
+    assert set(pool.call("ping", {})) == {"pid", "count"}
+    pool.close()
+    with pytest.raises(CanvasCoreError) as error:
+        pool.call("ping", {})
+    assert error.value.code == "canvas_core_unavailable"
+    after = metrics.observations_snapshot()["canvas_core.ping.ms"]
+    assert after["count"] - before.get("canvas_core.ping.ms", {}).get("count", 0) == 2
+    assert after["total"] >= before.get("canvas_core.ping.ms", {}).get("total", 0.0)
+    assert (
+        metrics.metrics_snapshot()["canvas_core.ping.error.canvas_core_unavailable"] == errors + 1
+    )

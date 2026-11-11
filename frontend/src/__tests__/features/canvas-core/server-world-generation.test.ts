@@ -30,3 +30,14 @@ it.each(['data:image/png;base64,AA==', 'blob:https://media.example.test/image'])
   const p = worldPayload(); p.source_node = source({ imageUrl });
   expect(await serveWorldGenerationRequest(p)).toStrictEqual({ ok: false, code: 'inline_media_reference', patches: [] });
 });
+
+it.each(['zh', 'en'])('returns browser world labels for %s and rejects unknown fields', async locale => {
+  const { createServerTranslate } = await import('@/features/canvas/server/i18n');
+  const t = await createServerTranslate(locale);
+  expect(await serveWorldGenerationPatch({ phase: 'labels', locale })).toStrictEqual({
+    pano_3dgs: t('node.threeDWorld.pano3dgsLabel'),
+    image_3dgs: t('node.threeDWorld.image3dgsLabel'),
+    world_url_missing: t('node.threeDWorld.worldUrlMissing'),
+  });
+  await expect(serveWorldGenerationPatch({ phase: 'labels', locale, unexpected: true })).rejects.toBeInstanceOf(InvalidRequest);
+});

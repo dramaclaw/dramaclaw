@@ -52,7 +52,9 @@ export type CanvasSaveSource =
   | "projection_remove"
   | "import"
   | "agent_create"
-  | "agent_patch";
+  | "agent_patch"
+  | "agent_confirmed"
+  | "workflow_result";
 
 export type CanvasBackupStatus = "disabled" | "synced" | "pending" | "failed";
 

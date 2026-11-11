@@ -4,19 +4,55 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import threading
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from novelvideo.freezone.agent_canvas_metrics import count
 from novelvideo.freezone.paths import CANVAS_ID_RE
+from novelvideo.freezone.server_workflow_actions import IMAGE_TOOL_SERVER_ACTIONS
 from novelvideo.freezone.workflow_contract_generated import GENERATION_ACTION_TYPES
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+
+logger = logging.getLogger(__name__)
+
+_SERVER_WORKFLOW_MEDIA_LINK: ContextVar[dict[str, str] | None] = ContextVar(
+    "server_workflow_media_link", default=None,
+)
+
+
+@contextmanager
+def server_workflow_media_link(link: dict[str, str] | None):
+    """Scope an in-process media submission to its server-owned action."""
+    token = _SERVER_WORKFLOW_MEDIA_LINK.set(dict(link) if link is not None else None)
+    try:
+        yield
+    finally:
+        _SERVER_WORKFLOW_MEDIA_LINK.reset(token)
+
+
+def get_server_workflow_media_link() -> dict[str, str] | None:
+    return _SERVER_WORKFLOW_MEDIA_LINK.get()
+
+
+_WORKFLOW_MEDIA_ACTIONS = {
+    "freezone_image_to_3gs": {"generate_3gs_world"},
+    "freezone_edit": IMAGE_TOOL_SERVER_ACTIONS,
+    "freezone_gen": {"generate_image"},
+    "freezone_video_gen": {"generate_video", "generate_text_video"},
+    "freezone_video_upscale": {"generate_video"},
+    "freezone_audio_speech": {"generate_audio"},
+    "freezone_audio_eleven_music": {"generate_audio"},
+    "freezone_text_translate": {"translate_text"},
+}
 
 RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 IDEMPOTENCY_KEY_RE = re.compile(r"^[a-zA-Z0-9._:-]{1,160}$")
@@ -136,6 +172,10 @@ _SCHEMA_READY_LOCK = threading.Lock()
 
 class WorkflowRunLeaseConflict(RuntimeError):
     """Raised when another live runner owns the canvas workflow lease."""
+
+
+class WorkflowRunOwnerConflict(WorkflowRunLeaseConflict):
+    """Raised when an executor tries to drive another executor's run."""
 
 
 class WorkflowRunIdempotencyConflict(RuntimeError):
@@ -479,12 +519,14 @@ def _read_run(
 
 
 def _run_from_rows(row: sqlite3.Row, action_rows: list[sqlite3.Row]) -> dict[str, Any]:
+    metadata = _decode_metadata(row["metadata_json"])
     return {
         "schema_version": row["schema_version"],
         "run_id": row["run_id"],
         "project_id": row["project_id"],
         "canvas_id": row["canvas_id"],
         "status": row["status"],
+        "owner_kind": metadata.get("owner_kind", "browser_legacy"),
         "resumable": bool(row["resumable"]),
         "created_at": row["created_at"],
         "started_at": row["started_at"],
@@ -494,7 +536,7 @@ def _run_from_rows(row: sqlite3.Row, action_rows: list[sqlite3.Row]) -> dict[str
         "runner_id": row["runner_id"],
         "lease_expires_at": row["lease_expires_at"],
         "actions": [_action_from_row(action_row) for action_row in action_rows],
-        "metadata": _decode_metadata(row["metadata_json"]),
+        "metadata": metadata,
     }
 
 
@@ -608,12 +650,15 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
 def _list_runs_in_transaction(
     conn: sqlite3.Connection,
     *,
-    canvas_id: str,
+    canvas_id: str | None = None,
     statuses: set[str] | None = None,
     limit: int = 0,
 ) -> list[dict[str, Any]]:
-    parameters: list[Any] = [canvas_id]
-    where = "canvas_id = ?"
+    parameters: list[Any] = []
+    where = "1 = 1"
+    if canvas_id is not None:
+        where += " AND canvas_id = ?"
+        parameters.append(canvas_id)
     if statuses:
         placeholders = ",".join("?" for _ in statuses)
         where += f" AND status IN ({placeholders})"
@@ -746,8 +791,9 @@ def claim_workflow_media_action(
     attempt_id: str,
     task_type: str,
     fingerprint: str,
+    run_id: str = "",
 ) -> dict[str, Any]:
-    """Atomically admit one media request for a trusted Recipe operation."""
+    """Atomically admit one media request for a Recipe or server-owned action."""
     from novelvideo.freezone.agent_product_operations import (
         PENDING_STATUSES,
         is_direct_voice_recipe_action,
@@ -755,26 +801,25 @@ def claim_workflow_media_action(
     )
     from novelvideo.task_state import project_task_state_key
 
-    allowed_actions = {
-        "freezone_gen": {"generate_image"},
-        "freezone_video_gen": {"generate_video", "generate_text_video"},
-        "freezone_audio_speech": {"generate_audio"},
-        "freezone_audio_eleven_music": {"generate_audio"},
-    }
-    if task_type not in allowed_actions or len(fingerprint) != 64:
+    if task_type not in _WORKFLOW_MEDIA_ACTIONS or len(fingerprint) != 64:
         raise ValueError("invalid workflow media claim")
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        operation = conn.execute(
-            "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
-            (operation_id,),
-        ).fetchone()
-        if operation is None:
-            raise ValueError(
-                "workflow media link does not match admitted Recipe attempt"
-            )
-        metadata = _decode_metadata(operation["metadata_json"])
-        run_id = str(metadata.get("workflow_run_id") or "")
+        operation = None
+        metadata = {}
+        if operation_id:
+            operation = conn.execute(
+                "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if operation is None:
+                raise ValueError(
+                    "workflow media link does not match admitted Recipe attempt"
+                )
+            metadata = _decode_metadata(operation["metadata_json"])
+            run_id = str(metadata.get("workflow_run_id") or "")
+        elif not run_id or not attempt_id:
+            raise ValueError("invalid server workflow media link")
         _validate_scope(canvas_id, run_id)
         run = conn.execute(
             "SELECT * FROM workflow_runs WHERE run_id = ? AND project_id = ? AND canvas_id = ?",
@@ -782,79 +827,91 @@ def claim_workflow_media_action(
         ).fetchone()
         action = conn.execute(
             """SELECT * FROM workflow_run_actions
-               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+               WHERE run_id = ? AND node_id = ? AND COALESCE(product_operation_id, '') = ?
                  AND generation_attempt_id = ?""",
             (run_id, node_id, operation_id, attempt_id),
         ).fetchone()
         if (
             run is None
             or action is None
-            or action["action"] not in allowed_actions[task_type]
-            or operation["product_kind"] != "recipe_result"
-            or operation["project_id"] != project_id
-            or operation["canvas_id"] != canvas_id
-            or operation["artifact_id"] != node_id
-            or metadata.get("generation_attempt_id") != attempt_id
-            or metadata.get("node_id") != node_id
-        ):
-            raise ValueError(
-                "workflow media link does not match admitted Recipe attempt"
+            or action["action"] not in _WORKFLOW_MEDIA_ACTIONS[task_type]
+            or (
+                not operation_id
+                and _decode_metadata(run["metadata_json"]).get("owner_kind") != "server"
             )
-        if operation["status"] in RECIPE_ATTEMPT_ENDED_STATUSES:
+            or (operation is not None and (
+                operation["product_kind"] != "recipe_result"
+                or operation["project_id"] != project_id
+                or operation["canvas_id"] != canvas_id
+                or operation["artifact_id"] != node_id
+                or metadata.get("generation_attempt_id") != attempt_id
+                or metadata.get("node_id") != node_id
+            ))
+        ):
+            message = (
+                "workflow media link does not match admitted Recipe attempt" if operation_id
+                else "server workflow media link does not match admitted action"
+            )
+            raise ValueError(message)
+        if operation is not None and operation["status"] in RECIPE_ATTEMPT_ENDED_STATUSES:
             raise ValueError(recipe_attempt_ended_message(operation["status"]))
         existing = str(action["media_request_fingerprint"] or "")
+        if run["status"] != "running" and (not operation_id or not existing):
+            raise ValueError(
+                f"workflow run is {run['status']}; continue the workflow to submit media"
+            )
         if existing:
             if existing != fingerprint or action["task_type"] not in (None, task_type):
                 raise ValueError(
                     "workflow media attempt already claimed by another request"
                 )
-            result_ref = _decode_metadata(operation["result_ref_json"])
-            if (
-                operation["status"] == "delivered"
-                and not is_recipe_compile_receipt("recipe_result", operation_id, result_ref)
-                and (
-                    result_ref.get("kind") != "recipe_result"
-                    or result_ref.get("id") != action["job_id"]
-                    or result_ref.get("workflow_run_id") != run_id
-                    or result_ref.get("node_id") != node_id
-                )
-            ):
-                raise ValueError("delivered Recipe result belongs to another media task")
+            if operation is not None:
+                result_ref = _decode_metadata(operation["result_ref_json"])
+                if (
+                    operation["status"] == "delivered"
+                    and not is_recipe_compile_receipt("recipe_result", operation_id, result_ref)
+                    and (
+                        result_ref.get("kind") != "recipe_result"
+                        or result_ref.get("id") != action["job_id"]
+                        or result_ref.get("workflow_run_id") != run_id
+                        or result_ref.get("node_id") != node_id
+                    )
+                ):
+                    raise ValueError("delivered Recipe result belongs to another media task")
             return {
                 "job_id": action["job_id"],
                 "claimed_at": action["media_claimed_at"],
                 "created": False,
                 "run_id": run_id,
             }
-        receipt = _decode_metadata(operation["result_ref_json"])
-        evidence = _decode_metadata(operation["model_evidence_json"])
-        compiled = is_recipe_compile_receipt("recipe_result", operation_id, receipt)
-        modeled = (
-            operation["status"] in PENDING_STATUSES
-            and evidence.get("source") == "server_recipe_compiler"
-            and evidence.get("compile_mode") == "model"
-            and bool(evidence.get("model_call_id"))
-            and bool(evidence.get("executed_at"))
-        )
-        direct_voice = (
-            operation["status"] in PENDING_STATUSES
-            and is_direct_voice_recipe_action(
-                recipe_id=str(action["recipe_id"] or ""),
-                action=str(action["action"] or ""),
-                task_type=task_type,
+        if operation is not None:
+            receipt = _decode_metadata(operation["result_ref_json"])
+            evidence = _decode_metadata(operation["model_evidence_json"])
+            compiled = is_recipe_compile_receipt("recipe_result", operation_id, receipt)
+            modeled = (
+                operation["status"] in PENDING_STATUSES
+                and evidence.get("source") == "server_recipe_compiler"
+                and evidence.get("compile_mode") == "model"
+                and bool(evidence.get("model_call_id"))
+                and bool(evidence.get("executed_at"))
             )
-            and metadata.get("recipe_id") == action["recipe_id"]
-            and metadata.get("recipe_version") == action["recipe_version"]
-        )
-        if run["status"] != "running":
-            raise ValueError(
-                f"workflow run is {run['status']}; continue the workflow to submit media"
+            direct_voice = (
+                operation["status"] in PENDING_STATUSES
+                and is_direct_voice_recipe_action(
+                    recipe_id=str(action["recipe_id"] or ""),
+                    action=str(action["action"] or ""),
+                    task_type=task_type,
+                )
+                and metadata.get("recipe_id") == action["recipe_id"]
+                and metadata.get("recipe_version") == action["recipe_version"]
             )
         if action["status"] not in {"pending", "running"}:
             raise ValueError(
                 f"workflow action is {action['status']} and cannot submit media"
             )
-        if not (compiled and operation["status"] == "delivered" or modeled or direct_voice):
+        if operation is not None and not (
+            compiled and operation["status"] == "delivered" or modeled or direct_voice
+        ):
             raise ValueError("Recipe compilation is not ready for media submission")
         job_id = uuid.uuid4().hex[:16]
         task_key = project_task_state_key(task_type, project_id, 0, scope=job_id)
@@ -898,17 +955,23 @@ def bind_workflow_media_task(
         conn.execute("BEGIN IMMEDIATE")
         current = conn.execute(
             """SELECT task_key FROM workflow_run_actions
-               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+               WHERE run_id = ? AND node_id = ? AND COALESCE(product_operation_id, '') = ?
                  AND media_request_fingerprint IS NOT NULL AND job_id = ?
-                 AND task_type = ?""",
-            (run_id, node_id, operation_id, job_id, task_type),
+                 AND task_type = ?
+                 AND (? <> '' OR EXISTS (
+                     SELECT 1 FROM workflow_runs r
+                     WHERE r.run_id = workflow_run_actions.run_id
+                       AND json_extract(r.metadata_json, '$.owner_kind') = 'server'
+                 ))""",
+            (run_id, node_id, operation_id, job_id, task_type, operation_id),
         ).fetchone()
         if current is None or current["task_key"] not in (None, task_key):
             raise ValueError("workflow media task claim changed")
         conn.execute(
             """UPDATE workflow_run_actions SET task_key = ?
-               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?""",
-            (task_key, run_id, node_id, operation_id),
+               WHERE run_id = ? AND node_id = ? AND COALESCE(product_operation_id, '') = ?
+                 AND job_id = ? AND task_type = ?""",
+            (task_key, run_id, node_id, operation_id, job_id, task_type),
         )
 
 
@@ -926,15 +989,18 @@ def renew_workflow_media_claim(
         conn.execute("BEGIN IMMEDIATE")
         updated = conn.execute(
             """UPDATE workflow_run_actions SET media_claimed_at = ?
-               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+               WHERE run_id = ? AND node_id = ? AND COALESCE(product_operation_id, '') = ?
                  AND job_id = ? AND media_claimed_at = ?
                  AND status IN ('pending', 'running')
                  AND EXISTS (
                      SELECT 1 FROM workflow_runs
                       WHERE workflow_runs.run_id = workflow_run_actions.run_id
                         AND workflow_runs.status = 'running'
+                        AND (? <> '' OR json_extract(
+                            workflow_runs.metadata_json, '$.owner_kind'
+                        ) = 'server')
                  )""",
-            (time.time(), run_id, node_id, operation_id, job_id, claimed_at),
+            (time.time(), run_id, node_id, operation_id, job_id, claimed_at, operation_id),
         )
         return updated.rowcount == 1
 
@@ -965,13 +1031,15 @@ def reclaim_failed_workflow_media_action(
         action = conn.execute(
             """SELECT a.* FROM workflow_run_actions AS a
                  JOIN workflow_runs AS r ON r.run_id = a.run_id
-               WHERE a.run_id = ? AND a.node_id = ? AND a.product_operation_id = ?
+               WHERE a.run_id = ? AND a.node_id = ? AND COALESCE(a.product_operation_id, '') = ?
                  AND a.generation_attempt_id = ? AND r.project_id = ?
-                 AND r.canvas_id = ? AND r.status = 'running'""",
-            (run_id, node_id, operation_id, attempt_id, project_id, canvas_id),
+                 AND r.canvas_id = ? AND r.status = 'running'
+                 AND (? <> '' OR json_extract(r.metadata_json, '$.owner_kind') = 'server')""",
+            (run_id, node_id, operation_id, attempt_id, project_id, canvas_id, operation_id),
         ).fetchone()
         if (
             action is None
+            or action["action"] not in _WORKFLOW_MEDIA_ACTIONS.get(task_type, set())
             or action["status"] not in {"pending", "running"}
             or action["job_id"] != failed_job_id
             or action["task_type"] != task_type
@@ -1004,6 +1072,25 @@ def reclaim_failed_workflow_media_action(
         }
 
 
+def _run_is_active(run: dict, now: datetime) -> bool:
+    expires = _parse_timestamp(run.get("lease_expires_at"))
+    return run["status"] == "running" and (
+        run["owner_kind"] == "server"
+        or bool(str(run.get("runner_id") or "").strip() and expires and expires > now)
+    )
+
+
+def active_workflow_run(
+    *, project_dir: Path, canvas_id: str, now: datetime | None = None,
+) -> dict | None:
+    """Return the run that prevents starting another workflow on this canvas."""
+    _validate_scope(canvas_id)
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        return next((run for run in _list_runs_in_transaction(conn, canvas_id=canvas_id)
+                     if _run_is_active(run, current)), None)
+
+
 def create_workflow_run(
     *,
     project_dir: Path,
@@ -1014,8 +1101,12 @@ def create_workflow_run(
     metadata: dict[str, Any] | None = None,
     idempotency_key: str = "",
     runner_id: str = "",
+    owner_kind: str = "browser_legacy",
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     _validate_scope(canvas_id)
+    if owner_kind not in {"server", "browser_legacy"}:
+        raise ValueError(f"invalid workflow run owner_kind: {owner_kind!r}")
     checked_idempotency_key = idempotency_key.strip()
     if checked_idempotency_key and not IDEMPOTENCY_KEY_RE.match(
         checked_idempotency_key
@@ -1025,8 +1116,8 @@ def create_workflow_run(
     if checked_runner_id and not RUNNER_ID_RE.match(checked_runner_id):
         raise ValueError("invalid workflow run runner_id")
     run_id = f"run_{uuid.uuid4().hex}"
-    current = datetime.now(timezone.utc)
-    now = _timestamp(current)
+    current = now or datetime.now(timezone.utc)
+    timestamp = _timestamp(current)
     normalized_actions = _normalize_actions(actions)
     request_fingerprint = _workflow_request_fingerprint(
         project_id=project_id,
@@ -1034,6 +1125,9 @@ def create_workflow_run(
         actions=normalized_actions,
     )
     run_metadata = dict(metadata or {})
+    run_metadata["owner_kind"] = owner_kind
+    if owner_kind == "server":
+        run_metadata["takeover_count"] = 0
     run_metadata["request_fingerprint"] = request_fingerprint
     if checked_idempotency_key:
         run_metadata["idempotency_key"] = checked_idempotency_key
@@ -1043,10 +1137,11 @@ def create_workflow_run(
         "project_id": project_id,
         "canvas_id": canvas_id,
         "status": "running",
+        "owner_kind": owner_kind,
         "resumable": True,
-        "created_at": now,
-        "started_at": now,
-        "updated_at": now,
+        "created_at": timestamp,
+        "started_at": timestamp,
+        "updated_at": timestamp,
         "completed_at": None,
         "actor_id": actor_id or None,
         "runner_id": checked_runner_id or None,
@@ -1090,15 +1185,8 @@ def create_workflow_run(
                         )
                     return existing
         existing_runs = _list_runs_in_transaction(conn, canvas_id=canvas_id)
-        for existing in existing_runs:
-            if existing.get("status") != "running":
-                continue
-            existing_runner_id = str(existing.get("runner_id") or "").strip()
-            lease_expires_at = _parse_timestamp(existing.get("lease_expires_at"))
-            if existing_runner_id and lease_expires_at and lease_expires_at > current:
-                raise WorkflowRunLeaseConflict(
-                    "another workflow runner is active on this canvas"
-                )
+        if any(_run_is_active(existing, current) for existing in existing_runs):
+            raise WorkflowRunLeaseConflict("another workflow runner is active on this canvas")
         for existing in existing_runs:
             if existing.get("status") not in RESUMABLE_RUN_STATUSES:
                 continue
@@ -1107,8 +1195,8 @@ def create_workflow_run(
             )
             existing["status"] = "interrupted" if was_leased_running else "cancelled"
             existing["resumable"] = was_leased_running
-            existing["updated_at"] = now
-            existing["completed_at"] = now
+            existing["updated_at"] = timestamp
+            existing["completed_at"] = timestamp
             existing_metadata = existing.get("metadata")
             existing_metadata = (
                 existing_metadata if isinstance(existing_metadata, dict) else {}
@@ -1120,7 +1208,152 @@ def create_workflow_run(
             existing["metadata"] = existing_metadata
             _write_run(conn, existing)
         _write_run(conn, payload)
+    count(f"workflow_run.created.owner_kind.{owner_kind}")
+    logger.info(
+        "workflow_run_created run_id=%s owner_kind=%s actions=%d",
+        run_id, owner_kind, len(normalized_actions),
+    )
     return payload
+
+
+def acquire_server_workflow_run(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    run_id: str,
+    runner_id: str,
+    now: datetime | None = None,
+    lease_seconds: int = WORKFLOW_RUN_LEASE_SECONDS,
+) -> dict[str, Any] | None:
+    """Acquire or renew a server driver's lease, taking over expired drivers."""
+    _validate_scope(canvas_id, run_id)
+    checked_runner_id = runner_id.strip()
+    if not RUNNER_ID_RE.match(checked_runner_id):
+        raise ValueError("invalid workflow run runner_id")
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        payload = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if payload is None:
+            return None
+        if payload["owner_kind"] != "server":
+            raise WorkflowRunOwnerConflict("workflow run is driven by another executor")
+        if payload["status"] in TERMINAL_RUN_STATUSES:
+            return {"run": payload, "acquired": False, "took_over": False}
+        stored_runner_id = str(payload.get("runner_id") or "").strip()
+        lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
+        if (
+            stored_runner_id
+            and stored_runner_id != checked_runner_id
+            and (lease_expires_at is None or lease_expires_at > current)
+        ):
+            raise WorkflowRunLeaseConflict(
+                "workflow run lease is not owned by this active runner"
+            )
+        took_over = bool(stored_runner_id and stored_runner_id != checked_runner_id)
+        timestamp = _timestamp(current)
+        if took_over:
+            payload["metadata"]["takeover_count"] += 1
+            payload["metadata"]["last_takeover_at"] = timestamp
+        payload["runner_id"] = checked_runner_id
+        payload["lease_expires_at"] = _timestamp(current + timedelta(seconds=lease_seconds))
+        payload["updated_at"] = timestamp
+        _write_run(conn, payload)
+        return {"run": payload, "acquired": True, "took_over": took_over}
+
+
+def mark_server_workflow_drive_enqueued(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    run_id: str,
+    now: datetime | None = None,
+    lease_seconds: int = WORKFLOW_RUN_LEASE_SECONDS,
+) -> int | None:
+    """Reserve a drive attempt number used as the drive task scope, once per lease window."""
+    _validate_scope(canvas_id, run_id)
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if run is None or run["owner_kind"] != "server" or run["status"] != "running":
+            return None
+        expires = _parse_timestamp(run.get("lease_expires_at"))
+        if run.get("runner_id") and (expires is None or expires > current):
+            return None
+        metadata = run["metadata"]
+        marked = _parse_timestamp(metadata.get("drive_enqueued_at"))
+        if marked is not None and current < marked + timedelta(seconds=lease_seconds):
+            return None
+        attempt = max(
+            int(metadata.get("drive_attempt") or 0),
+            int(metadata.get("drive_generation") or 0),
+        ) + 1
+        metadata["drive_attempt"] = attempt
+        metadata["drive_enqueued_at"] = _timestamp(current)
+        _write_run(conn, run)
+        return attempt
+
+
+def acknowledge_server_workflow_drive(
+    *, project_dir: Path, canvas_id: str, run_id: str, attempt: int,
+) -> int | None:
+    """Count an enqueued drive once, ignoring already acknowledged or older attempts."""
+    _validate_scope(canvas_id, run_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if run is None or run["owner_kind"] != "server":
+            return None
+        metadata = run["metadata"]
+        if attempt <= int(metadata.get("drive_acknowledged_attempt") or 0):
+            return None
+        generation = int(metadata.get("drive_generation") or 0) + 1
+        metadata["drive_generation"] = generation
+        metadata["drive_acknowledged_attempt"] = attempt
+        _write_run(conn, run)
+        return generation
+
+
+def record_server_workflow_drive_enqueue_failed(
+    *, project_dir: Path, canvas_id: str, run_id: str, attempt: int, error_kind: str,
+) -> None:
+    """Record the exception class for the current unacknowledged enqueue attempt."""
+    _validate_scope(canvas_id, run_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if run is None:
+            return
+        metadata = run["metadata"]
+        if (
+            metadata.get("drive_attempt") != attempt
+            or attempt <= int(metadata.get("drive_acknowledged_attempt") or 0)
+        ):
+            return
+        metadata["drive_enqueue_failures"] = int(metadata.get("drive_enqueue_failures") or 0) + 1
+        metadata["drive_last_enqueue_error"] = error_kind
+        _write_run(conn, run)
+
+
+def list_server_workflow_runs_needing_driver(
+    *, project_dir: Path, now: datetime | None = None
+) -> list[dict[str, Any]]:
+    """List running server runs awaiting an initial driver or lease takeover."""
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        runs = _list_runs_in_transaction(conn, statuses={"running"})
+    return [
+        run for run in runs
+        if run["owner_kind"] == "server"
+        and (
+            not run.get("runner_id")
+            or (
+                (expires_at := _parse_timestamp(run.get("lease_expires_at"))) is not None
+                and expires_at <= current
+            )
+        )
+    ]
 
 
 def reconcile_workflow_runs_with_canvas_nodes(
@@ -1142,6 +1375,8 @@ def reconcile_workflow_runs_with_canvas_nodes(
             canvas_id=canvas_id,
             statuses=eligible_statuses,
         ):
+            if payload["owner_kind"] == "server":
+                continue
             actions = payload.get("actions")
             actions = actions if isinstance(actions, list) else []
             unfinished_node_ids = {
@@ -1212,6 +1447,8 @@ def reconcile_workflow_runs_with_canvas_results(
             canvas_id=canvas_id,
             statuses={"running", "failed", "interrupted"},
         ):
+            if payload["owner_kind"] == "server":
+                continue
             actions = payload.get("actions")
             actions = actions if isinstance(actions, list) else []
             changed = False
@@ -1285,6 +1522,8 @@ def interrupt_stale_workflow_runs(
             canvas_id=canvas_id,
             statuses={"running"},
         ):
+            if payload["owner_kind"] == "server":
+                continue
             lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
             updated_at = _parse_timestamp(payload.get("updated_at"))
             stale = (
@@ -1418,7 +1657,10 @@ def update_workflow_run(
     run_id: str,
     status: str | None = None,
     action_updates: list[dict[str, Any]] | None = None,
+    story_attach_warnings: list[str] | None = None,
     runner_id: str = "",
+    owner_kind: str = "browser_legacy",
+    now: datetime | None = None,
 ) -> dict[str, Any] | None:
     _validate_scope(canvas_id, run_id)
     if status is not None and status not in RUN_STATUSES:
@@ -1426,11 +1668,17 @@ def update_workflow_run(
     checked_runner_id = runner_id.strip()
     if checked_runner_id and not RUNNER_ID_RE.match(checked_runner_id):
         raise ValueError("invalid workflow run runner_id")
+    current = now or datetime.now(timezone.utc)
+    timestamp = _timestamp(current)
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         payload = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
         if payload is None:
             return None
+        if payload["owner_kind"] != owner_kind and (
+            status != "cancelled" or action_updates
+        ):
+            raise WorkflowRunOwnerConflict("workflow run is driven by another executor")
         current_status = str(payload.get("status") or "")
         stored_runner_id = str(payload.get("runner_id") or "").strip()
         lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
@@ -1442,7 +1690,7 @@ def update_workflow_run(
                 or (
                     status != "cancelled"
                     and lease_expires_at is not None
-                    and lease_expires_at <= datetime.now(timezone.utc)
+                    and lease_expires_at <= current
                 )
             )
             and status != "cancelled"
@@ -1457,14 +1705,12 @@ def update_workflow_run(
             # Never reopen a terminal run; recovery starts a fresh run and explicitly
             # cancels the old failed/interrupted record.
             if status == "cancelled" and current_status in {"failed", "interrupted"}:
-                now = _now()
                 payload["status"] = "cancelled"
                 payload["resumable"] = False
-                payload["updated_at"] = now
-                payload["completed_at"] = now
+                payload["updated_at"] = timestamp
+                payload["completed_at"] = timestamp
                 _write_run(conn, payload)
             return payload
-        now = _now()
         actions = payload.get("actions")
         actions = actions if isinstance(actions, list) else []
         by_key = {
@@ -1497,18 +1743,24 @@ def update_workflow_run(
                     f"terminal workflow action cannot transition from "
                     f"{current_node_status} to {node_status}"
                 )
-            if (
-                action in GENERATION_ACTIONS
-                and node_status == "completed"
-                and item.get("artifact_status") != "valid"
-            ):
-                # Browser callbacks are delivery hints, not completion authority.
-                # Durable task reconciliation below is the only path that can mark
-                # a generation action completed.
-                node_status = "running"
+            artifact_error = None
+            if action in GENERATION_ACTIONS and node_status == "completed":
+                if owner_kind == "server":
+                    artifact_status, artifact_error = _validate_action_artifact(
+                        action=action,
+                        task_result=update.get("result"),
+                        history_record=None,
+                        project_dir=project_dir,
+                    )
+                    item["artifact_status"] = artifact_status
+                    if artifact_status != "valid":
+                        node_status = "failed"
+                elif item.get("artifact_status") != "valid":
+                    # Browser callbacks are delivery hints, not completion authority.
+                    node_status = "running"
             item["status"] = node_status
-            item["updated_at"] = now
-            item["error"] = str(update.get("error") or "").strip() or None
+            item["updated_at"] = timestamp
+            item["error"] = artifact_error or str(update.get("error") or "").strip() or None
             if "phase" in update:
                 phase = str(update.get("phase") or "").strip()
                 if phase and phase not in NODE_PHASES:
@@ -1556,7 +1808,7 @@ def update_workflow_run(
                     accepted_status = "running"
             payload["status"] = accepted_status
             if accepted_status in TERMINAL_RUN_STATUSES:
-                payload["completed_at"] = now
+                payload["completed_at"] = timestamp
                 payload["resumable"] = accepted_status in {"failed", "interrupted"}
             if accepted_status == "failed":
                 for item in actions:
@@ -1565,7 +1817,7 @@ def update_workflow_run(
                         "running",
                     }:
                         item["status"] = "blocked"
-                        item["updated_at"] = now
+                        item["updated_at"] = timestamp
                         item["error"] = item.get("error") or "workflow failed"
             if accepted_status == "cancelled":
                 for item in actions:
@@ -1574,15 +1826,20 @@ def update_workflow_run(
                         "skipped",
                     }:
                         item["status"] = "skipped"
-                        item["updated_at"] = now
+                        item["updated_at"] = timestamp
                         item["error"] = "workflow cancelled"
                 metadata = payload.get("metadata")
                 metadata = metadata if isinstance(metadata, dict) else {}
-                metadata["cancel_requested_at"] = now
+                metadata["cancel_requested_at"] = timestamp
                 payload["metadata"] = metadata
+        if story_attach_warnings:
+            metadata = payload.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            metadata["story_attach_warnings"] = list(story_attach_warnings)
+            payload["metadata"] = metadata
         if checked_runner_id and payload.get("status") == "running":
-            payload["lease_expires_at"] = _lease_expires_at(datetime.now(timezone.utc))
-        payload["updated_at"] = now
+            payload["lease_expires_at"] = _lease_expires_at(current)
+        payload["updated_at"] = timestamp
         _write_run(conn, payload)
         return payload
 
@@ -1647,7 +1904,7 @@ def reconcile_workflow_runs_with_tasks(
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         for payload in _list_runs_in_transaction(conn, canvas_id=canvas_id):
-            if payload.get("status") == "cancelled":
+            if payload["owner_kind"] == "server" or payload.get("status") == "cancelled":
                 continue
             actions = payload.get("actions")
             actions = actions if isinstance(actions, list) else []

@@ -11,6 +11,8 @@ import {
   extractExplicitSpeakableAudioText, extractSpeakableAudioText, isSpeechGenerationInstruction,
   resolveAudioKind, resolveMusicLengthMs, resolveSafeSpeechSubmissionText,
 } from '../audioSpeechText';
+import { selectWorkflowUpstreamText, readCatalog } from '../workflowRecipeCatalog';
+import { nodeContextWireFields } from './nodeContextWire';
 import type { UpstreamContent } from '../ports';
 import type { CompileWorkflowNodePromptInput } from '../workflowRecipeRuntime';
 import type { WorkflowProductOperationContext } from '../workflowExecutionActivity';
@@ -61,64 +63,34 @@ function nodeData(ctx: AudioGenerationRequestContext): AudioNodeData | undefined
   return isAudioNode(node) ? node.data : undefined;
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown> : null;
-}
-function strategyText(value: unknown): string {
-  return typeof value === 'string' ? value.trim()
-    : typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
-}
-/** Match selectWorkflowUpstreamText without loading the network-backed recipe runtime. */
-function selectedUpstreamText(data: AudioNodeData, contents: UpstreamContent[], fallback: string): string {
-  const catalog = record(data.workflowCatalog);
-  const builder = record(catalog?.promptBuilder);
-  const strategy = record(catalog?.inputStrategy) ?? record(builder?.inputStrategy);
-  if (!strategy) return fallback;
-  const type = strategyText(strategy.type);
-  if (type === 'none' || type === 'user_assets' || type === 'user_message') return '';
-  const single = strategyText(strategy.stepId) || strategyText(strategy.step_id);
-  const multiple = Array.isArray(strategy.stepIds) ? strategy.stepIds
-    : Array.isArray(strategy.step_ids) ? strategy.step_ids : [];
-  const stepIds = single ? [single] : multiple.map(strategyText).filter(Boolean);
-  if (stepIds.length === 0 || !contents.some((content) => Boolean(content.workflowStepId))) return fallback;
-  const wanted = new Set(stepIds);
-  return joinUpstreamText(contents.filter((content) => content.workflowStepId && wanted.has(content.workflowStepId)));
+export function audioEffectivePrompt(data: AudioNodeData, contents: UpstreamContent[]): string {
+  return [joinUpstreamText(contents).trim(), deriveAudioText(data).trim()]
+    .filter((segment) => segment.length > 0).join('\n\n');
 }
 
 function promptInputs(ctx: AudioGenerationRequestContext, data: AudioNodeData) {
   const contents = upstreamNodesInEdgeOrder(ctx.nodes, ctx.edges, ctx.nodeId).map(extractUpstreamContent);
   const joined = joinUpstreamText(contents);
   const ownText = deriveAudioText(data);
-  const effectivePrompt = [joined.trim(), ownText.trim()].filter((segment) => segment.length > 0).join('\n\n');
+  const effectivePrompt = audioEffectivePrompt(data, contents);
   const isMusic = resolveAudioKind(data) === 'music';
-  const upstreamText = isMusic ? '' : selectedUpstreamText(data, contents, joined);
+  const upstreamText = isMusic ? '' : selectWorkflowUpstreamText(data, contents, joined);
   const fallbackPrompt = isMusic ? effectivePrompt
     : extractExplicitSpeakableAudioText(ownText.trim()) || extractSpeakableAudioText(ownText.trim())
       || extractExplicitSpeakableAudioText(upstreamText) || extractSpeakableAudioText(upstreamText);
-  const catalog = record(data.workflowCatalog);
   return {
-    effectivePrompt, isMusic, directVoiceRecipe: !isMusic && catalog?.recipeId === 'drama-shot-voice',
+    effectivePrompt, isMusic, directVoiceRecipe: !isMusic && readCatalog(data)?.recipeId === 'drama-shot-voice',
     input: { nodeKind: 'audio', nodePrompt: ownText, upstreamText,
       upstreamContents: isMusic ? [] : contents, fallbackPrompt } satisfies AudioPromptCompileInput,
   };
 }
 
 /**
- * generate() guard order: useAudioGeneration.ts:141 busy,
- * useAudioGeneration.ts:142 model-task access, useAudioGeneration.ts:148
- * missing custom voice, useAudioGeneration.ts:157 empty initial prompt,
- * useAudioGeneration.ts:159 missing project. Access is network state and stays with the caller: after busy, before custom voice, if
- * blocked write { generationError: modelTaskAccess.message } only when that
- * message is truthy, then return {}. Run no later guard in that case.
- * Busy/access/empty/project return {} and AudioNode.tsx:116-133 publishes SUCCESS
- * without submission (it can include a previously stored audioUrl). Missing
- * voice publishes SUCCESS with the exact skipped output below. Empty final
- * speech instead throws inside the try block (useAudioGeneration.ts:233) and
- * becomes an action failure.
- * Apply audioNodeRepairPatch before this decision; voice-reference discovery is
- * caller network preparation. Inline data: URLs cannot occur in audio requests:
- * this path submits text and voice identifiers, with no media references.
+ * Busy precedes caller-owned model access, custom voice, empty prompt and project guards.
+ * Blocked callers write a truthy access message and return without running later guards.
+ * Busy/access/empty/project return empty success; missing voice returns a successful skip.
+ * Empty final speech instead fails after start. Apply render repairs before this decision;
+ * voice-reference discovery stays with the caller.
  */
 export function audioPromptCompileInput(ctx: AudioGenerationRequestContext): AudioPromptCompileDecision {
   const data = nodeData(ctx);
@@ -182,12 +154,9 @@ export function buildAudioGenerationRequest(ctx: AudioGenerationRequestContext &
   if (!prompt) {
     return { ok: false, code: 'no_speakable_text', message: '没有可朗读的旁白或对白' }; // i18n-exempt -- exact hook failure contract
   }
-  const context = {
-    ...(ctx.canvasId ? { canvas_id: ctx.canvasId } : {}),
-    ...(ctx.nodeId ? { node_id: ctx.nodeId } : {}),
-    ...(ctx.productOperation?.generationAttemptId ? { product_operation_id: ctx.productOperation.operationId,
-      generation_attempt_id: ctx.productOperation.generationAttemptId } : {}),
-  };
+  const context = nodeContextWireFields({
+    canvasId: ctx.canvasId, nodeId: ctx.nodeId, productOperation: ctx.productOperation,
+  });
   let body: AudioGenerationHttpRequest['body'];
   if (isMusic) {
     const length = resolveMusicLengthMs(data);
@@ -208,26 +177,36 @@ export function buildAudioGenerationRequest(ctx: AudioGenerationRequestContext &
     path: `projects/${encodeURIComponent(ctx.projectId)}/freezone/audio/${isMusic ? 'eleven-music' : 'speech'}`, body }] };
 }
 
-/** Merge of the hook's three render-effect writes, in effect order; apply before generate(). */
+/** Repair music intent without discarding an existing audio result. */
+export function audioMusicKindRepairPatch(data: AudioNodeData, nowIso: string): Partial<AudioNodeData> | null {
+  if (resolveAudioKind(data) !== 'music' || data.audioKind === 'music') return null;
+  return { audioKind: 'music', model: 'suno_music', ...(data.audioUrl ? {} : {
+    audioUrl: null, durationMs: null,
+    generationError: '背景音乐节点已修正，请重新生成音乐', // i18n-exempt -- exact hook repair contract
+    workflowResultStale: true, workflowInvalidatedAt: nowIso,
+    workflowInvalidationReason: '音频类型由语音修正为背景音乐', // i18n-exempt -- exact hook repair contract
+  }) };
+}
+
+export function audioMusicLengthRepairPatch(data: AudioNodeData): Partial<AudioNodeData> | null {
+  if (resolveAudioKind(data) !== 'music') return null;
+  const length = resolveMusicLengthMs(data);
+  return length !== undefined && data.musicLengthMs !== length ? { musicLengthMs: length } : null;
+}
+
+/** Previously generated instructions are not speakable audio content. */
+export function audioSpeechInstructionRepairPatch(data: AudioNodeData, nowIso: string): Partial<AudioNodeData> | null {
+  if (resolveAudioKind(data) === 'music' || !isSpeechGenerationInstruction(deriveAudioText(data)) || !data.audioUrl) return null;
+  return { audioUrl: null, durationMs: null,
+    generationError: '旁白节点缺少实际朗读文案，请填写旁白正文后重新生成', // i18n-exempt -- exact hook repair contract
+    workflowResultStale: true, workflowInvalidatedAt: nowIso,
+    workflowInvalidationReason: '旁白生成说明不能作为朗读正文', // i18n-exempt -- exact hook repair contract
+  };
+}
+
+/** Merge the render repairs in effect order for the server adapter. */
 export function audioNodeRepairPatch(data: AudioNodeData, nowIso: string): Partial<AudioNodeData> | null {
-  const isMusic = resolveAudioKind(data) === 'music';
-  const patch: Partial<AudioNodeData> = {};
-  if (isMusic && data.audioKind !== 'music') {
-    Object.assign(patch, { audioKind: 'music', model: 'suno_music', ...(data.audioUrl ? {} : {
-      audioUrl: null, durationMs: null,
-      generationError: '背景音乐节点已修正，请重新生成音乐', // i18n-exempt -- exact hook repair contract
-      workflowResultStale: true, workflowInvalidatedAt: nowIso,
-      workflowInvalidationReason: '音频类型由语音修正为背景音乐', // i18n-exempt -- exact hook repair contract
-    }) });
-  }
-  const length = isMusic ? resolveMusicLengthMs(data) : undefined;
-  if (isMusic && length !== undefined && data.musicLengthMs !== length) patch.musicLengthMs = length;
-  if (!isMusic && isSpeechGenerationInstruction(deriveAudioText(data)) && data.audioUrl) {
-    Object.assign(patch, { audioUrl: null, durationMs: null,
-      generationError: '旁白节点缺少实际朗读文案，请填写旁白正文后重新生成', // i18n-exempt -- exact hook repair contract
-      workflowResultStale: true, workflowInvalidatedAt: nowIso,
-      workflowInvalidationReason: '旁白生成说明不能作为朗读正文', // i18n-exempt -- exact hook repair contract
-    });
-  }
-  return Object.keys(patch).length ? patch : null;
+  const patches = [audioMusicKindRepairPatch(data, nowIso), audioMusicLengthRepairPatch(data),
+    audioSpeechInstructionRepairPatch(data, nowIso)].filter(patch => patch !== null);
+  return patches.length ? Object.assign({}, ...patches) : null;
 }

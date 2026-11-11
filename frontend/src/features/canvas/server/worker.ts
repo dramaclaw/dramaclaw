@@ -12,10 +12,13 @@ import { serveImageGenerationRequest, serveImageGenerationPatch } from './imageG
 import { serveVideoGenerationRequest, serveVideoGenerationPatch } from './videoGeneration';
 import { serveAudioGenerationRequest, serveAudioGenerationPatch } from './audioGeneration';
 import { serveTextGenerationRequest, serveTextGenerationPatch } from './textGeneration';
-import { serveImageToolRequest, serveImageToolPatch } from './imageTool';
+import { serveImageToolRequest, serveImageToolPatch, serveImageToolPlace } from './imageTool';
 import { serveAudioTranslateRequest, serveAudioTranslatePatch } from './audioTranslate';
 import { serveWorldGenerationRequest, serveWorldGenerationPatch, serveWorldGenerationUpstream } from './worldGeneration';
 import { serveGenerationErrorDescribe } from './generationError';
+import { serveStoryAttach } from './storyAttach';
+import { servePlanWorkflow } from './planWorkflow';
+import { serveRecipeCompileRequest, serveRecipeCompileResult } from './recipeCompile';
 
 console = new Console({ stdout: process.stderr, stderr: process.stderr });
 
@@ -73,10 +76,10 @@ function parseContextPayload(payload: unknown) {
   return { ...input, envelopes, environment };
 }
 
-const operations = ['ping', 'apply_commands', 'answer_context', 'image_generation_request', 'image_generation_patch',
+const operations = ['recipe_compile_request', 'recipe_compile_result', 'ping', 'story_attach', 'plan_workflow', 'apply_commands', 'answer_context', 'image_generation_request', 'image_generation_patch',
   'video_generation_request', 'video_generation_patch', 'audio_generation_request', 'audio_generation_patch',
   'text_generation_request', 'text_generation_patch', 'generation_error_describe',
-  'image_tool_request', 'image_tool_patch', 'audio_translate_request', 'audio_translate_patch',
+  'image_tool_request', 'image_tool_patch', 'image_tool_place', 'audio_translate_request', 'audio_translate_patch',
   'world_generation_request', 'world_generation_patch', 'world_generation_upstream'];
 
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
@@ -95,9 +98,17 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     if (parsed.op === 'apply_commands') {
       const payload = parsePayload(parsed.payload);
       result = await applyCommands(payload.canvas, payload.envelopes, payload.environment);
+    } else if (parsed.op === 'story_attach') {
+      result = await serveStoryAttach(parsed.payload);
+    } else if (parsed.op === 'plan_workflow') {
+      result = await servePlanWorkflow(parsed.payload);
     } else if (parsed.op === 'answer_context') {
       const payload = parseContextPayload(parsed.payload);
       result = await answerContextRequests(payload.canvas, payload.envelopes, payload.environment);
+    } else if (parsed.op === 'recipe_compile_request') {
+      result = await serveRecipeCompileRequest(parsed.payload);
+    } else if (parsed.op === 'recipe_compile_result') {
+      result = await serveRecipeCompileResult(parsed.payload);
     } else if (parsed.op === 'image_generation_request') {
       result = await serveImageGenerationRequest(parsed.payload);
     } else if (parsed.op === 'image_generation_patch') {
@@ -116,6 +127,8 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       result = await serveTextGenerationPatch(parsed.payload);
     } else if (parsed.op === 'image_tool_request') {
       result = await serveImageToolRequest(parsed.payload);
+    } else if (parsed.op === 'image_tool_place') {
+      result = await serveImageToolPlace(parsed.payload);
     } else if (parsed.op === 'image_tool_patch') {
       result = await serveImageToolPatch(parsed.payload);
     } else if (parsed.op === 'audio_translate_request') {

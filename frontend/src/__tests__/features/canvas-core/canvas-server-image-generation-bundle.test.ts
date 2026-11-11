@@ -23,6 +23,11 @@ it('serves pure image generation requests and patches from a standalone worker w
       requests.push({ id, op, payload });
       expected.push({ id, ok: true, result: wire(result) });
     };
+    add('workflow', 'plan_workflow', {
+      canvas: { nodes: [{ id: 'image', type: 'imageGenNode', position: { x: 0, y: 0 }, data: { prompt: 'A scene' } }], edges: [] },
+      commands: [{ type: 'run_workflow', scope: 'canvas' }],
+    }, { ok: true, actions: [{ command_index: 0, node_id: 'image', action: 'generate_image', execution_mode: 'workflow', label: '生成图片' }],
+      levels: [[0]], dependencies: {}, already_completed: false });
     for (const withReference of [false, true]) {
       const input = requestPayload(withReference);
       const context = requestContext(input);
@@ -31,6 +36,18 @@ it('serves pure image generation requests and patches from a standalone worker w
         compile_input, request: pure.buildImageGenerationRequest({ ...context, prompt: compile_input.fallbackPrompt }),
       });
     }
+    const recipeBody = {
+      recipe_id: 'scene', recipe_version: '', skill_id: '', skill_version: '',
+      confirmed_inputs: {}, node_kind: 'image', prompt_strategy: 'llm_refine',
+      node_prompt: 'A scene', user_goal: '', upstream_text: '', reference_media: [],
+    };
+    add('recipe-request', 'recipe_compile_request', {
+      node_id: 'image', node_data: { workflowCatalog: { recipeId: 'scene' } },
+      compile_input: { nodeKind: 'image', nodePrompt: 'A scene', fallbackPrompt: 'A scene' },
+      env: { executionSource: 'workflow' },
+    }, { kind: 'request', request: { method: 'POST', path: 'freezone/recipes/compile', body: recipeBody } });
+    add('recipe-result', 'recipe_compile_result', { request_body: recipeBody, data: { prompt: 'P' } },
+      { prompt: 'P', metadata: { mode: 'model', prompt: 'P', recipeIds: ['scene'] } });
     add('start', 'image_generation_patch', { phase: 'start', started_at_ms: 123 }, pure.imageGenerationStartPatch(123));
     add('submit', 'image_generation_patch', { phase: 'submit', started_at_ms: 456 }, pure.imageGenerationSubmitPatch(456));
     add('accepted', 'image_generation_patch', { phase: 'accepted', task }, pure.imageGenerationAcceptedPatch(task));
@@ -40,7 +57,7 @@ it('serves pure image generation requests and patches from a standalone worker w
       const input = outcomePayload(outcome, index % 2 ? 'zh' : 'en');
       add(`outcome-${index}`, 'image_generation_patch', input, pure.imageGenerationOutcomePatch(await outcomeInput(input)));
     }
-    for (const op of ['image_generation_request', 'image_generation_patch']) {
+    for (const op of ['image_generation_request', 'image_generation_patch', 'recipe_compile_request', 'recipe_compile_result']) {
       const id = `invalid-${op}`;
       requests.push({ id, op, payload: {} });
       expected.push({ id, ok: false, error: { code: 'invalid_request', message: expect.any(String) } });

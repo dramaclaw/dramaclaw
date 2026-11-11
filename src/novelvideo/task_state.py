@@ -14,6 +14,7 @@
 - worker 死亡不影响结果获取
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -53,6 +54,14 @@ from novelvideo.task_owner import owner_alive
 logger = logging.getLogger(__name__)
 
 ACTIVE_PROJECT_TASK_STATUSES = {"submitting", "queued", "running"}
+# These tasks wait for the generation tasks they submit, without occupying their lanes.
+LANE_EXEMPT_TASK_TYPES = frozenset({
+    "freezone_agent_workflow_result",
+    "freezone_agent_recipe_result",
+    "freezone_agent_workflow_generate",
+    "freezone_agent_recipe_generate",
+    "freezone_workflow_drive",
+})
 TASK_READ_BATCH_SIZE = 200
 # Exclude potentially large log payloads for workflow reconciliation.
 TASK_SNAPSHOT_COLUMNS = (
@@ -681,7 +690,7 @@ class TaskStateManager:
                 if project_lane_limit is _PROJECT_LANE_LIMIT_UNSET
                 else project_lane_limit
             )
-            if limit is not None:
+            if task_type not in LANE_EXEMPT_TASK_TYPES and limit is not None:
                 active = self._count_active_project_tasks_on_connection(
                     conn,
                     project_id=ctx.project_id,
@@ -696,7 +705,7 @@ class TaskStateManager:
                     )
 
             user_limit = project_user_lane_active_limit(normalized_queue_kind)
-            if user_limit is not None:
+            if task_type not in LANE_EXEMPT_TASK_TYPES and user_limit is not None:
                 user_active = self._count_active_project_tasks_on_connection(
                     conn,
                     project_id=ctx.project_id,
@@ -900,14 +909,9 @@ class TaskStateManager:
         if queue_kind is not None:
             predicates.append("queue_kind = ?")
             params.append(normalize_queue_kind(queue_kind))
-            # These tasks only wait for externally produced delivery receipts.
-            # Counting them as generation slots makes a workflow block itself
-            # before the node that produces those receipts can start.
-            predicates.append(
-                "task_type NOT IN ('freezone_agent_workflow_result', "
-                "'freezone_agent_recipe_result', 'freezone_agent_workflow_generate', "
-                "'freezone_agent_recipe_generate')"
-            )
+            excluded = ",".join("?" for _ in LANE_EXEMPT_TASK_TYPES)
+            predicates.append(f"task_type NOT IN ({excluded})")
+            params.extend(LANE_EXEMPT_TASK_TYPES)
         if requester_user_id is not None:
             predicates.append("requester_user_id = ?")
             params.append(requester_user_id)
@@ -1414,13 +1418,13 @@ class TaskStateManager:
             celery_stale_before = celery_stale_before.replace("Z", ".000000Z")
         try:
             inline_rows = conn.execute(
-                "SELECT task_key, task_id, "
+                "SELECT *, "
                 "json_extract(result_json, '$.task_metadata.owner') AS owner "
                 "FROM task_states WHERE status IN ('submitting', 'queued', 'running') "
                 "AND json_valid(result_json) "
                 "AND json_extract(result_json, '$.task_metadata.backend') = 'inline'"
             ).fetchall()
-            inline_changed = 0
+            claimed_inline_rows = []
             for row in inline_rows:
                 try:
                     owner = json.loads(row["owner"])
@@ -1443,7 +1447,8 @@ class TaskStateManager:
                         row["task_id"],
                     ),
                 )
-                inline_changed += result.rowcount
+                if result.rowcount == 1:
+                    claimed_inline_rows.append(row)
             celery_rows = conn.execute(
                 "SELECT task_key, task_id FROM task_states "
                 "WHERE status IN ('submitting', 'queued', 'running') "
@@ -1480,7 +1485,17 @@ class TaskStateManager:
             conn.rollback()
             logger.warning("stale task sweep skipped: %s", exc)
             return None
-        return inline_changed + celery_changed
+        if claimed_inline_rows:
+            from novelvideo.task_backend.run_core import release_interrupted_inline_task_reservation
+
+            async def release_claimed_reservations():
+                for row in claimed_inline_rows:
+                    await release_interrupted_inline_task_reservation(self._row_to_state(row))
+
+            thread = threading.Thread(target=lambda: asyncio.run(release_claimed_reservations()))
+            thread.start()
+            thread.join()
+        return len(claimed_inline_rows) + celery_changed
 
     def _sweep_stale_tasks_throttled(self, conn, db_path: Path) -> None:
         """普通连接按库定期清扫，失败则留给下次连接立即重试。"""

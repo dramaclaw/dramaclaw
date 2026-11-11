@@ -17,6 +17,7 @@ import time
 import uuid
 from collections.abc import Coroutine
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -82,6 +83,7 @@ from novelvideo.freezone.canvas_command_bridge import (
     resolve_skill_studio_result,
 )
 from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
+from novelvideo.freezone.agent_canvas_metrics import observe as observe_canvas_metric
 from novelvideo.freezone.canvas_confirmations import (
     CONFIRMATIONS_DIRNAME,
     CanvasConfirmationError,
@@ -1739,6 +1741,21 @@ async def append_canvas_confirmation_notice(
             f"and the server applied it with status {detail}. "
             "Check the current canvas before reporting."
         ),
+        "running": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
+            f"the server started workflow run {detail}. "
+            "Observe it with freezone_observe_workflow_run using that run_id before reporting. "
+            "Do not run it again."
+        ),
+        "already_completed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
+            "there is nothing to run because every target already has a current result."
+        ),
+        **{f"run_{outcome}": (
+            f"Workflow run {detail} for canvas confirmation {confirmation_id} "
+            f"finished with status {outcome}. "
+            "Read the canvas or observe the run before reporting."
+        ) for outcome in ("completed", "failed", "cancelled")},
         "failed": (
             f"The user confirmed canvas confirmation {confirmation_id} ({kinds}), "
             f"but the server could not apply it ({detail}). The confirmation is void. "
@@ -2913,6 +2930,10 @@ def _canvas_stream_start_revision(state_dir: Path, canvas_id: str) -> int:
     return canvas.get("revision", 0) if canvas else 0
 
 
+def _push_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @router.get("/chat/canvas-commands/stream")
 async def stream_canvas_commands(
     project_id: str,
@@ -2956,6 +2977,7 @@ async def stream_canvas_commands(
         else None
     )
     cursor = last_revision
+    cursor_replay = last_revision is not None
     if change_hub is not None and cursor is None:
         cursor = await hub.run(_canvas_stream_start_revision, state_dir, canvas_id)
     username = str(user["username"])
@@ -2983,20 +3005,51 @@ async def stream_canvas_commands(
             touch_canvas_presence(state_dir, canvas_id, subscriber_id)
 
     async def change_frames():
-        nonlocal cursor
+        nonlocal cursor, cursor_replay
         if change_hub is None:
             return
         replay = await hub.run(read_canvas_changes, state_dir, canvas_id, cursor)
-        if replay.reset_revision is not None:
-            cursor = replay.reset_revision
-            change_hub.metrics["canvas_reset_frames"] += 1
-            reset = {"type": "canvas.reset", "canvas_id": canvas_id, "revision": cursor}
-            yield {"data": json.dumps(reset)}
-        for entry in replay.entries:
-            cursor = entry["revision"]
-            change_hub.metrics["canvas_patch_frames"] += 1
-            patch = {key: value for key, value in entry.items() if key != "written_at"}
-            yield {"data": json.dumps(patch)}
+        is_replay = cursor_replay and bool(replay.entries)
+        cursor_replay = False
+        frames = 0
+        patch_frames = 0
+        max_delivery_ms = 0.0
+        reset = replay.reset_revision is not None
+        try:
+            if reset:
+                cursor = replay.reset_revision
+                change_hub.metrics["canvas_reset_frames"] += 1
+                count_canvas_metric("canvas_push.reset")
+                frames += 1
+                payload = {"type": "canvas.reset", "canvas_id": canvas_id, "revision": cursor}
+                yield {"data": json.dumps(payload)}
+            for entry in replay.entries:
+                cursor = entry["revision"]
+                change_hub.metrics["canvas_patch_frames"] += 1
+                try:
+                    written_at = datetime.fromisoformat(entry.get("written_at"))
+                    delivery_ms = max(0.0, (_push_now() - written_at).total_seconds() * 1000)
+                except (TypeError, ValueError, OverflowError):
+                    pass
+                else:
+                    observe_canvas_metric(
+                        "canvas_push.replay_age_ms" if is_replay else "canvas_push.delivery_ms",
+                        delivery_ms,
+                    )
+                    max_delivery_ms = max(max_delivery_ms, delivery_ms)
+                frames += 1
+                patch_frames += 1
+                patch = {key: value for key, value in entry.items() if key != "written_at"}
+                yield {"data": json.dumps(patch)}
+        finally:
+            if is_replay and patch_frames:
+                count_canvas_metric("canvas_push.cursor_replay")
+                observe_canvas_metric("canvas_push.cursor_replay_frames", patch_frames)
+            if frames:
+                logger.info(
+                    "canvas_push canvas=%s frames=%d reset=%s replay=%s max_delivery_ms=%d",
+                    canvas_id, frames, reset, is_replay, max_delivery_ms,
+                )
 
     async def events():
         hub.metrics["sse_connections"] = hub.metrics.get("sse_connections", 0) + 1
@@ -3663,8 +3716,13 @@ async def _follow_scope_turn(*, websocket, user, username, scope, send_lock) -> 
     except Exception:
         logger.exception("failed to follow Codex turn")
         await _send_json_best_effort(
-            websocket, {"type": "error", "turn_id": turn_id,
-                        "message": "无法跟随当前对话，请重新连接。"}, send_lock,
+            websocket,
+            {
+                "type": "error",
+                "turn_id": turn_id,
+                "message": "无法跟随当前对话，请重新连接。",  # i18n-exempt
+            },
+            send_lock,
         )
     finally:
         await _stop_turn_tasks(tasks)
@@ -4717,13 +4775,8 @@ async def chat_ws(websocket: WebSocket) -> None:
             except Exception as exc:  # noqa: BLE001
                 busy_message = _chat_turn_busy_message(exc)
                 message = busy_message or str(exc)
-                logger.exception(
-                    "chat turn failed username=%s turn_id=%s error_type=%s",
-                    username,
-                    turn_id,
-                    type(exc).__name__,
-                )
                 if busy_message is not None:
+                    logger.info("chat turn busy username=%s turn_id=%s", username, turn_id)
                     await _send_json_best_effort(
                         websocket,
                         {
@@ -4738,6 +4791,12 @@ async def chat_ws(websocket: WebSocket) -> None:
                         }, send_lock,
                     )
                     continue
+                logger.exception(
+                    "chat turn failed username=%s turn_id=%s error_type=%s",
+                    username,
+                    turn_id,
+                    type(exc).__name__,
+                )
                 billing_rule_error = find_billing_rule_not_configured_error(exc)
                 if billing_rule_error is not None:
                     await _send_json_best_effort(

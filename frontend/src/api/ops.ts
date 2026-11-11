@@ -1,8 +1,13 @@
 import { coerceAudioReferences } from "@/features/canvas/domain/audioReferences";
-import type { FreezoneAudioVoiceRef, FreezoneAudioReferencesResult } from "@/features/canvas/domain/audioReferences";
+export type { FreezoneAudioVoiceRef } from "@/features/canvas/domain/audioReferences";
+import type { FreezoneAudioReferencesResult } from "@/features/canvas/domain/audioReferences";
+import { nodeContextWireFields, textTranslateWireBody } from '@/features/canvas/application/generationRequests/nodeContextWire';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { z } from "zod";
+import {
+  recipeCompileRequestBody as recipeCompileJson, recipeCompileResult,
+} from '@/features/canvas/application/generationRequests/recipeCompileRequest';
 import { readVoiceDesignResponse } from "@/lib/queries/voice-design";
 import type { SaveGeneratedAccountVoice } from "@/types/voice-design";
 import { apiCall, apiCallEnvelope, apiClient } from "./client";
@@ -64,7 +69,7 @@ export interface FreezoneRecipeCompilePayload {
   onCompileMetadata?: (metadata: FreezoneRecipeCompileMetadata) => void;
 }
 
-const RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
+export const RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
 const RECIPE_COMPILE_BATCH_WINDOW_MS = 15;
 const RECIPE_COMPILE_BATCH_MAX_ITEMS = 12;
 
@@ -84,44 +89,13 @@ const pendingRecipeCompiles: PendingRecipeCompile[] = [];
 let recipeCompileBatchTimer: ReturnType<typeof setTimeout> | null = null;
 let recipeCompileRequestSequence = 0;
 
-function recipeCompileJson(payload: FreezoneRecipeCompilePayload) {
-  return {
-    ...(payload.projectId ? { project_id: payload.projectId } : {}),
-    ...(payload.productOperationId
-      ? { product_operation_id: payload.productOperationId }
-      : {}),
-    recipe_id: payload.recipeId,
-    recipe_version: payload.recipeVersion ?? "",
-    ...(payload.recipePipeline?.length
-      ? { recipe_pipeline: payload.recipePipeline }
-      : {}),
-    skill_id: payload.skillId ?? "",
-    skill_version: payload.skillVersion ?? "",
-    confirmed_inputs: payload.confirmedInputs ?? {},
-    node_kind: payload.nodeKind,
-    prompt_strategy: payload.promptStrategy ?? "llm_refine",
-    node_prompt: payload.nodePrompt ?? "",
-    user_goal: payload.userGoal ?? "",
-    upstream_text: payload.upstreamText ?? "",
-    reference_media: payload.referenceMedia ?? [],
-  };
-}
-
 function resolveRecipeCompile(
   pending: PendingRecipeCompile,
   data: FreezoneRecipeCompileWireData,
 ): void {
-  pending.payload.onCompileMetadata?.({
-    mode: data.compile_mode ?? "model",
-    prompt: data.prompt,
-    recipeIds: Array.isArray(data.recipe_ids)
-      ? data.recipe_ids.filter((item): item is string => typeof item === "string" && item.length > 0)
-      : [
-          pending.payload.recipeId,
-          ...(pending.payload.recipePipeline ?? []).map((item) => item.id),
-        ],
-  });
-  pending.resolve(data.prompt);
+  const result = recipeCompileResult(recipeCompileJson(pending.payload), data);
+  pending.payload.onCompileMetadata?.(result.metadata);
+  pending.resolve(result.prompt);
 }
 
 async function sendSingleRecipeCompile(pending: PendingRecipeCompile): Promise<void> {
@@ -220,35 +194,15 @@ export function compileFreezoneRecipePrompt(
   });
 }
 
-export async function generateFreezoneRecipeText(
-  payload: Omit<FreezoneRecipeCompilePayload, "nodeKind">,
-): Promise<string> {
-  const data = await apiCall<{ content: string }>("freezone/recipes/generate-text", {
-    method: "POST",
-    // Recipe-backed text generation is a model call and can legitimately take
-    // longer than the shared 30s API-client timeout.
-    timeout: RECIPE_MODEL_TIMEOUT_MS,
-    json: {
-      ...(payload.projectId ? { project_id: payload.projectId } : {}),
-      ...(payload.productOperationId
-        ? { product_operation_id: payload.productOperationId }
-        : {}),
-      recipe_id: payload.recipeId,
-      recipe_version: payload.recipeVersion ?? "",
-      ...(payload.recipePipeline?.length
-        ? { recipe_pipeline: payload.recipePipeline }
-        : {}),
-      skill_id: payload.skillId ?? "",
-      skill_version: payload.skillVersion ?? "",
-      confirmed_inputs: payload.confirmedInputs ?? {},
-      node_kind: "text",
-      node_prompt: payload.nodePrompt ?? "",
-      user_goal: payload.userGoal ?? "",
-      upstream_text: payload.upstreamText ?? "",
-      reference_media: payload.referenceMedia ?? [],
-    },
+export async function sendGenerationWireRequest<T>(
+  request: { method: 'POST'; path: string; body: Record<string, unknown> },
+  options?: { timeout?: number },
+): Promise<T> {
+  return apiCall<T>(request.path, {
+    method: request.method,
+    json: request.body,
+    ...(options?.timeout !== undefined ? { timeout: options.timeout } : {}),
   });
-  return data.content;
 }
 
 /**
@@ -256,16 +210,7 @@ export async function generateFreezoneRecipeText(
  * emitting keys only when present so legacy callers stay byte-identical.
  */
 function nodeContextBody(ctx: FreezoneNodeContext): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (ctx.canvasId) out.canvas_id = ctx.canvasId;
-  if (ctx.nodeId) out.node_id = ctx.nodeId;
-  if (ctx.modelParams) out.model_params = ctx.modelParams;
-  const operation = workflowProductOperation(ctx.nodeId);
-  if (operation?.generationAttemptId) {
-    out.product_operation_id = operation.operationId;
-    out.generation_attempt_id = operation.generationAttemptId;
-  }
-  return out;
+  return nodeContextWireFields({ ...ctx, productOperation: workflowProductOperation(ctx.nodeId) ?? null });
 }
 
 /** One recorded generation attempt for a node (see generation-history GET). */
@@ -1564,35 +1509,6 @@ export async function submitFreezoneFrameFromContext(
   );
 }
 
-// /freezone/image-to-3gs --------------------------------------------------- //
-
-/** SHARP / 3GS 来源类型；master/reverse 单面 SOG，pano 用 360 全景生成。 */
-export type FreezoneImageTo3GSKind = "master" | "reverse" | "pano";
-
-export interface FreezoneImageTo3GSPayload extends FreezoneNodeContext {
-  /** 源图静态地址，通常来自 Freezone 图片节点。 */
-  sourceUrl: string;
-  /** 默认 master；当前 3D 世界节点仅使用 master。 */
-  sourceKind?: FreezoneImageTo3GSKind;
-}
-
-export async function submitFreezoneImageTo3GS(
-  project: string,
-  payload: FreezoneImageTo3GSPayload,
-): Promise<FreezoneJobRef> {
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/image-to-3gs`,
-    {
-      method: "POST",
-      json: {
-        source_url: payload.sourceUrl,
-        source_kind: payload.sourceKind ?? "master",
-        ...nodeContextBody(payload),
-      },
-    },
-  );
-}
-
 // /freezone/extract-frames ------------------------------------------------ //
 
 export interface FreezoneExtractPayload {
@@ -2134,100 +2050,6 @@ export async function fetchFreezoneAudioReferences(
   return coerceAudioReferences(payload);
 }
 
-export interface FreezoneAudioSpeechPayload extends FreezoneNodeContext {
-  /** 要合成的台词 / 旁白文本。 */
-  text: string;
-  /** preset 无需参考音频；clone 使用 voiceRef 克隆声音。 */
-  speechMode?: "preset" | "clone";
-  presetModel?: string;
-  presetVoice?: string;
-  /** 情绪提示词，留空则用项目解说风格。例："紧张、压低声音、带一点恐惧感"。 */
-  emotionPrompt?: string;
-  /** 声线引用；不传则用项目默认解说人。 */
-  voiceRef?: FreezoneAudioVoiceRef | null;
-  /** 目标 beat;给定后生成的音频会带上 beat_audio slot_target,可直接 commit。 */
-  targetEpisode?: number;
-  targetBeat?: number;
-}
-
-export async function submitFreezoneAudioSpeech(
-  project: string,
-  payload: FreezoneAudioSpeechPayload,
-): Promise<FreezoneJobRef> {
-  const voiceRefBody = payload.voiceRef
-    ? {
-        scope: payload.voiceRef.scope,
-        character_name: payload.voiceRef.characterName ?? "",
-        identity_id: payload.voiceRef.identityId ?? "",
-        slot: payload.voiceRef.slot ?? "",
-        voice_id: payload.voiceRef.voiceId ?? "",
-      }
-    : null;
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/audio/speech`,
-    {
-      method: "POST",
-      json: {
-        ...nodeContextBody(payload),
-        text: payload.text,
-        speech_mode: payload.speechMode ?? "clone",
-        preset_model: payload.presetModel ?? "edge-tts",
-        preset_voice: payload.presetVoice ?? "Serena",
-        emotion_prompt: payload.emotionPrompt ?? "",
-        voice_ref: voiceRefBody,
-        target_episode: payload.targetEpisode,
-        target_beat: payload.targetBeat,
-      },
-    },
-  );
-}
-
-// /freezone/audio/eleven-music ------------------------------------------- //
-
-/**
- * 文本生成音乐请求。除 input 外全部可选，不传走后端默认。
- * model / response_format / output_format 不需要前端传（走后端默认 LingShan-MU-11 / mp3 /
- * mp3_44100_128），故不在此暴露。
- */
-export interface FreezoneAudioMusicPayload extends FreezoneNodeContext {
-  /** 音乐描述 prompt（风格、乐器、氛围等）；映射到后端 `input`。 */
-  prompt: string;
-  /** 生成长度（毫秒），范围 3000–600000，留空走后端默认 30000。 */
-  musicLengthMs?: number;
-  /** 是否强制纯音乐，留空走后端默认 true。 */
-  forceInstrumental?: boolean;
-  /** 是否严格遵守音乐段落时长策略，留空走后端默认 true。 */
-  respectSectionsDurations?: boolean;
-  /** 目标 beat;给定后生成的音频会带上 beat_audio slot_target,可直接 commit。 */
-  targetEpisode?: number;
-  targetBeat?: number;
-}
-
-/**
- * 文本生成音乐。返回异步任务句柄，结果用
- * fetchFreezoneJobResult('freezone_audio_eleven_music') 取。
- */
-export async function submitFreezoneAudioMusic(
-  project: string,
-  payload: FreezoneAudioMusicPayload,
-): Promise<FreezoneJobRef> {
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/audio/eleven-music`,
-    {
-      method: "POST",
-      json: {
-        ...nodeContextBody(payload),
-        input: payload.prompt,
-        music_length_ms: payload.musicLengthMs,
-        force_instrumental: payload.forceInstrumental,
-        respect_sections_durations: payload.respectSectionsDurations,
-        target_episode: payload.targetEpisode,
-        target_beat: payload.targetBeat,
-      },
-    },
-  );
-}
-
 // /freezone/audio/voices ------------------------------------------------- //
 //
 // 「我的音色」(scope=user_custom) 的列表统一通过 /freezone/audio/references
@@ -2367,11 +2189,9 @@ export async function submitFreezoneTextTranslate(
     `projects/${encodeURIComponent(project)}/freezone/text/translate`,
     {
       method: "POST",
-      json: {
-        text: payload.text,
-        node_type: payload.nodeType ?? "generic",
-        ...nodeContextBody(payload),
-      },
+      json: textTranslateWireBody({
+        ...payload, productOperation: workflowProductOperation(payload.nodeId) ?? null,
+      }),
     },
   );
 }

@@ -260,10 +260,12 @@ from novelvideo.freezone.workflow_runs import (
     _validate_action_artifact,
     WorkflowRunIdempotencyConflict,
     WorkflowRunLeaseConflict,
+    WorkflowRunOwnerConflict,
     bind_workflow_action_product_operation,
     bind_workflow_media_task,
     claim_workflow_media_action,
     create_workflow_run,
+    get_server_workflow_media_link,
     interrupt_stale_workflow_runs,
     list_workflow_runs,
     prune_workflow_runs,
@@ -610,10 +612,35 @@ async def _enqueue_claimed_workflow_media(
     queue_kind: str,
     payload: dict[str, Any],
     job_id: str,
+    claim_canvas_id: str | None = None,
+    claim_node_id: str | None = None,
 ) -> dict:
     """Use the durable workflow claim and task scope for one media submission."""
+    canvas_id = claim_canvas_id if claim_canvas_id is not None else str(payload.get("canvas_id") or "")
+    node_id = claim_node_id if claim_node_id is not None else str(payload.get("node_id") or "")
     operation_id = str(payload.get("product_operation_id") or "")
-    if operation_id:
+    server_link = get_server_workflow_media_link() if not operation_id else None
+    attempt_id = str(payload.get("generation_attempt_id") or "")
+    if server_link is not None:
+        try:
+            run = await asyncio.to_thread(
+                read_workflow_run,
+                project_dir=_canvas_state_project_dir(ctx, project_dir),
+                canvas_id=canvas_id,
+                run_id=server_link["run_id"],
+            )
+        except ValueError:
+            run = None
+        if (
+            run is None
+            or run["canvas_id"] != canvas_id
+            or server_link["node_id"] != node_id
+        ):
+            raise HTTPException(
+                409, "server workflow media link does not match the submitted node"
+            )
+        attempt_id = server_link["generation_attempt_id"]
+    if operation_id or server_link is not None:
         identity = {
             key: value
             for key, value in payload.items()
@@ -643,10 +670,11 @@ async def _enqueue_claimed_workflow_media(
                     claim_workflow_media_action,
                     project_dir=_canvas_state_project_dir(ctx, project_dir),
                     project_id=ctx.project_id,
-                    canvas_id=str(payload.get("canvas_id") or ""),
-                    node_id=str(payload.get("node_id") or ""),
+                    canvas_id=canvas_id,
+                    node_id=node_id,
                     operation_id=operation_id,
-                    attempt_id=str(payload.get("generation_attempt_id") or ""),
+                    attempt_id=attempt_id,
+                    run_id=server_link["run_id"] if server_link is not None else "",
                     task_type=task_type,
                     fingerprint=fingerprint,
                 )
@@ -679,11 +707,11 @@ async def _enqueue_claimed_workflow_media(
                 reclaim_failed_workflow_media_action,
                 project_dir=_canvas_state_project_dir(ctx, project_dir),
                 project_id=ctx.project_id,
-                canvas_id=str(payload.get("canvas_id") or ""),
+                canvas_id=canvas_id,
                 run_id=claim["run_id"],
-                node_id=str(payload.get("node_id") or ""),
+                node_id=node_id,
                 operation_id=operation_id,
-                attempt_id=str(payload.get("generation_attempt_id") or ""),
+                attempt_id=attempt_id,
                 task_type=task_type,
                 fingerprint=fingerprint,
                 failed_job_id=str(claim["job_id"]),
@@ -705,7 +733,7 @@ async def _enqueue_claimed_workflow_media(
             await _cancel_claimed_media_if_run_cancelled(
                 ctx=ctx,
                 project_dir=project_dir,
-                canvas_id=str(payload.get("canvas_id") or ""),
+                canvas_id=canvas_id,
                 run_id=claim["run_id"],
                 task=existing,
             )
@@ -720,7 +748,7 @@ async def _enqueue_claimed_workflow_media(
         run = await workflow_read_executor().run(
             "response_detail", read_workflow_run,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
-            canvas_id=str(payload.get("canvas_id") or ""),
+            canvas_id=canvas_id,
             run_id=claim["run_id"],
         )
         if run is None or run.get("status") != "running":
@@ -735,7 +763,7 @@ async def _enqueue_claimed_workflow_media(
                 renew_workflow_media_claim,
                 project_dir=_canvas_state_project_dir(ctx, project_dir),
                 run_id=claim["run_id"],
-                node_id=str(payload.get("node_id") or ""),
+                node_id=node_id,
                 operation_id=operation_id,
                 job_id=job_id,
                 claimed_at=float(claim["claimed_at"]),
@@ -751,12 +779,12 @@ async def _enqueue_claimed_workflow_media(
         scope=job_id,
         payload=payload,
     )
-    if operation_id:
+    if operation_id or server_link is not None:
         await asyncio.to_thread(
             bind_workflow_media_task,
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             run_id=claim["run_id"],
-            node_id=str(payload.get("node_id") or ""),
+            node_id=node_id,
             operation_id=operation_id,
             job_id=job_id,
             task_type=task_type,
@@ -765,7 +793,7 @@ async def _enqueue_claimed_workflow_media(
         await _cancel_claimed_media_if_run_cancelled(
             ctx=ctx,
             project_dir=project_dir,
-            canvas_id=str(payload.get("canvas_id") or ""),
+            canvas_id=canvas_id,
             run_id=claim["run_id"],
             task=queued.task_state,
         )
@@ -1038,6 +1066,16 @@ async def _start_or_enqueue_freezone_image_to_3gs(
             "operation": source_kind,
         },
     }
+    if ctx is not None and (link := get_server_workflow_media_link()) is not None:
+        data = (await _enqueue_claimed_workflow_media(
+            ctx=ctx, project_dir=project_dir, task_type=task_type, queue_kind="world",
+            payload=payload, job_id=job_id,
+            claim_canvas_id=link["canvas_id"], claim_node_id=link["node_id"],
+        ))["data"]
+        return {
+            "task_id": data.get("task_id"), "task_key": data["task_key"],
+            "backend": data["backend"], "queue": data["queue"], "job_id": data["job_id"],
+        }
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -2909,6 +2947,35 @@ async def _start_or_enqueue_freezone_edit_job(
         "display_name": "编辑图片",
         **(task_display or {}),
     }
+    task_payload = {
+        "job_id": job_id,
+        "project_dir": str(project_dir),
+        "prompt": prompt_text,
+        "base_path": base_paths[0],
+        "extra_reference_paths": extra_paths,
+        "aspect_ratio": resolved_aspect_ratio,
+        "image_size": image_size,
+        "provider": normalized_provider,
+        "model": resolved_model,
+        "quality": quality,
+        "canvas_id": canvas_id or "",
+        "node_id": node_id or "",
+        "model_id": model_id or "",
+        "catalog_id": catalog_id or "",
+        "gen_mode": gen_mode or "",
+        # 目录动态参数与它的 schema 一起下发给 runner；schema 是 runner
+        # 把参数写进网关请求体（requestPath）的唯一依据，只带值没有用。
+        **({"model_params": model_params} if model_params else {}),
+        **({"request_schema": request_schema} if request_schema else {}),
+        **({"billing": billing} if billing else {}),
+        **display_payload,
+    }
+    if ctx is not None and (link := get_server_workflow_media_link()) is not None:
+        return await _enqueue_claimed_workflow_media(
+            ctx=ctx, project_dir=project_dir, task_type="freezone_edit", queue_kind="default",
+            payload=task_payload, job_id=job_id,
+            claim_canvas_id=link["canvas_id"], claim_node_id=link["node_id"],
+        )
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -2917,29 +2984,7 @@ async def _start_or_enqueue_freezone_edit_job(
             queue_kind="default",
             episode=0,
             scope=job_id,
-            payload={
-                "job_id": job_id,
-                "project_dir": str(project_dir),
-                "prompt": prompt_text,
-                "base_path": base_paths[0],
-                "extra_reference_paths": extra_paths,
-                "aspect_ratio": resolved_aspect_ratio,
-                "image_size": image_size,
-                "provider": normalized_provider,
-                "model": resolved_model,
-                "quality": quality,
-                "canvas_id": canvas_id or "",
-                "node_id": node_id or "",
-                "model_id": model_id or "",
-                "catalog_id": catalog_id or "",
-                "gen_mode": gen_mode or "",
-                # 目录动态参数与它的 schema 一起下发给 runner；schema 是 runner
-                # 把参数写进网关请求体（requestPath）的唯一依据，只带值没有用。
-                **({"model_params": model_params} if model_params else {}),
-                **({"request_schema": request_schema} if request_schema else {}),
-                **({"billing": billing} if billing else {}),
-                **display_payload,
-            },
+            payload=task_payload,
         )
         return {
             "ok": True,
@@ -3033,6 +3078,25 @@ async def _start_or_enqueue_freezone_edit_path(
             "operation": billing_operation,
         },
     )
+    task_payload = {
+        "job_id": job_id,
+        "project_dir": str(project_dir),
+        "prompt": prompt,
+        "base_path": base_path.as_posix(),
+        "extra_reference_paths": extra_reference_paths,
+        "aspect_ratio": aspect_ratio,
+        "image_size": image_size,
+        "provider": provider,
+        "model": model,
+        "quality": quality,
+        "billing": billing,
+    }
+    if ctx is not None and (link := get_server_workflow_media_link()) is not None:
+        return await _enqueue_claimed_workflow_media(
+            ctx=ctx, project_dir=project_dir, task_type=task_type, queue_kind="default",
+            payload=task_payload, job_id=job_id,
+            claim_canvas_id=link["canvas_id"], claim_node_id=link["node_id"],
+        )
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -3041,19 +3105,7 @@ async def _start_or_enqueue_freezone_edit_path(
             queue_kind="default",
             episode=0,
             scope=job_id,
-            payload={
-                "job_id": job_id,
-                "project_dir": str(project_dir),
-                "prompt": prompt,
-                "base_path": base_path.as_posix(),
-                "extra_reference_paths": extra_reference_paths,
-                "aspect_ratio": aspect_ratio,
-                "image_size": image_size,
-                "provider": provider,
-                "model": model,
-                "quality": quality,
-                "billing": billing,
-            },
+            payload=task_payload,
         )
         return _project_job_response(
             task_type=task_type,
@@ -3203,7 +3255,6 @@ async def _enqueue_or_start_freezone_media_job(
     project_dir: Path,
     task_type: Literal[
         "freezone_video_erase",
-        "freezone_video_upscale",
         "freezone_audio_separate",
         "freezone_video_compose",
         "freezone_audio_eleven_music",
@@ -7273,12 +7324,13 @@ async def freezone_image_to_3gs(
         _handle_task_start_runtime_error("failed to start image-to-3gs task", exc)
         raise HTTPException(503, f"failed to start image-to-3gs task: {exc}") from exc
 
+    effective_job_id = task_data.pop("job_id", job_id)
     return {
         "ok": True,
         "data": {
             "task_type": "freezone_image_to_3gs",
-            "job_id": job_id,
-            "scope": job_id,
+            "job_id": effective_job_id,
+            "scope": effective_job_id,
             "scene_id": scene_id,
             "step": step,
             **task_data,
@@ -8200,75 +8252,6 @@ def _copy_image_matching_existing_target(source_path: Path, target: Path) -> dic
             "target_size": list(target_size),
             "fitted_size": list(fitted.size),
         }
-
-
-def _start_freezone_video_compose_task(
-    *,
-    username: str,
-    project: str,
-    project_dir: Path,
-    job_id: str,
-    body: FreezoneVideoComposeRequest,
-    resolved_tracks: list[dict],
-) -> None:
-    task_type = "freezone_video_compose"
-    task_manager = get_task_manager()
-    task_manager.create_task(
-        task_type, username, project, episode=0, scope=job_id, status="starting"
-    )
-
-    async def _runner() -> None:
-        try:
-            task_manager.update_progress(
-                task_type,
-                username,
-                project,
-                episode=0,
-                scope=job_id,
-                progress=0.05,
-                current_task="validating_timeline",
-                logs=["开始合成视频时间线"],
-            )
-            from novelvideo.freezone.jobs import run_freezone_video_compose
-
-            output_path = await run_freezone_video_compose(
-                project_dir=project_dir,
-                job_id=job_id,
-                title=body.title,
-                canvas_id=body.canvas_id,
-                resolution=body.resolution,
-                fps=body.fps,
-                background_color=body.background_color,
-                keep_original_audio=body.keep_original_audio,
-                tracks=resolved_tracks,
-            )
-            task_manager.complete_task(
-                task_type,
-                username,
-                project,
-                episode=0,
-                scope=job_id,
-                result={
-                    "output_format": "mp4",
-                    "output_path": str(output_path),
-                    "cover_url": body.cover_url or None,
-                },
-                current_task="completed",
-                logs=["视频合成完成"],
-            )
-        except Exception as exc:
-            task_manager.fail_task(
-                task_type,
-                username,
-                project,
-                episode=0,
-                scope=job_id,
-                error=str(exc),
-                current_task="failed",
-                logs=[f"错误: {exc}"],
-            )
-
-    asyncio.create_task(_runner())
 
 
 def _start_freezone_video_erase_task(
@@ -11693,6 +11676,8 @@ async def freezone_video_extend(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode="video_extend",
@@ -11890,13 +11875,20 @@ async def freezone_video_upscale(
     try:
         job_id = _new_job_id()
         if ctx is not None:
-            return await _enqueue_or_start_freezone_media_job(
+            workflow_link = _verified_workflow_media_link(
                 ctx=ctx,
-                username=username,
-                project=project_name,
+                project_dir=project_dir,
+                canvas_id=body.canvas_id or None,
+                node_id=body.node_id or None,
+                operation_id=body.product_operation_id,
+                attempt_id=body.generation_attempt_id,
+            )
+            return await _enqueue_freezone_background_job(
+                ctx=ctx,
                 project_dir=project_dir,
                 task_type="freezone_video_upscale",
                 job_id=job_id,
+                queue_kind="ffmpeg",
                 payload={
                     "source_path": source_path.as_posix(),
                     "resolution": body.resolution,
@@ -11908,6 +11900,9 @@ async def freezone_video_upscale(
                     "source_meta": source_meta,
                     "billing": billing,
                     **processing_models,
+                    "canvas_id": body.canvas_id,
+                    "node_id": body.node_id,
+                    **workflow_link,
                 },
             )
         _start_freezone_video_upscale_task(
@@ -12356,34 +12351,25 @@ async def freezone_video_compose(
 
     try:
         job_id = _new_job_id()
-        if ctx is not None:
-            return await _enqueue_or_start_freezone_media_job(
-                ctx=ctx,
-                username=username,
-                project=project_name,
-                project_dir=project_dir,
-                task_type="freezone_video_compose",
-                job_id=job_id,
-                payload={
-                    "title": body.title,
-                    "canvas_id": body.canvas_id,
-                    "node_id": body.node_id,
-                    "resolution": body.resolution,
-                    "fps": body.fps,
-                    "background_color": body.background_color,
-                    "keep_original_audio": body.keep_original_audio,
-                    "cover_url": body.cover_url,
-                    "tracks": resolved_tracks,
-                    "studio_export": studio_film is not None,
-                },
-            )
-        _start_freezone_video_compose_task(
+        return await _enqueue_or_start_freezone_media_job(
+            ctx=ctx,
             username=username,
             project=project_name,
             project_dir=project_dir,
+            task_type="freezone_video_compose",
             job_id=job_id,
-            body=body,
-            resolved_tracks=resolved_tracks,
+            payload={
+                "title": body.title,
+                "canvas_id": body.canvas_id,
+                "node_id": body.node_id,
+                "resolution": body.resolution,
+                "fps": body.fps,
+                "background_color": body.background_color,
+                "keep_original_audio": body.keep_original_audio,
+                "cover_url": body.cover_url,
+                "tracks": resolved_tracks,
+                "studio_export": studio_film is not None,
+            },
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(
@@ -12392,13 +12378,6 @@ async def freezone_video_compose(
         raise HTTPException(
             503, f"failed to start freezone video compose task: {exc}"
         ) from exc
-
-    return _accepted_job_response(
-        task_type="freezone_video_compose",
-        username=username,
-        project=project_name,
-        job_id=job_id,
-    )
 
 
 @router.post(
@@ -17022,84 +17001,49 @@ async def finish_canvas_workflow_draft(
     return {"ok": True, "data": _workflow_draft_api_data(draft)}
 
 
-@router.post(
-    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-runs",
-    tags=[TAG_FREEZONE_CANVAS],
-)
-async def create_canvas_workflow_run(
-    project: str,
-    canvas_id: str,
-    body: dict = Body(...),
-    user: dict = Depends(get_api_user),
-):
-    if not CANVAS_ID_RE.match(canvas_id):
-        raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(project, user)
-    )
-    state_dir = _canvas_state_project_dir(ctx, project_dir)
-    actions = body.get("actions") if isinstance(body.get("actions"), list) else []
-    metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
-    if metered_runtime:
-        for action in actions:
-            if not isinstance(action, dict):
-                continue
-            action_name = str(action.get("action") or "")
-            if (
-                (
-                    action_name
-                    in {
-                        "generate_text",
-                        "generate_story_script",
-                        "generate_image",
-                        "generate_video",
-                        "generate_text_video",
-                        "generate_audio",
-                        "generate_3gs_world",
-                    }
-                    or (action_name == "generate_html" and action.get("recipe_id"))
-                )
-                and (action_name == "generate_text" or action.get("recipe_id"))
-                and (
-                    not action.get("recipe_id")
-                    or not action.get("generation_attempt_id")
-                )
-            ):
-                raise HTTPException(
-                    400,
-                    "model workflow actions require recipe_id and generation_attempt_id",
-                )
-    try:
-        run = await asyncio.to_thread(
-            create_workflow_run,
-            project_dir=state_dir,
-            project_id=ctx.project_id,
-            canvas_id=canvas_id,
-            actions=actions,
-            actor_id=_canvas_actor_id(user),
-            metadata=(
-                body.get("metadata") if isinstance(body.get("metadata"), dict) else None
-            ),
-            idempotency_key=(
-                body.get("idempotency_key")
-                if isinstance(body.get("idempotency_key"), str)
-                else ""
-            ),
-            runner_id=(
-                body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
-            ),
-        )
-    except (WorkflowRunLeaseConflict, WorkflowRunIdempotencyConflict) as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except (ValueError, CanvasLockBusy) as exc:
-        raise HTTPException(
-            400 if isinstance(exc, ValueError) else 503, str(exc)
-        ) from exc
-    if not metered_runtime:
-        return {"ok": True, "data": run}
+async def admit_canvas_workflow_run_actions(
+    *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
+    actions: list[dict] | None = None, run: dict | None = None,
+) -> dict | None:
+    """Validate before creation, then admit and bind a persisted run's Recipe actions."""
+    actions = run.get("actions", []) if run is not None else (actions or [])
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        if action.get("product_operation_id"):
+            continue
+        action_name = str(action.get("action") or "")
+        if (
+            (
+                action_name
+                in {
+                    "generate_text",
+                    "generate_story_script",
+                    "generate_image",
+                    "generate_video",
+                    "generate_text_video",
+                    "generate_audio",
+                    "generate_3gs_world",
+                }
+                or (action_name == "generate_html" and action.get("recipe_id"))
+            )
+            and (action_name == "generate_text" or action.get("recipe_id"))
+            and (
+                not action.get("recipe_id")
+                or not action.get("generation_attempt_id")
+            )
+        ):
+            raise HTTPException(
+                400,
+                "model workflow actions require recipe_id and generation_attempt_id",
+            )
+    if run is None:
+        return None
     admitted_operations: list[dict[str, Any]] = []
     try:
         for action in run.get("actions") or []:
+            if action.get("product_operation_id"):
+                continue
             action_name = str(action.get("action") or "")
             if action_name not in {
                 "generate_text",
@@ -17195,8 +17139,66 @@ async def create_canvas_workflow_run(
             canvas_id=canvas_id,
             run_id=run["run_id"],
             status="failed",
+            owner_kind=run["owner_kind"],
         )
         raise
+    return run
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-runs",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def create_canvas_workflow_run(
+    project: str,
+    canvas_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    actions = body.get("actions") if isinstance(body.get("actions"), list) else []
+    metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if metered_runtime:
+        await admit_canvas_workflow_run_actions(
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, actions=actions,
+        )
+    try:
+        run = await asyncio.to_thread(
+            create_workflow_run,
+            project_dir=state_dir,
+            project_id=ctx.project_id,
+            canvas_id=canvas_id,
+            actions=actions,
+            actor_id=_canvas_actor_id(user),
+            owner_kind="browser_legacy",
+            metadata=(
+                body.get("metadata") if isinstance(body.get("metadata"), dict) else None
+            ),
+            idempotency_key=(
+                body.get("idempotency_key")
+                if isinstance(body.get("idempotency_key"), str)
+                else ""
+            ),
+            runner_id=(
+                body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
+            ),
+        )
+    except (WorkflowRunLeaseConflict, WorkflowRunIdempotencyConflict) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, CanvasLockBusy) as exc:
+        raise HTTPException(
+            400 if isinstance(exc, ValueError) else 503, str(exc)
+        ) from exc
+    if not metered_runtime:
+        return {"ok": True, "data": run}
+    run = await admit_canvas_workflow_run_actions(
+        ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, run=run,
+    )
     return {"ok": True, "data": run}
 
 
@@ -17217,6 +17219,17 @@ async def get_canvas_workflow_runs(
             await _resolve_freezone_project(project, user, required_role="viewer")
         )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    await maintain_server_workflow_canvas(ctx, canvas_id)
+    runs = await workflow_read_executor().run(
+        "response_list", list_workflow_runs,
+        project_dir=canvas_project_dir, canvas_id=canvas_id, limit=limit,
+    )
+    return {"ok": True, "data": {"runs": runs}}
+
+
+async def maintain_server_workflow_canvas(ctx: ProjectContext, canvas_id: str) -> None:
+    project_dir = Path(ctx.output_dir)
+    canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     await workflow_read_maintenance().run(
         (ctx.project_id, str(canvas_project_dir), canvas_id),
         lambda: _maintain_canvas_workflow_runs(
@@ -17224,11 +17237,6 @@ async def get_canvas_workflow_runs(
             canvas_project_dir=canvas_project_dir, canvas_id=canvas_id,
         ),
     )
-    runs = await workflow_read_executor().run(
-        "response_list", list_workflow_runs,
-        project_dir=canvas_project_dir, canvas_id=canvas_id, limit=limit,
-    )
-    return {"ok": True, "data": {"runs": runs}}
 
 
 async def _maintain_canvas_workflow_runs(
@@ -17587,7 +17595,7 @@ async def patch_canvas_workflow_run(
     canvas_id: str,
     run_id: str,
     body: dict = Body(...),
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(require_project_scope("projects:write")),
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
@@ -17600,6 +17608,7 @@ async def patch_canvas_workflow_run(
             project_dir=_canvas_state_project_dir(ctx, project_dir),
             canvas_id=canvas_id,
             run_id=run_id,
+            owner_kind="browser_legacy",
             status=body.get("status") if isinstance(body.get("status"), str) else None,
             action_updates=(
                 body.get("action_updates")
@@ -17610,6 +17619,11 @@ async def patch_canvas_workflow_run(
                 body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
             ),
         )
+    except WorkflowRunOwnerConflict as exc:
+        raise HTTPException(
+            409,
+            detail={"code": "workflow_run_owner_mismatch", "message": str(exc)},
+        ) from exc
     except WorkflowRunLeaseConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     except (ValueError, CanvasLockBusy) as exc:
@@ -18060,6 +18074,11 @@ async def create_canvas_confirmation(
     body: CanvasConfirmationRequest,
     user: dict = Depends(require_project_scope("projects:write")),
 ):
+    from novelvideo.api.freezone_server_workflow_start import (
+        canvas_open_required_detail,
+        check_server_workflow,
+    )
+
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
@@ -18068,12 +18087,30 @@ async def create_canvas_confirmation(
     state_dir = _canvas_state_project_dir(ctx, project_dir)
     now = _confirmation_now()
     try:
+        if agent_canvas_executor() == "server":
+            check = await check_server_workflow(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=body.commands,
+            )
+            if check["status"] == "invalid":
+                raise HTTPException(409, {
+                    "code": "workflow_plan_invalid", "message": check["message"],
+                })
+            if check["status"] == "blocked" and not await asyncio.to_thread(
+                canvas_browser_open, state_dir, canvas_id, now=now,
+            ):
+                raise HTTPException(409, canvas_open_required_detail(check))
         record = await asyncio.to_thread(
             canvas_confirmations.request_confirmation,
             username=str(user["username"]), agent_id=body.agent_id, project_id=project,
             canvas_id=canvas_id, project_state_dir=state_dir, turn_id=body.turn_id,
             commands=body.commands, now=now,
         )
+    except CanvasCoreError as exc:
+        if exc.code == "invalid_request":
+            raise HTTPException(422, {
+                "code": "invalid_agent_canvas_request", "message": str(exc),
+            }) from exc
+        raise HTTPException(503, {"code": exc.code}) from exc
     except ValueError as exc:
         raise HTTPException(422, {
             "code": "invalid_agent_canvas_request", "message": str(exc),
@@ -18155,7 +18192,15 @@ async def decide_canvas_confirmation(
     body: CanvasConfirmationDecisionRequest,
     user: dict = Depends(require_project_scope("projects:write")),
 ):
+    from datetime import datetime, timezone
+
+    from novelvideo.api.freezone_server_workflow_start import (
+        canvas_open_required_detail,
+        check_server_workflow,
+        start_server_workflow_run,
+    )
     from novelvideo.api.routes.chat import append_canvas_confirmation_notice
+    from novelvideo.freezone.workflow_runs import active_workflow_run
 
     now = _confirmation_now()
     record = {"id": confirmation_id, "kinds": [], "created_at": now}
@@ -18202,7 +18247,38 @@ async def decide_canvas_confirmation(
         }
         for command in record["commands"]
     )
-    if body.decision == "confirmed" and needs_browser:
+    check = {"status": "none"}
+    current = datetime.fromtimestamp(now, timezone.utc)
+    if body.decision == "confirmed" and executor == "server" and record["status"] == "pending":
+        try:
+            check = await check_server_workflow(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=record["commands"],
+            )
+        except CanvasCoreError as exc:
+            if exc.code == "invalid_request":
+                raise reject(422, "invalid_agent_canvas_request", message=str(exc)) from exc
+            raise HTTPException(503, {"code": exc.code}) from exc
+        if check["status"] == "invalid":
+            raise reject(409, "workflow_plan_invalid", message=check["message"])
+        if check["status"] == "blocked":
+            if not await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id, now=now):
+                detail = canvas_open_required_detail(check)
+                raise reject(409, **detail)
+        if check["status"] == "runnable" and not (
+            check["refused"] and await asyncio.to_thread(
+                canvas_browser_open, state_dir, canvas_id, now=now,
+            )
+        ):
+            active = await asyncio.to_thread(
+                active_workflow_run, project_dir=state_dir, canvas_id=canvas_id, now=current,
+            )
+            if active is not None:
+                raise reject(409, "workflow_already_running", run_id=active["run_id"],
+                             message="画布上已有工作流在运行，未执行。")
+            needs_browser = False
+    if body.decision == "confirmed" and needs_browser and (
+        executor != "server" or record["status"] == "pending"
+    ):
         if not await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id, now=now):
             raise reject(409, "canvas_browser_required", message="需要打开画布才能运行")
     try:
@@ -18233,6 +18309,64 @@ async def decide_canvas_confirmation(
         if body.via == "card":
             await append_canvas_confirmation_notice(user, record, "voided", ",".join(changed))
         raise reject(409, "targets_changed", node_ids=changed)
+    if check["status"] == "runnable" and not needs_browser:
+        plan = check["plan"]
+        if not plan["actions"]:
+            await asyncio.to_thread(
+                canvas_confirmations.finish_confirmation, directory, confirmation_id,
+                outcome={"status": "already_completed"}, now=now,
+            )
+            if body.via == "card":
+                await append_canvas_confirmation_notice(user, record, "already_completed")
+            return {"ok": True, "data": {
+                "confirmation_id": confirmation_id, "status": "already_completed",
+            }}
+        try:
+            run = await start_server_workflow_run(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, plan=plan,
+                confirmation=record, actor_id=_canvas_actor_id(user), now=current,
+                refused=check["refused"],
+            )
+        except WorkflowRunLeaseConflict as exc:
+            await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="workflow_already_running", now=now,
+            )
+            active = await asyncio.to_thread(
+                active_workflow_run, project_dir=state_dir, canvas_id=canvas_id, now=current,
+            )
+            raise reject(409, "workflow_already_running",
+                         **({"run_id": active["run_id"]} if active else {}),
+                         message="画布上已有工作流在运行，未执行。") from exc
+        except Exception as exc:
+            runs = await asyncio.to_thread(
+                list_workflow_runs, project_dir=state_dir, canvas_id=canvas_id,
+            )
+            if not any(
+                run["status"] == "failed"
+                and run["metadata"].get("confirmation", {}).get("id") == confirmation_id
+                for run in runs
+            ):
+                raise
+            await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="admission_failed", now=now,
+            )
+            raise reject(409, "admission_failed", message=str(exc)) from exc
+        run_id = run["run_id"]
+        await asyncio.to_thread(
+            canvas_confirmations.finish_confirmation, directory, confirmation_id,
+            outcome={"status": "running", "run_id": run_id}, now=now,
+        )
+        if body.via == "card":
+            await append_canvas_confirmation_notice(user, record, "running", run_id)
+        _log_canvas_confirmation_decision(record, "server_run", body.via, now)
+        return {"ok": True, "data": {
+            "confirmation_id": confirmation_id, "status": "running", "run_id": run_id,
+            "actions": [{key: action[key] for key in ("node_id", "action", "label")}
+                        for action in plan["actions"]],
+            "refused": [{**item, "code": "canvas_open_required"} for item in check["refused"]],
+        }}
     envelope = {
         "schema_version": "canvas_chat_commands.v1", "project_id": project,
         "canvas_id": canvas_id, "commands": record["commands"], "agent_id": record["agent_id"],
@@ -18396,6 +18530,10 @@ async def put_canvas(
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
+    if body.save_source in {"agent_confirmed", "workflow_result"}:
+        raise HTTPException(422, {
+            "code": "canvas_save_source_reserved", "save_source": body.save_source,
+        })
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(
             project,

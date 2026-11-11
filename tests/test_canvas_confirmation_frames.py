@@ -59,7 +59,7 @@ class CorePool:
 
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
-    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "server")
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "browser")
     monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "1")
     ctx = SimpleNamespace(project_id="proj", project_name="demo", state_dir=tmp_path,
                           requester_user_id="owner")

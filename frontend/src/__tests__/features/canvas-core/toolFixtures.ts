@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { createCanvasStore, createNodeCanvasEnvironment } from '@/features/canvas/serverEntry';
+import { VIDEO_MODELS } from '@/features/canvas/domain/modelOptions';
 import * as pure from '@/features/canvas/application/generationRequests';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { imageModelOptionsFromPayload } from '@/features/canvas/domain/modelCatalogPayload';
@@ -33,15 +35,46 @@ export function worldPayload(locale = 'en') {
   return { node_id: 'world', node_data: {}, source_node: source(), upstream: { node_id: 'source', kind: 'image' },
     env: { locale, project: 'tools / project', canvas_id: 'canvas/1', blocked: false, is_generating: false, product_operation: operation } };
 }
+export const placePayload = () => ({
+  canvas: { nodes: [source(), { ...source(), id: 'obstacle', position: { x: 380, y: 0 } }], edges: [] },
+  locale: 'en', child_node_id: 'placed-child',
+  child: { type: CANVAS_NODE_TYPES.exportImage, data: {
+    displayName: 'Tool result', imageUrl: null, generationOwner: 'server', generationRunId: 'run',
+    isGenerating: true, generationStartedAt: 123,
+  }, layout: { anchorNodeId: 'source', width: 360, height: 300 } },
+  edge: { source: 'source', target: 'child' },
+});
+
+export async function browserPlacement(payload: ReturnType<typeof placePayload>) {
+  const store = createCanvasStore(createNodeCanvasEnvironment({
+    translate: await createServerTranslate(payload.locale),
+    ids: { next: () => payload.child_node_id }, now: () => 123, videoModels: VIDEO_MODELS,
+  }));
+  store.getState().setCanvasData(payload.canvas.nodes, payload.canvas.edges);
+  const { anchorNodeId, width, height } = payload.child.layout;
+  const position = store.getState().findNodePosition(anchorNodeId, width, height);
+  const id = store.getState().addNode(payload.child.type, position, payload.child.data);
+  const edgeId = store.getState().addEdge(payload.edge.source, id);
+  return { node: store.getState().nodes.find(node => node.id === id),
+    edge: store.getState().edges.find(edge => edge.id === edgeId) ?? null };
+}
+
 export type Fixture = { name: string; op: string; payload: Record<string, unknown>; expected: () => unknown | Promise<unknown> };
 const productOperation = { projectId: operation.project_id, operationId: operation.operation_id, generationAttemptId: operation.generation_attempt_id };
 export async function toolFixtures(): Promise<Fixture[]> {
   const fixtures: Fixture[] = [];
   const add = (op: string, name: string, payload: Record<string, unknown>, expected: Fixture['expected']) => fixtures.push({ op, name, payload, expected });
+  const placed = placePayload();
+  add('image_tool_place', 'browser placement', placed, () => browserPlacement(placed));
   for (const locale of ['en', 'zh']) {
     const t = await createServerTranslate(locale);
     const patch = (op: string, phase: string, name: string, fields: Record<string, unknown>, expected: Fixture['expected']) =>
       add(op, `${phase}-${name}-${locale}`, { phase, locale, ...fields }, expected);
+    patch('world_generation_patch', 'labels', 'browser labels', {}, () => ({
+      pano_3dgs: t('node.threeDWorld.pano3dgsLabel'),
+      image_3dgs: t('node.threeDWorld.image3dgsLabel'),
+      world_url_missing: t('node.threeDWorld.worldUrlMissing'),
+    }));
     for (const action of actions) {
       const cases: { name: string; data?: Record<string, unknown>; project?: string | null; nodes?: CanvasNode[]; models?: unknown }[] = [
         { name: 'ordinary' }, { name: 'opaque fallbacks', data: { imageUrl: null, referenceImageUrl: url, aspectRatio: 2 } },
@@ -58,7 +91,9 @@ export async function toolFixtures(): Promise<Fixture[]> {
         const nodes = test.nodes ?? [source(test.data)];
         const project = 'project' in test ? test.project : p.env.project;
         add('image_tool_request', `${action}-${test.name}-${locale}`, { ...p, canvas: { nodes, edges: [] }, env: { ...p.env, project, image_models: models } },
-          () => pure.buildImageToolRequest({ action, nodes, nodeId: p.node_id, projectId: project, nowMs: p.env.now_ms,
+          () => test.name === 'data refusal' || test.name === 'blob refusal'
+            ? { ok: false, message: 'Inline image sources must be prepared before building an image tool request.' }
+            : pure.buildImageToolRequest({ action, nodes, nodeId: p.node_id, projectId: project, nowMs: p.env.now_ms,
             imageModels: models === undefined ? SHARED_MODELS : imageModelOptionsFromPayload(models), translate: t }));
       }
       for (const value of ['', url]) {
@@ -118,7 +153,12 @@ export async function toolFixtures(): Promise<Fixture[]> {
       const ctx: pure.WorldGenerationRequestContext = { nodeId: p.node_id, data: p.node_data, sourceNode: p.source_node,
         upstream, projectId: p.env.project, canvasId: p.env.canvas_id, blocked: p.env.blocked, isGenerating: p.env.is_generating,
         productOperation: p.env.product_operation ? productOperation : null, translate: t };
-      add('world_generation_request', `world-${i}-${locale}`, p, () => pure.buildWorldGenerationRequest(ctx));
+      const inlineSource = p.source_node?.data.imageUrl === 'data:image/png;base64,AA=='
+        || p.source_node?.data.imageUrl === 'blob:https://media.example.test/image';
+      add('world_generation_request', `world-${i}-${locale}`, p, () => inlineSource
+        ? { ok: false, code: 'inline_media_reference', patches: [] }
+        : pure.buildWorldGenerationRequest(ctx));
+      if (inlineSource) continue;
       const prepared = pure.buildWorldGenerationRequest(ctx);
       if (prepared.ok) for (const started_at_ms of [0, 123.5]) {
         const prepared_request = { source_node_id: prepared.sourceNodeId, source_url: prepared.sourceUrl,

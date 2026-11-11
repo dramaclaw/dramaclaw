@@ -12,14 +12,32 @@ public ``/config`` route).
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from novelvideo.chat import evidence_metrics
 from novelvideo.api.auth import get_api_user
+from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot, observations_snapshot
+from novelvideo.freezone.canvas_change_watch import canvas_change_watch_hub
 from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
 
 router = APIRouter()
+
+
+@router.get("/diagnostics/agent-canvas")
+async def get_agent_canvas_metrics(user: dict = Depends(get_api_user)):
+    """Return worker-local canvas counters and numeric observations."""
+    return {
+        "ok": True,
+        "data": {
+            "worker_pid": os.getpid(),
+            "counters": metrics_snapshot(),
+            "observations": observations_snapshot(),
+            "canvas_push": dict(canvas_change_watch_hub().metrics),
+        },
+    }
 
 
 @router.get("/diagnostics/canvas-command-push")

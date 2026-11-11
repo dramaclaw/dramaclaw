@@ -22,9 +22,9 @@ export interface ImageGenerationTaskRef {
 export type ImageGenerationOutcome =
   | { kind: 'completed'; result: Record<string, unknown> | null; fallbackUrl?: string | null }
   | { kind: 'failed'; message: string; error?: GenerationErrorInfo }
-  | { kind: 'cancelled'; message: string }
+  | { kind: 'cancelled'; message: string; error?: GenerationErrorInfo }
   | { kind: 'reference_invalid'; message: string }
-  | { kind: 'compile_failed'; message: string };
+  | { kind: 'compile_failed'; message: string; error?: GenerationErrorInfo };
 export type ImageGenerationEffect =
   | { kind: 'attach_story_frame'; nodeId: string }
   | { kind: 'attach_story_asset'; nodeId: string }
@@ -40,6 +40,8 @@ export interface ImageGenerationOutcomeInput {
   total: number;
   completedUrls: string[];
   attachStoryFrame: boolean;
+  /** Browser submissions retain the render-time auto-commit decision. */
+  canAutoCommitOnGenerate?: boolean;
   outcome: ImageGenerationOutcome;
   translate: CanvasEnvironment['translate'];
 }
@@ -207,6 +209,15 @@ function batchOutput(ref: ImageGenerationTaskRef | null, urls: readonly string[]
   };
 }
 
+/** The browser writes this before its catch performs failure arbitration. */
+export function imageGenerationMissingUrlOutcome(runIndex: number, completedUrls: readonly string[]) {
+  return {
+    message: '图片生成完成但未返回图片地址', // i18n-exempt -- existing manual failure text
+    patch: runIndex === 0 && completedUrls.length === 0
+      ? { isGenerating: false, generationStartedAt: null } : undefined,
+  };
+}
+
 /**
  * Per-run completed-mode writes. The caller owns the browser attempt counter
  * and ignores invalidated attempts before applying these patches.
@@ -227,7 +238,7 @@ export function imageGenerationOutcomePatch(input: ImageGenerationOutcomeInput):
   ): ImageGenerationOutcomeResult => ({ action: 'write', patch, completedUrls, effects, ...extra });
   const failure = (message: string, prefix: Record<string, unknown>) => {
     // An Error with an empty message falls back to String(error) for diagnostics.
-    const submitError = outcome.kind === 'failed' ? outcome.error : undefined;
+    const submitError = 'error' in outcome ? outcome.error : undefined;
     const raw = submitError ? message || submitError.name
       : message || ((outcome.kind === 'cancelled' || (outcome.kind === 'failed' && taskKey))
         ? 'TaskCompletionError' : 'Error');
@@ -258,7 +269,8 @@ export function imageGenerationOutcomePatch(input: ImageGenerationOutcomeInput):
       if (first && input.attachStoryFrame) {
         effects.push({ kind: 'attach_story_frame', nodeId: input.nodeId }, { kind: 'attach_story_asset', nodeId: input.nodeId });
       }
-      if (first && nodeData.autoCommitOnGenerate === true && isSystemManagedNodeData(nodeData)) {
+      if (first && (input.canAutoCommitOnGenerate
+        ?? (nodeData.autoCommitOnGenerate === true && isSystemManagedNodeData(nodeData)))) {
         effects.push({ kind: 'commit_node', nodeId: input.nodeId, auto: true });
       }
       return write({
@@ -266,8 +278,9 @@ export function imageGenerationOutcomePatch(input: ImageGenerationOutcomeInput):
         ...(total > 1 ? { generationBatch: [...completedUrls] } : {}),
       }, { output: batchOutput(input.firstAcceptedTask, completedUrls) }, effects);
     }
-    if (runIndex === 0 && completedUrls.length === 0) missingUrlPatch = resetLoading;
-    message = '图片生成完成但未返回图片地址'; // i18n-exempt -- must equal the browser hook's error text
+    const missing = imageGenerationMissingUrlOutcome(runIndex, completedUrls);
+    missingUrlPatch = missing.patch ?? {};
+    message = missing.message;
   } else message = outcome.message;
 
   // Catch order matters: a successful sibling wins over reference errors and cancellation.

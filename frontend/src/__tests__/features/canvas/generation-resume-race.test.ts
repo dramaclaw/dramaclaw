@@ -8,6 +8,9 @@
 // 两条都会让「稍后刷新页面查看结果」落空，所以在这里钉死。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderHook } from '@testing-library/react';
+import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
+import { useTaskCenterStore } from '@/task-center/store';
 import type { CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { CURRENT_RUNTIME_SESSION_ID } from "@/features/canvas/application/generationErrorReport";
@@ -410,4 +413,78 @@ describe("恢复路径：旧任务不能覆盖同一节点的新任务", () => {
     expect(currentData.generationTaskKey).toBe(newTaskKey);
     expect(currentData.isGenerating).toBe(true);
   });
+});
+
+
+describe('server generation ownership', () => {
+  it('excludes server-owned tasks from resume while preserving browser resume', () => {
+    expect(nodeNeedsGenerationResume(resumableNode({ generationTaskKey: 'k', generationOwner: 'server' }))).toBe(false);
+    expect(nodeNeedsGenerationResume(resumableNode({ generationTaskKey: 'k' }))).toBe(true);
+  });
+  it('does not poll a server-owned live image job', () => {
+    expect(nodeOwnsLiveGenerationJob(resumableNode({ generationOwner: 'server',
+      generationJobId: 'live', generationClientSessionId: CURRENT_RUNTIME_SESSION_ID }))).toBe(false);
+  });
+  it('does not clean up a server-owned stale image job', () => {
+    expect(staleGenerationJobPatch(resumableNode({ generationOwner: 'server', generationJobId: 'old' }))).toBeNull();
+  });
+  it('leaves server-owned nodes untouched even when resume is called directly', async () => {
+    const node = resumableNode({ generationOwner: 'server' });
+    listTasks.mockResolvedValue([{ task_key: TASK_KEY, status: 'running' }]);
+    awaitTaskCompletion.mockResolvedValue({ task_key: TASK_KEY, status: 'completed', result: { output_url: 'out.png' } });
+    await resumeNodeGeneration({ node, projectId: 'p', updateNodeData: (_id, patch) => Object.assign(node.data, patch) });
+    expect(node.data).toEqual({ isGenerating: true, generationTaskKey: TASK_KEY,
+      generationTaskType: 'freezone_image', generationTaskJobId: 'job-9', generationOwner: 'server' });
+  });
+  it('does not write a delayed browser result after server ownership is set', async () => {
+    const node = resumableNode();
+    listTasks.mockResolvedValue([{ task_key: TASK_KEY, status: 'running' }]);
+    awaitTaskCompletion.mockImplementationOnce(async () => {
+      node.data.generationOwner = 'server';
+      return { task_key: TASK_KEY, status: 'completed', result: { output_url: 'out.png' } };
+    });
+    await resumeNodeGeneration({ node, projectId: 'p', getNodeData: () => node.data,
+      updateNodeData: (_id, patch) => Object.assign(node.data, patch) });
+    expect(node.data).toEqual({ isGenerating: true, generationTaskKey: TASK_KEY,
+      generationTaskType: 'freezone_image', generationTaskJobId: 'job-9', generationOwner: 'server' });
+  });
+});
+
+
+it('keeps a server-owned node busy without a task record after hydration', () => {
+  useTaskCenterStore.setState({ tasks: new Map(), isHydrated: true });
+  const { result, unmount } = renderHook(() => useNodeGenerationTaskState({
+    isGenerating: true, generationTaskKey: 'k', generationOwner: 'server',
+  }));
+  expect(result.current.isGenerating).toBe(true);
+  unmount();
+  useTaskCenterStore.getState().reset();
+});
+
+it('resumes both derived-media stages when the task handle changes', async () => {
+  const node = resumableNode({ generationTaskType: 'freezone_video_gen' });
+  node.type = CANVAS_NODE_TYPES.animatedGif;
+  listTasks.mockResolvedValue([{ task_key: TASK_KEY, status: 'running' }]);
+  awaitTaskCompletion.mockResolvedValueOnce({ result: {
+    output_url: 'source.mp4', gif_task_key: 'gif-task', gif_job_id: 'gif-job',
+  } }).mockResolvedValueOnce({ result: { gif_url: 'result.gif' } });
+  await resumeNodeGeneration({ node, projectId: 'p', getNodeData: () => node.data,
+    updateNodeData: (_id, patch) => Object.assign(node.data, patch) });
+  expect(node.data.imageUrl).toBe('result.gif');
+  expect(node.data.isGenerating).toBe(false);
+  expect(node.data.generationTaskKey).toBeNull();
+});
+
+it('does not write a delayed derived-media result after server ownership begins', async () => {
+  const node = resumableNode({ generationTaskType: 'freezone_image_animate_gif' });
+  node.type = CANVAS_NODE_TYPES.animatedGif;
+  listTasks.mockResolvedValue([{ task_key: TASK_KEY, status: 'running' }]);
+  awaitTaskCompletion.mockImplementationOnce(async () => {
+    node.data.generationOwner = 'server';
+    return { result: { gif_url: 'result.gif' } };
+  });
+  await resumeNodeGeneration({ node, projectId: 'p', getNodeData: () => node.data,
+    updateNodeData: (_id, patch) => Object.assign(node.data, patch) });
+  expect(node.data).toEqual({ isGenerating: true, generationTaskKey: TASK_KEY,
+    generationTaskType: 'freezone_image_animate_gif', generationTaskJobId: 'job-9', generationOwner: 'server' });
 });

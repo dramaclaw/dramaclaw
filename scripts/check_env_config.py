@@ -61,11 +61,13 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^DRAMACLAW_CE_ROOT$"), "Audit script discovery override, not runtime app config."),
     (
         re.compile(
-            r"^(?:BRAND_TOKENS|CODE_BRAND|COPY_OVERRIDES|EDITOR_TITLE|JS_STRING_VALUE|"
-            r"PATCHED_CHUNK|SKILL_FILE|SOURCE_CHUNK|SOURCE_PATCHES|TOP_BTN)$"
+            r"^(?:BRAND_TOKENS|CODE_BRAND|COPY_OVERRIDES|EDITOR_TITLE|FILM_FILE|HOST_FLAG|"
+            r"JS_STRING_VALUE|PATCHED_CHUNK|SKILL_FILE|SOURCE_CHUNK|SOURCE_PATCHES|TOOL_DIR|"
+            r"TOP_BTN)$"
         ),
-        "JavaScript template-literal constants in scripts/openfilm_studio/*.mjs (the OpenFilm "
-        "re-vendor and bundle patcher); the shell-style ${NAME} scan reads them as env refs.",
+        "JavaScript template-literal constants in scripts/openfilm_studio/ (the OpenFilm "
+        "re-vendor scripts, bundle patcher and source patches); the shell-style ${NAME} scan "
+        "reads them as env refs.",
     ),
     (
         re.compile(

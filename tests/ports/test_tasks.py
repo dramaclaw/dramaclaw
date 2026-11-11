@@ -816,3 +816,26 @@ async def test_inline_enqueue_persists_owner_at_reservation(monkeypatch, tmp_pat
     assert persisted.metadata["backend"] == "inline"
     assert persisted.metadata["owner"] == current_owner()
     assert submitted[0].metadata["owner"] == current_owner()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("billing, expected", [
+    ({"feature_key": "  canvas.generate  "}, "canvas.generate"),
+    ({"feature_key": "  "}, None),
+    ({"feature_key": 42}, None),
+    ("canvas.generate", None),
+    (None, None),
+])
+async def test_inline_enqueue_records_billing_feature_key(tmp_path, monkeypatch, billing, expected):
+    ctx = _ctx(tmp_path)
+    backend = InlineTaskBackend(producer=FakeProducer())
+    monkeypatch.setattr(backend, "_submit_lane_job", lambda job: None)
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1,
+        payload={"billing": billing},
+    )
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    if expected is None:
+        assert "billing_feature_key" not in state.metadata
+    else:
+        assert state.metadata["billing_feature_key"] == "canvas.generate"

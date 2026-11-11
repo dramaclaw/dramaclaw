@@ -95,3 +95,17 @@ describe("createCanvasStore", () => {
     expect(recorder.events).toContain("envelope for r-1");
   });
 });
+
+
+it('preserves server-owned loading on load before a task handle exists', () => {
+  const store = createCanvasStore(recordingEnvironment('load').environment);
+  store.getState().setCanvasData([
+    { id: 'server', type: CANVAS_NODE_TYPES.imageGen, position: { x: 0, y: 0 },
+      data: { imageUrl: null, isGenerating: true, generationOwner: 'server', generationRunId: 'run' } },
+    { id: 'browser', type: CANVAS_NODE_TYPES.imageGen, position: { x: 0, y: 0 },
+      data: { imageUrl: null, isGenerating: true } },
+  ], []);
+  expect(store.getState().nodes.map(node => [node.id, node.data.isGenerating]))
+    .toEqual([['server', true], ['browser', false]]);
+  expect(store.getState().nodes[0].data.generationRunId).toBe('run');
+});

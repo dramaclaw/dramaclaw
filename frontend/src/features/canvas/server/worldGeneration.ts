@@ -53,12 +53,29 @@ export async function serveWorldGenerationRequest(payload: unknown) {
       return { nodeId: p.string(upstream.node_id), kind: p.choice(upstream.kind, ['image', 'text']) };
     }), projectId: project(env.project), canvasId: p.string(env.canvas_id), blocked: p.boolean(env.blocked),
     isGenerating: p.boolean(env.is_generating), productOperation: productOperation(env.product_operation) };
-  return runServerRequest(locale, async () => pure.buildWorldGenerationRequest({ ...context, translate: await createServerTranslate(locale) }));
+  return runServerRequest(locale, async () => {
+    const decision = pure.buildWorldGenerationRequest({ ...context, translate: await createServerTranslate(locale) });
+    if (decision.ok && /^\s*(?:data|blob):/i.test(decision.sourceUrl)) {
+      return { ok: false, code: 'inline_media_reference', patches: [] };
+    }
+    return decision;
+  });
 }
 
 export async function serveWorldGenerationPatch(payload: unknown) {
   const { input, phase, locale } = p.patch(payload);
   switch (phase) {
+    case 'labels': {
+      p.fields(input, ['phase', 'locale']);
+      return runServerRequest(locale, async () => {
+        const translate = await createServerTranslate(locale);
+        return {
+          pano_3dgs: translate('node.threeDWorld.pano3dgsLabel'),
+          image_3dgs: translate('node.threeDWorld.image3dgsLabel'),
+          world_url_missing: translate('node.threeDWorld.worldUrlMissing'),
+        };
+      });
+    }
     case 'source_kind': {
       p.fields(input, ['phase', 'locale', 'source_node', 'visible_source_kind']);
       const sourceNode = p.nullable(input.source_node, node), visible = p.choice(input.visible_source_kind, ['master', 'pano']);

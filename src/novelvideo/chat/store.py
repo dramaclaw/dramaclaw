@@ -102,9 +102,13 @@ class ChatScope:
         scope_id = str(raw_id).strip() if raw_id is not None else None
         raw_surface = payload.get("surface")
         surface = str(raw_surface).strip() if raw_surface is not None else None
-        raw_canvas_id = payload.get("canvasId", payload.get("canvas_id"))
+        raw_canvas_id = payload.get("canvasId")
+        if raw_canvas_id is None:
+            raw_canvas_id = payload.get("canvas_id")
         canvas_id = str(raw_canvas_id).strip() if raw_canvas_id is not None else None
-        raw_agent_id = payload.get("agentId", payload.get("agent_id"))
+        raw_agent_id = payload.get("agentId")
+        if raw_agent_id is None:
+            raw_agent_id = payload.get("agent_id")
         agent_id = str(raw_agent_id).strip() if raw_agent_id is not None else None
         if kind == "home":
             scope_id = None

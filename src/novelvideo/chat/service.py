@@ -961,6 +961,7 @@ _CODEX_FREEZONE_EXECUTION_TOOLS = (
     "freezone_get_node_detail",
     "freezone_get_workflow",
     "freezone_observe_workflow_run",
+    "freezone_cancel_workflow_run",
     "freezone_request_user_clarification",
     "freezone_run_node_action",
     "freezone_run_workflow",
