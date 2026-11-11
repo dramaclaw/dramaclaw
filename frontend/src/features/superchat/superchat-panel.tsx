@@ -399,10 +399,6 @@ const FREEZONE_TOOL_DISPLAY: Record<string, { title: string; description: string
     title: "删除节点",
     description: "准备删除画布节点",
   },
-  freezone_clear_canvas: {
-    title: "清空画布",
-    description: "准备清空普通画布节点和连接",
-  },
   freezone_delete_edges: {
     title: "断开连线",
     description: "准备断开画布连线",

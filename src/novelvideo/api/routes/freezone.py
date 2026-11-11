@@ -229,6 +229,11 @@ from novelvideo.freezone.history import (
     read_canvas_generation_history,
     read_generation_history,
 )
+from novelvideo.freezone.workflow_draft_delivery import (
+    canvas_receipt_delivered,
+    record_workflow_draft_delivery,
+    workflow_draft_identity,
+)
 from novelvideo.freezone.workflow_drafts import (
     bind_workflow_draft_task,
     cancel_workflow_draft,
@@ -18055,10 +18060,23 @@ async def execute_agent_canvas_envelopes(
         raise HTTPException(422, {"code": exc.code, "fields": exc.fields}) from exc
     except CanvasMediaScopeError as exc:
         _raise_canvas_media_scope_http(exc, ctx.project_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, "canvas not found") from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
+    if data.get("status") == "applied":
+        commands = [
+            command
+            for envelope in envelopes
+            if isinstance(envelope.get("commands"), list)
+            for command in envelope["commands"]
+        ]
+        identity = workflow_draft_identity(commands)
+        if identity is not None:
+            await record_workflow_draft_delivery(
+                project_ctx=ctx,
+                canvas_id=canvas_id,
+                identity=identity,
+                delivered=canvas_receipt_delivered(data["receipt"]),
+            )
     return data
 
 

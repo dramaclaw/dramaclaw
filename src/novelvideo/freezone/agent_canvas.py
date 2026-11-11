@@ -95,7 +95,7 @@ async def dispatch_agent_canvas(
             recompute = attempt
             canvas = await asyncio.to_thread(canvas_store.read_canvas, project_dir, canvas_id)
             if canvas is None:
-                raise FileNotFoundError("Canvas not found")
+                canvas = {"nodes": [], "edges": []}
             revision = canvas.get("revision")
             node_started = time.monotonic()
             try:
@@ -138,7 +138,10 @@ async def dispatch_agent_canvas(
                         build_payload=build_payload(body),
                         **({"allow_empty_overwrite": True} if user_confirmed else {}),
                     )
-                except canvas_store.CanvasRevisionConflict:
+                except (
+                    canvas_store.CanvasRevisionConflict,
+                    canvas_store.CanvasBaseRevisionRequired,
+                ):
                     if attempt == 2:
                         raise
                     continue

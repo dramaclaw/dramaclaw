@@ -10493,7 +10493,7 @@ def test_confirm_draft_revision_conflict_requires_fresh_user_confirmation(monkey
     def request(method, path, **kwargs):
         calls.append(method)
         assert method == "GET", "Revision conflict must fail before claim or dispatch"
-        return {"ok": True, "data": {"revision": 2, "run_after_create": True}}
+        return {"ok": True, "data": {"revision": 2, "status": "ready", "run_after_create": True}}
 
     monkeypatch.setattr(plugin, "_request", request)
     result = plugin._handle_confirm_workflow_draft(
@@ -10514,6 +10514,8 @@ def test_confirm_draft_revision_conflict_requires_fresh_user_confirmation(monkey
         if name == "freezone_confirm_workflow_draft"
     )
     Draft202012Validator(schema["output_schema"]).validate(result)
+
+    assert plugin._revision_conflict_write_error("p", "c") is not None
 
 
 def test_canvas_http_revision_conflict_preserves_current_revision():
@@ -11609,3 +11611,152 @@ def test_expired_existing_card_does_not_consume_new_preflight_proof(preflight_mo
     assert result["clarification_status"] == "pending_user_input"
     assert len(messages) == 1
     assert not plugin._PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS
+
+
+@pytest.mark.parametrize(
+    "draft_status,requested_revision,expected_status",
+    [
+        ("confirmed", 1, "workflow_draft_already_confirmed"),
+        ("confirmed", 2, "workflow_draft_already_confirmed"),
+        ("submitted", 2, "workflow_draft_confirmation_in_progress"),
+        ("confirming", 1, "workflow_draft_confirmation_in_progress"),
+    ],
+)
+def test_confirm_settled_draft_reports_state_without_write_fence(
+    monkeypatch, draft_status, requested_revision, expected_status,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET", "A settled draft must not be claimed again"
+        return {"ok": True, "data": {
+            "draft_id": "workflow_draft_example", "revision": 1,
+            "status": draft_status, "run_after_create": False,
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_confirm_workflow_draft(
+        {"draft_id": "workflow_draft_example", "revision": requested_revision},
+    )
+    assert result["status"] == expected_status
+    assert calls == ["GET"]
+    assert result["ok"] is False
+    assert result["retryable"] is False
+    assert result["draft_id"] == "workflow_draft_example"
+    assert result["revision"] == requested_revision
+    assert result["current_revision"] == 1
+    assert result["error"]
+    assert result["user_message"]
+    assert "Do not call freezone_confirm_workflow_draft again" in result["agent_instruction"]
+    assert "freezone_run_workflow" in result["agent_instruction"]
+    assert plugin._revision_conflict_write_error("p", "c") is None
+    schema = next(
+        schema for name, schema, _handler in plugin.TOOLS
+        if name == "freezone_confirm_workflow_draft"
+    )
+    Draft202012Validator(schema["output_schema"]).validate(result)
+
+
+def test_confirm_unknown_revision_reports_current_revision_without_write_fence(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET", "An unknown revision must not be claimed"
+        return {"ok": True, "data": {
+            "revision": 1, "status": "ready", "run_after_create": False,
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_confirm_workflow_draft(
+        {"draft_id": "workflow_draft_example", "revision": 2},
+    )
+    assert result["status"] == "workflow_draft_revision_not_found"
+    assert result["ok"] is False
+    assert result["draft_id"] == "workflow_draft_example"
+    assert result["revision"] == 2
+    assert result["current_revision"] == 1
+    assert result["retryable"] is False
+    assert result["error"]
+    assert result["user_message"]
+    assert calls == ["GET"]
+    assert "does not exist" in result["agent_instruction"]
+    assert "Never invent" in result["agent_instruction"]
+    assert plugin._revision_conflict_write_error("p", "c") is None
+    schema = next(
+        schema for name, schema, _handler in plugin.TOOLS
+        if name == "freezone_confirm_workflow_draft"
+    )
+    Draft202012Validator(schema["output_schema"]).validate(result)
+
+
+def test_confirm_wrong_revision_after_real_confirmation_keeps_canvas_writable(
+    monkeypatch, tmp_path,
+):
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+    )
+
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    draft = create_workflow_draft(
+        project_dir=tmp_path, project_id="project-a", canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "ad"},
+        compiled={
+            "ok": True, "skill_id": "video-ad", "edge_count": 0,
+            "plan": {"summary": "ad", "nodes": [], "edges": [], "phases": []},
+        },
+    )
+    draft_id = draft["draft_id"]
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft_id, revision=1,
+    )
+    assert error is None
+    assert claimed is not None
+    bound = bind_workflow_draft_task(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft_id,
+        task_id="task-1", root_task_id="task-1",
+    )
+    assert bound is not None
+    finished = finish_workflow_draft_confirmation(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft_id,
+        outcome="confirmed", expected_task_id="task-1",
+    )
+    assert finished["status"] == "confirmed"
+
+    result = plugin._handle_confirm_workflow_draft({"draft_id": draft_id, "revision": 2})
+    assert result["status"] == "workflow_draft_already_confirmed"
+    assert result["current_revision"] == 1
+    assert plugin._revision_conflict_write_error("project-a", "canvas-a") is None
+
+
+def test_command_catalog_typed_tools_are_registered_plugin_tools():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "frontend/src/__tests__/features/canvas-core/__parity__/context-reads.json"
+    )
+
+    def typed_tools(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "typed_tool" and isinstance(child, str):
+                    yield child
+                yield from typed_tools(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from typed_tools(child)
+
+    advertised = set(typed_tools(json.loads(path.read_text())))
+    registered = {name for name, _schema, _handler in _load_plugin_module().TOOLS}
+    assert advertised <= registered, f"Unregistered typed tools: {sorted(advertised - registered)}"

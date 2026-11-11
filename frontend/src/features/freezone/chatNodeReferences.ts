@@ -1150,11 +1150,10 @@ function buildCanvasCommandCatalog(canvasId: string, username: string | null): R
     },
     {
       type: "clear_canvas",
-      typed_tool: "freezone_clear_canvas",
       required: ["type"],
       optional: [],
       description:
-        "清空当前画布中的普通节点和连接。必须走审批；不要把‘清空画布’转换为空的 delete_nodes。主线投影/系统管理节点会保留并明确报告。",
+        '清空当前画布中的普通节点和连接。没有独立的清空工具；请使用 freezone_emit_canvas_command，传入 commands=[{type: "clear_canvas"}]，必须经用户审批。不要把‘清空画布’转换为空的 delete_nodes。主线投影/系统管理节点会保留并明确报告。',
       example: { type: "clear_canvas" },
     },
     {

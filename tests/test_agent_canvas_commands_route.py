@@ -15,6 +15,13 @@ import pytest
 from novelvideo.api.routes import freezone as routes
 from novelvideo.api.schemas import CanvasPayload
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.workflow_drafts import (
+    bind_workflow_draft_task,
+    claim_workflow_draft_confirmation,
+    create_workflow_draft,
+    read_workflow_draft,
+)
+from novelvideo.task_backend.runners import freezone as freezone_runner
 
 USER = {"id": "owner", "username": "alice"}
 ENVELOPES = [{"version": "canvas_chat_commands.v1", "commands": [{"type": "create_node"}]}]
@@ -26,6 +33,7 @@ class FakePool:
         self.status = "applied"
         self.node = {"id": "agent"}
         self.error = None
+        self.receipt = None
         self.blocked = threading.Event()
         self.release = threading.Event()
         self.block = False
@@ -42,7 +50,10 @@ class FakePool:
             "status": self.status,
             "canvas": {"nodes": payload["canvas"]["nodes"] + [self.node], "edges": []},
             "changes": {"created_node_ids": ["agent"]},
-            "receipt": {"canvas_apply_status": self.status},
+            "receipt": (
+                self.receipt if self.receipt is not None
+                else {"canvas_apply_status": self.status}
+            ),
             "host_command_types": ["generate_image"] if self.status == "host_required" else [],
         }
 
@@ -402,7 +413,8 @@ async def test_autosave_busy_metric(setup, caplog):
         (USER, 200),
     ],
 )
-def test_auth_dependency(setup, user, status):
+@pytest.mark.parametrize("canvas_id", ["default", "fresh"])
+def test_auth_dependency(setup, user, status, canvas_id):
     from novelvideo.api.auth import get_api_user
 
     app = FastAPI()
@@ -410,7 +422,8 @@ def test_auth_dependency(setup, user, status):
     app.dependency_overrides[get_api_user] = lambda: user
     client = TestClient(app)
     response = client.post(
-        "/projects/proj/freezone/canvases/default/agent-commands", json={"envelopes": ENVELOPES}
+        f"/projects/proj/freezone/canvases/{canvas_id}/agent-commands",
+        json={"envelopes": ENVELOPES}
     )
     assert response.status_code == status
 
@@ -512,3 +525,163 @@ async def test_worker_error_status_message_and_outcome(setup, caplog, code, mess
     assert f"result={outcome}" in caplog.text
     assert canvas_store.read_canvas(root, "default") == stored
     assert not events
+
+
+async def test_agent_write_creates_never_saved_canvas(setup):
+    root, pool, events = setup
+    response = await routes.agent_canvas_commands(
+        "proj", "fresh",
+        routes.AgentCanvasCommandsRequest(envelopes=ENVELOPES, locale="en"), USER,
+    )
+    assert response["data"]["status"] == "applied"
+    assert response["data"]["revision"] == 1
+    assert pool.calls[0]["canvas"] == {"nodes": [], "edges": []}
+    saved = canvas_store.read_canvas(root, "fresh")
+    assert saved["nodes"] == [{"id": "agent"}]
+    assert saved["revision"] == 1
+    assert saved["save_source"] == "agent_patch"
+    assert saved["project_id"] == "proj"
+    assert saved["canvas_id"] == "fresh"
+    assert saved["canvas_scope"] == "default"
+    assert saved["owner_principal_type"] == "user"
+    assert saved["owner_principal_id"] == "owner"
+    assert saved["access_model"] == "project_role"
+    assert saved["min_project_role"] == "editor"
+    assert saved["created_by"] == "owner"
+    assert saved["updated_by"] == "owner"
+    assert events[0]["event_type"] == "canvas.saved"
+    assert events[0]["payload"]["revision"] == 1
+
+
+async def test_agent_write_retries_when_new_canvas_appears_concurrently(setup, monkeypatch):
+    root, pool, _ = setup
+    compute = pool.call
+
+    def race(op, payload):
+        result = compute(op, payload)
+        if len(pool.calls) == 1:
+            canvas_store.save_canvas(
+                root, "fresh", base_revision=None,
+                build_payload=lambda _: {
+                    "nodes": [{"id": "browser"}], "edges": [],
+                    "revision": 1, "project_id": "proj",
+                },
+            )
+        return result
+
+    monkeypatch.setattr(pool, "call", race)
+    response = await routes.agent_canvas_commands(
+        "proj", "fresh",
+        routes.AgentCanvasCommandsRequest(envelopes=ENVELOPES, locale="en"), USER,
+    )
+    assert response["data"]["status"] == "applied"
+    assert response["data"]["revision"] == 2
+    assert len(pool.calls) == 2
+    assert pool.calls[1]["canvas"]["nodes"] == [{"id": "browser"}]
+    saved = canvas_store.read_canvas(root, "fresh")
+    assert [node["id"] for node in saved["nodes"]] == ["browser", "agent"]
+
+
+def _claimed_server_workflow(root, pool, monkeypatch, *, task_status="running"):
+    draft = create_workflow_draft(
+        project_dir=root, project_id="proj", canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "ad"},
+        compiled={
+            "ok": True, "skill_id": "video-ad", "edge_count": 0,
+            "plan": {"summary": "ad", "nodes": [], "edges": [], "phases": []},
+        },
+    )
+    draft_id = draft["draft_id"]
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=root, canvas_id="default", draft_id=draft_id, revision=1, now=1_000,
+    )
+    assert error is None
+    assert claimed is not None
+    bound = bind_workflow_draft_task(
+        project_dir=root, canvas_id="default", draft_id=draft_id,
+        task_id="task-1", root_task_id="task-1",
+    )
+    assert bound is not None
+    lookups = []
+
+    def get_task_for_project(ctx, task_type, index, beat_num=None, scope=None):
+        lookups.append((task_type, scope))
+        return SimpleNamespace(task_id="task-1", status=task_status)
+
+    monkeypatch.setattr(
+        "novelvideo.task_state.get_task_manager",
+        lambda: SimpleNamespace(get_task_for_project=get_task_for_project),
+    )
+    pool.receipt = {
+        "tool_call_status": "completed", "canvas_apply_status": "applied",
+        "applied": True, "cancelled": False, "errors": [],
+    }
+    request = routes.AgentCanvasCommandsRequest(envelopes=[{
+        "version": "canvas_chat_commands.v1",
+        "commands": [{
+            "type": "create_node", "node_type": "textAnnotationNode",
+            "data": {
+                "workflowInstanceId": draft_id, "workflowDraftRevision": 1,
+                "workflowConfirmationTaskId": "task-1",
+            },
+        }],
+    }], locale="en")
+    return draft, request, lookups
+
+
+async def test_server_applied_workflow_commands_confirm_draft_and_finish_task(setup, monkeypatch):
+    root, pool, _ = setup
+    draft, request, lookups = _claimed_server_workflow(root, pool, monkeypatch)
+    draft_id = draft["draft_id"]
+    await routes.agent_canvas_commands("proj", "default", request, USER)
+    assert read_workflow_draft(
+        project_dir=root, canvas_id="default", draft_id=draft_id,
+    )[0]["status"] == "confirmed"
+    assert lookups[0] == ("freezone_workflow_confirm", f"default:{draft_id}:1:1000.0")
+
+    async def unexpected_sleep(_seconds):
+        raise AssertionError("An applied workflow must finish without polling")
+
+    monkeypatch.setattr(freezone_runner.asyncio, "sleep", unexpected_sleep)
+    envelope = {
+        "task_type": "freezone_workflow_confirm", "__run_task_id": "task-1",
+        "payload": {
+            "canvas_id": "default", "draft_id": draft_id, "revision": 1,
+            "plan_digest": draft["plan_digest"],
+        },
+    }
+    result = await freezone_runner._run_freezone_workflow_confirm_async(
+        envelope, SimpleNamespace(state_dir=root),
+    )
+    assert result["delivery_status"] == "canvas_applied"
+
+
+async def test_server_workflow_commands_with_failed_receipt_release_draft(setup, monkeypatch):
+    root, pool, _ = setup
+    draft, request, _ = _claimed_server_workflow(root, pool, monkeypatch)
+    pool.receipt["errors"] = [{"code": "x"}]
+    await routes.agent_canvas_commands("proj", "default", request, USER)
+    assert read_workflow_draft(
+        project_dir=root, canvas_id="default", draft_id=draft["draft_id"],
+    )[0]["status"] == "ready"
+
+
+async def test_server_workflow_commands_ignore_inactive_task(setup, monkeypatch):
+    root, pool, _ = setup
+    draft, request, _ = _claimed_server_workflow(
+        root, pool, monkeypatch, task_status="completed",
+    )
+    await routes.agent_canvas_commands("proj", "default", request, USER)
+    assert read_workflow_draft(
+        project_dir=root, canvas_id="default", draft_id=draft["draft_id"],
+    )[0]["status"] == "confirming"
+
+
+async def test_server_host_required_workflow_commands_leave_draft_claimed(setup, monkeypatch):
+    root, pool, _ = setup
+    draft, request, _ = _claimed_server_workflow(root, pool, monkeypatch)
+    pool.status = "host_required"
+    await routes.agent_canvas_commands("proj", "default", request, USER)
+    assert read_workflow_draft(
+        project_dir=root, canvas_id="default", draft_id=draft["draft_id"],
+    )[0]["status"] == "confirming"

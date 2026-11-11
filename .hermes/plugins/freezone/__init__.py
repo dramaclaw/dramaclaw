@@ -8381,7 +8381,56 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if current_payload is None:
         return tool_result(current_error)
-    if int(current_payload.get("revision") or 0) != revision:
+    current_revision = int(current_payload.get("revision") or 0)
+    draft_status = current_payload.get("status")
+    if draft_status in {"confirmed", "confirming", "submitted"}:
+        confirmed = draft_status == "confirmed"
+        return tool_result(
+            {
+                "ok": False,
+                "status": (
+                    "workflow_draft_already_confirmed"
+                    if confirmed else "workflow_draft_confirmation_in_progress"
+                ),
+                "retryable": False,
+                "draft_id": draft_id,
+                "revision": revision,
+                "current_revision": current_revision,
+                "error": (
+                    "Workflow draft has already been confirmed."
+                    if confirmed else "Workflow draft confirmation is in progress or submitted."
+                ),
+                "user_message": (
+                    "工作流已创建，本次未创建任何新节点。"
+                    if confirmed else "工作流正在创建或已提交，本次未创建任何新节点。"
+                ),
+                "agent_instruction": (
+                    "Do not call freezone_confirm_workflow_draft again. "
+                    f"The nodes of revision {current_revision} are or will be on the canvas. "
+                    "Use freezone_run_workflow when the user asks to run them."
+                ),
+            }
+        )
+    if draft_status in {None, "ready"} and revision > current_revision:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_draft_revision_not_found",
+                "retryable": False,
+                "draft_id": draft_id,
+                "revision": revision,
+                "current_revision": current_revision,
+                "error": "The requested workflow draft revision does not exist.",
+                "user_message": "请求的草稿版本不存在，本次未创建任何节点，请查看当前版本后确认。",
+                "agent_instruction": (
+                    f"Revision {revision} does not exist. The user can only have reviewed "
+                    f"revision {current_revision}. Read it with freezone_get_workflow, show "
+                    "its preview, and confirm only that exact revision after the user "
+                    "explicitly confirms it. Never invent revision numbers."
+                ),
+            }
+        )
+    if current_revision != revision:
         # Rejected from the GET above only: nothing was claimed or dispatched.
         # The user confirmed an exact revision, and the current one may carry
         # changes they never reviewed, so it must not be confirmed silently.
@@ -8613,7 +8662,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             revision=revision,
         )
     elif result_payload and result_payload.get("ok"):
-        # Only the server's browser-receipt handler may confirm delivery.
+        # Only the server confirms delivery via browser receipt or agent-commands application.
         # Its callback may race this update; confirmed state is monotonic.
         outcome = "submitted"
         _finish_workflow_draft(
