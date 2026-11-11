@@ -4371,6 +4371,7 @@ tests/test_freezone_server_workflow_start.py,Elastic-2.0,2026 SuperTale contribu
 tests/test_freezone_skill_parameters.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_studio_agent.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_studio_film.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_freezone_studio_tool_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_text_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_video_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_video_breakdown_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
