@@ -4770,13 +4770,8 @@ async def chat_ws(websocket: WebSocket) -> None:
             except Exception as exc:  # noqa: BLE001
                 busy_message = _chat_turn_busy_message(exc)
                 message = busy_message or str(exc)
-                logger.exception(
-                    "chat turn failed username=%s turn_id=%s error_type=%s",
-                    username,
-                    turn_id,
-                    type(exc).__name__,
-                )
                 if busy_message is not None:
+                    logger.info("chat turn busy username=%s turn_id=%s", username, turn_id)
                     await _send_json_best_effort(
                         websocket,
                         {
@@ -4791,6 +4786,12 @@ async def chat_ws(websocket: WebSocket) -> None:
                         }, send_lock,
                     )
                     continue
+                logger.exception(
+                    "chat turn failed username=%s turn_id=%s error_type=%s",
+                    username,
+                    turn_id,
+                    type(exc).__name__,
+                )
                 billing_rule_error = find_billing_rule_not_configured_error(exc)
                 if billing_rule_error is not None:
                     await _send_json_best_effort(
