@@ -2240,6 +2240,8 @@ class CanvasPayload(BaseModel):
         "import",
         "agent_create",
         "agent_patch",
+        "agent_confirmed",
+        "workflow_result",
     ] = "autosave"
     allow_empty_overwrite: bool = False
     nodes: list[dict] = Field(default_factory=list)

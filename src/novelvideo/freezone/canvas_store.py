@@ -646,14 +646,16 @@ def check_dangerous_empty_overwrite(
 ) -> None:
     old_nodes = _node_count(existing)
     new_nodes = _node_count(payload)
-    # The only legal way to shrink a non-empty canvas to empty is an
-    # explicit ``manual_clear`` with ``allow_empty_overwrite=true``. Any
-    # other combination (autosave + flag, manual_save with/without flag,
-    # manual_clear without flag) is rejected as defense-in-depth — a
-    # buggy / refactored / malicious client cannot wipe user data by
-    # mislabeling its request.
+    # A non-empty canvas may only shrink to empty through an explicit
+    # ``manual_clear`` (user), ``projection_remove`` or ``agent_confirmed``
+    # (an Agent write the user confirmed) together with
+    # ``allow_empty_overwrite=true``. Any other combination is rejected as
+    # defense-in-depth: a buggy or malicious client cannot wipe user data by
+    # mislabeling its request (the client PUT route also refuses the
+    # server-only sources).
     if old_nodes > 0 and new_nodes == 0 and not (
-        save_source in {"manual_clear", "projection_remove"} and allow_empty_overwrite
+        save_source in {"manual_clear", "projection_remove", "agent_confirmed"}
+        and allow_empty_overwrite
     ):
         raise DangerousEmptyCanvasOverwrite(
             old_nodes=old_nodes,

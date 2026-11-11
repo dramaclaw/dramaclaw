@@ -18355,6 +18355,10 @@ async def put_canvas(
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
+    if body.save_source in {"agent_confirmed", "workflow_result"}:
+        raise HTTPException(422, {
+            "code": "canvas_save_source_reserved", "save_source": body.save_source,
+        })
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(
             project,

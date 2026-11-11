@@ -227,6 +227,7 @@ def test_card_confirm_executes_once(setup):
     assert response.json()["data"]["result"]["status"] == "applied"
     assert response.json()["data"]["result"]["revision"] == 2
     assert nodes(setup) == ["n2", "n3"]
+    assert canvas_store.read_canvas(setup.root, "default")["save_source"] == "agent_confirmed"
     assert record(setup, created)["status"] == "executed"
     saved = notices(setup)
     assert len(saved) == 1
@@ -247,6 +248,7 @@ def test_card_confirm_can_empty_the_canvas(setup):
     assert response.json()["data"]["result"]["status"] == "applied"
     assert response.json()["data"]["result"]["revision"] == 2
     assert nodes(setup) == []
+    assert canvas_store.read_canvas(setup.root, "default")["save_source"] == "agent_confirmed"
     assert record(setup, created)["status"] == "executed"
     saved = notices(setup)
     assert len(saved) == 1
