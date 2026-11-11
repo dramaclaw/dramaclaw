@@ -23,6 +23,7 @@ WORKFLOW_CAPACITY_POLL_SECONDS = 2.0
 # canvasChatCommands.ts: DEFAULT_NODE_ACTION_TIMEOUT_MS (capacity wait and action timeout).
 WORKFLOW_ACTION_TIMEOUT_SECONDS = 30 * 60
 WORKFLOW_CAPACITY_TIMEOUT_SECONDS = 30 * 60
+TEXT_INTERRUPTED_ERROR = "文本生成在接管前已发出，结果未知；为避免重复调用已停止，请重新发起"
 
 
 class ServerWorkflowLeaseLost(RuntimeError):
@@ -33,6 +34,10 @@ class ServerActionRunner(Protocol):
     def supports(self, action: str) -> bool: ...
 
     async def lane_capacity(self, lane: str) -> int | None: ...
+
+    async def interrupt_action(
+        self, *, node_id: str, action: str, product_operation_id: str | None,
+    ) -> None: ...
 
     async def run_action(
         self,
@@ -230,6 +235,17 @@ async def drive_server_workflow_run(
 
         if not runner.supports(name):
             await update(status="failed", error=f"工作流动作 {name} 需要打开画布运行")
+            return
+        if (
+            name == "generate_text"
+            and item["status"] == "running"
+            and item.get("phase") == "generating"
+        ):
+            await runner.interrupt_action(
+                node_id=node_id, action=name,
+                product_operation_id=item.get("product_operation_id"),
+            )
+            await update(status="failed", error=TEXT_INTERRUPTED_ERROR)
             return
         lane = workflow_action_lane(name)
         # Acquire the lane first so queued world actions do not consume global slots.

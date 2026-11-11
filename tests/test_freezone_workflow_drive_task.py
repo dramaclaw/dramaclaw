@@ -327,3 +327,37 @@ async def test_drive_confirmation_terminal_notice_once(tmp_path, monkeypatch, st
     await freezone._run_freezone_workflow_drive_async(envelope, SimpleNamespace(state_dir=tmp_path))
     assert notices == [({'id': 'requester-id', 'username': 'requester'}, record['id'],
                         f'run_{status}', f"{run['run_id']}: 1 completed, 0 failed")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,acquired,broken,expected", [
+    ("completed", True, False, True), ("failed", True, False, True),
+    ("cancelled", True, False, True), ("running", True, False, False),
+    ("completed", False, False, False), ("completed", True, True, True),
+])
+async def test_drive_delivers_terminal_result(
+    tmp_path, monkeypatch, status, acquired, broken, expected,
+):
+    from novelvideo.api.routes import freezone as routes
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    ctx = task_context(tmp_path)
+    result = {"status": status, "acquired": acquired, "run_id": "run_delivery"}
+    delivered = []
+
+    async def drive(**kwargs):
+        return result
+
+    async def maintain(context, canvas_id):
+        delivered.append((context, canvas_id))
+        if broken:
+            raise RuntimeError("delivery unavailable")
+
+    monkeypatch.setattr(driver, "drive_server_workflow_run", drive)
+    monkeypatch.setattr(routes, "maintain_server_workflow_canvas", maintain, raising=False)
+    returned = await freezone._run_freezone_workflow_drive_async({
+        "__run_task_id": "delivery-task",
+        "payload": {"canvas_id": "default", "run_id": "run_delivery"},
+    }, ctx)
+    assert returned == {"status": status, "acquired": acquired, "run_id": "run_delivery"}
+    assert delivered == ([(ctx, "default")] if expected else [])

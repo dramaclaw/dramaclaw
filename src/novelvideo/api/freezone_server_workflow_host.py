@@ -67,6 +67,26 @@ class InProcessActionHost:
         except Exception as exc:
             raise ActionLeaseLost() from exc
 
+    async def fail_product_operation(self, operation_id: str) -> None:
+        from novelvideo.freezone.agent_product_operations import (
+            PENDING_STATUSES,
+            finish_agent_product_operation,
+            read_agent_product_operation,
+            terminalize_undelivered_agent_product_task,
+        )
+
+        operation = await asyncio.to_thread(
+            read_agent_product_operation, project_dir=Path(self.ctx.state_dir),
+            operation_id=operation_id,
+        )
+        if operation is None or operation.get("status") not in PENDING_STATUSES:
+            return
+        finished = await asyncio.to_thread(
+            finish_agent_product_operation, project_dir=Path(self.ctx.state_dir),
+            operation_id=operation_id, outcome="failed", expected_task_id=operation["task_id"],
+        )
+        await terminalize_undelivered_agent_product_task(ctx=self.ctx, operation=finished)
+
     async def catalogs(self) -> dict:
         from novelvideo.api.routes import freezone as routes
 

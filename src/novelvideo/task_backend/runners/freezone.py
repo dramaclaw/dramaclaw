@@ -423,6 +423,12 @@ async def _run_freezone_workflow_drive_async(
         and result.get("acquired") is not False
     ):
         try:
+            from novelvideo.api.routes.freezone import maintain_server_workflow_canvas
+
+            await maintain_server_workflow_canvas(ctx, canvas_id)
+        except Exception:
+            logger.warning("Server workflow delivery deferred run_id=%s", run_id, exc_info=True)
+        try:
             from novelvideo.api.routes.chat import append_canvas_confirmation_notice
             from novelvideo.freezone import canvas_confirmations, workflow_runs
 

@@ -56,7 +56,7 @@ async def test_overlapping_list_requests_authorize_separately_and_share_only_mai
         if user["id"] == "denied":
             raise HTTPException(403, "forbidden")
         return (
-            SimpleNamespace(project_id=project, state_dir=tmp_path),
+            SimpleNamespace(project_id=project, state_dir=tmp_path, output_dir=tmp_path),
             "alice",
             "demo",
             tmp_path,
@@ -2495,6 +2495,83 @@ def test_generation_session_rejects_wrong_operation_identity(
 
     assert response.status_code == 400
     assert expected_error in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_server_recipe_delivery_without_get_confirms_once(workflow_run_client, monkeypatch):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import agent_product_operations as products
+    from novelvideo.freezone import workflow_runs as store
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    root = workflow_run_client.state_dir
+    ctx, *_ = await freezone._resolve_freezone_project("proj_demo", {})
+    run = store.create_workflow_run(
+        project_dir=root, project_id="proj_demo", canvas_id="default", owner_kind="server",
+        actions=[{"node_id": "image-1", "action": "generate_image", "recipe_id": "product-image",
+                  "generation_attempt_id": "attempt-image"}],
+    )
+    operation = products.create_agent_product_operation(
+        project_dir=root, project_id="proj_demo", product_kind="recipe_result",
+        idempotency_key="server-delivery", generation_session_id=run["run_id"],
+        canvas_id="default", artifact_id="image-1",
+    )
+    operation_id = operation["operation_id"]
+    products.bind_agent_product_task(
+        project_dir=root, operation_id=operation_id,
+        task_id="product-task", root_task_id="product-task",
+    )
+    products.bind_agent_product_model_execution(
+        project_dir=root, operation_id=operation_id, model_call_id="compile-image",
+        executed_at=1.0, source="server_recipe_compiler", compile_mode="model",
+    )
+    scope = dict(project_dir=root, canvas_id="default", run_id=run["run_id"])
+    store.bind_workflow_action_product_operation(
+        **scope, node_id="image-1", action="generate_image", operation_id=operation_id,
+    )
+    task_key = "task:freezone_gen:project:proj_demo:0:image-job"
+    artifact = {"output_url": "/static/image.png"}
+    store.update_workflow_run(
+        **scope, status="completed", owner_kind="server", action_updates=[{
+            "node_id": "image-1", "action": "generate_image", "status": "completed",
+            "task_key": task_key, "task_type": "freezone_gen", "job_id": "image-job",
+            "result": artifact,
+        }],
+    )
+    product_task = SimpleNamespace(task_id="product-task", status="running", metadata={
+        "feature_credit_reservation_id": "reservation-image",
+        "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+    })
+    media = SimpleNamespace(status="completed", result=artifact, error=None)
+
+    class Manager(_TaskMetadataWriter):
+        def get_tasks_for_project(self, context, keys, **kwargs):
+            return {task_key: media} if task_key in keys else {}
+
+        def get_task_for_project(self, *args, scope, **kwargs):
+            return product_task if scope == operation_id else None
+
+        def complete_task_for_project(self, *args, metadata, **kwargs):
+            product_task.status = "completed"
+            product_task.metadata.update(metadata)
+            return True
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    with RecordingUsageMeter().registered() as meter:
+        await freezone.maintain_server_workflow_canvas(ctx, "default")
+        assert products.read_agent_product_operation(
+            project_dir=root, operation_id=operation_id,
+        )["status"] == "delivered"
+        assert product_task.status == "completed"
+        expected = [("settle_feature_credit_reservation", {
+            "reservation_id": "reservation-image", "action": "confirm", "metadata": {
+                "source": "agent_product_late_delivery", "business_outcome": "delivered",
+                "operation_id": operation_id,
+            },
+        })]
+        assert meter.calls == expected
+        await freezone.maintain_server_workflow_canvas(ctx, "default")
+        assert meter.calls == expected
 
 
 @pytest.mark.asyncio

@@ -452,3 +452,54 @@ async def test_retry_preserves_ordinary_media_identity(tmp_path):
     assert (await drive(scope, clock, RetryingRunner(scope)))["status"] == "completed"
     assert observed == [expected, expected]
     assert store.read_workflow_run(**scope)["actions"][0]["retry_count"] == 1
+
+
+@pytest.mark.parametrize("status,phase,interrupted", [
+    ("running", "generating", True), ("running", "preparing", False),
+    ("running", "waiting_capacity", False), ("running", "retrying", False),
+    ("pending", "generating", False),
+])
+async def test_text_takeover_does_not_repeat_sent_request(tmp_path, status, phase, interrupted):
+    from novelvideo.freezone.server_workflow_driver import is_retryable_workflow_action_error
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{
+        "node_id": "text", "action": "generate_text",
+    }], levels=[[0]])
+    store.acquire_server_workflow_run(**scope, runner_id="dead", now=clock.now())
+    store.update_workflow_run(
+        **scope, owner_kind="server", runner_id="dead", now=clock.now(), action_updates=[{
+            "node_id": "text", "action": "generate_text", "status": status, "phase": phase,
+        }],
+    )
+    clock.advance(181)
+    interruptions = []
+
+    class TextRunner(FakeRunner):
+        async def interrupt_action(self, **kwargs):
+            interruptions.append(kwargs)
+
+    runner = TextRunner(scope, scripts={"text": [{
+        "status": "completed", "output": {"content": "Hello"},
+    }]})
+    with RecordingUsageMeter().registered() as meter:
+        result = await drive(scope, clock, runner)
+        assert meter.calls == []
+    action = store.read_workflow_run(**scope)["actions"][0]
+    if interrupted:
+        error = "文本生成在接管前已发出，结果未知；为避免重复调用已停止，请重新发起"
+        assert result["status"] == "failed"
+        assert action["status"] == "failed"
+        assert action["error"] == error
+        assert is_retryable_workflow_action_error(error) is False
+        assert runner.calls == []
+        assert interruptions == [{
+            "node_id": "text", "action": "generate_text", "product_operation_id": None,
+        }]
+        assert clock.delays == []
+    else:
+        assert result["status"] == "completed"
+        assert action["status"] == "completed"
+        assert runner.calls == [("text", None)]
+        assert interruptions == []

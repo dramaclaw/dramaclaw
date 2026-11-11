@@ -432,3 +432,131 @@ async def test_real_media_route_takeover_never_reserves_again(context, monkeypat
             }] == []
     finally:
         pool.close()
+
+
+@pytest.mark.parametrize("outcome", ["pending", "delivered", "missing"])
+async def test_interrupted_product_refunds_once(host, context, monkeypatch, outcome):
+    from novelvideo.freezone import agent_product_operations as products
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    operation = products.create_agent_product_operation(
+        project_dir=context.state_dir, project_id="project", product_kind="recipe_result",
+        idempotency_key="text-interruption", generation_session_id="text-run", canvas_id="default",
+    )
+    operation_id = operation["operation_id"]
+    products.bind_agent_product_task(
+        project_dir=context.state_dir, operation_id=operation_id,
+        task_id="text-product-task", root_task_id="text-product-task",
+    )
+    if outcome == "delivered":
+        products.bind_agent_product_model_execution(
+            project_dir=context.state_dir, operation_id=operation_id, model_call_id="text-call",
+            executed_at=1.0, source="server_recipe_compiler", compile_mode="model",
+        )
+        products.finish_agent_product_operation(
+            project_dir=context.state_dir, operation_id=operation_id, outcome="delivered",
+            expected_task_id="text-product-task",
+            result_ref={"kind": "recipe_result", "id": "text"},
+        )
+    task = SimpleNamespace(task_id="text-product-task", status="running", progress=0,
+                           metadata={"feature_credit_reservation_id": "text-reservation"})
+    terminalized = []
+
+    class Manager:
+        def get_task_for_project(self, ctx, task_type, episode, *, scope):
+            assert (ctx, task_type, episode, scope) == (
+                context, "freezone_agent_recipe_result", 0, operation_id,
+            )
+            return task
+
+        def fail_task_for_project(self, *args, metadata, **kwargs):
+            task.status = "failed"
+            task.metadata.update(metadata)
+            terminalized.append(task.status)
+
+    monkeypatch.setattr(products, "get_task_manager", lambda: Manager())
+    target = "agent_product_missing" if outcome == "missing" else operation_id
+    before = products.read_agent_product_operation(
+        project_dir=context.state_dir, operation_id=operation_id,
+    )
+    with RecordingUsageMeter().registered() as meter:
+        await host.fail_product_operation(target)
+        after = products.read_agent_product_operation(
+            project_dir=context.state_dir, operation_id=operation_id,
+        )
+        if outcome == "pending":
+            assert after["status"] == "failed"
+            assert (task.status, task.metadata["settlement_status"]) == ("failed", "refunded")
+            assert terminalized == ["failed"]
+            expected = [("settle_cancelled_feature_credit_reservation", {
+                "reservation_id": "text-reservation", "metadata": {
+                    "source": "agent_product_failed", "operation_id": operation_id,
+                    "business_outcome": "failed",
+                },
+            })]
+        else:
+            assert after == before
+            assert task.status == "running"
+            assert terminalized == []
+            expected = []
+        assert meter.calls == expected
+        await host.fail_product_operation(target)
+        assert meter.calls == expected
+        assert terminalized == (["failed"] if outcome == "pending" else [])
+
+
+async def test_text_takeover_uses_host_without_reserving_credit(context, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from novelvideo.freezone import workflow_runs as store
+    from novelvideo.freezone.server_workflow_driver import drive_server_workflow_run
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    run = store.create_workflow_run(
+        project_dir=context.state_dir, project_id="project", canvas_id="default",
+        owner_kind="server", actions=[{"node_id": "text", "action": "generate_text"}], now=now,
+    )
+    scope = dict(project_dir=context.state_dir, canvas_id="default", run_id=run["run_id"])
+    store.acquire_server_workflow_run(**scope, runner_id="dead", now=now)
+    store.update_workflow_run(
+        **scope, owner_kind="server", runner_id="dead", now=now, action_updates=[{
+            "node_id": "text", "action": "generate_text",
+            "status": "running", "phase": "generating",
+        }],
+    )
+    canvas = canvas_store.ensure_default_canvas(context.state_dir, project_id="project").payload
+    canvas["nodes"] = [{"id": "text", "type": "textAnnotationNode", "position": {"x": 0, "y": 0},
+                        "data": {"generationRunId": run["run_id"], "generationOwner": "server",
+                                 "isGenerating": True, "content": "Previous content"}}]
+    canvas_store.atomic_write_json(canvas_store.canvas_path(context.state_dir, "default"), canvas)
+
+    async def limits(project, user):
+        return {"data": {"default": {"remaining": 1}}}
+
+    monkeypatch.setattr(task_routes, "get_project_task_limits", limits)
+
+    async def no_core(op, payload):
+        raise AssertionError("an interrupted request must not be built again")
+
+    def factory(acquired, guard):
+        runner = build_server_action_runner(
+            ctx=context, run=acquired, runner_id="takeover", assert_lease=guard,
+        )
+        runner.core_call = no_core
+        return runner
+
+    with RecordingUsageMeter().registered() as meter:
+        result = await drive_server_workflow_run(
+            **scope, runner_id="takeover", action_runner_factory=factory,
+            now=lambda: now + timedelta(seconds=181),
+        )
+        assert result["status"] == "failed"
+        assert store.read_workflow_run(**scope)["actions"][0]["error"] == (
+            "文本生成在接管前已发出，结果未知；为避免重复调用已停止，请重新发起"
+        )
+        assert meter.calls == []
+    assert canvas_store.read_canvas(context.state_dir, "default")["nodes"][0]["data"] == {
+        "content": "Previous content", "isGenerating": False, "generationStartedAt": None,
+        "generationTaskKey": None, "generationTaskType": None, "generationTaskJobId": None,
+        "generationOwner": None, "generationRunId": None,
+    }

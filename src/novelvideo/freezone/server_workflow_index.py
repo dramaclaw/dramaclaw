@@ -20,6 +20,7 @@ from novelvideo.project_context import ProjectContext
 
 logger = logging.getLogger(__name__)
 _LOCK = threading.Lock()
+SERVER_WORKFLOW_DELIVERY_GRACE_SECONDS = 3600
 
 
 def _path() -> Path:
@@ -104,6 +105,11 @@ async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=Non
     from novelvideo.project_context import resolve_project_context
     from novelvideo.api.freezone_server_workflow_host import clear_server_generation_markers
     from novelvideo.task_state import get_task_manager
+    from novelvideo.api.routes.freezone import maintain_server_workflow_canvas
+    from novelvideo.freezone.agent_product_operations import (
+        PENDING_STATUSES,
+        read_agent_product_operation,
+    )
 
     current = now or datetime.now(timezone.utc)
     results = []
@@ -161,9 +167,35 @@ async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=Non
                 logger.warning("Server workflow task sweep skipped run_id=%s", run_id,
                                exc_info=True)
             if terminal:
+                try:
+                    await maintain_server_workflow_canvas(ctx, entry["canvas_id"])
+                except Exception:
+                    logger.warning("Server workflow delivery deferred run_id=%s", run_id,
+                                   exc_info=True)
+                run = await asyncio.to_thread(store.read_workflow_run, **scope)
+                pending = 0
+                for action in (run or {}).get("actions", []):
+                    operation_id = action.get("product_operation_id")
+                    if operation_id:
+                        operation = await asyncio.to_thread(
+                            read_agent_product_operation,
+                            project_dir=Path(entry["state_dir"]), operation_id=operation_id,
+                        )
+                        if operation and operation["status"] in PENDING_STATUSES:
+                            pending += 1
+                ended_at = (run or {}).get("completed_at") or (run or {}).get("updated_at")
+                awaiting_delivery = pending and ended_at and (
+                    current - datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+                ).total_seconds() < SERVER_WORKFLOW_DELIVERY_GRACE_SECONDS
                 await clear_server_generation_markers(
                     ctx=ctx, canvas_id=entry["canvas_id"], run_id=run_id,
                 )
+                if awaiting_delivery:
+                    results.append(dict(run_id=run_id, action="awaiting_delivery"))
+                    continue
+                if pending:
+                    logger.warning("Server workflow delivery grace expired run_id=%s pending=%s",
+                                   run_id, pending)
                 await asyncio.to_thread(unregister_server_workflow_run, run_id)
                 results.append(dict(run_id=run_id, action="unregistered"))
             else:

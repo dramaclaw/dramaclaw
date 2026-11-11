@@ -17215,6 +17215,17 @@ async def get_canvas_workflow_runs(
             await _resolve_freezone_project(project, user, required_role="viewer")
         )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    await maintain_server_workflow_canvas(ctx, canvas_id)
+    runs = await workflow_read_executor().run(
+        "response_list", list_workflow_runs,
+        project_dir=canvas_project_dir, canvas_id=canvas_id, limit=limit,
+    )
+    return {"ok": True, "data": {"runs": runs}}
+
+
+async def maintain_server_workflow_canvas(ctx: ProjectContext, canvas_id: str) -> None:
+    project_dir = Path(ctx.output_dir)
+    canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     await workflow_read_maintenance().run(
         (ctx.project_id, str(canvas_project_dir), canvas_id),
         lambda: _maintain_canvas_workflow_runs(
@@ -17222,11 +17233,6 @@ async def get_canvas_workflow_runs(
             canvas_project_dir=canvas_project_dir, canvas_id=canvas_id,
         ),
     )
-    runs = await workflow_read_executor().run(
-        "response_list", list_workflow_runs,
-        project_dir=canvas_project_dir, canvas_id=canvas_id, limit=limit,
-    )
-    return {"ok": True, "data": {"runs": runs}}
 
 
 async def _maintain_canvas_workflow_runs(

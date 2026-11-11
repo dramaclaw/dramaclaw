@@ -5,10 +5,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 import time
 from typing import Protocol
+
+
+logger = logging.getLogger(__name__)
 
 
 class ServerActionHttpError(Exception):
@@ -32,6 +36,7 @@ class ActionHost(Protocol):
     async def task_status(self, task: dict) -> dict | None: ...
     async def job_result_url(self, task: dict) -> str | None: ...
     async def lane_capacity(self, lane: str) -> int | None: ...
+    async def fail_product_operation(self, operation_id: str) -> None: ...
 
 
 SERVER_WORKFLOW_ACTIONS = frozenset({"generate_image", "generate_text"})
@@ -74,6 +79,20 @@ class WorkflowActionRunner:
 
     async def lane_capacity(self, lane: str) -> int | None:
         return await self.host.lane_capacity(lane)
+
+    async def interrupt_action(
+        self, *, node_id: str, action: str, product_operation_id: str | None,
+    ) -> None:
+        if not self.host.lease_held():
+            return
+        canvas = await self.host.read_canvas()
+        data = next((node.get("data") or {} for node in canvas["nodes"]
+                     if node["id"] == node_id), {})
+        if data.get("generationRunId") == self.run_id:
+            await self.host.patch_node(node_id, dict(CLEAR_GENERATION))
+        if product_operation_id:
+            await self.host.fail_product_operation(product_operation_id)
+        logger.info("Server workflow text interrupted run_id=%s node_id=%s", self.run_id, node_id)
 
     async def run_action(
         self, *, node_id: str, action: str, existing_task: dict | None,
@@ -290,6 +309,12 @@ class _ActionExecution:
 
     async def image_outcome(self, outcome, task, total):
         data = await self.node_data()
+        clear_task = ({
+            "generationTaskKey": None, "generationTaskType": None, "generationTaskJobId": None,
+        } if (
+            outcome["kind"] in {"failed", "cancelled"}
+            and task and data.get("generationTaskKey") == task["task_key"]
+        ) else {})
         patch = await self.core("image_generation_patch", {
             "phase": "outcome", "locale": self.host.locale, "node_id": self.node_id,
             "node_data": data, "task_key": task["task_key"] if task else None,
@@ -311,9 +336,11 @@ class _ActionExecution:
         })
         if patch["action"] == "write":
             current = self.current_result_patch() if result["status"] != "error" else {}
-            await self.patch({**patch["patch"], **_CLEAR_OWNER, **current})
+            await self.patch({**patch["patch"], **_CLEAR_OWNER, **current, **clear_task})
         if settle["kind"] == "no_result":
-            await self.patch({**settle["patch"], **_CLEAR_OWNER})
+            await self.patch({**settle["patch"], **_CLEAR_OWNER, **clear_task})
+        elif patch["action"] != "write" and clear_task:
+            await self.patch({**clear_task, **_CLEAR_OWNER})
         if result["status"] == "error":
             return {"status": "failed", "error": result["error"]}
         artifact = ({"output_url": outcome["fallbackUrl"]} if outcome.get("fallbackUrl")

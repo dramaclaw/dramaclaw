@@ -441,3 +441,62 @@ async def test_missing_takeover_task_submission_errors(setup_runner, error, expe
     assert await run(existing_task=TASK, generation_attempt_id="attempt-1") == {
         "status": "failed", "error": expected,
     }
+
+
+@pytest.mark.parametrize("owner,held", [("run-1", True), ("other-run", True), ("run-1", False)])
+async def test_interrupt_action_clears_only_owned_node(setup_runner, owner, held, caplog):
+    import logging
+
+    host, runner, _, _, _ = setup_runner
+    host.data.update({"generationRunId": owner, "generationOwner": "server",
+                      "isGenerating": True, "generationTaskKey": "old-task"})
+    original = deepcopy(host.data)
+    host.held = held
+    failed = []
+
+    async def fail(operation_id):
+        failed.append(operation_id)
+
+    host.fail_product_operation = fail
+    with caplog.at_level(logging.INFO):
+        await runner.interrupt_action(
+            node_id="n", action="generate_text", product_operation_id="agent_product_text",
+        )
+    assert host.data == ({**original, **CLEAR} if owner == "run-1" and held else original)
+    assert host.requests == []
+    assert failed == (["agent_product_text"] if held else [])
+    if held:
+        assert "Server workflow text interrupted run_id=run-1 node_id=n" in caplog.text
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled"])
+@pytest.mark.parametrize("matching", [True, False])
+async def test_terminal_image_clears_only_matching_task_descriptor(setup_runner, status, matching):
+    host, _, run, _, _ = setup_runner
+    descriptor = {
+        "generationTaskKey": TASK["task_key"] if matching else "another-task",
+        "generationTaskType": "freezone_gen", "generationTaskJobId": "j1" if matching else "other",
+    }
+    host.data.update({**descriptor, "generationRunId": "run-1", "isGenerating": True})
+    host.statuses = [{"status": status, "error": "Image task ended"}]
+    await run(existing_task=TASK)
+    assert {key: host.data[key] for key in descriptor} == ({
+        "generationTaskKey": None, "generationTaskType": None, "generationTaskJobId": None,
+    } if matching else descriptor)
+    assert host.requests == []
+
+
+async def test_completed_image_patch_stays_unchanged(setup_runner):
+    host, _, run, _, _ = setup_runner
+    host.data.update({"generationTaskKey": TASK["task_key"], "generationTaskType": "freezone_gen",
+                      "generationTaskJobId": "j1", "generationRunId": "run-1"})
+    host.statuses = [{"status": "completed", "result": {"output_url": URL}}]
+    assert (await run(existing_task=TASK))["status"] == "completed"
+    assert host.patches == [{
+        "imageUrl": URL, "previewImageUrl": URL, "isGenerating": False,
+        "generationStartedAt": None, "generationTaskKey": None, "generationTaskType": None,
+        "generationTaskJobId": None, "generationError": None, "generationErrorDetails": None,
+        "generationErrorRequestId": None, "generationOwner": None, "generationRunId": None,
+        "workflowResultStale": False, "workflowInvalidatedAt": None,
+        "workflowInvalidationReason": None, "workflowGeneratedAt": "1970-01-01T00:00:00.000Z",
+    }]
