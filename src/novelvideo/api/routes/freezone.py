@@ -18019,6 +18019,11 @@ async def create_canvas_confirmation(
     body: CanvasConfirmationRequest,
     user: dict = Depends(require_project_scope("projects:write")),
 ):
+    from novelvideo.api.freezone_server_workflow_start import (
+        canvas_open_required_detail,
+        check_server_workflow,
+    )
+
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
@@ -18027,12 +18032,30 @@ async def create_canvas_confirmation(
     state_dir = _canvas_state_project_dir(ctx, project_dir)
     now = _confirmation_now()
     try:
+        if agent_canvas_executor() == "server":
+            check = await check_server_workflow(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=body.commands,
+            )
+            if check["status"] == "invalid":
+                raise HTTPException(409, {
+                    "code": "workflow_plan_invalid", "message": check["message"],
+                })
+            if check["status"] == "blocked" and not await asyncio.to_thread(
+                canvas_browser_open, state_dir, canvas_id, now=now,
+            ):
+                raise HTTPException(409, canvas_open_required_detail(check))
         record = await asyncio.to_thread(
             canvas_confirmations.request_confirmation,
             username=str(user["username"]), agent_id=body.agent_id, project_id=project,
             canvas_id=canvas_id, project_state_dir=state_dir, turn_id=body.turn_id,
             commands=body.commands, now=now,
         )
+    except CanvasCoreError as exc:
+        if exc.code == "invalid_request":
+            raise HTTPException(422, {
+                "code": "invalid_agent_canvas_request", "message": str(exc),
+            }) from exc
+        raise HTTPException(503, {"code": exc.code}) from exc
     except ValueError as exc:
         raise HTTPException(422, {
             "code": "invalid_agent_canvas_request", "message": str(exc),
@@ -18114,7 +18137,15 @@ async def decide_canvas_confirmation(
     body: CanvasConfirmationDecisionRequest,
     user: dict = Depends(require_project_scope("projects:write")),
 ):
+    from datetime import datetime, timezone
+
+    from novelvideo.api.freezone_server_workflow_start import (
+        canvas_open_required_detail,
+        check_server_workflow,
+        start_server_workflow_run,
+    )
     from novelvideo.api.routes.chat import append_canvas_confirmation_notice
+    from novelvideo.freezone.workflow_runs import active_workflow_run
 
     now = _confirmation_now()
     record = {"id": confirmation_id, "kinds": [], "created_at": now}
@@ -18161,7 +18192,34 @@ async def decide_canvas_confirmation(
         }
         for command in record["commands"]
     )
-    if body.decision == "confirmed" and needs_browser:
+    check = {"status": "none"}
+    current = datetime.fromtimestamp(now, timezone.utc)
+    if body.decision == "confirmed" and executor == "server" and record["status"] == "pending":
+        try:
+            check = await check_server_workflow(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=record["commands"],
+            )
+        except CanvasCoreError as exc:
+            if exc.code == "invalid_request":
+                raise reject(422, "invalid_agent_canvas_request", message=str(exc)) from exc
+            raise HTTPException(503, {"code": exc.code}) from exc
+        if check["status"] == "invalid":
+            raise reject(409, "workflow_plan_invalid", message=check["message"])
+        if check["status"] == "blocked":
+            if not await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id, now=now):
+                detail = canvas_open_required_detail(check)
+                raise reject(409, **detail)
+        if check["status"] == "runnable":
+            active = await asyncio.to_thread(
+                active_workflow_run, project_dir=state_dir, canvas_id=canvas_id, now=current,
+            )
+            if active is not None:
+                raise reject(409, "workflow_already_running", run_id=active["run_id"],
+                             message="画布上已有工作流在运行，未执行。")
+            needs_browser = False
+    if body.decision == "confirmed" and needs_browser and (
+        executor != "server" or record["status"] == "pending"
+    ):
         if not await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id, now=now):
             raise reject(409, "canvas_browser_required", message="需要打开画布才能运行")
     try:
@@ -18192,6 +18250,47 @@ async def decide_canvas_confirmation(
         if body.via == "card":
             await append_canvas_confirmation_notice(user, record, "voided", ",".join(changed))
         raise reject(409, "targets_changed", node_ids=changed)
+    if check["status"] == "runnable":
+        plan = check["plan"]
+        if not plan["actions"]:
+            await asyncio.to_thread(
+                canvas_confirmations.finish_confirmation, directory, confirmation_id,
+                outcome={"status": "already_completed"}, now=now,
+            )
+            if body.via == "card":
+                await append_canvas_confirmation_notice(user, record, "already_completed")
+            return {"ok": True, "data": {
+                "confirmation_id": confirmation_id, "status": "already_completed",
+            }}
+        try:
+            run = await start_server_workflow_run(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, plan=plan,
+                confirmation=record, actor_id=_canvas_actor_id(user), now=current,
+            )
+        except WorkflowRunLeaseConflict as exc:
+            await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="workflow_already_running", now=now,
+            )
+            active = await asyncio.to_thread(
+                active_workflow_run, project_dir=state_dir, canvas_id=canvas_id, now=current,
+            )
+            raise reject(409, "workflow_already_running",
+                         **({"run_id": active["run_id"]} if active else {}),
+                         message="画布上已有工作流在运行，未执行。") from exc
+        run_id = run["run_id"]
+        await asyncio.to_thread(
+            canvas_confirmations.finish_confirmation, directory, confirmation_id,
+            outcome={"status": "running", "run_id": run_id}, now=now,
+        )
+        if body.via == "card":
+            await append_canvas_confirmation_notice(user, record, "running", run_id)
+        _log_canvas_confirmation_decision(record, "server_run", body.via, now)
+        return {"ok": True, "data": {
+            "confirmation_id": confirmation_id, "status": "running", "run_id": run_id,
+            "actions": [{key: action[key] for key in ("node_id", "action", "label")}
+                        for action in plan["actions"]],
+        }}
     envelope = {
         "schema_version": "canvas_chat_commands.v1", "project_id": project,
         "canvas_id": canvas_id, "commands": record["commands"], "agent_id": record["agent_id"],

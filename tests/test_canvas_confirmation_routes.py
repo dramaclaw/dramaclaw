@@ -3,6 +3,7 @@
 """Canvas confirmation HTTP policy, durable decisions, notices, and bridge payloads."""
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import logging
 from types import SimpleNamespace
 
@@ -13,7 +14,10 @@ import pytest
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.routes import chat, freezone as routes
 from novelvideo.chat.store import ChatScope, ChatStore
+from novelvideo import config
 from novelvideo.freezone import agent_canvas, canvas_confirmations as confirmations, canvas_store
+from novelvideo.freezone import canvas_core_pool, server_workflow_index, workflow_runs
+from novelvideo.task_backend import client as task_client
 from novelvideo.freezone.canvas_command_bridge import list_pending_bridge_messages
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
 from novelvideo.freezone.canvas_presence import touch_canvas_presence
@@ -31,7 +35,20 @@ AGENT = {**USER, "credential_kind": "agent_session", "scopes": ["projects:write"
 class CorePool:
     """Use the existing route-test pool approach; no compiled worker is installed."""
 
+    def __init__(self):
+        self.plan = {
+            "ok": True, "actions": [{"command_index": 0, "node_id": "n1",
+                "action": "generate_image", "execution_mode": "task", "label": "海报"}],
+            "levels": [[0]], "dependencies": {}, "already_completed": False,
+        }
+        self.plan_inputs = []
+
     def call(self, op, payload):
+        if op == "plan_workflow":
+            self.plan_inputs.append(deepcopy(payload))
+            if isinstance(self.plan, Exception):
+                raise self.plan
+            return deepcopy(self.plan)
         canvas = deepcopy(payload["canvas"])
         for envelope in payload["envelopes"]:
             for command in envelope["commands"]:
@@ -59,7 +76,8 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "server")
     monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "1")
     ctx = SimpleNamespace(project_id="proj", project_name="demo", state_dir=tmp_path,
-                          requester_user_id="owner")
+                          requester_user_id="owner", requester_username="owner",
+                          output_dir=tmp_path)
     clock = [1000]
     monkeypatch.setattr(routes, "_confirmation_now", lambda: clock[0], raising=False)
 
@@ -77,7 +95,19 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setattr(chat, "_project_context_for_scope", project_context)
     monkeypatch.setattr(routes, "_freezone_image_models_data", catalog)
     monkeypatch.setattr(routes, "_freezone_video_models_data", catalog)
-    monkeypatch.setattr(agent_canvas, "get_canvas_core_pool", CorePool)
+    pool = CorePool()
+    monkeypatch.setattr(agent_canvas, "get_canvas_core_pool", lambda: pool)
+    monkeypatch.setattr(canvas_core_pool, "get_canvas_core_pool", lambda: pool)
+    from novelvideo.api import freezone_server_workflow_start as start
+    monkeypatch.setattr(start, "get_canvas_core_pool", lambda: pool)
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path / "index")
+    queued = []
+
+    async def enqueue(context, **kwargs):
+        assert context is ctx
+        queued.append(kwargs)
+
+    monkeypatch.setattr(task_client, "enqueue_project_task", enqueue)
     store = ChatStore()
     monkeypatch.setattr(chat, "chat_store", store)
     canvas_store.save_canvas(tmp_path, "default", base_revision=None, build_payload=lambda _: {
@@ -96,7 +126,8 @@ def setup(monkeypatch, tmp_path):
     user = [USER]
     app.dependency_overrides[get_api_user] = lambda: user[0]
     with TestClient(app) as client:
-        yield SimpleNamespace(client=client, root=tmp_path, clock=clock, user=user, store=store)
+        yield SimpleNamespace(client=client, root=tmp_path, clock=clock, user=user, store=store,
+                              pool=pool, queued=queued, ctx=ctx)
 
 
 def create(setup, *, commands=DELETE, turn_id="t1", agent_id="main"):
@@ -349,7 +380,8 @@ def test_conversation_requires_later_turn_then_executes_without_card_notice(setu
     assert notices(setup) == []
 
 
-def test_paid_confirm_requires_presence_then_submits_exact_bridge_envelope(setup):
+def test_browser_paid_confirm_presence_and_exact_bridge_envelope(setup, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "browser")
     created = create(setup, commands=PAID)
     assert created["kinds"] == ["paid_generation"]
     response = decide(setup, created)
@@ -488,3 +520,266 @@ def test_list_distinct_agents_and_sorted_records(setup):
 def test_invalid_canvas_id_is_400(setup, method, suffix, body):
     response = setup.client.request(method, BASE.replace("default", "invalid!") + suffix, json=body)
     assert response.status_code == 400, response.text
+
+
+def runs(setup):
+    return workflow_runs.list_workflow_runs(project_dir=setup.root, canvas_id="default")
+
+
+def test_server_paid_confirmation_starts_without_browser_once(setup, monkeypatch):
+    created = create(setup, commands=PAID)
+
+    def presence_forbidden(*args, **kwargs):
+        raise AssertionError("runnable decision must not consult browser presence")
+
+    monkeypatch.setattr(routes, "canvas_browser_open", presence_forbidden)
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data == {"confirmation_id": created["confirmation_id"], "status": "running",
+                    "run_id": data["run_id"], "actions": [
+                        {"node_id": "n1", "action": "generate_image", "label": "海报"}]}
+    run = runs(setup)[0]
+    assert run["run_id"] == data["run_id"]
+    assert run["owner_kind"] == "server"
+    assert [{k: a[k] for k in ("node_id", "action", "status")} for a in run["actions"]] == [
+        {"node_id": "n1", "action": "generate_image", "status": "pending"}]
+    assert run["metadata"]["requester"] == {"user_id": "owner", "username": "owner"}
+    assert run["metadata"]["confirmation"] == {
+        "id": created["confirmation_id"], "agent_id": "main", "username": "owner"}
+    assert run["metadata"]["levels"] == [[0]]
+    assert run["metadata"]["dependencies"] == {}
+    assert server_workflow_index.list_server_workflow_runs() == [{
+        "project_id": "proj", "state_dir": str(setup.root), "canvas_id": "default",
+        "run_id": run["run_id"], "requester": {"user_id": "owner", "username": "owner"}}]
+    assert setup.queued == [{
+        "task_type": "freezone_workflow_drive", "product_surface": "freezone_assistant",
+        "queue_kind": "default", "scope": f"{run['run_id']}:d1",
+        "payload": {"canvas_id": "default", "run_id": run["run_id"]}}]
+    assert record(setup, created)["outcome"] == {"status": "running", "run_id": run["run_id"]}
+    assert run["run_id"] in notices(setup)[0]["content"]
+    assert "freezone_observe_workflow_run" in notices(setup)[0]["content"]
+    assert list_pending_bridge_messages(
+        project_id="proj", canvas_id="default", bridge_dir=directory(setup).parent) == []
+    assert setup.pool.plan_inputs[0]["commands"] == PAID
+    assert setup.pool.plan_inputs[0]["env"] == {
+        "locale": "zh", "catalogs": {"image": [], "video": []}, "selectedNodeIds": []}
+    again = decide(setup, created)
+    assert again.status_code == 409
+    assert again.json()["detail"]["code"] == "already_handled"
+    assert len(runs(setup)) == 1
+
+
+def test_server_conversation_run_without_card_notice(setup):
+    created = create(setup, commands=PAID)
+    setup.user[0] = AGENT
+    response = decide(setup, created, via="conversation", turn_id="t2")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "running"
+    assert notices(setup) == []
+
+
+def test_video_requires_open_canvas_at_creation_and_decision(setup):
+    commands = [{"type": "run_node_action", "node_id": "n2", "action": "generate_video"}]
+    setup.pool.plan["actions"][0].update(node_id="n2", action="generate_video", label="片头")
+    expected = {"code": "canvas_open_required", "message": "这些动作需要打开画布才能运行：片头",
+                "blocked": [{"node_id": "n2", "action": "generate_video", "label": "片头",
+                             "reason": "action_not_on_server"}]}
+    response = setup.client.post(BASE + "/confirmations", json={"commands": commands})
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == expected
+    assert list(directory(setup).glob("cc_*.json")) == []
+    touch_canvas_presence(setup.root, "default", "browser", now=1000)
+    created = create(setup, commands=commands)
+    setup.clock[0] = 1500
+    response = decide(setup, created)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == expected
+    assert record(setup, created)["status"] == "pending"
+    touch_canvas_presence(setup.root, "default", "browser", now=1500)
+    assert decide(setup, created).json()["data"]["status"] == "submitted"
+    frames = list_pending_bridge_messages(
+        project_id="proj", canvas_id="default", bridge_dir=directory(setup).parent)
+    assert frames[0]["envelope"] == {
+        "schema_version": "canvas_chat_commands.v1", "project_id": "proj",
+        "canvas_id": "default", "commands": commands, "agent_id": "main", "turn_id": "t1",
+        "external_mcp_command": True, "confirmation_id": created["confirmation_id"]}
+
+
+@pytest.mark.parametrize("reason", ["action_parameters", "metered_runtime", "mixed_commands"])
+def test_server_blocked_reasons_leave_no_confirmation(setup, monkeypatch, reason):
+    commands = PAID
+    expected = {"node_id": "n1", "action": "generate_image", "label": "海报", "reason": reason}
+    if reason == "action_parameters":
+        setup.pool.plan["actions"][0]["parameters"] = {}
+    elif reason == "metered_runtime":
+        from novelvideo.api import freezone_server_workflow_start as start
+        monkeypatch.setattr(start, "get_usage_meter", lambda: object())
+    else:
+        commands = [{"type": "update_node_data", "node_id": "n3", "data": {"content": "Hi"}},
+                    *PAID]
+        expected = {"node_id": "n3", "action": "update_node_data", "label": "update_node_data",
+                    "reason": reason}
+    response = setup.client.post(BASE + "/confirmations", json={"commands": commands})
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "canvas_open_required"
+    assert response.json()["detail"]["blocked"] == [expected]
+    assert list(directory(setup).glob("cc_*.json")) == []
+    if reason == "mixed_commands":
+        assert setup.pool.plan_inputs == []
+
+
+def test_invalid_plan_creation_and_pending_decision(setup):
+    created = create(setup, commands=PAID)
+    setup.pool.plan = {"ok": False, "code": "workflow_cycle", "message": "环"}
+    response = setup.client.post(BASE + "/confirmations", json={"commands": PAID})
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {"code": "workflow_plan_invalid", "message": "环"}
+    assert len(list(directory(setup).glob("cc_*.json"))) == 1
+    response = decide(setup, created)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {"code": "workflow_plan_invalid", "message": "环"}
+    assert record(setup, created)["status"] == "pending"
+
+
+@pytest.mark.parametrize("code,status,detail", [
+    ("invalid_request", 422, {"code": "invalid_agent_canvas_request", "message": "bad"}),
+    ("worker_unavailable", 503, {"code": "worker_unavailable"}),
+])
+def test_plan_worker_error_mapping(setup, code, status, detail):
+    setup.pool.plan = CanvasCoreError(code, "bad")
+    response = setup.client.post(BASE + "/confirmations", json={"commands": PAID})
+    assert response.status_code == status, response.text
+    assert response.json()["detail"] == detail
+    assert list(directory(setup).glob("cc_*.json")) == []
+
+
+def test_active_run_leaves_confirmation_pending(setup):
+    created = create(setup, commands=PAID)
+    run = workflow_runs.create_workflow_run(
+        project_dir=setup.root, project_id="proj", canvas_id="default", owner_kind="server",
+        actions=[{"node_id": "n1", "action": "generate_image"}],
+        now=datetime.fromtimestamp(1000, timezone.utc))
+    response = decide(setup, created)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "workflow_already_running", "run_id": run["run_id"],
+        "message": "画布上已有工作流在运行，未执行。"}
+    assert record(setup, created)["status"] == "pending"
+
+
+def test_zero_actions_already_completed(setup):
+    setup.pool.plan.update(actions=[], levels=[], already_completed=True)
+    created = create(setup, commands=[{"type": "run_workflow", "scope": "canvas"}])
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == {"confirmation_id": created["confirmation_id"],
+                                       "status": "already_completed"}
+    assert record(setup, created)["outcome"] == {"status": "already_completed"}
+    assert runs(setup) == []
+    assert setup.queued == []
+    assert "every target already has a current result" in notices(setup)[0]["content"]
+
+
+def test_start_invalidates_generation_result(setup):
+    setup.pool.plan["actions"][0]["invalidation_reason"] = "upstream_changed"
+    created = create(setup, commands=PAID)
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    assert canvas["save_source"] == "workflow_result"
+    assert canvas["nodes"][0]["data"] == {
+        "label": "海报", "workflowResultStale": True,
+        "workflowInvalidatedAt": "1970-01-01T00:16:40.000Z",
+        "workflowInvalidationReason": "upstream_changed"}
+
+
+def test_run_conflict_after_claim_voids_confirmation(setup, monkeypatch):
+    from novelvideo.api import freezone_server_workflow_start as start
+
+    created = create(setup, commands=PAID)
+    start_run = start.start_server_workflow_run
+    raced = []
+
+    async def race(**kwargs):
+        raced.append(workflow_runs.create_workflow_run(
+            project_dir=setup.root, project_id="proj", canvas_id="default", owner_kind="server",
+            actions=[{"node_id": "n1", "action": "generate_image"}], now=kwargs["now"]))
+        return await start_run(**kwargs)
+
+    monkeypatch.setattr(start, "start_server_workflow_run", race)
+    response = decide(setup, created)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "workflow_already_running", "run_id": raced[0]["run_id"],
+        "message": "画布上已有工作流在运行，未执行。"}
+    assert record(setup, created)["status"] == "voided"
+    assert record(setup, created)["outcome"] == {"reason": "workflow_already_running"}
+    assert setup.queued == []
+
+
+def test_run_conflict_after_claim_when_active_run_already_ended(setup, monkeypatch):
+    from novelvideo.api import freezone_server_workflow_start as start
+
+    created = create(setup, commands=PAID)
+
+    async def conflict(**kwargs):
+        raise workflow_runs.WorkflowRunLeaseConflict("another workflow runner is active")
+
+    monkeypatch.setattr(start, "start_server_workflow_run", conflict)
+    response = decide(setup, created)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "workflow_already_running", "message": "画布上已有工作流在运行，未执行。"}
+    assert record(setup, created)["status"] == "voided"
+
+
+def test_started_run_is_registered_before_node_patches(setup, monkeypatch):
+    from novelvideo.api import freezone_server_workflow_start as start
+
+    setup.pool.plan["actions"][0]["invalidation_reason"] = "upstream_changed"
+    created = create(setup, commands=PAID)
+
+    async def patch_fails(self, node_id, patch):
+        raise RuntimeError("patch failed")
+
+    monkeypatch.setattr(start.InProcessActionHost, "patch_node", patch_fails)
+    with pytest.raises(RuntimeError, match="patch failed"):
+        decide(setup, created)
+    run = runs(setup)[0]
+    assert [entry["run_id"] for entry in server_workflow_index.list_server_workflow_runs()] == [
+        run["run_id"]]
+
+
+def test_first_enqueue_failure_keeps_index_for_recovery(setup, monkeypatch):
+    from novelvideo.api import freezone_server_workflow_start as start
+
+    async def full(*args, **kwargs):
+        raise RuntimeError("queue is full")
+
+    monkeypatch.setattr(start, "enqueue_server_workflow_drive", full)
+    created = create(setup, commands=PAID)
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    run_id = response.json()["data"]["run_id"]
+    assert response.json()["data"]["status"] == "running"
+    indexed = server_workflow_index.list_server_workflow_runs()
+    assert [item["run_id"] for item in indexed] == [run_id]
+    assert runs(setup)[0]["metadata"]["drive_generation"] == 1
+    assert setup.queued == []
+
+
+async def test_terminal_notices_are_idempotent_per_status(setup):
+    created = create(setup, commands=PAID)
+    saved = record(setup, created)
+    for status in ("completed", "failed", "cancelled"):
+        for _ in range(2):
+            await chat.append_canvas_confirmation_notice(
+                USER, saved, f"run_{status}", "run_example: 2 completed, 1 failed")
+    messages = notices(setup)
+    assert [message["idempotency_key"] for message in messages] == [
+        f"canvas-confirmation:{created['confirmation_id']}:run_{status}"
+        for status in ("completed", "failed", "cancelled")]
+    assert all("run_example: 2 completed, 1 failed" in message["content"] for message in messages)
+    assert all("Read the canvas or observe the run before reporting" in message["content"]
+               for message in messages)

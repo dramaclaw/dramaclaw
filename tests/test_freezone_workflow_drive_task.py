@@ -87,7 +87,9 @@ async def test_sweep_generations_and_terminal_cleanup(indexed, monkeypatch):
     from novelvideo import project_context
 
     index, now, entry = indexed
-    ctx = SimpleNamespace(project_id='project')
+    ctx = SimpleNamespace(project_id='project', state_dir=Path(entry['state_dir']),
+                          output_dir=Path(entry['state_dir']), requester_user_id='requester',
+                          requester_username='requester')
     resolved = []
 
     async def resolve(**kwargs):
@@ -209,3 +211,120 @@ async def test_sweep_enqueue_error_is_retried_in_next_window(indexed, monkeypatc
         now=now + timedelta(seconds=180), enqueue=enqueue,
     )
     assert queued == [f"{entry['run_id']}:d2"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('elapsed,access,clear_error,expected', [
+    (179, True, False, 'skipped'),
+    (180, True, False, 'unregistered'),
+    (180, False, False, 'unregistered'),
+    (180, True, True, 'skipped'),
+])
+async def test_terminal_sweep_cleans_after_driver_lease(
+    indexed, monkeypatch, elapsed, access, clear_error, expected,
+):
+    from novelvideo import project_context
+    from novelvideo.api import freezone_server_workflow_host as host
+
+    index, now, entry = indexed
+    scope = dict(project_dir=Path(entry['state_dir']), canvas_id='default', run_id=entry['run_id'])
+    store.acquire_server_workflow_run(**scope, runner_id='driver', now=now)
+    store.update_workflow_run(**scope, status='cancelled', now=now)
+    ctx = SimpleNamespace(state_dir=Path(entry['state_dir']))
+    cleared, resolved = [], []
+
+    async def resolve(**kwargs):
+        resolved.append(kwargs)
+        if not access:
+            raise HTTPException(403, 'access lost')
+        return ctx
+
+    async def clear(**kwargs):
+        cleared.append(kwargs)
+        if clear_error:
+            raise RuntimeError('write unavailable')
+
+    monkeypatch.setattr(project_context, 'resolve_project_context', resolve)
+    monkeypatch.setattr(host, 'clear_server_generation_markers', clear, raising=False)
+    assert await index.sweep_server_workflow_runs(now=now + timedelta(seconds=elapsed)) == [
+        {'run_id': entry['run_id'], 'action': expected}]
+    assert index.list_server_workflow_runs() == ([entry] if expected == 'skipped' else [])
+    assert cleared == ([dict(ctx=ctx, canvas_id='default', run_id=entry['run_id'])]
+                       if elapsed >= 180 and access else [])
+    assert resolved == ([{
+        'user': {'id': 'requester', 'username': 'requester'},
+        'project_id': 'project', 'required_role': 'editor',
+    }] if elapsed >= 180 else [])
+
+
+@pytest.mark.asyncio
+async def test_sweeper_uses_shared_enqueue_helper(indexed, monkeypatch):
+    from novelvideo import project_context
+
+    index, now, entry = indexed
+    ctx = SimpleNamespace(project_id='project')
+    queued = []
+
+    async def resolve(**kwargs):
+        return ctx
+
+    async def enqueue(context, **kwargs):
+        queued.append((context, kwargs))
+
+    monkeypatch.setattr(project_context, 'resolve_project_context', resolve)
+    monkeypatch.setattr(index, 'enqueue_server_workflow_drive', enqueue, raising=False)
+    async def unexpected_enqueue(*args, **kwargs):
+        raise AssertionError('sweeper must use the shared enqueue helper')
+
+    from novelvideo.task_backend import client
+    monkeypatch.setattr(client, 'enqueue_project_task', unexpected_enqueue)
+    assert await index.sweep_server_workflow_runs(now=now) == [
+        {'run_id': entry['run_id'], 'action': 'enqueued'}]
+    assert queued == [(ctx, {
+        'canvas_id': 'default', 'run_id': entry['run_id'], 'generation': 1, 'enqueue': None})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['completed', 'failed', 'cancelled'])
+async def test_drive_confirmation_terminal_notice_once(tmp_path, monkeypatch, status):
+    from novelvideo.api.routes import chat
+    from novelvideo.freezone import canvas_confirmations as confirmations
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    directory = confirmations.confirmations_dir('requester', 'main', tmp_path)
+    record = confirmations.create_confirmation(
+        directory, project_id='project', canvas_id='default', agent_id='main',
+        username='requester', turn_id='t1', now=1000,
+        commands=[{'type': 'run_workflow', 'scope': 'canvas'}], targets=[])
+    run = store.create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'one', 'action': 'save'}],
+        metadata={'confirmation': {'id': record['id'], 'username': 'requester', 'agent_id': 'main'},
+                  'requester': {'user_id': 'requester-id', 'username': 'requester'}})
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    store.update_workflow_run(
+        **scope, status=status, owner_kind="server",
+        action_updates=[{'node_id': 'one', 'action': 'save', 'status': 'completed'}])
+    acquired = [True]
+
+    async def drive(**kwargs):
+        return {'status': status, 'run_id': run['run_id'], 'acquired': acquired[0]}
+
+    notices = []
+
+    async def notice(user, saved, kind, detail=''):
+        notices.append((user, saved['id'], kind, detail))
+
+    monkeypatch.setattr(driver, 'drive_server_workflow_run', drive)
+    monkeypatch.setattr(chat, 'append_canvas_confirmation_notice', notice)
+    envelope = {'__run_task_id': 'task-1',
+                'payload': {'canvas_id': 'default', 'run_id': run['run_id']}}
+    result = await freezone._run_freezone_workflow_drive_async(
+        envelope, SimpleNamespace(state_dir=tmp_path))
+    assert result['status'] == status
+    assert notices == [({'id': 'requester-id', 'username': 'requester'}, record['id'],
+                        f'run_{status}', f"{run['run_id']}: 1 completed, 0 failed")]
+    acquired[0] = False
+    await freezone._run_freezone_workflow_drive_async(envelope, SimpleNamespace(state_dir=tmp_path))
+    assert notices == [({'id': 'requester-id', 'username': 'requester'}, record['id'],
+                        f'run_{status}', f"{run['run_id']}: 1 completed, 0 failed")]

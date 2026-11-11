@@ -32,8 +32,10 @@ class ActionHost(Protocol):
     async def lane_capacity(self, lane: str) -> int | None: ...
 
 
+SERVER_WORKFLOW_ACTIONS = frozenset({"generate_image", "generate_text"})
+
 _CLEAR_OWNER = {"generationOwner": None, "generationRunId": None}
-_CLEAR_GENERATION = {
+CLEAR_GENERATION = {
     "isGenerating": False,
     "generationStartedAt": None,
     "generationTaskKey": None,
@@ -66,7 +68,7 @@ class WorkflowActionRunner:
         self.task_timeout_seconds = task_timeout_seconds
 
     def supports(self, action: str) -> bool:
-        return action in {"generate_image", "generate_text"}
+        return action in SERVER_WORKFLOW_ACTIONS
 
     async def lane_capacity(self, lane: str) -> int | None:
         return await self.host.lane_capacity(lane)
@@ -89,7 +91,7 @@ class WorkflowActionRunner:
                 if self.host.lease_held():
                     data = await execution.node_data()
                     if execution.started or data.get("generationRunId") == self.run_id:
-                        await self.host.patch_node(node_id, dict(_CLEAR_GENERATION))
+                        await self.host.patch_node(node_id, dict(CLEAR_GENERATION))
             except ActionLeaseLost:
                 pass
             return {"status": "stopped"}
@@ -244,6 +246,15 @@ class _ActionExecution:
             self.check()
             await self.runner.sleep(self.runner.poll_seconds)
 
+    def current_result_patch(self):
+        return {
+            "workflowResultStale": False, "workflowInvalidatedAt": None,
+            "workflowInvalidationReason": None,
+            "workflowGeneratedAt": datetime.fromtimestamp(
+                self.runner.now_ms() / 1000, timezone.utc,
+            ).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        }
+
     async def image_outcome(self, outcome, task, total):
         data = await self.node_data()
         patch = await self.core("image_generation_patch", {
@@ -252,8 +263,6 @@ class _ActionExecution:
             "first_accepted_task": task, "run_index": 0, "total": total,
             "completed_urls": [], "attach_story_frame": False, "outcome": outcome,
         })
-        if patch["action"] == "write":
-            await self.patch({**patch["patch"], **_CLEAR_OWNER})
         if patch.get("error"):
             settled = [{"status": "rejected", "message": patch["error"]["message"]}]
         else:
@@ -264,11 +273,14 @@ class _ActionExecution:
             "completed_urls": patch.get("completedUrls", []),
             "accepted_refs": [task] if task else [], "completion_mode": "completed",
         })
-        if settle["kind"] == "no_result":
-            await self.patch({**settle["patch"], **_CLEAR_OWNER})
         result = await self.core("image_generation_patch", {
             "phase": "action_result", "settle_outcome": settle, "settled": settled,
         })
+        if patch["action"] == "write":
+            current = self.current_result_patch() if result["status"] != "error" else {}
+            await self.patch({**patch["patch"], **_CLEAR_OWNER, **current})
+        if settle["kind"] == "no_result":
+            await self.patch({**settle["patch"], **_CLEAR_OWNER})
         if result["status"] == "error":
             return {"status": "failed", "error": result["error"]}
         artifact = ({"output_url": outcome["fallbackUrl"]} if outcome.get("fallbackUrl")
@@ -293,7 +305,8 @@ class _ActionExecution:
         except ServerActionHttpError as exc:
             outcome = {"kind": "failed", "message": str(exc), "isError": True}
         patch = await self.core("text_generation_patch", {"phase": "outcome", "outcome": outcome})
-        await self.patch({**patch["patch"], **_CLEAR_OWNER})
+        current = self.current_result_patch() if "error" not in patch else {}
+        await self.patch({**patch["patch"], **_CLEAR_OWNER, **current})
         if "error" in patch:
             return {"status": "failed", "error": patch["error"]["message"]}
         return {"status": "completed", "output": patch["output"],

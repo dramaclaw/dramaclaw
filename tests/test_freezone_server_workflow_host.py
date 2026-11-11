@@ -203,3 +203,25 @@ async def test_task_lookup_and_result_url(host, context, monkeypatch):
 
     monkeypatch.setattr(routes, "freezone_job_result", missing)
     assert await host.job_result_url(TASK) is None
+
+
+async def test_clear_generation_markers_only_for_this_run(context):
+    from novelvideo.api.freezone_server_workflow_host import clear_server_generation_markers
+
+    root = context.state_dir
+    canvas = canvas_store.ensure_default_canvas(root, project_id="project").payload
+    canvas["nodes"] = [{
+        "id": node_id, "type": "imageGenNode", "position": {"x": 0, "y": 0},
+        "data": {"generationRunId": run_id, "generationOwner": "server", "isGenerating": True,
+                 "prompt": "A ship"},
+    } for node_id, run_id in (("one", "run-1"), ("two", "run-2"), ("three", None))]
+    original = json.loads(json.dumps(canvas["nodes"]))
+    canvas_store.atomic_write_json(canvas_store.canvas_path(root, "default"), canvas)
+    await clear_server_generation_markers(ctx=context, canvas_id="default", run_id="run-1")
+    saved = canvas_store.read_canvas(root, "default")
+    assert saved["save_source"] == "workflow_result"
+    assert saved["nodes"][0]["data"] == {
+        "prompt": "A ship", "isGenerating": False, "generationStartedAt": None,
+        "generationTaskKey": None, "generationTaskType": None, "generationTaskJobId": None,
+        "generationOwner": None, "generationRunId": None}
+    assert saved["nodes"][1:] == original[1:]

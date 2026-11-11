@@ -1013,6 +1013,25 @@ def reclaim_failed_workflow_media_action(
         }
 
 
+def _run_is_active(run: dict, now: datetime) -> bool:
+    expires = _parse_timestamp(run.get("lease_expires_at"))
+    return run["status"] == "running" and (
+        run["owner_kind"] == "server"
+        or bool(str(run.get("runner_id") or "").strip() and expires and expires > now)
+    )
+
+
+def active_workflow_run(
+    *, project_dir: Path, canvas_id: str, now: datetime | None = None,
+) -> dict | None:
+    """Return the run that prevents starting another workflow on this canvas."""
+    _validate_scope(canvas_id)
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        return next((run for run in _list_runs_in_transaction(conn, canvas_id=canvas_id)
+                     if _run_is_active(run, current)), None)
+
+
 def create_workflow_run(
     *,
     project_dir: Path,
@@ -1107,17 +1126,8 @@ def create_workflow_run(
                         )
                     return existing
         existing_runs = _list_runs_in_transaction(conn, canvas_id=canvas_id)
-        for existing in existing_runs:
-            if existing.get("status") != "running":
-                continue
-            existing_runner_id = str(existing.get("runner_id") or "").strip()
-            lease_expires_at = _parse_timestamp(existing.get("lease_expires_at"))
-            if existing["owner_kind"] == "server" or (
-                existing_runner_id and lease_expires_at and lease_expires_at > current
-            ):
-                raise WorkflowRunLeaseConflict(
-                    "another workflow runner is active on this canvas"
-                )
+        if any(_run_is_active(existing, current) for existing in existing_runs):
+            raise WorkflowRunLeaseConflict("another workflow runner is active on this canvas")
         for existing in existing_runs:
             if existing.get("status") not in RESUMABLE_RUN_STATUSES:
                 continue

@@ -1525,3 +1525,28 @@ def test_mark_server_drive_generation(tmp_path):
     assert store.mark_server_workflow_drive_enqueued(
         project_dir=tmp_path, canvas_id='browser', run_id=browser['run_id'], now=now,
     ) is None
+
+
+@pytest.mark.parametrize("owner,runner,elapsed,active", [
+    ("server", "", 1000, True),
+    ("browser_legacy", "browser", 179, True),
+    ("browser_legacy", "browser", 180, False),
+])
+def test_active_workflow_run_matches_create_conflict(tmp_path, owner, runner, elapsed, active):
+    from novelvideo.freezone.workflow_runs import active_workflow_run
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project", canvas_id="default", owner_kind=owner,
+        runner_id=runner, actions=[{"node_id": "n", "action": "save"}], now=now)
+    current = now + timedelta(seconds=elapsed)
+    found = active_workflow_run(project_dir=tmp_path, canvas_id="default", now=current)
+    assert (found["run_id"] if found else None) == (run["run_id"] if active else None)
+    if active:
+        with pytest.raises(WorkflowRunLeaseConflict):
+            create_workflow_run(project_dir=tmp_path, project_id="project", canvas_id="default",
+                                actions=[{"node_id": "other", "action": "save"}], now=current)
+    else:
+        assert create_workflow_run(
+            project_dir=tmp_path, project_id="project", canvas_id="default",
+            actions=[{"node_id": "other", "action": "save"}], now=current)["status"] == "running"

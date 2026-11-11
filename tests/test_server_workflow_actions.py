@@ -155,6 +155,11 @@ async def test_image_prompt_and_durable_result(setup_runner, tmp_path):
     assert phases == ["submitting", "generating"]
     assert accepted == [TASK]
     assert host.data["imageUrl"] == URL
+    assert {key: host.data[key] for key in (
+        "workflowResultStale", "workflowInvalidatedAt", "workflowInvalidationReason",
+        "workflowGeneratedAt",
+    )} == {"workflowResultStale": False, "workflowInvalidatedAt": None,
+           "workflowInvalidationReason": None, "workflowGeneratedAt": "1970-01-01T00:00:00.000Z"}
     assert host.patches[0]["generationOwner"] == "server"
     assert host.patches[0]["generationRunId"] == "run-1"
     assert_cleared(host)
@@ -200,6 +205,10 @@ async def test_failed_task(setup_runner):
     host, _, run, _, _ = setup_runner
     host.statuses = [{"status": "failed", "error": "HTTP 503: upstream busy"}]
     assert await run() == {"status": "failed", "error": "HTTP 503: upstream busy"}
+    assert "workflowGeneratedAt" not in host.data
+    assert "workflowResultStale" not in host.data
+    assert "workflowInvalidatedAt" not in host.data
+    assert "workflowInvalidationReason" not in host.data
     assert host.data["generationError"] == "HTTP 503: upstream busy"
     assert host.data["generationErrorDetails"] == "HTTP 503: upstream busy"
     assert_cleared(host)
@@ -262,6 +271,11 @@ async def test_text_and_durable_result(setup_runner, tmp_path):
                       "artifact": {"content": "Hello"}}
     assert [r["path"] for r in host.requests] == ["freezone/recipes/generate-text"]
     assert host.data["content"] == "Hello"
+    assert {key: host.data[key] for key in (
+        "workflowResultStale", "workflowInvalidatedAt", "workflowInvalidationReason",
+        "workflowGeneratedAt",
+    )} == {"workflowResultStale": False, "workflowInvalidatedAt": None,
+           "workflowInvalidationReason": None, "workflowGeneratedAt": "1970-01-01T00:00:00.000Z"}
     assert phases == ["generating"]
     assert accepted == []
     assert_cleared(host)
@@ -317,6 +331,8 @@ async def test_text_http_failure_clears_owner(setup_runner):
     host.data.update({"content": "Original", "workflowCatalog": {"recipeId": "r"}})
     host.responses = [ServerActionHttpError("HTTP 400: bad recipe")]
     assert await run("generate_text") == {"status": "failed", "error": "HTTP 400: bad recipe"}
+    assert "workflowGeneratedAt" not in host.data
+    assert "workflowResultStale" not in host.data
     assert host.data["content"] == "Original"
     assert host.data["generationError"] == "HTTP 400: bad recipe"
     assert_cleared(host)

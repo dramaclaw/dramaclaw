@@ -28,6 +28,7 @@ from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
 from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
 from novelvideo.freezone.server_workflow_actions import (
     ActionLeaseLost,
+    CLEAR_GENERATION,
     ServerActionHttpError,
     WorkflowActionRunner,
 )
@@ -195,3 +196,13 @@ def build_server_action_runner(
         project_id=ctx.project_id, canvas_id=run["canvas_id"], run_id=run["run_id"],
         core_call=core_call,
     )
+
+
+async def clear_server_generation_markers(
+    *, ctx: ProjectContext, canvas_id: str, run_id: str,
+) -> None:
+    host = InProcessActionHost(ctx=ctx, canvas_id=canvas_id, assert_lease=lambda: None)
+    canvas = await host.read_canvas()
+    for node in canvas["nodes"]:
+        if (node.get("data") or {}).get("generationRunId") == run_id:
+            await host.patch_node(node["id"], dict(CLEAR_GENERATION))

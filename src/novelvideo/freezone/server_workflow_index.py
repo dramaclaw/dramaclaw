@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from novelvideo import config
 from novelvideo.freezone import workflow_runs as store
+from novelvideo.project_context import ProjectContext
 
 logger = logging.getLogger(__name__)
 _LOCK = threading.Lock()
@@ -86,12 +87,24 @@ def unregister_server_workflow_run(run_id: str) -> None:
             _write(remaining)
 
 
-async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=None) -> list[dict]:
-    from novelvideo.project_context import resolve_project_context
+async def enqueue_server_workflow_drive(
+    ctx: ProjectContext, *, canvas_id: str, run_id: str, generation: int, enqueue=None,
+) -> None:
     from novelvideo.task_backend.client import enqueue_project_task
 
-    current = now or datetime.now(timezone.utc)
     enqueue = enqueue or enqueue_project_task
+    await enqueue(
+        ctx, task_type="freezone_workflow_drive", product_surface="freezone_assistant",
+        queue_kind="default", scope=f"{run_id}:d{generation}",
+        payload={"canvas_id": canvas_id, "run_id": run_id},
+    )
+
+
+async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=None) -> list[dict]:
+    from novelvideo.project_context import resolve_project_context
+    from novelvideo.api.freezone_server_workflow_host import clear_server_generation_markers
+
+    current = now or datetime.now(timezone.utc)
     results = []
     for entry in await asyncio.to_thread(list_server_workflow_runs):
         run_id = entry["run_id"]
@@ -99,16 +112,24 @@ async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=Non
                      run_id=run_id)
         try:
             run = await asyncio.to_thread(store.read_workflow_run, **scope)
-            if run is None or run["status"] != "running":
+            if run is None:
                 await asyncio.to_thread(unregister_server_workflow_run, run_id)
                 results.append(dict(run_id=run_id, action="unregistered"))
                 continue
-            generation = await asyncio.to_thread(
-                store.mark_server_workflow_drive_enqueued, **scope, now=current,
-            )
-            if generation is None:
-                results.append(dict(run_id=run_id, action="skipped"))
-                continue
+            terminal = run["status"] != "running"
+            if terminal:
+                expiry = run.get("lease_expires_at")
+                expires = datetime.fromisoformat(expiry.replace("Z", "+00:00")) if expiry else None
+                if run.get("runner_id") and expires and expires > current:
+                    results.append(dict(run_id=run_id, action="skipped"))
+                    continue
+            else:
+                generation = await asyncio.to_thread(
+                    store.mark_server_workflow_drive_enqueued, **scope, now=current,
+                )
+                if generation is None:
+                    results.append(dict(run_id=run_id, action="skipped"))
+                    continue
             requester = entry["requester"]
             try:
                 ctx = await resolve_project_context(
@@ -118,24 +139,32 @@ async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=Non
             except HTTPException as exc:
                 if exc.status_code not in {403, 404}:
                     raise
-                runner_id = f"sweep:{uuid.uuid4().hex}"
-                acquired = await asyncio.to_thread(
-                    store.acquire_server_workflow_run, **scope, runner_id=runner_id, now=current,
-                )
-                if acquired is not None and acquired["acquired"]:
-                    await asyncio.to_thread(
-                        store.update_workflow_run, **scope, status="failed", owner_kind="server",
-                        runner_id=runner_id, now=current,
+                if not terminal:
+                    runner_id = f"sweep:{uuid.uuid4().hex}"
+                    acquired = await asyncio.to_thread(
+                        store.acquire_server_workflow_run, **scope, runner_id=runner_id,
+                        now=current,
                     )
+                    if acquired is not None and acquired["acquired"]:
+                        await asyncio.to_thread(
+                            store.update_workflow_run, **scope, status="failed",
+                            owner_kind="server", runner_id=runner_id, now=current,
+                        )
                 await asyncio.to_thread(unregister_server_workflow_run, run_id)
-                results.append(dict(run_id=run_id, action="failed"))
+                results.append(dict(run_id=run_id, action="unregistered" if terminal else "failed"))
                 continue
-            await enqueue(
-                ctx, task_type="freezone_workflow_drive", product_surface="freezone_assistant",
-                queue_kind="default", scope=f"{run_id}:d{generation}",
-                payload={"canvas_id": entry["canvas_id"], "run_id": run_id},
-            )
-            results.append(dict(run_id=run_id, action="enqueued"))
+            if terminal:
+                await clear_server_generation_markers(
+                    ctx=ctx, canvas_id=entry["canvas_id"], run_id=run_id,
+                )
+                await asyncio.to_thread(unregister_server_workflow_run, run_id)
+                results.append(dict(run_id=run_id, action="unregistered"))
+            else:
+                await enqueue_server_workflow_drive(
+                    ctx, canvas_id=entry["canvas_id"], run_id=run_id, generation=generation,
+                    enqueue=enqueue,
+                )
+                results.append(dict(run_id=run_id, action="enqueued"))
         except Exception:
             logger.exception("Server workflow recovery deferred run_id=%s", run_id)
             results.append(dict(run_id=run_id, action="skipped"))

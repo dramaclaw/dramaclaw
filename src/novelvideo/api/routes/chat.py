@@ -1862,6 +1862,21 @@ async def append_canvas_confirmation_notice(
             f"and the server applied it with status {detail}. "
             "Check the current canvas before reporting."
         ),
+        "running": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
+            f"the server started workflow run {detail}. "
+            "Observe it with freezone_observe_workflow_run using that run_id before reporting. "
+            "Do not run it again."
+        ),
+        "already_completed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
+            "there is nothing to run because every target already has a current result."
+        ),
+        **{f"run_{outcome}": (
+            f"Workflow run {detail} for canvas confirmation {confirmation_id} "
+            f"finished with status {outcome}. "
+            "Read the canvas or observe the run before reporting."
+        ) for outcome in ("completed", "failed", "cancelled")},
         "failed": (
             f"The user confirmed canvas confirmation {confirmation_id} ({kinds}), "
             f"but the server could not apply it ({detail}). The confirmation is void. "
