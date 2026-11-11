@@ -89,8 +89,27 @@ def _whole_canvas(command: dict) -> bool:
     )
 
 
+def _batch_nodes(commands: list[dict]) -> dict[str, dict]:
+    nodes = {}
+    for command in commands:
+        client_id = command.get("client_id")
+        if not isinstance(client_id, str):
+            continue
+        kind = command.get("type")
+        if kind in {"create_node", "add_next_node"}:
+            nodes[client_id] = {
+                "type": command.get("node_type") or "", "data": command.get("data") or {},
+            }
+        elif kind == "html_artifact" and command.get("action") == "prepare":
+            nodes[client_id] = {
+                "type": "htmlArtifactNode", "data": command.get("workflow_data") or {},
+            }
+    return nodes
+
+
 def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
     nodes = {node["id"]: node for node in canvas.get("nodes", [])}
+    batch_nodes = _batch_nodes(commands)
     targets = []
     seen = set()
     missing = set()
@@ -106,13 +125,13 @@ def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
         else:
             node_ids = command.get("node_ids", [])
         for node_id in node_ids:
-            if node_id not in nodes:
+            node = nodes.get(node_id, batch_nodes.get(node_id))
+            if node is None:
                 missing.add(node_id)
                 continue
             if (node_id, action) in seen:
                 continue
             seen.add((node_id, action))
-            node = nodes[node_id]
             data = node.get("data", {})
             title = next((
                 value.strip() for key in ("label", "displayName", "title", "name")
@@ -132,7 +151,7 @@ def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
 def changed_targets(canvas: dict, record: dict) -> list[str]:
     current = {node["id"] for node in canvas.get("nodes", [])}
     shown = {target["node_id"] for target in record["targets"]}
-    changed = shown - current
+    changed = shown - current - _batch_nodes(record["commands"]).keys()
     if any(_whole_canvas(command) for command in record["commands"]):
         changed |= current - shown
     return sorted(changed)

@@ -43,17 +43,59 @@ class CorePool:
             "levels": [[0]], "dependencies": {}, "already_completed": False,
         }
         self.plan_inputs = []
+        self.apply_calls = []
+        self.apply_fails = False
+        self.node_count = 0
+        self.edge_count = 0
 
     def call(self, op, payload):
         if op == "plan_workflow":
             self.plan_inputs.append(deepcopy(payload))
             if isinstance(self.plan, Exception):
                 raise self.plan
-            return deepcopy(self.plan)
+            return deepcopy(self.plan(payload) if callable(self.plan) else self.plan)
+        assert op == "apply_commands"
+        self.apply_calls.append(deepcopy(payload))
         canvas = deepcopy(payload["canvas"])
+        if self.apply_fails:
+            return {"status": "validation_failed", "canvas": canvas, "changes": {},
+                    "receipt": {"tool_call_status": "failed", "canvas_apply_status": "failed",
+                                "applied": False, "cancelled": False,
+                                "errors": ["edges[0]: target node not found"], "applied_count": 0,
+                                "created_node_ids": [], "command_results": []}}
+        client_ids = {}
+        created_nodes, created_edges, results = [], [], []
         for envelope in payload["envelopes"]:
             for command in envelope["commands"]:
-                if command["type"] == "delete_nodes":
+                kind = command["type"]
+                result = {"commandIndex": len(results), "type": kind, "status": "success"}
+                if kind == "create_node":
+                    self.node_count += 1
+                    node_id = f"node-{self.node_count}"
+                    canvas["nodes"].append({
+                        "id": node_id, "type": command["node_type"],
+                        "position": deepcopy(command.get("position") or {"x": 0, "y": 0}),
+                        "data": deepcopy(command.get("data") or {}),
+                    })
+                    client_ids[command["client_id"]] = node_id
+                    created_nodes.append(node_id)
+                    result.update(nodeId=command["client_id"], createdNodeId=node_id)
+                elif kind == "create_edge":
+                    self.edge_count += 1
+                    edge_id = f"edge-{self.edge_count}"
+                    canvas["edges"].append({
+                        "id": edge_id,
+                        "source": client_ids.get(command["source"], command["source"]),
+                        "target": client_ids.get(command["target"], command["target"]),
+                    })
+                    created_edges.append(edge_id)
+                elif kind == "update_node_data":
+                    node_id = client_ids.get(command["node_id"], command["node_id"])
+                    node = next(node for node in canvas["nodes"] if node["id"] == node_id)
+                    node["data"].update(deepcopy(command["data"]))
+                elif kind in {"select_nodes", "layout_nodes", "group_nodes"}:
+                    pass
+                elif kind == "delete_nodes":
                     canvas["nodes"] = [
                         node for node in canvas["nodes"] if node["id"] not in command["node_ids"]
                     ]
@@ -68,8 +110,15 @@ class CorePool:
                     ]
                 else:
                     raise CanvasCoreError("invalid_request", "Unknown canvas command type")
-        return {"status": "applied", "canvas": canvas, "changes": {},
-                "receipt": {"canvas_apply_status": "applied"}}
+                results.append(result)
+        return {
+            "status": "applied", "canvas": canvas,
+            "changes": {"created_node_ids": created_nodes, "created_edge_ids": created_edges},
+            "receipt": {"tool_call_status": "completed", "canvas_apply_status": "applied",
+                        "applied": True, "cancelled": False, "errors": [],
+                        "applied_count": len(results), "created_node_ids": created_nodes,
+                        "command_results": results},
+        }
 
 
 @pytest.fixture
@@ -646,10 +695,10 @@ def test_server_blocked_reasons_leave_no_confirmation(setup, reason, request):
         setup.pool.plan["actions"][0].update(action="generate_text")
         expected["action"] = "generate_text"
     else:
-        commands = [{"type": "update_node_data", "node_id": "n3", "data": {"content": "Hi"}},
-                    *PAID]
-        expected = {"node_id": "n3", "action": "update_node_data", "label": "update_node_data",
-                    "reason": reason}
+        commands = [{"type": "html_artifact", "action": "prepare", "client_id": "h1",
+                     "position": {"x": 0, "y": 0}, "workflow_data": {"label": "页面"}}, *PAID]
+        expected = {"node_id": "h1", "action": "html_artifact", "label": "html_artifact",
+                    "reason": "mixed_commands"}
     response = setup.client.post(BASE + "/confirmations", json={"commands": commands})
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "canvas_open_required"
@@ -657,6 +706,7 @@ def test_server_blocked_reasons_leave_no_confirmation(setup, reason, request):
     assert list(directory(setup).glob("cc_*.json")) == []
     if reason == "mixed_commands":
         assert setup.pool.plan_inputs == []
+        assert setup.pool.apply_calls == []
 
 
 @pytest.mark.parametrize("browser_open", [False, True])
@@ -900,3 +950,264 @@ def test_recipe_admission_failure_voids_confirmation(setup, monkeypatch):
     assert record(setup, created)["outcome"] == {"reason": "admission_failed"}
     assert [run["status"] for run in runs(setup)] == ["failed"]
     assert setup.queued == []
+
+
+MIXED = [
+    {"type": "create_node", "client_id": "c1", "node_type": "imageGenNode",
+     "position": {"x": 300, "y": 0}, "data": {"label": "新海报"}},
+    {"type": "create_edge", "source": "n3", "target": "c1", "link_type": "prompt_for"},
+    {"type": "select_nodes", "node_ids": ["c1"], "focus": True},
+    {"type": "run_workflow", "node_ids": ["c1"], "scope": "selection"},
+]
+
+
+def mixed_plan(*extra_actions):
+    def plan(payload):
+        actions = [{"command_index": 0, "node_id": payload["commands"][0]["node_ids"][0],
+                    "action": "generate_image", "execution_mode": "task", "label": "新海报"},
+                   *deepcopy(extra_actions)]
+        return {"ok": True, "actions": actions, "levels": [[i] for i in range(len(actions))],
+                "dependencies": {}, "already_completed": False}
+
+    return plan
+
+
+def created(setup):
+    return [node_id for node_id in nodes(setup) if node_id not in {"n1", "n2", "n3"}]
+
+
+@pytest.mark.parametrize("browser_open", [False, True])
+def test_mixed_create_and_run_applies_edits_then_starts_server_run(
+    setup, monkeypatch, browser_open,
+):
+    setup.pool.plan = mixed_plan()
+    if browser_open:
+        touch_canvas_presence(setup.root, "default", "browser", now=1000)
+    confirmation = create(setup, commands=MIXED)
+    assert confirmation["kinds"] == ["paid_generation"]
+    assert confirmation["targets"] == [
+        {"node_id": "c1", "title": "新海报", "node_type": "imageGenNode",
+         "action": "run_workflow"},
+    ]
+    assert nodes(setup) == ["n1", "n2", "n3"]
+    preview_id = setup.pool.plan_inputs[-1]["commands"][0]["node_ids"][0]
+    if not browser_open:
+        def presence_forbidden(*args, **kwargs):
+            raise AssertionError("runnable decision must not consult browser presence")
+
+        monkeypatch.setattr(routes, "canvas_browser_open", presence_forbidden)
+    response = decide(setup, confirmation)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    real, = created(setup)
+    assert real != preview_id
+    assert data == {
+        "confirmation_id": confirmation["confirmation_id"], "status": "running",
+        "run_id": data["run_id"],
+        "actions": [{"node_id": real, "action": "generate_image", "label": "新海报"}],
+        "refused": [], "result": data["result"],
+    }
+    assert data["result"]["status"] == "applied"
+    assert data["result"]["revision"] == 2
+    assert data["result"]["receipt"]["created_node_ids"] == [real]
+    assert setup.pool.plan_inputs[-1]["commands"] == [
+        {"type": "run_workflow", "node_ids": [real], "scope": "selection"},
+    ]
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    assert next(node for node in canvas["nodes"] if node["id"] == real)["data"] == {
+        "label": "新海报",
+    }
+    assert [(edge["source"], edge["target"]) for edge in canvas["edges"]] == [
+        ("n1", "n2"), ("n3", real),
+    ]
+    run, = runs(setup)
+    assert run["run_id"] == data["run_id"]
+    assert run["owner_kind"] == "server"
+    assert [(a["node_id"], a["action"], a["status"]) for a in run["actions"]] == [
+        (real, "generate_image", "pending"),
+    ]
+    assert record(setup, confirmation)["outcome"] == {
+        "status": "running", "run_id": data["run_id"],
+    }
+    assert [task["task_type"] for task in setup.queued] == ["freezone_workflow_drive"]
+    assert list_pending_bridge_messages(
+        project_id="proj", canvas_id="default", bridge_dir=directory(setup).parent,
+    ) == []
+    assert any(data["run_id"] in notice["content"] for notice in notices(setup))
+
+
+def test_mixed_create_and_run_retry_applies_nothing_twice(setup):
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=MIXED)
+    response = decide(setup, confirmation)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "running"
+    before = (len(setup.pool.apply_calls), nodes(setup), len(runs(setup)), deepcopy(setup.queued))
+    response = decide(setup, confirmation)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "already_handled"
+    assert (len(setup.pool.apply_calls), nodes(setup), len(runs(setup)), setup.queued) == before
+
+
+def test_mixed_edit_failure_starts_no_run(setup, monkeypatch):
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=MIXED)
+    claim = confirmations.claim
+
+    def fail_after_claim(*args, **kwargs):
+        result = claim(*args, **kwargs)
+        setup.pool.apply_fails = True
+        return result
+
+    monkeypatch.setattr(confirmations, "claim", fail_after_claim)
+    response = decide(setup, confirmation)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data == {"confirmation_id": confirmation["confirmation_id"], "status": "executed",
+                    "result": data["result"]}
+    assert data["result"]["status"] == "validation_failed"
+    assert data["result"]["receipt"]["errors"] == ["edges[0]: target node not found"]
+    assert nodes(setup) == ["n1", "n2", "n3"]
+    assert runs(setup) == []
+    assert setup.queued == []
+    stored = record(setup, confirmation)
+    assert stored["status"] == "executed"
+    assert stored["outcome"] == {"status": "validation_failed", "revision": 1}
+
+
+def test_mixed_preview_failure_rejects_creation(setup):
+    setup.pool.apply_fails = True
+    response = setup.client.post(BASE + "/confirmations", json={"commands": MIXED})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {
+        "code": "invalid_agent_canvas_request", "message": "edges[0]: target node not found",
+    }
+    assert list(directory(setup).glob("cc_*.json")) == []
+    assert setup.pool.plan_inputs == []
+
+
+def test_mixed_request_on_missing_canvas_reports_canvas_not_found(setup):
+    setup.pool.plan = mixed_plan()
+    response = setup.client.post(
+        "/projects/proj/freezone/canvases/fresh/confirmations",
+        json={"commands": [
+            {"type": "create_node", "client_id": "c1", "node_type": "imageGenNode",
+             "position": {"x": 0, "y": 0}, "data": {"label": "新海报"}},
+            {"type": "run_workflow", "node_ids": ["c1"], "scope": "selection"},
+        ]},
+    )
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == {"code": "canvas_not_found"}
+    assert list(directory(setup).glob("cc_*.json")) == []
+
+
+def test_mixed_direct_commands_still_require_confirmation(setup):
+    response = setup.client.post(BASE + "/agent-commands", json={"envelopes": [
+        {"schema_version": "canvas_chat_commands.v1", "commands": MIXED},
+    ]})
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "canvas_confirmation_required", "kinds": ["paid_generation"],
+    }
+    assert setup.pool.apply_calls == []
+    assert nodes(setup) == ["n1", "n2", "n3"]
+
+
+def test_mixed_metered_run_admits_recipe_once(setup, monkeypatch):
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    setup.pool.plan = mixed_plan()
+    commands = deepcopy(MIXED)
+    commands[0]["data"]["workflowCatalog"] = {"recipeId": "image-recipe"}
+    enqueued = []
+
+    async def enqueue(context, **kwargs):
+        assert context is setup.ctx
+        enqueued.append(kwargs)
+        return SimpleNamespace(task_state=SimpleNamespace(task_id=f"recipe-task-{len(enqueued)}"))
+
+    monkeypatch.setattr(routes, "get_task_backend", lambda: SimpleNamespace(
+        enqueue_project_task=enqueue,
+    ))
+    with RecordingUsageMeter({"freezone_agent_recipe_result"}).registered() as meter:
+        confirmation = create(setup, commands=commands)
+        assert enqueued == []
+        response = decide(setup, confirmation)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["status"] == "running"
+        real, = created(setup)
+        task, = enqueued
+        assert task["task_type"] == "freezone_agent_recipe_result"
+        assert task["product_surface"] == "freezone_assistant"
+        assert task["payload"]["product_kind"] == "recipe_result"
+        assert task["payload"]["artifact_id"] == real
+        action, = runs(setup)[0]["actions"]
+        assert action["recipe_id"] == "image-recipe"
+        assert action["generation_attempt_id"] == (
+            f"canvas-confirmation:{confirmation['confirmation_id']}:{real}:generate_image"
+        )
+        response = decide(setup, confirmation)
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "already_handled"
+        assert enqueued == [task]
+        assert meter.calls == []
+
+
+def test_mixed_partial_refusal_reports_refused_after_edits(setup):
+    setup.pool.plan = mixed_plan({
+        "command_index": 0, "node_id": "n2", "action": "auto_compose_video",
+        "execution_mode": "task", "label": "Compose",
+    })
+    confirmation = create(setup, commands=MIXED)
+    response = decide(setup, confirmation)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "running"
+    assert data["refused"] == [{
+        "node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+        "reason": "action_not_on_server", "code": "canvas_open_required",
+    }]
+    assert len(created(setup)) == 1
+    assert data["result"]["status"] == "applied"
+
+
+@pytest.mark.parametrize("reason,run", [
+    ("invalid", {"status": "not_started", "code": "workflow_plan_invalid", "message": "环"}),
+    ("blocked", {"status": "not_started", "code": "canvas_open_required",
+                 "message": "这些动作需要打开画布才能运行：Compose", "blocked": [{
+                     "node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+                     "reason": "action_not_on_server",
+                 }]}),
+])
+def test_mixed_run_not_started_after_edits_reports_reason(setup, monkeypatch, reason, run):
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=MIXED)
+    claim = confirmations.claim
+
+    def replace_plan_after_claim(*args, **kwargs):
+        result = claim(*args, **kwargs)
+        if reason == "invalid":
+            setup.pool.plan = {"ok": False, "code": "workflow_cycle", "message": "环"}
+        else:
+            setup.pool.plan = lambda payload: {
+                "ok": True, "actions": [{
+                    "command_index": 0, "node_id": "n2", "action": "auto_compose_video",
+                    "execution_mode": "task", "label": "Compose",
+                }], "levels": [[0]], "dependencies": {}, "already_completed": False,
+            }
+        return result
+
+    monkeypatch.setattr(confirmations, "claim", replace_plan_after_claim)
+    response = decide(setup, confirmation)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data == {"confirmation_id": confirmation["confirmation_id"], "status": "executed",
+                    "result": data["result"], "run": run}
+    assert data["result"]["status"] == "applied"
+    assert len(created(setup)) == 1
+    assert runs(setup) == []
+    assert setup.queued == []
+    stored = record(setup, confirmation)
+    assert stored["status"] == "executed"
+    assert stored["outcome"] == {"status": "applied", "revision": 2, "run": run}
+    assert any("workflow run not started" in notice["content"] for notice in notices(setup))

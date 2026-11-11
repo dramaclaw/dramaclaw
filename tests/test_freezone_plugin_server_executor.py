@@ -939,3 +939,71 @@ def test_cancel_workflow_run_timeout_is_not_retryable(agent, monkeypatch):
         "ok": False, "status": "workflow_cancellation_failed", "run_id": "run_1",
         "error": "Cancellation timed out", "retryable": False,
     }
+
+
+def applied_edit_result():
+    return {
+        "status": "applied", "revision": 7,
+        "receipt": {
+            "tool_call_status": "completed", "canvas_apply_status": "applied",
+            "applied": True, "cancelled": False, "errors": [], "applied_count": 1,
+            "created_node_ids": ["new-node"],
+            "command_results": [{"type": "create_node", "status": "applied"}],
+        },
+        "changes": {"created_node_ids": ["new-node"]}, "recompute_count": 0,
+    }
+
+
+def test_running_decision_after_edits_reports_applied_nodes(agent, monkeypatch):
+    plugin, _, _, _ = agent
+    actions = [{"node_id": "new-node", "action": "generate_image", "label": "新海报"}]
+    _respond(agent, monkeypatch, "/decision", {"ok": True, "data": {
+        "confirmation_id": CONFIRMATION_ID, "status": "running", "run_id": "run_1",
+        "actions": actions, "refused": [], "result": applied_edit_result(),
+    }})
+    result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    assert result == {
+        "ok": True, "status": "running", "tool_call_status": "completed",
+        "canvas_apply_status": "running", "applied": True, "confirmation_id": CONFIRMATION_ID,
+        "project_id": "p", "canvas_id": "c", "run_id": "run_1", "actions": actions,
+        "revision": 7, "created_node_ids": ["new-node"],
+        "agent_instruction": (
+            "The confirmed workflow is running on the server as run_1. "
+            "Do not call the run tool again. To report progress or results, call "
+            "freezone_observe_workflow_run with this run_id (wait_seconds up to 20; "
+            "pass the previous "
+            "observation_token as after). Report outcomes only from a terminal observation. "
+            "Call freezone_cancel_workflow_run only if the user asks to stop it."
+        ),
+    }
+
+
+@pytest.mark.parametrize("run,instruction", [
+    ({"status": "not_started", "code": "canvas_open_required",
+      "message": "这些动作需要打开画布才能运行：Compose", "blocked": [{
+          "node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+          "reason": "action_not_on_server",
+      }]},
+     "The canvas edits were applied, but the workflow run did not start because these actions "
+     "only run in the open canvas: Compose. Ask the user to open this canvas and run them there. "
+     "Do not call this confirmation again."),
+    ({"status": "not_started", "code": "workflow_plan_invalid", "message": "环"},
+     "The canvas edits were applied, but the workflow run did not start: 环. "
+     "Explain this to the user. Do not call this confirmation again."),
+])
+def test_executed_decision_reports_run_not_started(agent, monkeypatch, run, instruction):
+    plugin, _, _, _ = agent
+    edit_result = applied_edit_result()
+    edit_result["recompute_count"] = 1
+    _respond(agent, monkeypatch, "/decision", {"ok": True, "data": {
+        "confirmation_id": CONFIRMATION_ID, "status": "executed",
+        "result": edit_result, "run": run,
+    }})
+    result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    assert result["ok"] is True
+    assert result["canvas_apply_status"] == "applied"
+    assert result["revision"] == 7
+    assert result["created_node_ids"] == ["new-node"]
+    assert result["confirmation_id"] == CONFIRMATION_ID
+    assert result["run"] == run
+    assert result["agent_instruction"] == instruction

@@ -5948,10 +5948,27 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
         })
     data = response["data"]
     if data["status"] == "executed":
-        return tool_result({
+        payload = {
             **_server_canvas_command_result(project, canvas, data["result"], [], slim_result=True),
             "confirmation_id": confirmation_id,
-        })
+        }
+        if run := data.get("run"):
+            payload["run"] = run
+            if run["code"] == "canvas_open_required":
+                labels = ", ".join(
+                    item.get("label") or item["action"] for item in run.get("blocked", [])
+                )
+                payload["agent_instruction"] = (
+                    "The canvas edits were applied, but the workflow run did not start because "
+                    f"these actions only run in the open canvas: {labels}. Ask the user to open "
+                    "this canvas and run them there. Do not call this confirmation again."
+                )
+            else:
+                payload["agent_instruction"] = (
+                    "The canvas edits were applied, but the workflow run did not start: "
+                    f"{run['message']}. Explain this to the user. Do not call this confirmation again."
+                )
+        return tool_result(payload)
     if data["status"] == "running":
         refusal_instruction = ""
         if data.get("refused"):
@@ -5963,7 +5980,11 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
             )
         return tool_result({
             "ok": True, "status": "running", "tool_call_status": "completed",
-            "canvas_apply_status": "running", "applied": False, **scope,
+            "canvas_apply_status": "running", "applied": bool(data.get("result")), **scope,
+            **({
+                "revision": data["result"]["revision"],
+                "created_node_ids": data["result"]["receipt"].get("created_node_ids", []),
+            } if data.get("result") else {}),
             "run_id": data["run_id"], "actions": data["actions"],
             **({"refused": data["refused"]} if data.get("refused") else {}),
             "agent_instruction": (
