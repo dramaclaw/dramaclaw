@@ -26,7 +26,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import BinaryIO, List, Optional
+
+import portalocker
 
 from novelvideo.i18n_message import (
     MessageLike,
@@ -51,6 +53,17 @@ from novelvideo.task_identity import (
 logger = logging.getLogger(__name__)
 
 ACTIVE_PROJECT_TASK_STATUSES = {"submitting", "queued", "running"}
+# These tasks wait for the generation tasks they submit, without occupying their lanes.
+LANE_EXEMPT_TASK_TYPES = frozenset({
+    "freezone_agent_workflow_result",
+    "freezone_agent_recipe_result",
+    "freezone_agent_workflow_generate",
+    "freezone_agent_recipe_generate",
+    "freezone_workflow_drive",
+})
+_INLINE_OWNER_TOKEN: str | None = None
+_INLINE_OWNER_FILES: dict[Path, BinaryIO] = {}
+_INLINE_OWNER_LOCK = threading.Lock()
 TASK_READ_BATCH_SIZE = 200
 # Exclude potentially large log payloads for workflow reconciliation.
 TASK_SNAPSHOT_COLUMNS = (
@@ -159,8 +172,7 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-# inline 后端的 worker 与 API 同进程:早于本进程启动仍标记 ACTIVE 的
-# inline 任务必然已中断(见 _sweep_interrupted_inline_tasks_once)。
+# Legacy inline rows without an owner token retain the process-start timestamp rule.
 _PROCESS_STARTED_AT = utc_now_iso()
 if "." not in _PROCESS_STARTED_AT:
     # isoformat 在整秒时省略小数位;同秒内 "...:56Z" 字典序大于 "...:56.4Z",
@@ -194,6 +206,40 @@ def get_project_task_db_path(username: str, project: str) -> Path:
 def get_project_task_db_path_for_context(ctx: ProjectContext) -> Path:
     """Project-local task state DB path for project_id based execution."""
     return (Path(ctx.state_dir) / "data.db").resolve()
+
+
+def get_inline_owner_for_project(ctx: ProjectContext) -> str:
+    """Hold this process's owner lock beside every database it submits inline tasks to."""
+    global _INLINE_OWNER_TOKEN
+    owner_dir = get_project_task_db_path_for_context(ctx).parent / "inline-owners"
+    with _INLINE_OWNER_LOCK:
+        if _INLINE_OWNER_TOKEN is None:
+            _INLINE_OWNER_TOKEN = uuid.uuid4().hex
+        if owner_dir not in _INLINE_OWNER_FILES:
+            owner_dir.mkdir(parents=True, exist_ok=True)
+            stream = (owner_dir / f"{_INLINE_OWNER_TOKEN}.lock").open("a+b")
+            try:
+                portalocker.lock(stream, portalocker.LOCK_EX | portalocker.LOCK_NB)
+            except BaseException:
+                stream.close()
+                raise
+            _INLINE_OWNER_FILES[owner_dir] = stream
+        return _INLINE_OWNER_TOKEN
+
+
+def _inline_owner_is_alive(owner_dir: Path, owner: str) -> bool:
+    if owner == _INLINE_OWNER_TOKEN:
+        return True
+    try:
+        with (owner_dir / f"{owner}.lock").open("r+b") as stream:
+            try:
+                portalocker.lock(stream, portalocker.LOCK_EX | portalocker.LOCK_NB)
+            except portalocker.LockException:
+                return True
+            portalocker.unlock(stream)
+    except FileNotFoundError:
+        pass
+    return False
 
 
 @dataclass
@@ -687,7 +733,7 @@ class TaskStateManager:
                 if project_lane_limit is _PROJECT_LANE_LIMIT_UNSET
                 else project_lane_limit
             )
-            if limit is not None:
+            if task_type not in LANE_EXEMPT_TASK_TYPES and limit is not None:
                 active = self._count_active_project_tasks_on_connection(
                     conn,
                     project_id=ctx.project_id,
@@ -702,7 +748,7 @@ class TaskStateManager:
                     )
 
             user_limit = project_user_lane_active_limit(normalized_queue_kind)
-            if user_limit is not None:
+            if task_type not in LANE_EXEMPT_TASK_TYPES and user_limit is not None:
                 user_active = self._count_active_project_tasks_on_connection(
                     conn,
                     project_id=ctx.project_id,
@@ -906,13 +952,9 @@ class TaskStateManager:
         if queue_kind is not None:
             predicates.append("queue_kind = ?")
             params.append(normalize_queue_kind(queue_kind))
-            # These tasks wait for delivery receipts or generation tasks they
-            # submit. Counting workflow drivers would block their generation tasks.
-            predicates.append(
-                "task_type NOT IN ('freezone_agent_workflow_result', "
-                "'freezone_agent_recipe_result', 'freezone_agent_workflow_generate', "
-                "'freezone_agent_recipe_generate', 'freezone_workflow_drive')"
-            )
+            excluded = ",".join("?" for _ in LANE_EXEMPT_TASK_TYPES)
+            predicates.append(f"task_type NOT IN ({excluded})")
+            params.extend(LANE_EXEMPT_TASK_TYPES)
         if requester_user_id is not None:
             predicates.append("requester_user_id = ?")
             params.append(requester_user_id)
@@ -1401,14 +1443,7 @@ class TaskStateManager:
     CELERY_STALE_TTL = 40 * 60
 
     def _sweep_stale_tasks_on_connection(self, conn) -> int | None:
-        """把不可能仍在执行的 ACTIVE 任务落为 failed(僵尸回收),两条轴:
-
-        - inline:worker 随 API 进程消亡,早于本进程启动的必然已中断;
-        - celery/EE:worker 独立于本进程,按 CELERY_STALE_TTL 判(见其注释)。
-
-        两条轴按 backend 标记互斥,彼此不外溢。
-        时间戳按字符串比较:两侧均为 utc_now_iso 产物且保证含小数位。
-        """
+        """Fail inline tasks with dead owners and independently expire stale broker tasks."""
         now = utc_now_iso()
         celery_stale_before = (
             datetime.now(timezone.utc) - timedelta(seconds=self.CELERY_STALE_TTL)
@@ -1418,22 +1453,37 @@ class TaskStateManager:
             # "...:56Z" 字典序大于 "...:56.4Z",会多扫掉同秒内的活任务。
             celery_stale_before = celery_stale_before.replace("Z", ".000000Z")
         try:
-            inline_result = conn.execute(
-                "UPDATE task_states SET status = 'failed', "
-                "error = COALESCE(NULLIF(error, ''), ?), "
-                "completed_at = ?, updated_at = ?, expires_at = ? "
+            owner_dir = Path(conn.execute("PRAGMA database_list").fetchone()[2]).parent / (
+                "inline-owners"
+            )
+            inline_rows = conn.execute(
+                "SELECT task_key, task_id, updated_at, "
+                "json_extract(result_json, '$.task_metadata.inline_owner') AS inline_owner "
+                "FROM task_states "
                 "WHERE status IN ('submitting', 'queued', 'running') "
-                "AND updated_at < ? "
                 "AND json_valid(result_json) "
                 "AND json_extract(result_json, '$.task_metadata.backend') = 'inline'",
-                (
-                    "服务重启,任务已中断,请重新发起",
-                    now,
-                    now,
-                    compute_expiry(self.COMPLETED_TTL),
-                    _PROCESS_STARTED_AT,
-                ),
-            )
+            ).fetchall()
+            inline_count = 0
+            for row in inline_rows:
+                owner = row["inline_owner"]
+                if owner:
+                    if _inline_owner_is_alive(owner_dir, owner):
+                        continue
+                elif row["updated_at"] >= _PROCESS_STARTED_AT:
+                    continue
+                inline_count += conn.execute(
+                    "UPDATE task_states SET status = 'failed', "
+                    "error = COALESCE(NULLIF(error, ''), ?), "
+                    "completed_at = ?, updated_at = ?, expires_at = ? "
+                    "WHERE task_key = ? AND task_id = ? AND updated_at = ? "
+                    "AND status IN ('submitting', 'queued', 'running')",
+                    (
+                        "服务重启,任务已中断,请重新发起",
+                        now, now, compute_expiry(self.COMPLETED_TTL),
+                        row["task_key"], row["task_id"], row["updated_at"],
+                    ),
+                ).rowcount
             celery_result = conn.execute(
                 "UPDATE task_states SET status = 'failed', "
                 "error = COALESCE(NULLIF(error, ''), ?), "
@@ -1455,7 +1505,7 @@ class TaskStateManager:
             conn.rollback()
             logger.warning("stale task sweep skipped: %s", exc)
             return None
-        return inline_result.rowcount + celery_result.rowcount
+        return inline_count + celery_result.rowcount
 
     def _sweep_interrupted_inline_tasks_once(self, conn, db_path: Path) -> None:
         """普通连接首次打开每个 DB 时运行清扫，失败则留给下次连接重试。"""

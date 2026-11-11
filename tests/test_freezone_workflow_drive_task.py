@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI, HTTPException
 
+from inline_task_owner_helper import task_context
 from novelvideo.freezone import workflow_runs as store
 from novelvideo.task_backend.runners import freezone
 
@@ -87,9 +88,7 @@ async def test_sweep_generations_and_terminal_cleanup(indexed, monkeypatch):
     from novelvideo import project_context
 
     index, now, entry = indexed
-    ctx = SimpleNamespace(project_id='project', state_dir=Path(entry['state_dir']),
-                          output_dir=Path(entry['state_dir']), requester_user_id='requester',
-                          requester_username='requester')
+    ctx = task_context(Path(entry['state_dir']))
     resolved = []
 
     async def resolve(**kwargs):
@@ -190,7 +189,7 @@ async def test_sweep_enqueue_error_is_retried_in_next_window(indexed, monkeypatc
     index, now, entry = indexed
 
     async def resolve(**kwargs):
-        return SimpleNamespace(project_id='project')
+        return task_context(Path(entry['state_dir']))
 
     async def full(context, **kwargs):
         raise RuntimeError('lane is full')
@@ -230,7 +229,7 @@ async def test_terminal_sweep_cleans_after_driver_lease(
     scope = dict(project_dir=Path(entry['state_dir']), canvas_id='default', run_id=entry['run_id'])
     store.acquire_server_workflow_run(**scope, runner_id='driver', now=now)
     store.update_workflow_run(**scope, status='cancelled', now=now)
-    ctx = SimpleNamespace(state_dir=Path(entry['state_dir']))
+    ctx = task_context(Path(entry['state_dir']))
     cleared, resolved = [], []
 
     async def resolve(**kwargs):
@@ -262,7 +261,7 @@ async def test_sweeper_uses_shared_enqueue_helper(indexed, monkeypatch):
     from novelvideo import project_context
 
     index, now, entry = indexed
-    ctx = SimpleNamespace(project_id='project')
+    ctx = task_context(Path(entry['state_dir']))
     queued = []
 
     async def resolve(**kwargs):

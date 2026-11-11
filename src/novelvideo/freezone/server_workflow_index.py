@@ -103,6 +103,7 @@ async def enqueue_server_workflow_drive(
 async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=None) -> list[dict]:
     from novelvideo.project_context import resolve_project_context
     from novelvideo.api.freezone_server_workflow_host import clear_server_generation_markers
+    from novelvideo.task_state import get_task_manager
 
     current = now or datetime.now(timezone.utc)
     results = []
@@ -153,6 +154,12 @@ async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=Non
                 await asyncio.to_thread(unregister_server_workflow_run, run_id)
                 results.append(dict(run_id=run_id, action="unregistered" if terminal else "failed"))
                 continue
+            try:
+                # Fail tasks of a dead process first, so the next drive does not wait on them.
+                await asyncio.to_thread(get_task_manager().sweep_stale_tasks_for_project, ctx)
+            except Exception:
+                logger.warning("Server workflow task sweep skipped run_id=%s", run_id,
+                               exc_info=True)
             if terminal:
                 await clear_server_generation_markers(
                     ctx=ctx, canvas_id=entry["canvas_id"], run_id=run_id,

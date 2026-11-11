@@ -1,17 +1,17 @@
-"""服务重启后 inline 任务的僵尸回收。
+"""Inline liveness follows owner locks; legacy rows retain restart reconciliation."""
 
-inline 后端的 worker 随 API 进程消亡:进程启动时间之前仍标记
-submitting/queued/running 的 inline 任务必然已中断,读取路径应将其
-落为 failed,避免僵尸任务永久挡住新任务(去重守卫/并发限额)。
-Celery/EE worker 独立于 API 进程,**这条进程启动时间的规则对它绝不适用**;
-它按自己的 40min TTL 回收,那一轴在 test_task_state_celery_zombie_ttl.py。
-"""
-
+import asyncio
+import os
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from inline_task_owner_helper import inline_owner_process, task_context
+from novelvideo import task_state
+from novelvideo.ports.local.tasks import InlineTaskBackend
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_state import TaskStateManager
 
@@ -174,3 +174,105 @@ def test_stale_inline_task_no_longer_blocks_active_count(tmp_path: Path) -> None
     manager = _restarted()
 
     assert manager.count_active_tasks_for_project(ctx) == 0
+
+
+@pytest.mark.parametrize("status", ["submitting", "queued", "running"])
+def test_inline_owner_liveness_across_processes(tmp_path, status):
+    ctx = task_context(tmp_path)
+    manager = TaskStateManager()
+    with inline_owner_process(tmp_path, status) as owner:
+        # A new manager performs its automatic connection sweep while the sibling is live.
+        sibling = manager.get_task_for_project(ctx, "freezone_workflow_drive", 0, scope="sibling")
+        assert sibling.status == status
+        assert manager.sweep_stale_tasks_for_project(ctx) == 0
+        owner.kill()
+        owner.wait(timeout=10)
+        # The same manager must detect the death without another process restart.
+        assert manager.sweep_stale_tasks_for_project(ctx) == 1
+        sibling = manager.get_task_for_project(ctx, "freezone_workflow_drive", 0, scope="sibling")
+        assert sibling.status == "failed"
+        assert sibling.error == "服务重启,任务已中断,请重新发起"
+
+
+def test_missing_inline_owner_lock_is_failed_even_with_fresh_timestamp(tmp_path):
+    ctx = task_context(tmp_path)
+    manager = TaskStateManager()
+    manager.reserve_task_for_project(
+        ctx, "freezone_workflow_drive", 0,
+        metadata={"backend": "inline", "inline_owner": "missing"},
+    )
+    assert manager.sweep_stale_tasks_for_project(ctx) == 1
+    state = manager.get_task_for_project(ctx, "freezone_workflow_drive", 0)
+    assert state.status == "failed"
+    assert state.error == "服务重启,任务已中断,请重新发起"
+
+
+@pytest.mark.asyncio
+async def test_inline_reservation_contains_live_process_owner(tmp_path, monkeypatch):
+    ctx = task_context(tmp_path)
+    manager = TaskStateManager()
+    monkeypatch.setattr("novelvideo.ports.local.tasks.get_task_manager", lambda: manager)
+    signing = asyncio.Event()
+
+    class PendingProducer:
+        async def sign_top_level(self, **kwargs):
+            signing.set()
+            await asyncio.Event().wait()
+
+    backend = InlineTaskBackend(producer=PendingProducer())
+    pending = asyncio.create_task(backend.enqueue_project_task(
+        ctx, task_type="freezone_workflow_drive", product_surface="freezone_assistant",
+    ))
+    try:
+        await asyncio.wait_for(signing.wait(), timeout=5)
+        state = manager.get_task_for_project(ctx, "freezone_workflow_drive", 0)
+        assert state.status == "submitting"
+        assert state.metadata.get("backend") == "inline"
+        token = state.metadata["inline_owner"]
+        assert isinstance(token, str) and token
+        lock_path = ctx.state_dir / "inline-owners" / f"{token}.lock"
+        probe = """
+import sys
+import portalocker
+with open(sys.argv[1], 'r+') as lock:
+    try:
+        portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
+    except portalocker.LockException:
+        print('locked')
+    else:
+        portalocker.unlock(lock)
+        print('unlocked')
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", probe, str(lock_path)], text=True, capture_output=True,
+            timeout=10, env={**os.environ, "PYTHONPATH": "src:."}, check=True,
+        )
+        assert result.stdout == "locked\n"
+        _backdate(manager, ctx, state.task_id)
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 0
+        own = manager.get_task_for_project(ctx, "freezone_workflow_drive", 0)
+        assert own.status == "submitting"
+        with inline_owner_process(tmp_path) as sibling:
+            assert manager.sweep_stale_tasks_for_project(ctx) == 0
+            sibling.kill()
+            sibling.wait(timeout=10)
+            assert manager.sweep_stale_tasks_for_project(ctx) == 1
+            own = manager.get_task_for_project(ctx, "freezone_workflow_drive", 0)
+            assert own.status == "submitting"
+    finally:
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+
+
+def test_legacy_inline_owner_uses_process_start_timestamp(tmp_path, monkeypatch):
+    ctx = task_context(tmp_path)
+    manager = TaskStateManager()
+    monkeypatch.setattr(task_state, "_PROCESS_STARTED_AT", "2026-01-01T00:00:00.000000Z")
+    monkeypatch.setattr(task_state, "utc_now_iso", lambda: "2025-12-31T23:59:59.000000Z")
+    manager.reserve_task_for_project(ctx, "legacy", 0, metadata={"backend": "inline"})
+    monkeypatch.setattr(task_state, "utc_now_iso", lambda: "2026-01-01T00:00:01.000000Z")
+    manager.reserve_task_for_project(ctx, "fresh", 0, metadata={"backend": "inline"})
+    assert manager.sweep_stale_tasks_for_project(ctx) == 1
+    assert manager.get_task_for_project(ctx, "legacy", 0).status == "failed"
+    assert manager.get_task_for_project(ctx, "fresh", 0).status == "submitting"
