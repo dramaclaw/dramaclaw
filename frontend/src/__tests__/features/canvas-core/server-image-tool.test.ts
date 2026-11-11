@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { buildImageToolRequest } from '@/features/canvas/application/generationRequests/imageToolRequest';
 import { InvalidRequest } from '@/features/canvas/server/requestPayload';
 import * as imageTool from '@/features/canvas/server/imageTool';
 import { serveImageToolRequest, serveImageToolPatch } from '@/features/canvas/server/imageTool';
@@ -28,9 +29,15 @@ it.each([null, [], {}, { phase: 'unknown' }])('rejects invalid payload %j', asyn
 });
 
 it.each(actions.flatMap(action => ['data:image/png;base64,AA==', 'blob:https://media.example.test/image'].map(imageUrl => ({ action, imageUrl }))))(
-  'returns the pure inline refusal: $action $imageUrl', async ({ action, imageUrl }) => {
+  'refuses inline sources only at the server boundary: $action $imageUrl', async ({ action, imageUrl }) => {
     const p = imagePayload(action); p.canvas.nodes = [source({ imageUrl })];
-    expect(await serveImageToolRequest(p)).toStrictEqual({ ok: false, message: 'Inline image sources must be prepared before building an image tool request.' });
+    const response = await serveImageToolRequest(p);
+    expect(response).toStrictEqual({ ok: false, message: 'Inline image sources must be prepared before building an image tool request.' });
+    expect(JSON.stringify(response)).not.toContain(imageUrl);
+    expect(buildImageToolRequest({
+      action, nodes: p.canvas.nodes, nodeId: p.node_id, projectId: p.env.project,
+      imageModels: [], translate: key => key, nowMs: p.env.now_ms,
+    }).ok).toBe(true);
   });
 
 
@@ -61,4 +68,19 @@ it.each([
   { ...placePayload(), edge: { source: 'source', target: 'actual-child' } },
 ])('rejects invalid placement payload %j', async payload => {
   await expect(imageTool.serveImageToolPlace(payload)).rejects.toBeInstanceOf(InvalidRequest);
+});
+
+it.each(actions)('preserves refusal order: %s', async action => {
+  const payload = imagePayload(action);
+  payload.env.project = '';
+  payload.canvas.nodes = [source({ imageUrl: 'data:image/png;base64,AA==' })];
+  expect(await serveImageToolRequest(payload)).toStrictEqual({
+    ok: false, message: '当前 URL 缺少 project，无法提交生成',
+  });
+  payload.canvas.nodes = [];
+  expect(await serveImageToolRequest(payload)).toStrictEqual({
+    ok: false, message: action === 'run_outpaint_tool' ? '目标节点没有可用于扩图的图片'
+      : action === 'run_upscale_tool' ? '目标节点没有可用于高清放大的图片'
+        : '目标节点没有可用于生成的图片',
+  });
 });

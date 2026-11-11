@@ -62,6 +62,13 @@ export type ImageToolActionResultInput = { message: string } | ({
 ));
 
 /** Request id, source node id and action envelope belong to the caller. */
+export function imageToolActionResult(input: Extract<ImageToolActionResultInput, { action: ImageToolAction }>):
+  { status: 'success'; output: Record<string, unknown> };
+export function imageToolActionResult(input: { message: string }):
+  { status: 'error'; error: string };
+export function imageToolActionResult(input: ImageToolActionResultInput):
+  | { status: 'success'; output: Record<string, unknown> }
+  | { status: 'error'; error: string };
 export function imageToolActionResult(input: ImageToolActionResultInput):
   | { status: 'success'; output: Record<string, unknown> }
   | { status: 'error'; error: string } {

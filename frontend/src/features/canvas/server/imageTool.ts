@@ -24,7 +24,16 @@ export async function serveImageToolRequest(payload: unknown) {
   p.fields(env, ['locale', 'project', 'image_models', 'now_ms']);
   const context = { nodes: canvas.nodes, nodeId, action: action(input.action), projectId: project(env.project),
     nowMs: p.number(env.now_ms), imageModels: env.image_models === undefined ? SHARED_MODELS : imageModelOptionsFromPayload(env.image_models) };
-  return runServerRequest(locale, async () => pure.buildImageToolRequest({ ...context, translate: await createServerTranslate(locale) }));
+  return runServerRequest(locale, async () => {
+    const decision = pure.buildImageToolRequest({ ...context, translate: await createServerTranslate(locale) });
+    if (decision.ok) {
+      const source = decision.body.source_url ?? decision.body.reference_url;
+      if (typeof source === 'string' && (source.startsWith('data:') || source.startsWith('blob:'))) {
+        return { ok: false, message: 'Inline image sources must be prepared before building an image tool request.' };
+      }
+    }
+    return decision;
+  });
 }
 
 export async function serveImageToolPatch(payload: unknown) {

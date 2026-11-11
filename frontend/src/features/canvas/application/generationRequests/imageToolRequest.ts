@@ -121,7 +121,6 @@ export type ImageToolRequestResult =
  * Caller supplies the image snapshot and clock, computes positions with
  * findNodePosition(layout.anchorNodeId, layout.width, layout.height), and replaces
  * the child placeholder with the allocated id. Event parameters are ignored.
- * Unlike the browser's upload/forward paths, inline sources are refused here.
  */
 export function buildImageToolRequest(ctx: ImageToolRequestContext): ImageToolRequestResult {
   const { action, projectId, imageModels, translate, nowMs } = ctx;
@@ -137,9 +136,6 @@ export function buildImageToolRequest(ctx: ImageToolRequestContext): ImageToolRe
   }
   if (!projectId) {
     return { ok: false, message: '当前 URL 缺少 project，无法提交生成' }; // i18n-exempt -- exact subscriber refusal
-  }
-  if (imageSource.startsWith('data:') || imageSource.startsWith('blob:')) {
-    return { ok: false, message: 'Inline image sources must be prepared before building an image tool request.' };
   }
   const sourceData: Record<string, unknown> = { ...sourceNode.data };
   const sourceAspectRatio = typeof sourceData.aspectRatio === 'string' ? sourceData.aspectRatio : DEFAULT_ASPECT_RATIO;
@@ -165,7 +161,7 @@ export function buildImageToolRequest(ctx: ImageToolRequestContext): ImageToolRe
     return finish('outpaint', {
       source_url: sourceUrl, target_aspect_ratio: 'original', num_images: 1,
       image_size: '2K', ...(model ? { model } : {}),
-    }, { ...inheritMainlineFields({ data: sourceData }, { ...initialData, displayName: translate('outpaintEditor.title') }) });
+    }, { ...inheritMainlineFields({ data: sourceData }, { displayName: translate('outpaintEditor.title'), ...initialData }) });
   }
   if (action === 'run_upscale_tool') {
     const selectedModel = imageModels.find(model => model.id === DEFAULT_UPSCALE_MODEL_ID) ?? imageModels[0];
@@ -173,7 +169,7 @@ export function buildImageToolRequest(ctx: ImageToolRequestContext): ImageToolRe
     return finish('upscale', {
       source_url: sourceUrl, scale_factor: 2, image_size: '2K', ...(model ? { model } : {}),
     }, {
-      ...initialData, displayName: translate('upscaleEditor.title'), previewImageUrl: imageSource,
+      displayName: translate('upscaleEditor.title'), ...initialData, previewImageUrl: imageSource,
       resultKind: 'upscale', upscaleSourceUrl: imageSource, upscaleModelId: DEFAULT_UPSCALE_MODEL_ID,
       upscaleImageSize: '2K', upscaleScaleFactor: 2,
     });
@@ -189,5 +185,5 @@ export function buildImageToolRequest(ctx: ImageToolRequestContext): ImageToolRe
   const label = translate(runAction.i18nKey);
   return finish('template-edit', {
     source_url: sourceUrl, mode: runAction.mode, prompt: label, image_size: '2K',
-  }, { ...initialData, displayName: label }, label);
+  }, { displayName: label, ...initialData }, label);
 }

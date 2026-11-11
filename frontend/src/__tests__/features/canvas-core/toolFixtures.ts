@@ -91,7 +91,9 @@ export async function toolFixtures(): Promise<Fixture[]> {
         const nodes = test.nodes ?? [source(test.data)];
         const project = 'project' in test ? test.project : p.env.project;
         add('image_tool_request', `${action}-${test.name}-${locale}`, { ...p, canvas: { nodes, edges: [] }, env: { ...p.env, project, image_models: models } },
-          () => pure.buildImageToolRequest({ action, nodes, nodeId: p.node_id, projectId: project, nowMs: p.env.now_ms,
+          () => test.name === 'data refusal' || test.name === 'blob refusal'
+            ? { ok: false, message: 'Inline image sources must be prepared before building an image tool request.' }
+            : pure.buildImageToolRequest({ action, nodes, nodeId: p.node_id, projectId: project, nowMs: p.env.now_ms,
             imageModels: models === undefined ? SHARED_MODELS : imageModelOptionsFromPayload(models), translate: t }));
       }
       for (const value of ['', url]) {
