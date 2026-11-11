@@ -15,7 +15,6 @@ import i18next from "i18next";
 import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
   abortTerminalGraceMsForTest,
-  approvalOptionIdForTest,
   canvasContextToolResultFrameForTest,
   cancelAssistantClarificationsForTurnForTest,
   dedupeMessagesByIdForTest,
@@ -120,6 +119,54 @@ import type { ChatMessage, ChatMessagePart, ChatRole } from "@/features/supercha
 const MESSAGE_CACHE_PREFIX = "superchat:messages:v2:";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const apiPostMock = vi.hoisted(() => vi.fn((_url: string, _options?: unknown) => Promise.resolve({})));
+
+it("keeps keyed notifications local and replaces a repeated message", async () => {
+  apiPostMock.mockClear();
+  localStorage.clear();
+  const { result, unmount } = renderHook(() => useSuperChat({
+    project: "local-notices", displayName: "Tester",
+  }));
+  const appended: boolean[] = [];
+  try {
+    await act(async () => {
+      appended.push(await result.current.appendNotification("✅ 分镜图已完成。", "batch:b1"));
+      appended.push(await result.current.appendNotification("✅ 分镜图已完成。", "batch:b1"));
+    });
+    expect(apiPostMock.mock.calls.map(([url]) => url))
+      .not.toContain("api/v1/chat/notifications");
+    expect(appended).toEqual([true, true]);
+    expect(result.current.messages.map(({ id, role, text }) => ({ id, role, text }))).toEqual([
+      { id: "task-notification:batch:b1", role: "assistant", text: "✅ 分镜图已完成。" },
+    ]);
+  } finally {
+    unmount();
+  }
+});
+
+it("adds an unkeyed notification locally with a generated id", async () => {
+  apiPostMock.mockClear();
+  localStorage.clear();
+  const { result, unmount } = renderHook(() => useSuperChat({
+    project: "local-notices", displayName: "Tester",
+  }));
+  let appended = false;
+  try {
+    await act(async () => {
+      appended = await result.current.appendNotification("  ✅ 分镜图已完成。  ");
+    });
+    expect(apiPostMock.mock.calls.map(([url]) => url))
+      .not.toContain("api/v1/chat/notifications");
+    expect(appended).toBe(true);
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      id: expect.stringMatching(/^task-notification-/),
+      role: "assistant",
+      text: "✅ 分镜图已完成。",
+    });
+  } finally {
+    unmount();
+  }
+});
 
 it("does not POST chat history during a full live turn or its history snapshot", async () => {
   apiPostMock.mockClear();
@@ -6757,6 +6804,50 @@ describe("tool status parts", () => {
     })).toBe("等待选择生成参数");
   });
 
+  it("renders canvas confirmation as waiting for user confirmation", () => {
+    const card = (toolCard({
+      turn_id: "turn-a",
+      call_id: "call-confirmation",
+      name: "freezone_emit_canvas_command",
+      status: "completed",
+      result_json: {
+        ok: true,
+        status: "confirmation_required",
+        code: "canvas_confirmation_required",
+        applied: false,
+      },
+    }) as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: zhT,
+      status: "done",
+      title: genericToolTitleForTest(card),
+      toolMessage: card,
+    })).toBe("等待你确认");
+  });
+
+  it("translates confirmation_required in the English interface", () => {
+    const card = (toolCard({
+      turn_id: "turn-a",
+      call_id: "call-confirmation",
+      name: "freezone_emit_canvas_command",
+      status: "completed",
+      result_json: {
+        ok: true,
+        status: "confirmation_required",
+        code: "canvas_confirmation_required",
+        applied: false,
+      },
+    }) as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: enT,
+      status: "done",
+      title: genericToolTitleForTest(card),
+      toolMessage: card,
+    })).toBe("Waiting for your confirmation");
+  });
+
   it.each([
     ["clarification_required", "Waiting for generation parameters"],
     ["clarification_frontend_timeout", "Waiting for an answer is paused"],
@@ -7179,26 +7270,6 @@ describe("tool status parts", () => {
   });
 
 
-});
-
-describe("agent permission options", () => {
-  const approval = {
-    id: "permission-a",
-    kind: "agent" as const,
-    title: "运行命令",
-    options: [
-      { optionId: "allow_once", kind: "allow_once", name: "Allow once" },
-      { optionId: "allow_session", kind: "allow_always", name: "Allow for session" },
-      { optionId: "allow_always", kind: "allow_always", name: "Allow always" },
-      { optionId: "deny", kind: "reject_once", name: "Deny" },
-    ],
-  };
-
-  it("does not confuse session access with permanent access", () => {
-    expect(approvalOptionIdForTest(approval, "allow-always")).toBe("allow_always");
-    expect(approvalOptionIdForTest(approval, { optionId: "allow_session" })).toBe("allow_session");
-    expect(approvalOptionIdForTest(approval, { optionId: "unknown" })).toBe("");
-  });
 });
 
 describe("canvas context bridge results", () => {
@@ -7674,18 +7745,11 @@ describe("server-owned running turns", () => {
         if (cancelled) act(() => { hook.result.current.abort(); });
         await frame({ type: "chat.item", turn_id: "t-active", message_id: "assistant:active",
           item_id: "msg-active", card: { id: "msg-active", type: "text", text: "Working" } });
-        for (const turnId of ["t-other", "t-active"]) {
-          await frame({ type: "agent.permission.requested", turn_id: turnId,
-            request_id: turnId, text: "Read file", options: [] });
-        }
-        expect(hook.result.current.approvals.map(approval => approval.turnId))
-          .toEqual(["t-other", "t-active"]);
         await frame({ type: "chat.done", turn_id: "t-other", message: {
           id: "assistant:other", role: "assistant", content: "Other reply", turn_id: "t-other",
         } });
         expect(hook.result.current.busy).toBe(true);
         expect(hook.result.current.activeTurnId).toBe("t-active");
-        expect(hook.result.current.approvals.map(approval => approval.turnId)).toEqual(["t-active"]);
         expect(hook.result.current.messages.filter(message => message.role === "assistant")
           .map(message => ({ turnId: message.turnId, text: message.text })))
           .toEqual([

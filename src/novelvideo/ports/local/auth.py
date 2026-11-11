@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import time
-from dataclasses import replace
+from collections.abc import Callable
+from dataclasses import asdict, replace
+from pathlib import Path
 
 from ulid import ULID
 
+from novelvideo.config import RUNTIME_DIR
 from novelvideo.ports.auth_contract import (
     AgentAuthenticatedUser,
     AgentSessionToken,
@@ -15,6 +20,7 @@ from novelvideo.ports.auth_contract import (
     AuthError,
     AuthFailureReason,
 )
+from novelvideo.utils.state_index_files import write_json_atomic
 
 
 class FileAuthPort:
@@ -27,8 +33,39 @@ class FileAuthPort:
 
 
 class LocalAuthSession:
-    def __init__(self) -> None:
-        self._sessions: dict[str, AgentAuthenticatedUser] = {}
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self._root = Path(root) if root is not None else Path(RUNTIME_DIR) / "agent_sessions"
+        self._clock = clock
+
+    def _session_path(self, token_value: str) -> Path:
+        return self._root / f"{hashlib.sha256(token_value.encode()).hexdigest()}.json"
+
+    def _load_session(self, token_value: str) -> tuple[AgentAuthenticatedUser, int]:
+        path = self._session_path(token_value)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("invalid session data")
+            exp = data.pop("exp")
+            expired = exp <= self._clock()
+            data["scopes"] = tuple(data["scopes"])
+            session = AgentAuthenticatedUser(**data)
+        except (OSError, ValueError, TypeError, KeyError):
+            raise AuthError(AuthFailureReason.INVALID, "agent session not found") from None
+        if expired:
+            path.unlink(missing_ok=True)
+            raise AuthError(AuthFailureReason.EXPIRED, "agent session expired")
+        return session, exp
+
+    def _write_session(self, token_value: str, session: AgentAuthenticatedUser, exp: int) -> None:
+        self._root.mkdir(parents=True, exist_ok=True)
+        self._root.chmod(0o700)
+        write_json_atomic(self._session_path(token_value), {**asdict(session), "exp": exp})
 
     async def create_agent_session(
         self,
@@ -45,9 +82,9 @@ class LocalAuthSession:
     ) -> AgentSessionToken:
         session_id = str(ULID())
         token_value = f"local-{ULID()}"
-        exp = int(time.time()) + int(ttl_seconds or 2 * 3600)
+        exp = int(self._clock()) + int(ttl_seconds or 2 * 3600)
         normalized_scopes = tuple(scopes or ())
-        self._sessions[token_value] = AgentAuthenticatedUser(
+        session = AgentAuthenticatedUser(
             id="local",
             username=username,
             role="owner",
@@ -59,6 +96,14 @@ class LocalAuthSession:
             current_project_id=current_project_id,
             parent_session_id=parent_session_id,
         )
+        for path in self._root.glob("*.json"):
+            try:
+                expired = json.loads(path.read_text(encoding="utf-8"))["exp"] <= self._clock()
+            except (OSError, ValueError, TypeError, KeyError):
+                continue
+            if expired:
+                path.unlink(missing_ok=True)
+        self._write_session(token_value, session, exp)
         return AgentSessionToken(
             value=token_value,
             session_id=session_id,
@@ -70,11 +115,7 @@ class LocalAuthSession:
         )
 
     async def verify_agent_session(self, token: str) -> dict:
-        session = self._sessions.get(token)
-        if session is None:
-            raise AuthError(AuthFailureReason.INVALID, "agent session not found")
-        # CE local agent tokens intentionally do not expire. The single-user
-        # trust boundary is local machine ownership; revoke invalidates workers.
+        session, _ = self._load_session(token)
         return session.to_legacy_dict()
 
     async def update_agent_session_scope(
@@ -84,14 +125,13 @@ class LocalAuthSession:
         scope_kind: str,
         project_id: str | None,
     ) -> None:
-        session = self._sessions.get(token_value)
-        if session is None:
-            raise AuthError(AuthFailureReason.INVALID, "agent session not found")
-        self._sessions[token_value] = replace(
+        session, exp = self._load_session(token_value)
+        updated = replace(
             session,
             current_scope_kind=scope_kind,
             current_project_id=project_id,
         )
+        self._write_session(token_value, updated, exp)
 
     async def revoke_agent_session(self, token_value: str) -> None:
-        self._sessions.pop(token_value, None)
+        self._session_path(token_value).unlink(missing_ok=True)

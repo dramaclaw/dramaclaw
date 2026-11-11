@@ -60,7 +60,7 @@ from novelvideo.chat.hermes_workspace import (
     ensure_user_hermes_workspace,
     sync_freezone_hermes_workflow_skills,
 )
-from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
+from novelvideo.chat.store import ChatScope, chat_store
 from novelvideo.chat.stream_delta import AssistantDeltaEncoder
 from novelvideo.chat.turn_images import CANVAS_NODE_REFERENCE_TYPE, referenced_image_paths
 from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
@@ -358,18 +358,6 @@ class ScopeSetIn(BaseModel):
     history_before: str | None = None
 
 
-class ChatUiEventIn(BaseModel):
-    scope: ChatScopePayload
-    turn_id: str
-    event: dict[str, Any]
-
-
-class AgentPermissionResultIn(BaseModel):
-    scope: ChatScopePayload | None = None
-    request_id: str | int
-    option_id: str
-
-
 class FreezoneCanvasAgentsIn(BaseModel):
     project_id: str
     canvas_id: str
@@ -471,12 +459,6 @@ class ClarificationToolResultIn(BaseModel):
     used_recommended: bool = False
     errors: list[str] = []
     message: str | None = None
-
-
-class ChatNotificationIn(BaseModel):
-    scope: ChatScopePayload | None = None
-    text: str
-    idempotency_key: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class DirectorAutoStartIn(BaseModel):
@@ -589,82 +571,6 @@ async def resume_director_auto_run(
     return {"ok": True, "data": _director_auto_payload(run)}
 
 
-@router.post("/chat/notifications")
-async def append_chat_notification(
-    payload: ChatNotificationIn,
-    user: dict = Depends(get_api_user),
-) -> dict[str, Any]:
-    username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
-    text = payload.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
-    if len(text) > 4000:
-        raise HTTPException(status_code=400, detail="text is too long")
-
-    if _is_freezone_scope(scope):
-        project_ctx = await _project_context_for_scope(user, scope)
-        message = await chat_store.append_message_async(
-            username,
-            _chat_store_scope_for_project_context(scope, project_ctx),
-            "assistant",
-            text,
-            idempotency_key=(
-                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
-            ),
-        )
-    elif scope.kind == "project":
-        project_ctx = await _project_context_for_scope(user, scope)
-        if not scope.id:
-            raise HTTPException(status_code=400, detail="project scope id is required")
-        message = await asyncio.to_thread(
-            chat_service.add_assistant_message,
-            username,
-            str(scope.id),
-            text,
-            project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=(
-                project_ctx.state_dir if project_ctx is not None else None
-            ),
-        )
-    else:
-        message = await chat_store.append_message_async(
-            username, scope, "assistant", text,
-            idempotency_key=(
-                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
-            ),
-        )
-    return {"ok": True, "data": message}
-
-
-@router.post("/chat/ui-events")
-async def append_chat_ui_event(
-    payload: ChatUiEventIn,
-    user: dict = Depends(get_api_user),
-) -> dict[str, Any]:
-    username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
-    project_ctx = None
-    if scope.kind == "project":
-        project_ctx = await _project_context_for_scope(user, scope)
-    turn_id = payload.turn_id.strip()
-    if not turn_id:
-        raise HTTPException(status_code=400, detail="turn_id is required")
-    try:
-        event = await chat_store.append_ui_event_async(
-            username,
-            _chat_store_scope_for_project_context(scope, project_ctx),
-            turn_id,
-            payload.event,
-        )
-    except ChatUiEventRejected as exc:
-        # Permanent for this turn: the client should stop retrying, not report on every flush.
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "data": event}
-
-
 @router.post("/chat/uploads")
 async def upload_home_chat_file(
     file: Annotated[UploadFile, File()],
@@ -695,35 +601,6 @@ async def read_home_chat_file(name: str, user: dict = Depends(get_api_user)) -> 
         content_disposition_type="attachment",
         headers={"X-Content-Type-Options": "nosniff"},
     )
-
-
-@router.post("/chat/permission-result")
-async def resolve_agent_permission(
-    payload: AgentPermissionResultIn,
-    user: dict = Depends(get_api_user),
-) -> dict[str, Any]:
-    scope = _scope_from_model(payload.scope)
-    if scope.kind in {"project", "freezone"}:
-        await _project_context_for_scope(user, scope)
-    option_id = payload.option_id.strip()
-    if not option_id:
-        raise HTTPException(status_code=400, detail="option_id is required")
-    from novelvideo.chat.hermes_pool import pool as hermes_pool
-
-    agent_profile = (
-        _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
-    )
-    resolved = await hermes_pool.resolve_permission(
-        str(user["username"]),
-        agent_profile,
-        payload.request_id,
-        option_id,
-    )
-    if not resolved:
-        raise HTTPException(
-            status_code=404, detail="permission request is no longer pending"
-        )
-    return {"ok": True, "data": {"resolved": True}}
 
 
 @router.post("/chat/freezone-canvas-agents")
@@ -3893,20 +3770,6 @@ class _ChatFrameSender:
                 },
                 self.send_lock,
             )
-        elif event_type == "permission_requested":
-            await _send_json_best_effort(
-                self.websocket,
-                {
-                    "type": "agent.permission.requested",
-                    "scope": self.scope.to_dict(),
-                    "turn_id": self.turn_id,
-                    "request_id": event.get("request_id"),
-                    "text": str(event.get("text") or "需要操作授权"),
-                    "options": event.get("options") or [],
-                    "tool_call": event.get("tool_call") or {},
-                },
-                self.send_lock,
-            )
         elif event_type in {"tool_started", "tool_updated", "tool_update"}:
             tool_name, tool_body = _tool_display_payload(
                 event.get("text"), event.get("name")
@@ -4476,20 +4339,6 @@ async def _stream_home_turn(
                         "scope": scope.to_dict(),
                         "turn_id": turn_id,
                         "usage": event.usage or {},
-                    },
-                    send_lock,
-                )
-            elif event.type == "permission_requested":
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "agent.permission.requested",
-                        "scope": scope.to_dict(),
-                        "turn_id": turn_id,
-                        "request_id": event.request_id,
-                        "text": str(event.text or "需要操作授权"),
-                        "options": event.options or [],
-                        "tool_call": event.raw or {},
                     },
                     send_lock,
                 )

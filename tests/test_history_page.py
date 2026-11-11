@@ -314,7 +314,7 @@ async def test_history_anchor_prefers_first_user_then_timestamp(chat):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cap, expected", [
-    ("UI_TURN_MAX_OTHER_ROWS", ["notice", "chat.history_incomplete"]),
+    ("UI_TURN_MAX_ROWS", ["notice", "chat.history_incomplete"]),
     ("UI_EVENT_MAX_BYTES", ["chat.history_incomplete"]),
     ("UI_TURN_MAX_BYTES", ["chat.history_incomplete"]),
     ("UI_HISTORY_MAX_BYTES", ["chat.history_incomplete"]),
@@ -330,7 +330,7 @@ async def test_turn_events_reuse_bounds(chat, monkeypatch, cap, expected):
         USER, scope, ["business-0001"], max_bytes=store_module.UI_HISTORY_MAX_BYTES,
     )
     assert [e["type"] for e in events["business-0001"]] == expected
-    if cap == "UI_TURN_MAX_OTHER_ROWS":
+    if cap == "UI_TURN_MAX_ROWS":
         assert events["business-0001"][0]["seq"] == 1
 
 
@@ -419,4 +419,23 @@ async def test_whole_browser_page_byte_bound_and_complete_ids(history_page, chat
     assert [m["id"] for p in reversed(pages) for m in p.history
             if isinstance(m["id"], str)] == [
         f"assistant:turn-{index:04d}" for index in range(1, 101)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_ui_events_attach_to_user_message_when_turn_has_no_assistant(
+    history_page, chat,
+):
+    store, scope = chat
+    append(chat, "user", "加个视频节点", turn_id="turn-a")
+    store.append_ui_event(USER, scope, "turn-a", {
+        "type": "assistant.clarification.request", "clarification_id": "c1", "question": "继续?",
+    })
+
+    page = await read_page(history_page, chat, no_codex)
+
+    assert [(m["role"], m["content"]) for m in page.history] == [("user", "加个视频节点")]
+    assert [(e["type"], e["clarification_id"], e["question"])
+            for e in page.history[0]["ui_events"]] == [
+        ("assistant.clarification.request", "c1", "继续?"),
     ]

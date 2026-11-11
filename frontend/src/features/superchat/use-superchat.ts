@@ -5,8 +5,6 @@ import { applyLiveItemFrame, applyLiveItemDeltaFrame } from "./live-items";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import i18next from "i18next";
 import type {
-  ApprovalDecision,
-  ApprovalRequest,
   ChatAttachment,
   ChatMessage,
   ChatMessagePart,
@@ -68,7 +66,6 @@ const LIVE_TURN_FRAME_TYPES = new Set<string>([
   "assistant.message",
   "agent.plan.update",
   "agent.usage.update",
-  "agent.permission.requested",
   "agent.tool.started",
   "agent.tool.updated",
   "tool.call",
@@ -99,11 +96,6 @@ export const abortTerminalGraceMsForTest = () => ABORT_TERMINAL_GRACE_MS;
 type ActiveTurnSnapshot = {
   turnId: string;
   startedAt: number;
-};
-
-type ChatNotificationResponse = {
-  ok: boolean;
-  data?: unknown;
 };
 
 function loadSettings(): SuperChatSettings {
@@ -1637,42 +1629,6 @@ function upsertRuntimePartInMessages(
 
 export const upsertRuntimePartInMessagesForTest = upsertRuntimePartInMessages;
 
-function approvalOptionId(
-  approval: ApprovalRequest,
-  decision: ApprovalDecision,
-): string {
-  const explicitlySelectedId = typeof decision === "object" ? decision.optionId.trim() : "";
-  const options = approval.options ?? [];
-  const optionIdFor = (option: (typeof options)[number]) => option.optionId ?? option.option_id ?? "";
-  if (typeof decision === "object") {
-    return options.some((option) => optionIdFor(option) === explicitlySelectedId)
-      ? explicitlySelectedId
-      : "";
-  }
-  const preferredIds = decision === "allow-once"
-    ? ["allow_once", "allow-once"]
-    : decision === "allow-always"
-      ? ["allow_always", "allow-always"]
-      : decision === "deny"
-        ? ["deny", "reject_once", "reject-once", "deny_always", "reject_always", "reject-always"]
-        : [];
-  const preferredKinds = decision === "allow-once"
-    ? ["allow_once", "allow-once"]
-    : decision === "allow-always"
-      ? ["allow_always", "allow-always", "allow_session", "allow-session"]
-      : decision === "deny"
-        ? ["reject_once", "reject-once", "deny", "reject_always", "reject-always"]
-        : [];
-  const selected = options.find((option) => preferredIds.includes(optionIdFor(option)))
-    ?? options.find((option) => preferredKinds.includes(String(option.kind ?? "")))
-    ?? (decision === "deny"
-      ? options.find((option) => /reject|deny/i.test(String(option.kind ?? option.name ?? "")))
-      : options.find((option) => /allow/i.test(String(option.kind ?? option.name ?? ""))));
-  return selected ? optionIdFor(selected) : "";
-}
-
-export const approvalOptionIdForTest = approvalOptionId;
-
 function dispatchCanvasCommandFrame(payload: ServerFrame, anchorTextPrefix?: string | null): void {
   if (typeof window === "undefined" || payload.type !== "canvas.command") return;
   window.dispatchEvent(new CustomEvent(SUPERCHAT_CANVAS_COMMAND_EVENT, {
@@ -1900,7 +1856,6 @@ export function useSuperChat({
   const olderHistoryRef = useRef<ChatMessage[]>([]);
   const lastSnapshotRef = useRef<ChatMessage[]>([]);
   const loadingOlderRef = useRef(false);
-  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [relayInstances, setRelayInstances] = useState<RelayInstanceInfo[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
   const [models, setModels] = useState<ModelEntry[]>([]);
@@ -2406,49 +2361,6 @@ export function useSuperChat({
         placeRuntimePart(turnId, agentUsagePart(frame, turnId));
         break;
       }
-      case "agent.permission.requested": {
-        const requestId = typeof frame.request_id === "string" || typeof frame.request_id === "number"
-          ? frame.request_id
-          : undefined;
-        if (requestId === undefined) break;
-        const requestScope = frameScope(frame) ?? desiredScopeRef.current;
-        const toolCall = recordValue(frame.tool_call) ?? {};
-        const rawInput = recordValue(toolCall.rawInput) ?? recordValue(toolCall.input);
-        const command = typeof toolCall.rawInput === "string"
-          ? toolCall.rawInput
-          : typeof toolCall.input === "string"
-            ? toolCall.input
-            : typeof rawInput?.command === "string"
-              ? rawInput.command
-              : undefined;
-        const description = typeof toolCall.description === "string"
-          ? toolCall.description
-          : typeof rawInput?.description === "string"
-            ? rawInput.description
-            : undefined;
-        const approvalId = `agent-permission:${scopeSessionKey(requestScope)}:${String(requestId)}`;
-        const approval: ApprovalRequest = {
-          id: approvalId,
-          kind: "agent",
-          title: typeof frame.text === "string" && frame.text.trim()
-            ? frame.text
-            : typeof toolCall.title === "string" && toolCall.title.trim()
-              ? toolCall.title
-              : "需要操作授权",
-          command,
-          description,
-          requestId,
-          turnId: typeof frame.turn_id === "string" ? frame.turn_id : undefined,
-          scope: requestScope,
-          options: Array.isArray(frame.options) ? frame.options : [],
-          expiresAtMs: Date.now() + 60_000,
-        };
-        setApprovals((current) => [
-          ...current.filter((item) => item.id !== approvalId),
-          approval,
-        ]);
-        break;
-      }
       case "agent.tool.started":
       case "agent.tool.updated": {
         const turnId = typeof frame.turn_id === "string" && frame.turn_id.trim()
@@ -2611,9 +2523,6 @@ export function useSuperChat({
         const completesOtherTurn = typeof frame.turn_id === "string"
           && activeTurnIdRef.current !== null
           && frame.turn_id !== activeTurnIdRef.current;
-        if (completedTurnId) {
-          setApprovals((current) => current.filter((approval) => approval.turnId !== completedTurnId));
-        }
         if (!frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
           const remoteScopeKey = frameScopeSessionKey(frame);
           const turnId = typeof frame.turn_id === "string" ? frame.turn_id : null;
@@ -2935,42 +2844,24 @@ export function useSuperChat({
     return true;
   }, [connected, desiredScope, displayName, markTurnActive, normalizedComposeNodeId, normalizedFreezoneCanvasId, sendFrame, surface]);
 
-  const appendNotification = useCallback(async (text: string, idempotencyKey?: string): Promise<boolean> => {
+  const appendNotification = useCallback((text: string, idempotencyKey?: string): boolean => {
     const trimmed = text.trim();
     if (!trimmed) return false;
-    try {
-      const response = await api
-        .post("api/v1/chat/notifications", {
-          json: {
-            scope: desiredScope,
-            text: trimmed,
-            ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
-          },
-        })
-        .json<ChatNotificationResponse>();
-      const message = normalizeMessageForScope(response.data, "assistant", desiredScope);
-      if (message && scopeMatches(desiredScope, desiredScopeRef.current)) {
-        setMessages((current) => sortMessages([...current.filter((item) => item.id !== message.id), message]));
-      }
-      return true;
-    } catch (error) {
-      console.error("[superchat] append notification failed", error);
-      const fallback = normalizeMessageForScope(
-        {
-          id: idempotencyKey ? `task-notification:${idempotencyKey}`
-            : `task-notification-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          role: "assistant",
-          content: trimmed,
-          created_at: new Date().toISOString(),
-        },
-        "assistant",
-        desiredScope,
-      );
-      if (fallback && scopeMatches(desiredScope, desiredScopeRef.current)) {
-        setMessages((current) => sortMessages([...current.filter((item) => item.id !== fallback.id), fallback]));
-      }
-      return false;
+    const message = normalizeMessageForScope(
+      {
+        id: idempotencyKey ? `task-notification:${idempotencyKey}`
+          : `task-notification-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: "assistant",
+        content: trimmed,
+        created_at: new Date().toISOString(),
+      },
+      "assistant",
+      desiredScope,
+    );
+    if (message && scopeMatches(desiredScope, desiredScopeRef.current)) {
+      setMessages((current) => sortMessages([...current.filter((item) => item.id !== message.id), message]));
     }
+    return true;
   }, [desiredScope]);
 
   const clearConversation = useCallback(async (): Promise<boolean> => {
@@ -2987,7 +2878,6 @@ export function useSuperChat({
     setActiveTurnId(null);
     setMessages([]);
     messagesRef.current = [];
-    setApprovals([]);
     setPinnedIds(new Set());
     setDeletedIds(new Set());
     saveCachedMessages(scopeKey, []);
@@ -3084,44 +2974,6 @@ export function useSuperChat({
     }, ABORT_TERMINAL_GRACE_MS);
   }, [clearAbortGrace, markTurnInactive]);
 
-  const resolveApproval = useCallback((approval: ApprovalRequest, decision: ApprovalDecision) => {
-    if (approval.kind !== "agent" || approval.requestId === undefined) {
-      setApprovals((current) => current.filter((item) => item.id !== approval.id));
-      return;
-    }
-    const optionId = approvalOptionId(approval, decision);
-    if (!optionId) {
-      setError("Agent 没有提供可用的授权选项");
-      return;
-    }
-    void api.post("api/v1/chat/permission-result", {
-      json: {
-        scope: approval.scope ?? desiredScopeRef.current,
-        request_id: approval.requestId,
-        option_id: optionId,
-      },
-    }).then(() => {
-      setApprovals((current) => current.filter((item) => item.id !== approval.id));
-    }).catch(() => {
-      setError("授权请求已失效，请让虾导重新执行该操作");
-    });
-  }, []);
-
-  useEffect(() => {
-    const nextExpiry = approvals.reduce<number | null>((earliest, approval) => {
-      if (!approval.expiresAtMs) return earliest;
-      return earliest === null ? approval.expiresAtMs : Math.min(earliest, approval.expiresAtMs);
-    }, null);
-    if (nextExpiry === null) return;
-    const timeout = window.setTimeout(() => {
-      const now = Date.now();
-      setApprovals((current) => current.filter(
-        (approval) => !approval.expiresAtMs || approval.expiresAtMs > now,
-      ));
-    }, Math.max(0, nextExpiry - Date.now()) + 25);
-    return () => window.clearTimeout(timeout);
-  }, [approvals]);
-
   const refreshRelayInstances = useCallback(() => {
     setRelayInstances([]);
   }, []);
@@ -3193,9 +3045,6 @@ export function useSuperChat({
 
   return {
     abort,
-    approvals: approvals.filter(
-      (approval) => !approval.scope || scopeMatches(approval.scope, desiredScope),
-    ),
     activeTurnId,
     busy,
     connected,
@@ -3218,7 +3067,6 @@ export function useSuperChat({
     refreshModels,
     refreshRelayInstances,
     relayInstances,
-    resolveApproval,
     selectRelayInstance,
     send,
 	    selectedInstanceId,
