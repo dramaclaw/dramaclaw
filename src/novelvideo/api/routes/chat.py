@@ -3716,8 +3716,13 @@ async def _follow_scope_turn(*, websocket, user, username, scope, send_lock) -> 
     except Exception:
         logger.exception("failed to follow Codex turn")
         await _send_json_best_effort(
-            websocket, {"type": "error", "turn_id": turn_id,
-                        "message": "无法跟随当前对话，请重新连接。"}, send_lock,
+            websocket,
+            {
+                "type": "error",
+                "turn_id": turn_id,
+                "message": "无法跟随当前对话，请重新连接。",  # i18n-exempt
+            },
+            send_lock,
         )
     finally:
         await _stop_turn_tasks(tasks)
