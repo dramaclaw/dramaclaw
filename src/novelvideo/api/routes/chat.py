@@ -3155,7 +3155,10 @@ async def stream_canvas_commands(
                 except (TypeError, ValueError, OverflowError):
                     pass
                 else:
-                    observe_canvas_metric("canvas_push.delivery_ms", delivery_ms)
+                    observe_canvas_metric(
+                        "canvas_push.replay_age_ms" if is_replay else "canvas_push.delivery_ms",
+                        delivery_ms,
+                    )
                     max_delivery_ms = max(max_delivery_ms, delivery_ms)
                 frames += 1
                 patch_frames += 1

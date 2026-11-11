@@ -432,9 +432,14 @@ async def test_cursor_replay_metrics_with_delivery_clock(scoped_canvas, monkeypa
     assert after["canvas_push.cursor_replay_frames"]["count"] == frames_before.get("count", 0) + 1
     assert after["canvas_push.cursor_replay_frames"]["total"] == frames_before.get("total", 0) + 2
     delivery_before = observations.get("canvas_push.delivery_ms", {})
-    assert after["canvas_push.delivery_ms"]["count"] == delivery_before.get("count", 0) + 2
-    assert after["canvas_push.delivery_ms"]["total"] == delivery_before.get("total", 0) + 86401000
-    assert after["canvas_push.delivery_ms"]["max"] == 86400000.0
+    delivery_after = after.get("canvas_push.delivery_ms", {})
+    assert delivery_after.get("count", 0) == delivery_before.get("count", 0)
+    assert delivery_after.get("total", 0) == delivery_before.get("total", 0)
+    replay_before = observations.get("canvas_push.replay_age_ms", {})
+    replay_after = after.get("canvas_push.replay_age_ms", {})
+    assert replay_after.get("count", 0) == replay_before.get("count", 0) + 2
+    assert replay_after.get("total", 0) == replay_before.get("total", 0) + 86401000
+    assert replay_after.get("max", 0) == 86400000.0
     assert [record.getMessage() for record in caplog.records if record.name == chat.__name__] == [
         "canvas_push canvas=canvas frames=2 reset=False replay=True max_delivery_ms=86400000"
     ]
@@ -457,10 +462,36 @@ async def test_delivery_metrics_skip_invalid_dates_and_clamp_future(
         entry["written_at"] = written_at
     path.write_text(json.dumps(entry))
     monkeypatch.setattr(chat, "_push_now", lambda: datetime(2200, 1, 2, tzinfo=timezone.utc))
-    before = metrics.observations_snapshot().get("canvas_push.delivery_ms", {})
+    before = metrics.observations_snapshot().get("canvas_push.replay_age_ms", {})
     async with connected_stream(last_revision=0) as iterator:
         assert (await next_frame(iterator))["revision"] == 1
-    after = metrics.observations_snapshot().get("canvas_push.delivery_ms", {})
+    after = metrics.observations_snapshot().get("canvas_push.replay_age_ms", {})
     expected_count = 1 if written_at and written_at != "invalid" else 0
     assert after.get("count", 0) - before.get("count", 0) == expected_count
     assert after.get("total", 0.0) == before.get("total", 0.0)
+
+
+async def test_live_frame_records_delivery_metrics(scoped_canvas, monkeypatch):
+    from datetime import datetime, timezone
+
+    from novelvideo.freezone import agent_canvas_metrics as metrics
+    from novelvideo.freezone.canvas_changes import canvas_changes_dir
+
+    save(scoped_canvas, 1)
+    monkeypatch.setattr(chat, "_push_now", lambda: datetime(2200, 1, 2, tzinfo=timezone.utc))
+    before = metrics.observations_snapshot()
+    async with connected_stream() as iterator:
+        await asyncio.to_thread(save, scoped_canvas, 2)
+        path = canvas_changes_dir(scoped_canvas, "canvas") / "000000000002.json"
+        entry = json.loads(path.read_text())
+        entry["written_at"] = "2200-01-01T23:59:59.850000+00:00"
+        path.write_text(json.dumps(entry))
+        assert (await next_frame(iterator))["revision"] == 2
+    after = metrics.observations_snapshot()
+    delivery_before = before.get("canvas_push.delivery_ms", {})
+    delivery_after = after.get("canvas_push.delivery_ms", {})
+    assert delivery_after.get("count", 0) == delivery_before.get("count", 0) + 1
+    assert delivery_after.get("total", 0) == delivery_before.get("total", 0) + 150
+    replay_before = before.get("canvas_push.replay_age_ms", {})
+    replay_after = after.get("canvas_push.replay_age_ms", {})
+    assert replay_after.get("count", 0) == replay_before.get("count", 0)
