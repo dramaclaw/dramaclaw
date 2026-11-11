@@ -65,6 +65,10 @@ from novelvideo.chat.store import ChatScope, chat_store
 from novelvideo.chat.stream_delta import AssistantDeltaEncoder
 from novelvideo.chat.turn_images import CANVAS_NODE_REFERENCE_TYPE, referenced_image_paths
 from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
+from novelvideo.freezone.workflow_draft_delivery import (
+    record_workflow_draft_delivery,
+    workflow_draft_identity,
+)
 from novelvideo.freezone.canvas_change_watch import canvas_change_watch_hub
 from novelvideo.freezone.canvas_changes import canvas_changes_dir, read_canvas_changes
 from novelvideo.freezone.canvas_command_bridge import (
@@ -886,33 +890,7 @@ def _pending_workflow_draft_receipt(
         if isinstance(pending, dict)
         else None
     )
-    if not isinstance(commands, list):
-        return None
-    identities = set()
-    for command in commands:
-        if not isinstance(command, dict) or command.get("type") != "create_node":
-            continue
-        data = command.get("data")
-        if not isinstance(data, dict):
-            return None
-        draft_id = data.get("workflowInstanceId")
-        revision = data.get("workflowDraftRevision")
-        task_id = data.get("workflowConfirmationTaskId")
-        if (
-            not isinstance(draft_id, str)
-            or not draft_id.startswith("workflow_draft_")
-            or isinstance(revision, bool)
-            or not isinstance(revision, int)
-            or revision <= 0
-            or not isinstance(task_id, str)
-            or not task_id.strip()
-        ):
-            return None
-        identities.add((draft_id, revision, task_id))
-    if len(identities) != 1:
-        return None
-    draft_id, revision, task_id = identities.pop()
-    return {"draft_id": draft_id, "revision": revision, "task_id": task_id}
+    return workflow_draft_identity(commands)
 
 
 async def _record_workflow_draft_canvas_result(
@@ -930,12 +908,6 @@ async def _record_workflow_draft_canvas_result(
     if not project_id or not canvas_id:
         return
     try:
-        from novelvideo.freezone.workflow_drafts import (
-            finish_workflow_draft_confirmation,
-            read_workflow_draft,
-        )
-        from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
-
         scope = ChatScope(
             kind="project",
             id=project_id,
@@ -946,62 +918,18 @@ async def _record_workflow_draft_canvas_result(
         project_ctx = await _project_context_for_scope(user, scope)
         if project_ctx is None:
             raise RuntimeError("workflow draft project context is unavailable")
-        draft, _error = await asyncio.to_thread(
-            read_workflow_draft,
-            project_dir=project_ctx.state_dir,
-            canvas_id=canvas_id,
-            draft_id=draft_id,
-        )
-        if draft is None:
-            return
-        task_id = str(draft.get("task_id") or "")
-        revision = int(draft.get("revision") or 0)
-        attempt_started_at = draft.get("confirmation_started_at")
-        if task_id != draft_receipt["task_id"] or revision != draft_receipt["revision"]:
-            return
-        if attempt_started_at is None:
-            return
-        task_manager = get_task_manager()
-        task_state = None
-        for task_scope in (
-            f"{canvas_id}:{draft_id}:{revision}:{attempt_started_at}",
-            f"{canvas_id}:{draft_id}:{revision}",
-        ):
-            task_state = await asyncio.to_thread(
-                task_manager.get_task_for_project,
-                project_ctx,
-                "freezone_workflow_confirm",
-                0,
-                beat_num=None,
-                scope=task_scope,
-            )
-            if task_state is not None:
-                break
-        if (
-            task_state is None
-            or str(task_state.task_id) != task_id
-            or task_state.status not in ACTIVE_PROJECT_TASK_STATUSES
-        ):
-            logger.info(
-                "ignored late workflow canvas result without active task draft_id=%s",
-                draft_id,
-            )
-            return
-        await asyncio.to_thread(
-            finish_workflow_draft_confirmation,
-            project_dir=project_ctx.state_dir,
-            canvas_id=canvas_id,
-            draft_id=draft_id,
-            outcome="confirmed" if resolved.get("ok") else "ready",
-            expected_task_id=task_id,
-            expected_revision=revision,
-            expected_confirmation_started_at=attempt_started_at,
-        )
     except Exception:
         logger.exception(
             "failed to record durable workflow canvas outcome draft_id=%s",
             draft_id,
         )
+        return
+    await record_workflow_draft_delivery(
+        project_ctx=project_ctx,
+        canvas_id=canvas_id,
+        identity=draft_receipt,
+        delivered=bool(resolved.get("ok")),
+    )
 
 
 async def _close_freezone_agent_worker(username: str, agent_id: str | None) -> bool:

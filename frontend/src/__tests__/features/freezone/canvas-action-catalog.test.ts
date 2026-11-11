@@ -13,6 +13,7 @@ import {
   buildCanvasContextRequestResponses,
   extractCanvasContextRequestEnvelopes,
 } from "@/features/freezone/chatNodeReferences";
+import { FREEZONE_CANVAS_WRITE_TOOL_NAME_SET } from "@/features/freezone/canvasCommandTools";
 import { AGENT_CREATABLE_CANVAS_NODE_TYPES } from "@/features/freezone/agentCreatableNodeTypes";
 
 function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["type"] }): CanvasNode {
@@ -25,6 +26,46 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas action catalog", () => {
+  it("advertises only typed tools that exist", async () => {
+    const responses = await buildCanvasContextRequestResponses({
+      project: "p", canvasId: "c", nodes: [], edges: [], ontologyContext: null,
+      envelopes: [{
+        schema_version: "canvas_context_request.v1",
+        requests: [{ type: "canvas_command_catalog" }],
+      }],
+    });
+    const typedTools: string[] = [];
+    function walk(value: unknown): void {
+      if (Array.isArray(value)) {
+        value.forEach(walk);
+      } else if (value !== null && typeof value === "object") {
+        for (const [key, child] of Object.entries(value)) {
+          if (key === "typed_tool" && typeof child === "string") typedTools.push(child);
+          walk(child);
+        }
+      }
+    }
+    walk(responses);
+    expect(typedTools.length).toBeGreaterThan(0);
+    for (const tool of typedTools) {
+      expect.soft(FREEZONE_CANVAS_WRITE_TOOL_NAME_SET.has(tool), tool).toBe(true);
+    }
+    const catalog = responses?.[0].data;
+    if (!catalog || typeof catalog !== "object" || !("commands" in catalog)
+      || !Array.isArray(catalog.commands)) {
+      throw new Error("The command catalog must contain commands");
+    }
+    const clearCommand: unknown = catalog.commands.find(
+      (command) => command.type === "clear_canvas",
+    );
+    if (!clearCommand || typeof clearCommand !== "object") {
+      throw new Error("The command catalog must describe clear_canvas");
+    }
+    expect.soft("typed_tool" in clearCommand ? clearCommand.typed_tool : undefined).toBeUndefined();
+    expect("description" in clearCommand ? clearCommand.description : undefined)
+      .toContain("freezone_emit_canvas_command");
+  });
+
   it("localizes story fields and frame capture instructions when the language changes", async () => {
     i18next.addResourceBundle("en", "translation", enTranslation, true, true);
     i18next.addResourceBundle("vi", "translation", JSON.parse(
