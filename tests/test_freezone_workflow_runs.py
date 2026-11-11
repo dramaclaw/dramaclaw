@@ -1550,3 +1550,32 @@ def test_active_workflow_run_matches_create_conflict(tmp_path, owner, runner, el
         assert create_workflow_run(
             project_dir=tmp_path, project_id="project", canvas_id="default",
             actions=[{"node_id": "other", "action": "save"}], now=current)["status"] == "running"
+
+
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_created_metrics_count_insert_only(tmp_path, owner_kind, caplog):
+    import logging
+
+    from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot
+
+    name = f"workflow_run.created.owner_kind.{owner_kind}"
+    before = metrics_snapshot().get(name, 0)
+    kwargs = dict(
+        project_dir=tmp_path, project_id="project", canvas_id="default",
+        actions=[{"node_id": "one", "action": "generate_image"}],
+        owner_kind=owner_kind, idempotency_key="create-once",
+    )
+    with caplog.at_level(logging.INFO, logger="novelvideo.freezone.workflow_runs"):
+        run = create_workflow_run(**kwargs)
+        assert metrics_snapshot().get(name, 0) == before + 1
+        persisted = read_workflow_run(
+            project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+        )
+        assert persisted["run_id"] == run["run_id"]
+        assert persisted["owner_kind"] == owner_kind
+        assert persisted["actions"][0]["status"] == "pending"
+        assert create_workflow_run(**kwargs) == persisted
+    assert metrics_snapshot()[name] == before + 1
+    assert [record.getMessage() for record in caplog.records] == [
+        f"workflow_run_created run_id={run['run_id']} owner_kind={owner_kind} actions=1"
+    ]

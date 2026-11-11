@@ -328,3 +328,43 @@ def test_browser_retry_markers(error, retryable):
     from novelvideo.freezone.server_workflow_driver import is_retryable_workflow_action_error
 
     assert is_retryable_workflow_action_error(error) is retryable
+
+
+async def test_drive_metrics_takeover_and_unacquired_replay(tmp_path, caplog):
+    import logging
+
+    from novelvideo.freezone import agent_canvas_metrics as metrics
+
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[
+        {"node_id": "one", "action": "generate_image"}
+    ], levels=[[0]])
+    store.acquire_server_workflow_run(**scope, runner_id="previous", now=clock.now())
+    clock.advance(181)
+    runner = FakeRunner(scope, scripts={"one": [{"status": "failed", "error": "HTTP 503"}]})
+    before = metrics.metrics_snapshot()
+    observed = metrics.observations_snapshot().get("workflow_run.drive_ms", {})
+    with caplog.at_level(logging.INFO, logger="novelvideo.freezone.server_workflow_driver"):
+        result = await drive(scope, clock, runner)
+    assert result == {
+        "status": "completed", "run_id": scope["run_id"], "runner_id": "driver", "took_over": True
+    }
+    after = metrics.metrics_snapshot()
+    assert after["workflow_run.takeover"] - before.get("workflow_run.takeover", 0) == 1
+    assert (
+        after["workflow_run.drive.completed"] - before.get("workflow_run.drive.completed", 0) == 1
+    )
+    timing = metrics.observations_snapshot()["workflow_run.drive_ms"]
+    assert timing["count"] == observed.get("count", 0) + 1
+    assert timing["total"] == observed.get("total", 0.0) + 1000.0
+    assert caplog.records[-1].getMessage() == (
+        f"Server workflow drive ended run_id={scope['run_id']} status=completed "
+        "took_over=True duration_ms=1000"
+    )
+    replay = await drive(scope, clock, runner)
+    assert replay == {
+        "status": "completed", "run_id": scope["run_id"], "runner_id": "driver",
+        "took_over": False, "acquired": False,
+    }
+    assert metrics.metrics_snapshot() == after
+    assert metrics.observations_snapshot()["workflow_run.drive_ms"] == timing

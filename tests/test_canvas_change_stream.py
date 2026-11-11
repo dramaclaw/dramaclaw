@@ -178,6 +178,9 @@ async def test_reconnect_replays_in_order_then_sends_live_save_once(scoped_canva
 
 @pytest.mark.parametrize("cursor", [0, 10], ids=["pruned", "ahead"])
 async def test_invalid_cursor_sends_one_reset_without_patches(scoped_canvas, monkeypatch, cursor):
+    from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot
+
+    before = metrics_snapshot().get("canvas_push.reset", 0)
     monkeypatch.setenv("DRAMACLAW_CANVAS_CHANGE_LOG_MAX_ENTRIES", "2")
     for revision in (1, 2, 3, 4):
         save(scoped_canvas, revision)
@@ -186,6 +189,7 @@ async def test_invalid_cursor_sends_one_reset_without_patches(scoped_canvas, mon
             "type": "canvas.reset", "canvas_id": "canvas", "revision": 4
         }
         assert chat.canvas_change_watch_hub().metrics["canvas_reset_frames"] == 1
+        assert metrics_snapshot().get("canvas_push.reset", 0) == before + 1
         await assert_idle(iterator)
 
 
@@ -394,3 +398,69 @@ async def test_last_unsubscribe_and_new_subscription_never_overlap_watchers(tmp_
     assert not hub.directories
     assert hub.watcher is None
     assert active == 0
+
+
+async def test_cursor_replay_metrics_with_delivery_clock(scoped_canvas, monkeypatch, caplog):
+    from datetime import datetime, timezone
+
+    from novelvideo.freezone import agent_canvas_metrics as metrics
+    from novelvideo.freezone.canvas_changes import canvas_changes_dir
+
+    for revision in (1, 2, 3):
+        save(scoped_canvas, revision)
+    directory = canvas_changes_dir(scoped_canvas, "canvas")
+    for revision, timestamp in (
+        (2, "2200-01-01T00:00:00+00:00"),
+        (3, "2200-01-01T23:59:59+00:00"),
+    ):
+        path = directory / f"{revision:012d}.json"
+        entry = json.loads(path.read_text())
+        entry["written_at"] = timestamp
+        path.write_text(json.dumps(entry))
+    monkeypatch.setattr(chat, "_push_now", lambda: datetime(2200, 1, 2, tzinfo=timezone.utc))
+    before = metrics.metrics_snapshot().get("canvas_push.cursor_replay", 0)
+    observations = metrics.observations_snapshot()
+    with caplog.at_level(logging.INFO, logger=chat.__name__):
+        async with connected_stream(last_revision=1) as iterator:
+            assert [frame["revision"] for frame in [
+                await next_frame(iterator), await next_frame(iterator)
+            ]] == [2, 3]
+            await assert_idle(iterator)
+    assert metrics.metrics_snapshot()["canvas_push.cursor_replay"] == before + 1
+    after = metrics.observations_snapshot()
+    frames_before = observations.get("canvas_push.cursor_replay_frames", {})
+    assert after["canvas_push.cursor_replay_frames"]["count"] == frames_before.get("count", 0) + 1
+    assert after["canvas_push.cursor_replay_frames"]["total"] == frames_before.get("total", 0) + 2
+    delivery_before = observations.get("canvas_push.delivery_ms", {})
+    assert after["canvas_push.delivery_ms"]["count"] == delivery_before.get("count", 0) + 2
+    assert after["canvas_push.delivery_ms"]["total"] == delivery_before.get("total", 0) + 86401000
+    assert after["canvas_push.delivery_ms"]["max"] == 86400000.0
+    assert [record.getMessage() for record in caplog.records if record.name == chat.__name__] == [
+        "canvas_push canvas=canvas frames=2 reset=False replay=True max_delivery_ms=86400000"
+    ]
+
+
+@pytest.mark.parametrize("written_at", [None, "invalid", "2200-01-02T00:00:01+00:00"])
+async def test_delivery_metrics_skip_invalid_dates_and_clamp_future(
+    scoped_canvas, monkeypatch, written_at
+):
+    from datetime import datetime, timezone
+
+    from novelvideo.freezone import agent_canvas_metrics as metrics
+    from novelvideo.freezone.canvas_changes import canvas_changes_dir
+
+    save(scoped_canvas, 1)
+    path = canvas_changes_dir(scoped_canvas, "canvas") / "000000000001.json"
+    entry = json.loads(path.read_text())
+    entry.pop("written_at")
+    if written_at is not None:
+        entry["written_at"] = written_at
+    path.write_text(json.dumps(entry))
+    monkeypatch.setattr(chat, "_push_now", lambda: datetime(2200, 1, 2, tzinfo=timezone.utc))
+    before = metrics.observations_snapshot().get("canvas_push.delivery_ms", {})
+    async with connected_stream(last_revision=0) as iterator:
+        assert (await next_frame(iterator))["revision"] == 1
+    after = metrics.observations_snapshot().get("canvas_push.delivery_ms", {})
+    expected_count = 1 if written_at and written_at != "invalid" else 0
+    assert after.get("count", 0) - before.get("count", 0) == expected_count
+    assert after.get("total", 0.0) == before.get("total", 0.0)

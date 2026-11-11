@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Protocol
 
 from novelvideo.freezone import workflow_runs as store
+from novelvideo.freezone.agent_canvas_metrics import count, observe
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +107,18 @@ async def drive_server_workflow_run(
 ) -> dict:
     scope = dict(project_dir=project_dir, canvas_id=canvas_id, run_id=run_id)
     took_over = False
+    acquired_run = False
+    started = now()
 
     def result(status: str, **extra) -> dict:
+        if acquired_run:
+            elapsed_ms = (now() - started).total_seconds() * 1000
+            count(f"workflow_run.drive.{status}")
+            observe("workflow_run.drive_ms", elapsed_ms)
+            logger.info(
+                "Server workflow drive ended run_id=%s status=%s took_over=%s duration_ms=%d",
+                run_id, status, took_over, elapsed_ms,
+            )
         return dict(status=status, run_id=run_id, runner_id=runner_id,
                     took_over=took_over, **extra)
 
@@ -123,7 +134,10 @@ async def drive_server_workflow_run(
     run = acquired["run"]
     if not acquired["acquired"]:
         return result(run["status"], acquired=False)
+    acquired_run = True
     took_over = acquired["took_over"]
+    if took_over:
+        count("workflow_run.takeover")
     logger.info("Driving workflow run_id=%s runner_id=%s took_over=%s takeover_count=%s",
                 run_id, runner_id, took_over, run["metadata"]["takeover_count"])
     expiry = datetime.fromisoformat(run["lease_expires_at"].replace("Z", "+00:00"))

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
+from novelvideo.freezone.agent_canvas_metrics import count, observe
 from novelvideo.freezone.paths import CANVAS_ID_RE
 
 CHANGE_LOG_MAX_ENTRIES_ENV = "DRAMACLAW_CANVAS_CHANGE_LOG_MAX_ENTRIES"
@@ -149,6 +150,16 @@ def publish_canvas_change(
             path.unlink(missing_ok=True)
             remaining -= 1
             total_bytes -= size
+        count("canvas_change.published")
+        observe("canvas_change_log.entries", remaining)
+        observe("canvas_change_log.bytes", total_bytes)
+        pruned = len(files) - remaining
+        if pruned:
+            count("canvas_change_log.pruned")
+            logger.info(
+                "canvas_change_log canvas=%s entries=%d bytes=%d pruned=%d",
+                canvas_id, remaining, total_bytes, pruned,
+            )
         canvas_change_signal_path(project_dir, canvas_id).touch()
     except Exception as exc:
         logger.warning(

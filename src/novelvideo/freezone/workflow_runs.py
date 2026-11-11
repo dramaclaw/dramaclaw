@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -14,9 +15,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from novelvideo.freezone.agent_canvas_metrics import count
 from novelvideo.freezone.paths import CANVAS_ID_RE
 from novelvideo.freezone.workflow_contract_generated import GENERATION_ACTION_TYPES
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+
+logger = logging.getLogger(__name__)
 
 RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 IDEMPOTENCY_KEY_RE = re.compile(r"^[a-zA-Z0-9._:-]{1,160}$")
@@ -1149,6 +1153,11 @@ def create_workflow_run(
             existing["metadata"] = existing_metadata
             _write_run(conn, existing)
         _write_run(conn, payload)
+    count(f"workflow_run.created.owner_kind.{owner_kind}")
+    logger.info(
+        "workflow_run_created run_id=%s owner_kind=%s actions=%d",
+        run_id, owner_kind, len(normalized_actions),
+    )
     return payload
 
 

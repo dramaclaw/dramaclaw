@@ -244,3 +244,23 @@ def test_apply_commands(pool):
     result = pool.call("apply_commands", {"canvas": {"nodes": [{"id": "before"}], "edges": []}})
     assert result["status"] == "applied"
     assert result["canvas"]["nodes"] == [{"id": "before"}, {"id": "n-1"}]
+
+
+def test_call_metrics_include_success_and_failure_but_exclude_warm(pool):
+    from novelvideo.freezone import agent_canvas_metrics as metrics
+
+    before = metrics.observations_snapshot()
+    errors = metrics.metrics_snapshot().get("canvas_core.ping.error.canvas_core_unavailable", 0)
+    pool.warm()
+    assert metrics.observations_snapshot() == before
+    assert set(pool.call("ping", {})) == {"pid", "count"}
+    pool.close()
+    with pytest.raises(CanvasCoreError) as error:
+        pool.call("ping", {})
+    assert error.value.code == "canvas_core_unavailable"
+    after = metrics.observations_snapshot()["canvas_core.ping.ms"]
+    assert after["count"] - before.get("canvas_core.ping.ms", {}).get("count", 0) == 2
+    assert after["total"] >= before.get("canvas_core.ping.ms", {}).get("total", 0.0)
+    assert (
+        metrics.metrics_snapshot()["canvas_core.ping.error.canvas_core_unavailable"] == errors + 1
+    )
