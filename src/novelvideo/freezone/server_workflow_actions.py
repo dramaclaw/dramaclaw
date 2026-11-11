@@ -77,8 +77,15 @@ class WorkflowActionRunner:
         self, *, node_id: str, action: str, existing_task: dict | None,
         on_accepted: Callable[[dict], Awaitable[None]],
         on_phase: Callable[[str], Awaitable[None]], should_stop: Callable[[], bool],
+        product_operation_id: str | None = None, generation_attempt_id: str | None = None,
     ) -> dict:
-        execution = _ActionExecution(self, node_id, on_accepted, on_phase, should_stop)
+        product_operation = ({
+            "projectId": self.project_id, "operationId": product_operation_id,
+            "generationAttemptId": generation_attempt_id,
+        } if product_operation_id else None)
+        execution = _ActionExecution(
+            self, node_id, on_accepted, on_phase, should_stop, product_operation,
+        )
         try:
             execution.check()
             if action == "generate_image":
@@ -102,7 +109,7 @@ class WorkflowActionRunner:
 class _ActionExecution:
     """Per-call state; concurrent actions never share cancellation or ownership state."""
 
-    def __init__(self, runner, node_id, on_accepted, on_phase, should_stop):
+    def __init__(self, runner, node_id, on_accepted, on_phase, should_stop, product_operation):
         self.runner = runner
         self.host = runner.host
         self.node_id = node_id
@@ -110,6 +117,7 @@ class _ActionExecution:
         self.on_phase = on_phase
         self.should_stop = should_stop
         self.started = False
+        self.product_operation = product_operation
 
     def check(self):
         if self.should_stop():
@@ -151,7 +159,7 @@ class _ActionExecution:
         data = next((n["data"] for n in canvas["nodes"] if n["id"] == self.node_id), {})
         env = {"locale": self.host.locale, "project": self.runner.project_id,
                "canvasId": self.runner.canvas_id, "catalogs": await self.host.catalogs(),
-               "executionSource": "workflow", "productOperation": None}
+               "executionSource": "workflow", "productOperation": self.product_operation}
         payload = {"canvas": canvas, "node_id": self.node_id, "env": env}
         built = await self.core("image_generation_request", payload)
         compile_input = built["compile_input"]
@@ -169,7 +177,7 @@ class _ActionExecution:
             await self.start("image_generation_patch")
             plan = await self.core("recipe_compile_request", {
                 "node_id": self.node_id, "node_data": data, "compile_input": compile_input,
-                "env": {"executionSource": "workflow", "productOperation": None,
+                "env": {"executionSource": "workflow", "productOperation": self.product_operation,
                         "locale": self.host.locale},
             })
             if plan["kind"] == "request":
@@ -293,7 +301,7 @@ class _ActionExecution:
         data = next((n["data"] for n in canvas["nodes"] if n["id"] == self.node_id), {})
         request = await self.core("text_generation_request", {
             "canvas": canvas, "node_id": self.node_id, "node_data": data,
-            "env": {"locale": self.host.locale, "productOperation": None},
+            "env": {"locale": self.host.locale, "productOperation": self.product_operation},
         })
         if not request["ok"]:
             return {"status": "failed", "error": request["message"]}

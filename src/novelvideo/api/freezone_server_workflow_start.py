@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import logging
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from novelvideo.api.freezone_server_workflow_host import InProcessActionHost
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
@@ -35,6 +37,26 @@ def is_run_command(command: dict) -> bool:
         command.get("type") == "run_node_action"
         and not command.get("action", "").startswith("open_")
     )
+
+
+def _server_run_actions(canvas: dict, plan: dict, idempotency_key: str) -> list[dict]:
+    nodes = {node["id"]: node for node in canvas.get("nodes", [])}
+    actions = []
+    # workflowInvalidation.ts includes HTML and Skill actions in generation identities.
+    generation_actions = GENERATION_ACTIONS | {"generate_html", "run_skill"}
+    for planned in plan["actions"]:
+        node_id, name = planned["node_id"], planned["action"]
+        catalog = nodes.get(node_id, {}).get("data", {}).get("workflowCatalog")
+        catalog = catalog if isinstance(catalog, dict) else {}
+        action = {"node_id": node_id, "action": name}
+        for source, target in (("recipeId", "recipe_id"), ("recipeVersion", "recipe_version")):
+            value = str(catalog.get(source) or "").strip()
+            if value:
+                action[target] = value
+        if name in generation_actions:
+            action["generation_attempt_id"] = f"{idempotency_key}:{node_id}:{name}"
+        actions.append(action)
+    return actions
 
 
 async def check_server_workflow(
@@ -68,14 +90,20 @@ async def check_server_workflow(
         return {"status": "invalid", "message": plan["message"]}
     metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
     blocked = []
-    for action in plan["actions"]:
+    run_actions = _server_run_actions(canvas, plan, "canvas-confirmation:preflight")
+    for action, run_action in zip(plan["actions"], run_actions):
         reason = None
-        if metered:
-            reason = "metered_runtime"
-        elif action["action"] not in SERVER_WORKFLOW_ACTIONS:
+        if action["action"] not in SERVER_WORKFLOW_ACTIONS:
             reason = "action_not_on_server"
         elif "parameters" in action:
             reason = "action_parameters"
+        elif metered:
+            try:
+                await routes.admit_canvas_workflow_run_actions(
+                    ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, actions=[run_action],
+                )
+            except HTTPException:
+                reason = "recipe_required"
         if reason:
             blocked.append({"node_id": action["node_id"], "action": action["action"],
                             "label": action["label"], "reason": reason})
@@ -94,15 +122,24 @@ async def start_server_workflow_run(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str, plan: dict,
     confirmation: dict, actor_id: str, now: datetime | None = None,
 ) -> dict:
+    from novelvideo.api.routes import freezone as routes
+
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    idempotency_key = f"canvas-confirmation:{confirmation['id']}"
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    actions = _server_run_actions(canvas, plan, idempotency_key)
+    metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if metered:
+        await routes.admit_canvas_workflow_run_actions(
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, actions=actions,
+        )
     requester = {"user_id": ctx.requester_user_id, "username": ctx.requester_username}
     run = await asyncio.to_thread(
         create_workflow_run, project_dir=state_dir, project_id=ctx.project_id,
         canvas_id=canvas_id,
-        actions=[{"node_id": action["node_id"], "action": action["action"]}
-                 for action in plan["actions"]],
+        actions=actions,
         actor_id=actor_id, owner_kind="server",
-        idempotency_key=f"canvas-confirmation:{confirmation['id']}",
+        idempotency_key=idempotency_key,
         metadata={"levels": plan["levels"], "dependencies": plan["dependencies"],
                   "requester": requester,
                   "confirmation": {key: confirmation[key]
@@ -114,6 +151,10 @@ async def start_server_workflow_run(
         register_server_workflow_run, project_id=ctx.project_id, state_dir=state_dir,
         canvas_id=canvas_id, run_id=run["run_id"], requester=requester,
     )
+    if metered:
+        run = await routes.admit_canvas_workflow_run_actions(
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, run=run,
+        )
     host = InProcessActionHost(ctx=ctx, canvas_id=canvas_id, assert_lease=lambda: None)
     timestamp = current.isoformat(timespec="milliseconds").replace("+00:00", "Z")
     for action in plan["actions"]:

@@ -16974,85 +16974,49 @@ async def finish_canvas_workflow_draft(
     return {"ok": True, "data": _workflow_draft_api_data(draft)}
 
 
-@router.post(
-    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-runs",
-    tags=[TAG_FREEZONE_CANVAS],
-)
-async def create_canvas_workflow_run(
-    project: str,
-    canvas_id: str,
-    body: dict = Body(...),
-    user: dict = Depends(get_api_user),
-):
-    if not CANVAS_ID_RE.match(canvas_id):
-        raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(project, user)
-    )
-    state_dir = _canvas_state_project_dir(ctx, project_dir)
-    actions = body.get("actions") if isinstance(body.get("actions"), list) else []
-    metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
-    if metered_runtime:
-        for action in actions:
-            if not isinstance(action, dict):
-                continue
-            action_name = str(action.get("action") or "")
-            if (
-                (
-                    action_name
-                    in {
-                        "generate_text",
-                        "generate_story_script",
-                        "generate_image",
-                        "generate_video",
-                        "generate_text_video",
-                        "generate_audio",
-                        "generate_3gs_world",
-                    }
-                    or (action_name == "generate_html" and action.get("recipe_id"))
-                )
-                and (action_name == "generate_text" or action.get("recipe_id"))
-                and (
-                    not action.get("recipe_id")
-                    or not action.get("generation_attempt_id")
-                )
-            ):
-                raise HTTPException(
-                    400,
-                    "model workflow actions require recipe_id and generation_attempt_id",
-                )
-    try:
-        run = await asyncio.to_thread(
-            create_workflow_run,
-            project_dir=state_dir,
-            project_id=ctx.project_id,
-            canvas_id=canvas_id,
-            actions=actions,
-            actor_id=_canvas_actor_id(user),
-            owner_kind="browser_legacy",
-            metadata=(
-                body.get("metadata") if isinstance(body.get("metadata"), dict) else None
-            ),
-            idempotency_key=(
-                body.get("idempotency_key")
-                if isinstance(body.get("idempotency_key"), str)
-                else ""
-            ),
-            runner_id=(
-                body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
-            ),
-        )
-    except (WorkflowRunLeaseConflict, WorkflowRunIdempotencyConflict) as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except (ValueError, CanvasLockBusy) as exc:
-        raise HTTPException(
-            400 if isinstance(exc, ValueError) else 503, str(exc)
-        ) from exc
-    if not metered_runtime:
-        return {"ok": True, "data": run}
+async def admit_canvas_workflow_run_actions(
+    *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
+    actions: list[dict] | None = None, run: dict | None = None,
+) -> dict | None:
+    """Validate before creation, then admit and bind a persisted run's Recipe actions."""
+    actions = run.get("actions", []) if run is not None else (actions or [])
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        if action.get("product_operation_id"):
+            continue
+        action_name = str(action.get("action") or "")
+        if (
+            (
+                action_name
+                in {
+                    "generate_text",
+                    "generate_story_script",
+                    "generate_image",
+                    "generate_video",
+                    "generate_text_video",
+                    "generate_audio",
+                    "generate_3gs_world",
+                }
+                or (action_name == "generate_html" and action.get("recipe_id"))
+            )
+            and (action_name == "generate_text" or action.get("recipe_id"))
+            and (
+                not action.get("recipe_id")
+                or not action.get("generation_attempt_id")
+            )
+        ):
+            raise HTTPException(
+                400,
+                "model workflow actions require recipe_id and generation_attempt_id",
+            )
+    if run is None:
+        return None
     admitted_operations: list[dict[str, Any]] = []
     try:
         for action in run.get("actions") or []:
+            if action.get("product_operation_id"):
+                continue
             action_name = str(action.get("action") or "")
             if action_name not in {
                 "generate_text",
@@ -17148,8 +17112,66 @@ async def create_canvas_workflow_run(
             canvas_id=canvas_id,
             run_id=run["run_id"],
             status="failed",
+            owner_kind=run["owner_kind"],
         )
         raise
+    return run
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-runs",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def create_canvas_workflow_run(
+    project: str,
+    canvas_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    actions = body.get("actions") if isinstance(body.get("actions"), list) else []
+    metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if metered_runtime:
+        await admit_canvas_workflow_run_actions(
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, actions=actions,
+        )
+    try:
+        run = await asyncio.to_thread(
+            create_workflow_run,
+            project_dir=state_dir,
+            project_id=ctx.project_id,
+            canvas_id=canvas_id,
+            actions=actions,
+            actor_id=_canvas_actor_id(user),
+            owner_kind="browser_legacy",
+            metadata=(
+                body.get("metadata") if isinstance(body.get("metadata"), dict) else None
+            ),
+            idempotency_key=(
+                body.get("idempotency_key")
+                if isinstance(body.get("idempotency_key"), str)
+                else ""
+            ),
+            runner_id=(
+                body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
+            ),
+        )
+    except (WorkflowRunLeaseConflict, WorkflowRunIdempotencyConflict) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, CanvasLockBusy) as exc:
+        raise HTTPException(
+            400 if isinstance(exc, ValueError) else 503, str(exc)
+        ) from exc
+    if not metered_runtime:
+        return {"ok": True, "data": run}
+    run = await admit_canvas_workflow_run_actions(
+        ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, run=run,
+    )
     return {"ok": True, "data": run}
 
 
@@ -18278,6 +18300,21 @@ async def decide_canvas_confirmation(
             raise reject(409, "workflow_already_running",
                          **({"run_id": active["run_id"]} if active else {}),
                          message="画布上已有工作流在运行，未执行。") from exc
+        except Exception as exc:
+            runs = await asyncio.to_thread(
+                list_workflow_runs, project_dir=state_dir, canvas_id=canvas_id,
+            )
+            if not any(
+                run["status"] == "failed"
+                and run["metadata"].get("confirmation", {}).get("id") == confirmation_id
+                for run in runs
+            ):
+                raise
+            await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="admission_failed", now=now,
+            )
+            raise reject(409, "admission_failed", message=str(exc)) from exc
         run_id = run["run_id"]
         await asyncio.to_thread(
             canvas_confirmations.finish_confirmation, directory, confirmation_id,

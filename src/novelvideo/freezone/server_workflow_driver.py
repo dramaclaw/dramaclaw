@@ -40,6 +40,8 @@ class ServerActionRunner(Protocol):
         node_id: str,
         action: str,
         existing_task: dict | None,
+        product_operation_id: str | None,
+        generation_attempt_id: str | None,
         on_accepted: Callable[[dict], Awaitable[None]],
         on_phase: Callable[[str], Awaitable[None]],
         should_stop: Callable[[], bool],
@@ -266,6 +268,8 @@ async def drive_server_workflow_run(
 
                 task = asyncio.create_task(runner.run_action(
                     node_id=node_id, action=name, existing_task=existing_task,
+                    product_operation_id=item.get("product_operation_id"),
+                    generation_attempt_id=item.get("generation_attempt_id"),
                     on_accepted=on_accepted, on_phase=on_phase, should_stop=should_stop,
                 ))
                 executing[task] = now()
@@ -297,8 +301,10 @@ async def drive_server_workflow_run(
                     and retry_count < store.WORKFLOW_ACTION_MAX_RETRIES
                 ):
                     retry_count += 1
-                    await update(phase="retrying", retry_count=retry_count,
-                                 task_key="", task_type="", job_id="")
+                    cleared_task = ({} if item.get("product_operation_id") else {
+                        "task_key": "", "task_type": "", "job_id": "",
+                    })
+                    await update(phase="retrying", retry_count=retry_count, **cleared_task)
                     await sleep(workflow_retry_delay_seconds(retry_count))
                     existing_task = None
                 else:

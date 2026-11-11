@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import contextvars
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
@@ -32,6 +33,7 @@ from novelvideo.freezone.server_workflow_actions import (
     ServerActionHttpError,
     WorkflowActionRunner,
 )
+from novelvideo.ports import get_usage_meter
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_state import get_task_manager
 
@@ -148,8 +150,15 @@ class InProcessActionHost:
             parsed = request_model(**body)
         except ValidationError as exc:
             raise ServerActionHttpError(f"HTTP 422: {exc}") from exc
+
+        async def request_in_usage_context():
+            get_usage_meter().clear_llm_usage_context()
+            return await handler(parsed, self.user)
+
         try:
-            response = await handler(parsed, self.user)
+            response = await asyncio.create_task(
+                request_in_usage_context(), context=contextvars.copy_context(),
+            )
         except HTTPException as exc:
             detail = exc.detail
             if isinstance(detail, dict):

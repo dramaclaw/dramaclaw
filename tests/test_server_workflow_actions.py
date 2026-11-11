@@ -336,3 +336,44 @@ async def test_text_http_failure_clears_owner(setup_runner):
     assert host.data["content"] == "Original"
     assert host.data["generationError"] == "HTTP 400: bad recipe"
     assert_cleared(host)
+
+
+@pytest.mark.parametrize("action", ["generate_image", "generate_text"])
+@pytest.mark.parametrize("operation_id", ["operation-1", None])
+async def test_core_product_operation_payload(setup_runner, action, operation_id):
+    host, runner, _, _, _ = setup_runner
+    host.data["workflowCatalog"] = {"recipeId": "r"}
+    if action == "generate_image":
+        host.responses.insert(0, {"prompt": "Compiled", "compile_mode": "model",
+                                  "recipe_ids": ["r"]})
+    else:
+        host.canvas["nodes"][0]["type"] = "textAnnotationNode"
+        host.responses = [{"content": "A story"}]
+    payloads = []
+    core = runner.core_call
+
+    async def capture(op, payload):
+        if op in {"image_generation_request", "recipe_compile_request", "text_generation_request"}:
+            payloads.append((op, deepcopy(payload["env"]["productOperation"])))
+        return await core(op, payload)
+
+    async def accepted(task):
+        pass
+
+    async def phase(value):
+        pass
+
+    runner.core_call = capture
+    result = await runner.run_action(
+        node_id="n", action=action, existing_task=None, on_accepted=accepted,
+        on_phase=phase, should_stop=lambda: False,
+        **({"product_operation_id": operation_id, "generation_attempt_id": "attempt-1"}
+           if operation_id else {}),
+    )
+    assert result["status"] == "completed"
+    expected = ({"projectId": "project", "operationId": "operation-1",
+                 "generationAttemptId": "attempt-1"} if operation_id else None)
+    assert payloads == ([("image_generation_request", expected),
+                         ("recipe_compile_request", expected),
+                         ("image_generation_request", expected)] if action == "generate_image"
+                        else [("text_generation_request", expected)])

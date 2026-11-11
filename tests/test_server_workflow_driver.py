@@ -53,7 +53,8 @@ class FakeRunner:
         return value
 
     async def run_action(self, *, node_id, action, existing_task, on_accepted,
-                         on_phase, should_stop):
+                         on_phase, should_stop, product_operation_id=None,
+                         generation_attempt_id=None):
         self.calls.append((node_id, existing_task))
         self.snapshots.append(await asyncio.to_thread(store.read_workflow_run, **self.scope))
         self.node_snapshots[node_id] = self.snapshots[-1]
@@ -368,3 +369,61 @@ async def test_drive_metrics_takeover_and_unacquired_replay(tmp_path, caplog):
     }
     assert metrics.metrics_snapshot() == after
     assert metrics.observations_snapshot()["workflow_run.drive_ms"] == timing
+
+
+async def test_retry_preserves_admitted_media_identity(tmp_path):
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+        create_agent_product_operation,
+    )
+
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{
+        "node_id": "one", "action": "generate_image", "recipe_id": "image-recipe",
+        "generation_attempt_id": "attempt-1",
+    }], levels=[[0]])
+    operation = create_agent_product_operation(
+        project_dir=tmp_path, project_id="project", product_kind="recipe_result",
+        idempotency_key="recipe-attempt-1", generation_session_id=scope["run_id"],
+        canvas_id="default", artifact_id="one", metadata={
+            "workflow_run_id": scope["run_id"], "node_id": "one",
+            "generation_attempt_id": "attempt-1",
+        },
+    )
+    operation_id = operation["operation_id"]
+    store.bind_workflow_action_product_operation(
+        **scope, node_id="one", action="generate_image", operation_id=operation_id,
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path, operation_id=operation_id, model_call_id="compile-1",
+        executed_at=1.0, source="server_recipe_compiler", compile_mode="model",
+    )
+    claim = store.claim_workflow_media_action(
+        project_dir=tmp_path, project_id="project", canvas_id="default", node_id="one",
+        operation_id=operation_id, attempt_id="attempt-1", task_type="freezone_gen",
+        fingerprint="a" * 64,
+    )
+    job_id = claim["job_id"]
+    expected_task = {"task_key": f"task:freezone_gen:project:project:0:{job_id}",
+                     "task_type": "freezone_gen", "job_id": job_id}
+    observed = []
+    operation_contexts = []
+
+    class RetryingRunner(FakeRunner):
+        async def run_action(self, **kwargs):
+            persisted = store.read_workflow_run(**scope)["actions"][0]
+            observed.append({key: persisted[key] for key in (
+                "task_key", "task_type", "job_id", "retry_count",
+            )})
+            operation_contexts.append((kwargs.get("product_operation_id"),
+                                       kwargs.get("generation_attempt_id")))
+            if len(observed) == 1:
+                return {"status": "failed", "error": "HTTP 503"}
+            return {"status": "completed", "output": {"output_url": "/static/result.png"}}
+
+    assert (await drive(scope, clock, RetryingRunner(scope)))["status"] == "completed"
+    assert observed == [{**expected_task, "retry_count": 0}, {**expected_task, "retry_count": 1}]
+    assert operation_contexts == [(operation_id, "attempt-1"), (operation_id, "attempt-1")]
+    saved = store.read_workflow_run(**scope)["actions"][0]
+    assert {key: saved[key] for key in expected_task} == expected_task
+    assert saved["retry_count"] == 1

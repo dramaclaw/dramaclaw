@@ -2,6 +2,7 @@
 # Copyright (c) 2026 ClaymoreLab
 """Canvas confirmation HTTP policy, durable decisions, notices, and bridge payloads."""
 
+from contextlib import ExitStack
 from copy import deepcopy
 from datetime import datetime, timezone
 import logging
@@ -606,15 +607,20 @@ def test_video_requires_open_canvas_at_creation_and_decision(setup):
         "external_mcp_command": True, "confirmation_id": created["confirmation_id"]}
 
 
-@pytest.mark.parametrize("reason", ["action_parameters", "metered_runtime", "mixed_commands"])
-def test_server_blocked_reasons_leave_no_confirmation(setup, monkeypatch, reason):
+@pytest.mark.parametrize("reason", ["action_parameters", "recipe_required", "mixed_commands"])
+def test_server_blocked_reasons_leave_no_confirmation(setup, reason, request):
     commands = PAID
     expected = {"node_id": "n1", "action": "generate_image", "label": "海报", "reason": reason}
     if reason == "action_parameters":
         setup.pool.plan["actions"][0]["parameters"] = {}
-    elif reason == "metered_runtime":
-        from novelvideo.api import freezone_server_workflow_start as start
-        monkeypatch.setattr(start, "get_usage_meter", lambda: object())
+    elif reason == "recipe_required":
+        from tests.recording_usage_meter import RecordingUsageMeter
+
+        stack = ExitStack()
+        request.addfinalizer(stack.close)
+        stack.enter_context(RecordingUsageMeter().registered())
+        setup.pool.plan["actions"][0].update(action="generate_text")
+        expected["action"] = "generate_text"
     else:
         commands = [{"type": "update_node_data", "node_id": "n3", "data": {"content": "Hi"}},
                     *PAID]
@@ -783,3 +789,29 @@ async def test_terminal_notices_are_idempotent_per_status(setup):
     assert all("run_example: 2 completed, 1 failed" in message["content"] for message in messages)
     assert all("Read the canvas or observe the run before reporting" in message["content"]
                for message in messages)
+
+
+def test_recipe_admission_failure_voids_confirmation(setup, monkeypatch):
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    canvas["nodes"][0]["data"]["workflowCatalog"] = {"recipeId": "image-recipe"}
+    canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), canvas)
+
+    async def reject(*args, **kwargs):
+        raise RuntimeError("recipe admission rejected")
+
+    monkeypatch.setattr(routes, "get_task_backend", lambda: SimpleNamespace(
+        enqueue_project_task=reject,
+    ))
+    with RecordingUsageMeter().registered():
+        created = create(setup, commands=PAID)
+        response = decide(setup, created)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "admission_failed", "message": "recipe admission rejected",
+    }
+    assert record(setup, created)["status"] == "voided"
+    assert record(setup, created)["outcome"] == {"reason": "admission_failed"}
+    assert [run["status"] for run in runs(setup)] == ["failed"]
+    assert setup.queued == []

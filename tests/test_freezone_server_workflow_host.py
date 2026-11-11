@@ -261,3 +261,23 @@ async def test_clear_generation_markers_only_for_this_run(context):
         "generationTaskKey": None, "generationTaskType": None, "generationTaskJobId": None,
         "generationOwner": None, "generationRunId": None}
     assert saved["nodes"][1:] == original[1:]
+
+
+async def test_request_isolates_drive_usage_context(host, monkeypatch):
+    from novelvideo.llm_instrumentation import get_llm_user_context
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    async def gen(project, body, user):
+        assert get_llm_user_context() is None
+        return {"ok": True, "data": TASK}
+
+    monkeypatch.setattr(routes, "freezone_gen", gen)
+    with RecordingUsageMeter().registered() as meter:
+        meter.set_llm_usage_context("drive-user", "project")
+        try:
+            assert await host.request(
+                "POST", "projects/project/freezone/gen", {"prompt": "A ship"},
+            ) == TASK
+            assert get_llm_user_context() == "drive-user"
+        finally:
+            meter.clear_llm_usage_context()
