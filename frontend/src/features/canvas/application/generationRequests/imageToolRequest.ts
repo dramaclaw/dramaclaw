@@ -177,8 +177,10 @@ export function buildImageToolRequest(ctx: ImageToolRequestContext): ImageToolRe
   if (action === 'run_scene360_tool') {
     // The serializer drops the component's aspectRatio and sends no model.
     return finish('scene-360', { reference_url: sourceUrl, image_size: '2K', mode: 'candidate' }, {
-      ...initialData, displayName: translate('scene360.label'), aspectRatio: '2:1',
+      displayName: translate('scene360.label'), imageUrl: null, previewImageUrl: null,
+      aspectRatio: '2:1', resultKind: 'generic',
       output_role: 'scene_360_candidate', media_kind: 'pano360',
+      isGenerating: true, generationStartedAt: nowMs,
     });
   }
   const runAction = GRID_RUN_ACTIONS[action];

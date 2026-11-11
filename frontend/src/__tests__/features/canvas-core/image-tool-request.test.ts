@@ -110,9 +110,7 @@ function comparePure(fixture: Fixture) {
   };
   expect(JSON.parse(JSON.stringify(actual))).toStrictEqual(expected);
   expect(JSON.stringify(request.body)).toBe(JSON.stringify(expected.submitted[0].body));
-  if (fixture.action !== 'run_scene360_tool') {
-    expect(JSON.stringify(request.child.data)).toBe(JSON.stringify(expected.children[0].data));
-  }
+  expect(JSON.stringify(request.child.data)).toBe(JSON.stringify(expected.children[0].data));
 }
 
 describe('pure image tool requests and results', () => {
@@ -151,13 +149,13 @@ describe('pure image tool requests and results', () => {
     { name: 'poll timeout', thrown: new TaskPollTimeoutError('image-tool-task', 1000) },
   ])('$name is an ordinary tool failure', async ({ thrown }) => {
     await comparePure({ action: 'run_scene360_tool', fault: 'wait', thrown });
-  });  for (const action of ['run_outpaint_tool', 'run_upscale_tool', 'run_grid_multi_camera'] as const) {
+  });
+  for (const action of ['run_outpaint_tool', 'run_upscale_tool', 'run_grid_multi_camera'] as const) {
     it.each(['data:image/png;base64,AA==', 'blob:https://media.example.test/image'])(
       `${action}: inline %s`, async imageUrl => {
         await comparePure({ action, nodes: [sourceNode({ imageUrl })] });
       });
   }
-
 });
 
 describe('pure image-tool boundary', () => {

@@ -15,7 +15,7 @@ import { buildImageToolRequest } from '@/features/canvas/application/generationR
 import type { ImageToolAction, ImageToolRequestContext } from '@/features/canvas/application/generationRequests/imageToolRequest';
 import {
   imageToolAcceptedPatch, imageToolOutputResolution, imageToolSuccessPatch,
-  imageToolFailurePatch, imageToolActionResult,
+  imageToolFailurePatch, imageToolActionResult, imageToolViewerPlan,
 } from '@/features/canvas/application/generationRequests/imageToolResult';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import type { CanvasNode } from '@/features/canvas/domain/canvasNodes';
@@ -78,7 +78,7 @@ function sourceNode(data: Record<string, unknown> = {}): CanvasNode {
   } } as CanvasNode;
 }
 type Fixture = {
-  action: Exclude<ImageToolAction, 'run_scene360_tool'>;
+  action: ImageToolAction;
   models?: ModelOption[];
   result?: { output_url?: string | null } | null;
   fallbackUrl?: string;
@@ -91,6 +91,7 @@ const original = {
   addNode: useCanvasStore.getState().addNode, addEdge: useCanvasStore.getState().addEdge,
   updateNodeData: useCanvasStore.getState().updateNodeData,
   findNodePosition: useCanvasStore.getState().findNodePosition,
+  requestFocusNode: useCanvasStore.getState().requestFocusNode,
 };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -107,7 +108,7 @@ async function compareBrowser(fixture: Fixture) {
   const task: FreezoneJobRef = { task_key: 'image-tool-task', job_id: 'image-tool-job',
     task_type: fixture.action === 'run_outpaint_tool' ? 'freezone_outpaint'
       : fixture.action === 'run_upscale_tool' ? 'freezone_upscale'
-        : 'freezone_template_edit' };
+        : fixture.action === 'run_scene360_tool' ? 'freezone_scene_360' : 'freezone_template_edit' };
   const project = fixture.project ?? projectId;
   window.history.replaceState(null, '', project ? `/projects/${encodeURIComponent(project)}/freezone` : '/');
   catalog.models = fixture.models ?? defaultModels;
@@ -128,6 +129,11 @@ async function compareBrowser(fixture: Fixture) {
   const patches: { id: string; patch: Record<string, unknown> }[] = [];
   const layouts: { anchorNodeId: string; width: number | undefined; height: number | undefined; position: unknown }[] = [];
   useCanvasStore.setState({
+    requestFocusNode: (id) => {
+      expect(useCanvasStore.getState().nodes.filter(node => node.selected).map(node => node.id)).toStrictEqual([id]);
+      trace.push('select/focus');
+      original.requestFocusNode(id);
+    },
     addNode: (...args) => {
       const id = original.addNode(...args);
       children.push({ id, type: args[0], data: structuredClone(args[2]), position: args[1] });
@@ -154,11 +160,13 @@ async function compareBrowser(fixture: Fixture) {
     return task;
   });
   vi.mocked(awaitTaskCompletion).mockImplementation(async () => {
+    trace.push('wait');
     if (fixture.fault === 'wait') throw thrown;
     return { task_type: task.task_type, task_key: task.task_key, username: '', project,
       episode: 1, status: 'completed', result: fixture.result === undefined ? { output_url: outputUrl } : fixture.result };
   });
   vi.mocked(fetchFreezoneJobResult).mockImplementation(async () => {
+    trace.push('fetch');
     if (fixture.fault === 'fetch') throw thrown;
     return { url: fixture.fallbackUrl ?? outputUrl, size: 1 };
   });
@@ -182,6 +190,7 @@ async function compareBrowser(fixture: Fixture) {
       expect(accepted).toStrictEqual([]); expect(children).toStrictEqual([]);
       expect(edges).toStrictEqual([]); expect(patches).toStrictEqual([]); expect(layouts).toStrictEqual([]);
       expect(submitted).toStrictEqual([]);
+      expect(trace).toStrictEqual(['result']);
       expect(awaitTaskCompletion).not.toHaveBeenCalled(); expect(fetchFreezoneJobResult).not.toHaveBeenCalled();
       return request;
     }
@@ -206,13 +215,27 @@ async function compareBrowser(fixture: Fixture) {
       expectedPatches.push(imageToolSuccessPatch({ action: fixture.action, url }));
     }
     expect(patches).toStrictEqual(expectedPatches.map(patch => ({ id: child.id, patch })));
-    expect(children).toHaveLength(1);
-    expect(edges).toHaveLength(1); expect(layouts).toHaveLength(1);
+    const viewerPlan = failure ? null : imageToolViewerPlan({ action: fixture.action, childNodeId: child.id });
+    if (viewerPlan) {
+      const viewer = children[1];
+      expect(viewer.type).toBe(viewerPlan.node.type);
+      expect(viewer.data).toBeUndefined();
+      expect(layouts[1]).toStrictEqual({ ...viewerPlan.node.layout, position: viewer.position });
+      expect(edges[1]).toStrictEqual({ source: viewerPlan.edge.source, target: viewer.id });
+    }
+    expect(children).toHaveLength(viewerPlan ? 2 : 1);
+    expect(edges).toHaveLength(viewerPlan ? 2 : 1);
+    expect(layouts).toHaveLength(viewerPlan ? 2 : 1);
     const actionResult = failure ? imageToolActionResult({ message })
-      : imageToolActionResult({ action: fixture.action, childNodeId: child.id, url, task });
+      : fixture.action === 'run_scene360_tool'
+        ? imageToolActionResult({ action: fixture.action, childNodeId: child.id, viewerNodeId: children[1].id, url, task })
+        : imageToolActionResult({ action: fixture.action, childNodeId: child.id, url, task });
     expect(results).toStrictEqual([{ ...envelope, ...actionResult }]);
-    expect(trace).toStrictEqual(['accepted', 'node', 'edge', 'submit',
-      ...(fixture.fault === 'submit' ? [] : ['patch']), 'patch', 'result']);
+    expect(trace).toStrictEqual(['accepted', 'node', 'edge', 'select/focus', 'submit',
+      ...(fixture.fault === 'submit' ? [] : ['patch', 'wait']),
+      ...(fixture.fault !== 'submit' && fixture.fault !== 'wait'
+        && fixture.result !== undefined && fixture.result?.output_url == null ? ['fetch'] : []),
+      'patch', ...(viewerPlan ? ['node', 'edge', 'select/focus'] : []), 'result']);
     expect(vi.mocked(awaitTaskCompletion).mock.calls).toStrictEqual(fixture.fault === 'submit' ? [] : [[task.task_key, project]]);
     const needsFallback = fixture.fault !== 'submit' && fixture.fault !== 'wait'
       && fixture.result !== undefined && fixture.result?.output_url == null;
@@ -231,6 +254,18 @@ async function compareBrowser(fixture: Fixture) {
 }
 
 describe('direct image tool delegation', () => {
+  it('scene-360 direct-output success', async () => {
+    await compareBrowser({ action: 'run_scene360_tool' });
+  });
+  it('scene-360 missing-output fallback', async () => {
+    await compareBrowser({ action: 'run_scene360_tool', result: {} });
+  });
+  it('scene-360 wait failure', async () => {
+    await compareBrowser({ action: 'run_scene360_tool', fault: 'wait' });
+  });
+  it('scene-360 missing-project refusal', async () => {
+    await compareBrowser({ action: 'run_scene360_tool', project: '' });
+  });
   it('outpaint success with defaults catalog', async () => {
     await compareBrowser({ action: 'run_outpaint_tool', models: defaultModels });
   });
