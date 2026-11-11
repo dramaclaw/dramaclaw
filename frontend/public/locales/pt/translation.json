@@ -9002,6 +9002,8 @@
       "hint": "Ligue pelo menos {{min}} nós de vídeo para abrir",
       "counts": "Vídeo {{video}} · Áudio {{audio}}",
       "open": "Abrir composição de vídeo",
+      "exporting": "A exportar…",
+      "exportFailed": "Falha na exportação",
       "reopen": "Reabrir",
       "resultName": "Vídeo montado"
     },

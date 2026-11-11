@@ -7,6 +7,7 @@ import asyncio
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote
 
 import httpx
@@ -130,10 +131,19 @@ def test_json_rewrites_preview_urls_and_preserves_film_keys(tmp_path):
 
 def test_vendored_router_and_assets_are_scoped_to_the_current_film():
     root = Path(__file__).resolve().parents[1]
-    original = next(
-        (root / "vendor/openfilm/studio/ui/dist/assets").glob("*.dramaclaw12.js")
-    ).read_text()
+    chunks = list(
+        (root / "vendor/openfilm/studio/ui/dist/assets").glob("index-*.dramaclaw*.js")
+    )
+    assert len(chunks) == 1, "expected exactly one patched Studio chunk"
+    original = chunks[0].read_text()
     adapted = proxy.editor_chunk(original, BASE)
+    assert adapted.count(
+        'window.parent.postMessage({type:"dramaclaw:studio-export"},location.origin)'
+    ) == 1
+    assert (
+        'onClick:()=>{S?i.showError(`${s("project.filmCannotExport")} ${S}`):'
+        'Zt>0?Ff(!0):i.show(s("project.filmNotReady"))}'
+    ) not in adapted
     without_scoped_calls = adapted.replace(BASE + "/api/", "scoped-api/")
     assert '"/api/' not in without_scoped_calls and "`/api/" not in without_scoped_calls
     assert "${location.host}/api/" not in without_scoped_calls
@@ -159,13 +169,23 @@ def client(monkeypatch, tmp_path):
     async def resolve(project, user):
         if project != "alice" or user["id"] != "alice":
             raise HTTPException(403, "project access denied")
-        return None, "alice", "alice", tmp_path, str(tmp_path)
+        return (
+            SimpleNamespace(
+                output_dir=tmp_path, state_dir=tmp_path / "state", runtime_dir=tmp_path / "runtime"
+            ),
+            "alice",
+            "alice",
+            tmp_path,
+            str(tmp_path),
+        )
 
     async def ensure():
         return STATE
 
     async def register(state, film_folder):
-        assert state is STATE and film_folder == folder
+        assert state is STATE and film_folder.root == folder
+        assert film_folder.state_dir == tmp_path / "state/openfilm/canvas-1/node-1"
+        assert film_folder.runtime_dir == tmp_path / "runtime/openfilm/canvas-1/node-1"
         return FILM
 
     monkeypatch.setattr(freezone, "_resolve_freezone_project", resolve)
@@ -306,10 +326,12 @@ def test_repeated_query_parameters_cannot_hide_a_git_path(client):
     assert client.captured == []
 
 
-def test_host_preferences_cannot_change_other_users_shortcuts_or_storage(client):
-    response = client.patch(
-        BASE + "/api/prefs", headers={"origin": EDITOR}, json={"projectsFolder": "/etc"}
-    )
+@pytest.mark.parametrize(
+    "change",
+    [{"projectsFolder": "/etc"}, {"autoVersions": True}, {"showAutoVersions": True}],
+)
+def test_host_preferences_cannot_change_other_users_shortcuts_or_storage(client, change):
+    response = client.patch(BASE + "/api/prefs", headers={"origin": EDITOR}, json=change)
     assert response.status_code == 403
     assert client.captured == []
 
@@ -457,9 +479,10 @@ async def test_startup_lock_is_exclusive_and_waiting_cancellation_does_not_leak_
         pass
 
 
-def test_hosted_render_uses_the_existing_folder_only_network_policy(tmp_path):
+def test_hosted_render_uses_the_existing_folder_only_network_policy(monkeypatch, tmp_path):
     from novelvideo.freezone import studio
 
+    monkeypatch.setattr(studio, "RUNTIME_DIR", tmp_path / "runtime")
     env = studio._studio_env(4747, "secret", tmp_path / "ready")
     assert env["OPENFILM_HOSTED_RENDER"] == "1"
     assert "ST_CONTROL_PLANE_DSN" not in env
@@ -478,6 +501,7 @@ def test_worker_threads_with_independent_event_loops_share_one_startup_lock(
 
     monkeypatch.setattr(studio, "STATE_DIR", tmp_path)
     monkeypatch.setattr(studio, "_read_state", lambda: dict(STATE))
+    monkeypatch.setattr(studio, "_studio_group_alive", lambda pid: True)
     counter = threading.Lock()
     active = 0
     maximum = 0
@@ -518,6 +542,7 @@ async def test_cancelled_startup_keeps_the_lock_until_its_thread_finishes(
     from novelvideo.freezone import studio
 
     monkeypatch.setattr(studio, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(studio, "_studio_group_alive", lambda pid: True)
     started = threading.Event()
     release = threading.Event()
     ready = threading.Event()
@@ -552,7 +577,7 @@ async def test_cancelled_startup_keeps_the_lock_until_its_thread_finishes(
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await owner
-        assert await follower == STATE
+        assert await follower == {**STATE, "status": "ready"}
         assert len(calls) == 1
     finally:
         release.set()

@@ -11,6 +11,7 @@
  * stretch, the rate and the size. Any change makes another name, so a stale render is never played; renders asked for
  * under names no longer current are let go.
  */
+import { cacheDir } from '../../src/film-dirs.mjs';
 import { fork } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -19,7 +20,6 @@ import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_STAGE, FILM_FILE, readFilmFile } from '../../src/film-doc.mjs';
 import { writeAtomic } from './atomic.mjs';
-import { TOOL_DIR } from './projects.mjs';
 
 /** Changing how renders are made names them anew. */
 const VERSION = 1;
@@ -29,7 +29,7 @@ const SOUNDS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.opus',
 const MOST_FILES = 20_000;
 
 /** Where a project's preview renders are kept. @param {string} root */
-export const previewDir = (root) => join(root, TOOL_DIR, 'cache', 'preview');
+export const previewDir = (root) => cacheDir(root, 'preview');
 
 /** A render's name is 20 hex digits: anything else asked for is not one. @param {string} key */
 export const isPreviewKey = (key) => /^[0-9a-f]{20}$/.test(key);

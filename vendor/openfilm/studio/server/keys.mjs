@@ -6,8 +6,8 @@
  * Kept in ~/.openfilm/providers.json, readable by this user only (0600, in a 0700 folder), written whole and atomically:
  *   { "keys": { "<provider id>": "<key>" }, "use": { "<verb>": "<provider id>" }, "model": { "<verb>": "<model id>" },
  *     "custom": [ the person's own services (custom-services.mjs), each with its key ] }
- * A kind of media with no model (or one its provider no longer has) is made with the provider's first. Listing voices
- * goes with voice-over: same provider, same model.
+ * A keyless provider connected without a key keeps '' as its key. A kind of media with no model (or one its provider no
+ * longer has) is made with the provider's first. Listing voices goes with voice-over: same provider, same model.
  *
  * The file is shared with every OpenFilm on this computer (`npx openfilm`, the app), which may be older or newer than
  * this one: what this one does not know of it (a newer one's field) is written back as it was, never dropped.
@@ -93,7 +93,8 @@ export function changeSettings(/** @type {(s: ProviderSettings) => void} */ edit
 
 /**
  * A provider's key and where it comes from: the one pasted in Studio (the person's choice), else the environment's
- * unless the person disconnected it there. null: no key.
+ * unless the person disconnected it there. A `keyless` provider connected without a key (kept as '') has the key ''.
+ * null: not connected.
  * @param {Provider} provider @param {ProviderSettings} settings
  * @returns {{ key: string, source: 'env' | 'file', env: string } | null}
  */
@@ -101,7 +102,7 @@ export function providerKey(provider, settings, env = process.env) {
   const kept = settings.keys[provider.id];
   if (kept) return { key: kept, source: 'file', env: provider.env };
   if (settings.off?.includes(provider.id)) return null;
-  return envKey(provider, env);
+  return envKey(provider, env) ?? (provider.keyless && kept === '' ? { key: '', source: 'file', env: provider.env } : null);
 }
 
 /** The environment's key for a provider, connected or not, or null. @param {Provider} provider */

@@ -11250,6 +11250,46 @@ def test_studio_get_film_reads_the_bound_canvas_scope(monkeypatch):
     assert "status_code" not in result
 
 
+def test_studio_get_film_passes_export_outcome_through(monkeypatch):
+    plugin, _requests = _studio_plugin(monkeypatch)
+    handler = {name: handler for name, _schema, handler in plugin.TOOLS}[
+        "freezone_studio_get_film"
+    ]
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "status_code": 200, "ok": True, "status": "studio_film",
+            "rev": "r1", "film": {"tracks": []},
+            "export": {
+                "status": "failed", "job_id": "export-1", "task_key": "export-task-key",
+                "error": "执行该任务的服务进程已退出,任务已中断,请重新发起",
+                "video_url": None,
+            },
+        },
+    )
+
+    result = _assert_real_mcp_output(
+        plugin, "freezone_studio_get_film", _as_result(handler({"node_id": "node-1"}))
+    )
+
+    assert result["export"] == {
+        "status": "failed", "job_id": "export-1", "task_key": "export-task-key",
+        "error": "执行该任务的服务进程已退出,任务已中断,请重新发起",
+        "video_url": None,
+    }
+
+
+def test_studio_export_description_explains_how_to_read_the_outcome(monkeypatch):
+    plugin, _requests = _studio_plugin(monkeypatch)
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    description = schemas["freezone_studio_export_film"]["description"]
+
+    assert "do not poll." not in description
+    assert "freezone_studio_get_film" in description
+    assert "export" in schemas["freezone_studio_get_film"]["description"]
+
+
 def test_studio_tools_refuse_a_canvas_outside_the_bound_scope(monkeypatch):
     plugin, requests = _studio_plugin(monkeypatch)
     handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]

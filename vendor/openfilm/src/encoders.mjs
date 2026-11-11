@@ -83,6 +83,24 @@ export function proresOptions(encoder, alpha) {
   return { video: ['-c:v', 'prores_ks', '-profile:v', alpha ? '4444' : '3', '-vendor', 'apl0'], pix: alpha ? 'format=yuva444p10le' : 'format=yuv422p10le' };
 }
 
+/* BT.709 said on the frames: an encoder that takes no notice of the color options (the Mac's VideoToolbox writes no
+   primaries or transfer from them, and nothing at all for HEVC with alpha) takes it from the frames */
+export const FRAMES_709 = 'setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709';
+
+/**
+ * ProRes of the browser's frames, BT.709 throughout: converted to YUV with it (swscale's own default is BT.601; the
+ * Mac's engine takes RGB and converts it itself), said on the frames and to the encoder. Footage converted for an
+ * editor keeps its own colors and takes proresOptions as it is.
+ * @param {string} encoder @param {boolean} alpha
+ */
+export function prores709(encoder, alpha) {
+  const { video, pix } = proresOptions(encoder, alpha);
+  return {
+    video: [...video, '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'],
+    pix: pix === 'format=bgra' ? `${pix},${FRAMES_709}` : `scale=out_color_matrix=bt709:out_range=tv,${pix},${FRAMES_709}`,
+  };
+}
+
 /** @type {Map<string, Promise<boolean>>} */
 const tried = new Map();
 /**
@@ -96,8 +114,9 @@ function works(encoder) {
     const prores = encoder.startsWith('prores_') ? proresOptions(encoder, true) : null;
     const options = prores ? ['-vf', prores.pix, ...prores.video] : ['-vf', 'format=yuv420p', ...hardwareOptions(encoder, 2e6)];
     tried.set(encoder, new Promise((done) => {
+      /* one that hangs in the chip's driver never sees a SIGTERM, and its answer would never come: killed */
       execFile('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-frames:v', '10',
-        ...options, '-f', 'null', '-'], { timeout: 20_000, windowsHide: true }, (error) => done(!error));
+        ...options, '-f', 'null', '-'], { timeout: 20_000, killSignal: 'SIGKILL', windowsHide: true }, (error) => done(!error));
     }));
   }
   return /** @type {Promise<boolean>} */ (tried.get(encoder));
@@ -156,7 +175,13 @@ function decodedMd5(options, sample) {
       { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     let out = '';
     proc.stdout.on('data', (d) => { out += d; });
-    const timer = setTimeout(() => proc.kill('SIGKILL'), 20_000);
+    /* a decoder that hangs is not one to wait for: its whole tree ended (an ffmpeg that is a shim runs the real one as
+       its child, which would keep the pipe open), and no answer at once */
+    const timer = setTimeout(() => {
+      if (process.platform === 'win32' && proc.pid) spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => {});
+      else proc.kill('SIGKILL');
+      done(null);
+    }, 20_000);
     proc.on('error', () => { clearTimeout(timer); done(null); });
     proc.on('close', (code) => { clearTimeout(timer); done(code === 0 && /^MD5=\w+$/.test(out.trim()) ? out.trim() : null); });
     proc.stdin.on('error', () => {});

@@ -8,6 +8,7 @@
  * in Studio's own `.film/`, can be written through here, by its name or through a link in the folder; outside it, only
  * what the person linked can be read.
  */
+import { TOOL_DIR } from '../../src/film-dirs.mjs';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants, createReadStream, createWriteStream, existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
@@ -17,8 +18,8 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { FILM_FILE, clipKind } from '../../src/film-doc.mjs';
 import { addLinkedPlaces, readableLink } from '../../src/media-links.mjs';
-import { readProjectFilm, writeProjectFilm } from './film.mjs';
-import { TOOL_DIR } from './projects.mjs';
+import { changeProjectFilm, readProjectFilm } from './film.mjs';
+import { filesWritten } from './person-edits.mjs';
 import { moveToTrash } from './trash.mjs';
 import { linkKind, rewriteLinks } from './page-links.mjs';
 import { ffmpeg } from '../../src/shared.mjs';
@@ -348,10 +349,14 @@ export async function moveCheck(root, from, to) {
 /**
  * After `from` moved to `to`: every page, stylesheet and script of the project written again so its links reach the
  * same files (those that moved, and what they link to). Returns how many files changed.
- * @param {string} root @param {string} from @param {string} to
+ * @param {string} root @param {string} from @param {string} to @param {{ from: string, to: string }[]} [sidecars]
  */
-async function relinkAfterMove(root, from, to) {
-  const where = movedTo(from, to);
+async function relinkAfterMove(root, from, to, sidecars = []) {
+  const mediaWhere = movedTo(from, to);
+  const where = (/** @type {string} */ path) => {
+    const move = sidecars.find((move) => move.from === path);
+    return move?.to ?? mediaWhere(path);
+  };
   const back = (/** @type {string} */ path) => (path === to ? from : path.startsWith(`${to}/`) ? from + path.slice(to.length) : path);
   let changed = 0;
   for (const file of await linkedFiles(root)) {
@@ -362,7 +367,11 @@ async function relinkAfterMove(root, from, to) {
     const text = await readFile(abs, 'utf8').catch(() => null);
     if (text == null) continue;
     const next = rewriteLinks(text, kind, posix(dirname(was)), posix(dirname(file)), where);
-    if (next.changed) { await writeFile(abs, next.text); changed++; }
+    if (next.changed) {
+      await writeFile(abs, next.text);
+      filesWritten(root, { [file]: text }, { [file]: next.text });
+      changed++;
+    }
   }
   return changed;
 }
@@ -370,7 +379,8 @@ async function relinkAfterMove(root, from, to) {
 /**
  * Rename or move a file or a folder, never over another, and point film.html's clips at the new place in the same
  * step: a renamed picture stays on the timeline. Pages, stylesheets and scripts that link to what moved, or that moved
- * themselves, are written again so their links still reach their files (relinkAfterMove). The new name is cleaned
+ * themselves, are written again so their links still reach their files (relinkAfterMove). A media file's transcript
+ * and translations go with it; sidecars still shared with another media file are copied. The new name is cleaned
  * (cleanName).
  * @param {string} root @param {string} from @param {string} asked
  */
@@ -389,11 +399,56 @@ export async function moveFile(root, from, asked) {
   }
   if (existsSync(dst) && !sameEntry(src, dst)) throw new FileError(`${to} is already there`, 409);
   if (dst.startsWith(src + sep)) throw new FileError('a folder cannot go inside itself');
-  await mkdir(dirname(dst), { recursive: true });
-  await rename(src, dst);
+  const media = !link && (await stat(src)).isFile() && ['audio', 'video'].includes(kindOf(fromName));
+  const sidecars = media ? await moveMedia(root, src, dst) : [];
+  if (!media) {
+    await mkdir(dirname(dst), { recursive: true });
+    await rename(src, dst);
+  }
   const moved = await repoint(root, posix(relative(root, src)), posix(relative(root, dst)));
-  const pages = await relinkAfterMove(root, posix(relative(root, src)), posix(relative(root, dst)));
+  const pages = await relinkAfterMove(root, posix(relative(root, src)), posix(relative(root, dst)), sidecars);
   return { path: posix(relative(root, dst)), clips: moved, pages };
+}
+
+/** Move media and its sidecars together, refusing every conflict before anything moves. */
+async function moveMedia(/** @type {string} */ root, /** @type {string} */ src, /** @type {string} */ dst) {
+  const stem = basename(src, extname(src)), targetStem = basename(dst, extname(dst));
+  const entries = await readdir(dirname(src), { withFileTypes: true });
+  const shared = entries.some((entry) => entry.isFile() && join(dirname(src), entry.name) !== src
+    && ['audio', 'video'].includes(kindOf(entry.name)) && basename(entry.name, extname(entry.name)) === stem);
+  const moves = entries.filter((entry) => entry.isFile() && (entry.name === `${stem}.vtt`
+    || (entry.name.startsWith(`${stem}.`) && /^\.([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)\.vtt$/.test(entry.name.slice(stem.length)))))
+    .map((entry) => ({
+      from: inside(root, posix(relative(root, join(dirname(src), entry.name)))),
+      to: inside(root, posix(relative(root, join(dirname(dst), targetStem + entry.name.slice(stem.length))))),
+    })).filter(({ from, to }) => from !== to && !(shared && sameEntry(from, to)));
+  for (const { from, to } of moves) {
+    if (lstatSync(to, { throwIfNoEntry: false }) && !sameEntry(from, to)) {
+      throw new FileError(`${posix(relative(root, to))} is already there`, 409);
+    }
+  }
+  await mkdir(dirname(dst), { recursive: true });
+  /** @type {typeof moves} */
+  const done = [];
+  try {
+    for (const move of moves) {
+      if (shared) await copyFile(move.from, move.to, constants.COPYFILE_EXCL);
+      else await rename(move.from, move.to);
+      done.push(move);
+    }
+    await rename(src, dst);
+  } catch (error) {
+    const failures = [];
+    for (const move of done.reverse()) {
+      try {
+        if (shared) await unlink(move.to);
+        else await rename(move.to, move.from);
+      } catch (restoreError) { failures.push(restoreError); }
+    }
+    if (failures.length) throw new AggregateError([error, ...failures], 'Could not restore the subtitles after the media move failed');
+    throw error;
+  }
+  return shared ? [] : moves.map(({ from, to }) => ({ from: posix(relative(root, from)), to: posix(relative(root, to)) }));
 }
 
 /** Whether two paths are one file on disk: a name changed only in case, on a disk that ignores case, is not "taken". */
@@ -404,17 +459,19 @@ function sameEntry(/** @type {string} */ a, /** @type {string} */ b) {
 
 /** Point every clip whose src is `from` (or inside the folder `from`) at `to`. Returns how many moved. */
 async function repoint(/** @type {string} */ root, /** @type {string} */ from, /** @type {string} */ to) {
-  const film = await readProjectFilm(root);
-  if (!film.value) return 0;
-  let moved = 0;
-  for (const track of film.value.tracks) {
-    for (const clip of track.clips) {
-      if (clip.src === from) { clip.src = to; moved++; }
-      else if (clip.src.startsWith(`${from}/`)) { clip.src = to + clip.src.slice(from.length); moved++; }
+  /* as any edit of Studio's: after a write of the agent's is merged, and kept over the next one */
+  const done = await changeProjectFilm(root, (value, film) => {
+    if (!film.value) return null;
+    let moved = 0;
+    for (const track of value.tracks) {
+      for (const clip of track.clips) {
+        if (clip.src === from) { clip.src = to; moved++; }
+        else if (clip.src.startsWith(`${from}/`)) { clip.src = to + clip.src.slice(from.length); moved++; }
+      }
     }
-  }
-  if (moved) await writeProjectFilm(root, film.value, film.text);
-  return moved;
+    return moved ? { value, moved } : null;
+  });
+  return done?.moved ?? 0;
 }
 
 /**

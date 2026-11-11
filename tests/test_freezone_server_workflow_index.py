@@ -1,10 +1,11 @@
 """Workflow recovery fails a dead process's tasks before it enqueues the next drive."""
 
+import socket
 from datetime import datetime, timezone
 
 import pytest
 
-from inline_task_owner_helper import task_context
+from task_context_helper import task_context
 from novelvideo import config, project_context, task_state
 from novelvideo.freezone import server_workflow_index as index
 from novelvideo.freezone import workflow_runs as store
@@ -14,8 +15,11 @@ from novelvideo.freezone import workflow_runs as store
 @pytest.mark.parametrize("leased", [False, True])
 async def test_recovery_sweeps_project_before_enqueueing_next_drive(tmp_path, monkeypatch, leased):
     monkeypatch.setattr(config, "STATE_DIR", tmp_path / "index")
+    monkeypatch.setattr(config, "RUNTIME_DIR", str(tmp_path / "runtime"))
     ctx = task_context(tmp_path)
     manager = task_state.TaskStateManager()
+    # Only the recovery's explicit sweep may fail the dead row in this test.
+    manager.SWEEP_INTERVAL_SECONDS = 3600
     monkeypatch.setattr(task_state, "_task_manager", manager)
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scope = dict(project_dir=ctx.state_dir, canvas_id="default")
@@ -32,7 +36,10 @@ async def test_recovery_sweeps_project_before_enqueueing_next_drive(tmp_path, mo
     )
     manager.reserve_task_for_project(
         ctx, "freezone_workflow_drive", 0, scope="dead",
-        metadata={"backend": "inline", "inline_owner": "missing"},
+        # A well-formed owner on this host whose lock no longer exists: its process is gone.
+        metadata={"backend": "inline", "owner": {
+            "host": socket.gethostname(), "pid": 1, "token": "0" * 32,
+        }},
     )
 
     resolved = []

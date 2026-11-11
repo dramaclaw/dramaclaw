@@ -22,7 +22,7 @@ def forced(source: str, flag: str) -> bool:
 
 def test_launcher_forces_the_host_guards() -> None:
     source = LAUNCHER.read_text(encoding="utf-8")
-    for flag in ["OPENFILM_NO_RENAME", "OPENFILM_NO_EXAMPLES"]:
+    for flag in ["OPENFILM_NO_RENAME", "OPENFILM_NO_EXAMPLES", "OPENFILM_HOST_DIRS"]:
         assert forced(source, flag), f"run.mjs must force {flag} rather than inherit it"
 
 

@@ -19,6 +19,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 import uuid
 from collections.abc import Iterable
 from contextlib import contextmanager
@@ -26,9 +27,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import BinaryIO, List, Optional
-
-import portalocker
+from typing import List, Optional
 
 from novelvideo.i18n_message import (
     MessageLike,
@@ -49,6 +48,7 @@ from novelvideo.task_identity import (
     task_scope_from_key,
     task_state_key,
 )
+from novelvideo.task_owner import owner_alive
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +61,6 @@ LANE_EXEMPT_TASK_TYPES = frozenset({
     "freezone_agent_recipe_generate",
     "freezone_workflow_drive",
 })
-_INLINE_OWNER_TOKEN: str | None = None
-_INLINE_OWNER_FILES: dict[Path, BinaryIO] = {}
-_INLINE_OWNER_LOCK = threading.Lock()
 TASK_READ_BATCH_SIZE = 200
 # Exclude potentially large log payloads for workflow reconciliation.
 TASK_SNAPSHOT_COLUMNS = (
@@ -172,14 +169,6 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-# Legacy inline rows without an owner token retain the process-start timestamp rule.
-_PROCESS_STARTED_AT = utc_now_iso()
-if "." not in _PROCESS_STARTED_AT:
-    # isoformat 在整秒时省略小数位;同秒内 "...:56Z" 字典序大于 "...:56.4Z",
-    # 会把启动后同秒更新的活任务误判为过期,补齐小数位消除该反转。
-    _PROCESS_STARTED_AT = _PROCESS_STARTED_AT.replace("Z", ".000000Z")
-
-
 def parse_task_timestamp(value: str | None) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -206,40 +195,6 @@ def get_project_task_db_path(username: str, project: str) -> Path:
 def get_project_task_db_path_for_context(ctx: ProjectContext) -> Path:
     """Project-local task state DB path for project_id based execution."""
     return (Path(ctx.state_dir) / "data.db").resolve()
-
-
-def get_inline_owner_for_project(ctx: ProjectContext) -> str:
-    """Hold this process's owner lock beside every database it submits inline tasks to."""
-    global _INLINE_OWNER_TOKEN
-    owner_dir = get_project_task_db_path_for_context(ctx).parent / "inline-owners"
-    with _INLINE_OWNER_LOCK:
-        if _INLINE_OWNER_TOKEN is None:
-            _INLINE_OWNER_TOKEN = uuid.uuid4().hex
-        if owner_dir not in _INLINE_OWNER_FILES:
-            owner_dir.mkdir(parents=True, exist_ok=True)
-            stream = (owner_dir / f"{_INLINE_OWNER_TOKEN}.lock").open("a+b")
-            try:
-                portalocker.lock(stream, portalocker.LOCK_EX | portalocker.LOCK_NB)
-            except BaseException:
-                stream.close()
-                raise
-            _INLINE_OWNER_FILES[owner_dir] = stream
-        return _INLINE_OWNER_TOKEN
-
-
-def _inline_owner_is_alive(owner_dir: Path, owner: str) -> bool:
-    if owner == _INLINE_OWNER_TOKEN:
-        return True
-    try:
-        with (owner_dir / f"{owner}.lock").open("r+b") as stream:
-            try:
-                portalocker.lock(stream, portalocker.LOCK_EX | portalocker.LOCK_NB)
-            except portalocker.LockException:
-                return True
-            portalocker.unlock(stream)
-    except FileNotFoundError:
-        pass
-    return False
 
 
 @dataclass
@@ -314,10 +269,11 @@ class TaskStateManager:
 
     MAX_LOGS = 100  # 保留最近 100 条日志
     COMPLETED_TTL = 3600  # 完成后保留 1 小时
+    SWEEP_INTERVAL_SECONDS = 2.0
 
     def __init__(self) -> None:
-        # 僵尸清扫按库只跑一次(见 _sweep_interrupted_inline_tasks_once)
-        self._swept_dbs: set[str] = set()
+        # 每个库独立节流，持续回收在本进程存活期间退出的 owner。
+        self._last_sweep_at: dict[str, float] = {}
         self._sweep_db_locks: dict[str, threading.Lock] = {}
         self._sweep_lock = threading.Lock()
     STARTING_TIMEOUT = _env_int(
@@ -445,7 +401,7 @@ class TaskStateManager:
         # journal-mode transition or execute DDL.
         configure_sqlite_connection(conn, set_journal_mode=False)
         if not skip_auto_sweep:
-            self._sweep_interrupted_inline_tasks_once(conn, db_path)
+            self._sweep_stale_tasks_throttled(conn, db_path)
         try:
             yield conn
             conn.commit()
@@ -1437,91 +1393,121 @@ class TaskStateManager:
             return None
         return self._row_to_state(row)
 
-    # celery/EE worker 独立于本进程,判不了「早于进程启动即已中断」,只能按
+    # celery/EE worker 不持有 inline owner 锁，只能按
     # TTL 收:40min = task_time_limit 35min(EE celery_app.py 的 celery 配置)
     # + 5min 余量。超过它仍未更新的在途行,worker 已被硬超时杀掉。
     CELERY_STALE_TTL = 40 * 60
 
     def _sweep_stale_tasks_on_connection(self, conn) -> int | None:
-        """Fail inline tasks with dead owners and independently expire stale broker tasks."""
+        """把不可能仍在执行的 ACTIVE 任务落为 failed(僵尸回收),两条轴:
+
+        - inline:owner 进程的文件锁已释放，任务必然已中断;
+        - celery/EE:worker 独立于本进程,按 CELERY_STALE_TTL 判(见其注释)。
+
+        两条轴按 backend 标记互斥,彼此不外溢。
+        celery 时间戳按字符串比较，两侧均为 UTC 且保证含小数位。
+        """
         now = utc_now_iso()
         celery_stale_before = (
             datetime.now(timezone.utc) - timedelta(seconds=self.CELERY_STALE_TTL)
         ).isoformat().replace("+00:00", "Z")
         if "." not in celery_stale_before:
-            # 同 _PROCESS_STARTED_AT 的补位:整秒时 isoformat 省略小数位,
+            # 整秒时 isoformat 省略小数位，补齐后才能按字符串比较，
             # "...:56Z" 字典序大于 "...:56.4Z",会多扫掉同秒内的活任务。
             celery_stale_before = celery_stale_before.replace("Z", ".000000Z")
         try:
-            owner_dir = Path(conn.execute("PRAGMA database_list").fetchone()[2]).parent / (
-                "inline-owners"
-            )
             inline_rows = conn.execute(
-                "SELECT task_key, task_id, updated_at, "
-                "json_extract(result_json, '$.task_metadata.inline_owner') AS inline_owner "
-                "FROM task_states "
-                "WHERE status IN ('submitting', 'queued', 'running') "
+                "SELECT task_key, task_id, "
+                "json_extract(result_json, '$.task_metadata.owner') AS owner "
+                "FROM task_states WHERE status IN ('submitting', 'queued', 'running') "
                 "AND json_valid(result_json) "
-                "AND json_extract(result_json, '$.task_metadata.backend') = 'inline'",
+                "AND json_extract(result_json, '$.task_metadata.backend') = 'inline'"
             ).fetchall()
-            inline_count = 0
+            inline_changed = 0
             for row in inline_rows:
-                owner = row["inline_owner"]
-                if owner:
-                    if _inline_owner_is_alive(owner_dir, owner):
-                        continue
-                elif row["updated_at"] >= _PROCESS_STARTED_AT:
+                try:
+                    owner = json.loads(row["owner"])
+                except (TypeError, ValueError):
+                    owner = None
+                if owner_alive(owner) is not False:
                     continue
-                inline_count += conn.execute(
+                result = conn.execute(
                     "UPDATE task_states SET status = 'failed', "
                     "error = COALESCE(NULLIF(error, ''), ?), "
                     "completed_at = ?, updated_at = ?, expires_at = ? "
-                    "WHERE task_key = ? AND task_id = ? AND updated_at = ? "
+                    "WHERE task_key = ? AND task_id = ? "
                     "AND status IN ('submitting', 'queued', 'running')",
                     (
-                        "服务重启,任务已中断,请重新发起",
-                        now, now, compute_expiry(self.COMPLETED_TTL),
-                        row["task_key"], row["task_id"], row["updated_at"],
+                        "执行该任务的服务进程已退出,任务已中断,请重新发起",
+                        now,
+                        now,
+                        compute_expiry(self.COMPLETED_TTL),
+                        row["task_key"],
+                        row["task_id"],
                     ),
-                ).rowcount
-            celery_result = conn.execute(
-                "UPDATE task_states SET status = 'failed', "
-                "error = COALESCE(NULLIF(error, ''), ?), "
-                "completed_at = ?, updated_at = ?, expires_at = ? "
+                )
+                inline_changed += result.rowcount
+            celery_rows = conn.execute(
+                "SELECT task_key, task_id FROM task_states "
                 "WHERE status IN ('submitting', 'queued', 'running') "
                 "AND updated_at < ? "
                 "AND json_valid(result_json) "
                 "AND json_extract(result_json, '$.task_metadata.backend') = 'celery'",
-                (
-                    "任务超时未更新,worker 已中断,请重新发起",
-                    now,
-                    now,
-                    compute_expiry(self.COMPLETED_TTL),
-                    celery_stale_before,
-                ),
-            )
-            conn.commit()
+                (celery_stale_before,),
+            ).fetchall()
+            celery_changed = 0
+            for row in celery_rows:
+                result = conn.execute(
+                    "UPDATE task_states SET status = 'failed', "
+                    "error = COALESCE(NULLIF(error, ''), ?), "
+                    "completed_at = ?, updated_at = ?, expires_at = ? "
+                    "WHERE task_key = ? AND task_id = ? "
+                    "AND status IN ('submitting', 'queued', 'running') "
+                    "AND updated_at < ? "
+                    "AND json_valid(result_json) "
+                    "AND json_extract(result_json, '$.task_metadata.backend') = 'celery'",
+                    (
+                        "任务超时未更新,worker 已中断,请重新发起",
+                        now,
+                        now,
+                        compute_expiry(self.COMPLETED_TTL),
+                        row["task_key"],
+                        row["task_id"],
+                        celery_stale_before,
+                    ),
+                )
+                celery_changed += result.rowcount
+            if conn.in_transaction:
+                conn.commit()
         except sqlite3.OperationalError as exc:
             conn.rollback()
             logger.warning("stale task sweep skipped: %s", exc)
             return None
-        return inline_count + celery_result.rowcount
+        return inline_changed + celery_changed
 
-    def _sweep_interrupted_inline_tasks_once(self, conn, db_path: Path) -> None:
-        """普通连接首次打开每个 DB 时运行清扫，失败则留给下次连接重试。"""
+    def _sweep_stale_tasks_throttled(self, conn, db_path: Path) -> None:
+        """普通连接按库定期清扫，失败则留给下次连接立即重试。"""
         key = str(db_path.resolve())
         with self._sweep_lock:
-            if key in self._swept_dbs:
+            last_sweep = self._last_sweep_at.get(key)
+            if (
+                last_sweep is not None
+                and time.monotonic() - last_sweep < self.SWEEP_INTERVAL_SECONDS
+            ):
                 return
             db_lock = self._sweep_db_locks.setdefault(key, threading.Lock())
         with db_lock:
             with self._sweep_lock:
-                if key in self._swept_dbs:
+                last_sweep = self._last_sweep_at.get(key)
+                if (
+                    last_sweep is not None
+                    and time.monotonic() - last_sweep < self.SWEEP_INTERVAL_SECONDS
+                ):
                     return
             changed = self._sweep_stale_tasks_on_connection(conn)
             if changed is not None:
                 with self._sweep_lock:
-                    self._swept_dbs.add(key)
+                    self._last_sweep_at[key] = time.monotonic()
 
     def sweep_stale_tasks_for_project(self, ctx: ProjectContext) -> int | None:
         """显式、可重复地清扫项目 DB 中已失联的在途任务。"""

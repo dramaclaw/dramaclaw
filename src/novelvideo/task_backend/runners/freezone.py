@@ -1608,8 +1608,16 @@ async def _run_freezone_video_compose_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     cover_url = str(payload.get("cover_url") or payload.get("coverUrl") or "").strip()
     ensure_freezone_dirs(project_dir)
-    studio_film_dir = str(payload.get("studio_film_dir") or "").strip()
-    if studio_film_dir:
+    if payload.get("studio_export"):
+        from novelvideo.freezone.studio import studio_film_for_node
+
+        film = studio_film_for_node(
+            project_dir=ctx.output_dir,
+            state_dir=ctx.state_dir,
+            runtime_dir=ctx.runtime_dir,
+            canvas_id=str(payload.get("canvas_id") or ""),
+            node_id=str(payload.get("node_id") or ""),
+        )
         # The node was cut in the OpenFilm workspace (by hand or by the agent):
         # the film is the cut, so Studio renders it. Untouched nodes keep the
         # timeline path below unchanged.
@@ -1620,7 +1628,7 @@ async def _run_freezone_video_compose_async(
             "run_freezone_studio_export",
             project_dir=project_dir,
             job_id=job_id,
-            film_dir=studio_film_dir,
+            film=film,
             fps=int(payload.get("fps") or 30),
         )
     else:

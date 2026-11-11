@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from inline_task_owner_helper import task_context
+from task_context_helper import task_context
 from novelvideo.task_backend.limits import (
     ProjectTaskLimitExceeded,
     ProjectUserTaskLimitExceeded,

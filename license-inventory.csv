@@ -1204,6 +1204,7 @@ frontend/src/__tests__/features/canvas/video-breakdown-groups.test.ts,Elastic-2.
 frontend/src/__tests__/features/canvas/video-breakdown-lifecycle.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-breakdown-spawn.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-clip-panel.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/video-compose-node-status.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-compose-upstream-reconcile.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-compose-workspace.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-continuity-mode.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3371,6 +3372,7 @@ scripts/openfilm_studio/source-patches/0006-project-name-from-film-title.patch,E
 scripts/openfilm_studio/source-patches/0007-server-copy-branding.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/openfilm_studio/source-patches/0008-host-route-gates.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/openfilm_studio/source-patches/0009-hosted-render-network.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0010-hosted-film-dirs.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_arm_rig.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_gait.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_leg_rig.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3960,6 +3962,7 @@ src/novelvideo/task_backend/signing.py,Elastic-2.0,2026 SuperTale contributors,R
 src/novelvideo/task_backend/subprocesses.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/task_identity.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/task_jobs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/task_owner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/task_scopes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/task_state.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/telemetry.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4430,9 +4433,11 @@ tests/test_newapi_provider_sync.py,Elastic-2.0,2026 SuperTale contributors,REUSE
 tests/test_newapi_text_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_no_nicegui_character_ref_imports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openapi_edition_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_host_dirs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_hosted_proxy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_export_branding.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_image.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_studio_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_route_guards.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_server_copy_branding.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_ui_patch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4580,6 +4585,7 @@ tests/test_task_envelope_consumer.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_task_envelope_local_signing_key.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_envelope_producer.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_envelope_signing_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_task_owner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_payload_projection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_payload_projection_guardrails.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_progress_i18n.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4632,105 +4638,119 @@ tests/test_workspace_holds_no_gateway_key.py,Elastic-2.0,2026 SuperTale contribu
 tests/test_wysiwyg_consistency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_neo4j.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 uv.lock,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-vendor/openfilm/LICENSE,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/README.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/SPEC.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/THIRD_PARTY_NOTICES.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/package-lock.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/package.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/product.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/doctor.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/encoders.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/film-doc.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/film-doc.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/host.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/host.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/locations.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/look.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/look.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/media-links.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/overrides.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/problems.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/rate.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/render.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/seekable.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/shared.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/shared.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/skills-cli.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/skills.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/src/timeline.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/client.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/atomic.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/bridge.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/browse.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/captions.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/closure.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/cover.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/custom-services.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/derived.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/diagnostics.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/examples.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/exports.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/fcpxml.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/fetch-error.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/fetch-github.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/fetch-repo.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/files.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/film-subtitle.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/film.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/folder-picker.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/fonts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/get.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/history-migrate.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/history-store.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/history.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/http.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/jianying.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/keys.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/main.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/markers.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/nle.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/ops.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/page-links.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/pageframes.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/pages.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/prefs.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/preview-cache.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/project-fonts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/project-settings.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/projects.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/azure.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/brave.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/common.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/contract.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/doubao.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/elevenlabs.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/fal.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/google.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/groq.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/index.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/openai.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/pexels.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/pixabay.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/tavily.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/providers/web.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/proxies.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/render-worker.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/saved.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/server.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/slides.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/stage.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/subtitle-edits.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/subtitle-segments.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/track-layout.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/transcripts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/transition-pages.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/trash.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/watch.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/websocket.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/server/zip.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/ui/dist/assets/index-4w_4bVMU.css,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/ui/dist/assets/index-D1xgKltC.dramaclaw12.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/LICENSE,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/README.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/SPEC.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/THIRD_PARTY_NOTICES.md,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/package-lock.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/package.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/product.json,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/browser-pool.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/burn.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/doctor.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/encoders.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/film-dirs.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/film-doc.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/film-doc.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/host.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/host.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/locations.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/look.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/look.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/media-links.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/overrides.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/problems.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/rate.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/render-ranges.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/render.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/seekable.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/shared.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/shared.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/skills-cli.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/skills.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/timeline.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/client.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/atomic.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/auto-versions.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/bridge.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/browse.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/captions.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/closure.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/cover.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/custom-services.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/derived.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/diagnostics.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/examples.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/exports.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fcpxml.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fetch-error.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fetch-github.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fetch-repo.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/files.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/film-subtitle.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/film.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/folder-picker.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/fonts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/get.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/history-deleted.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/history-migrate.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/history-previews.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/history-store.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/history.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/http.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/jianying.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/keys.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/main.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/markers.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/nle.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/ops.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/page-links.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/page-text.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/pageframes.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/pages.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/person-edits.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/person-merge-worker.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/person-merge.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/prefs.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/preview-cache.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/project-fonts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/project-presence.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/project-settings.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/projects.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/azure.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/brave.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/common.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/contract.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/doubao.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/elevenlabs.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/fal.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/google.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/groq.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/index.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/keenable.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/mimo.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/openai.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/pexels.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/pixabay.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/tavily.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/providers/web.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/proxies.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/render-worker.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/saved.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/server.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/slides.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/stage.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/subtitle-edits.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/subtitle-segments.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/track-layout.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/transcripts.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/transition-pages.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/trash.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/watch.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/websocket.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/server/zip.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/ui/dist/assets/index-7ByF79tc.dramaclaw14.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/ui/dist/assets/index-Dw4FuWhK.css,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/studio/ui/dist/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
 vendor/openfilm/studio/ui/dist/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
 vendor/openfilm/studio/ui/dist/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
@@ -4738,4 +4758,4 @@ vendor/openfilm/studio/ui/dist/assets/inter-greek-wght-normal-CkhJZR-_.woff2,OFL
 vendor/openfilm/studio/ui/dist/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
 vendor/openfilm/studio/ui/dist/assets/inter-latin-wght-normal-Dx4kXJAl.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
 vendor/openfilm/studio/ui/dist/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
-vendor/openfilm/studio/ui/dist/index.html,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/ui/dist/index.html,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"

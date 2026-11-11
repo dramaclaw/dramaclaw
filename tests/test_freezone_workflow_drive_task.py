@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI, HTTPException
 
-from inline_task_owner_helper import task_context
+from task_context_helper import task_context
 from novelvideo.freezone import workflow_runs as store
 from novelvideo.task_backend.runners import freezone
 

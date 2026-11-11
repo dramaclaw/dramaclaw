@@ -9611,7 +9611,9 @@ _STORY_SUCCESS_REQUIRED = (
 
 
 _STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    "freezone_studio_get_film": ("node_id", "rev", "problems", "film", "media", "studio"),
+    "freezone_studio_get_film": (
+        "node_id", "rev", "problems", "film", "media", "studio", "export",
+    ),
     "freezone_studio_edit_film": (
         "node_id", "rev", "rebased", "ops_applied", "film", "media",
     ),
@@ -11777,7 +11779,9 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
             "src, at, time=[in,out] source seconds, duration, end, speed, volume, fade, box) "
             "and each clip's canvas source (item_id, node_id, label), plus probed media "
             "durations. Always call this before freezone_studio_edit_film and whenever an "
-            "edit reports a conflict. Read-only.",
+            "edit reports a conflict. The result also carries export, the state of the "
+            "node's latest export (running / completed / failed with the error / none). "
+            "Read-only.",
             {**_SCOPE_PROPS, **_STUDIO_NODE_PROP},
             ["node_id"],
             reject_unknown=True,
@@ -11844,7 +11848,9 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
             "video through Studio. Starts an asynchronous export task and returns job_id / "
             "task_key; the finished video is written to the compose node automatically. Call "
             "it once per export request, only when the user asks to export, render or "
-            "produce the final video; do not poll.",
+            "produce the final video; do not poll in a loop. To report the outcome later, "
+            "call freezone_studio_get_film and read export; a failed export carries the "
+            "error, and the user can export again.",
             {
                 **_SCOPE_PROPS,
                 **_STUDIO_NODE_PROP,

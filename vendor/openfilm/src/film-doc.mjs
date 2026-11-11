@@ -18,8 +18,17 @@
 export const FILM_FILE = 'film.html';
 /** The stage of a film that says none. */
 export const DEFAULT_STAGE = Object.freeze({ w: 1920, h: 1080 });
-export const SPEED_MIN = 0.25;
-export const SPEED_MAX = 4;
+/** A video's or a sound's `speed`: 0.1× to 100×, the range people expect of an editor; the export plays any of it. */
+export const SPEED_MIN = 0.1;
+export const SPEED_MAX = 100;
+/**
+ * The rates a browser plays media at (Chromium's 1/16 to 16). A clip whose speed by the viewer's is outside them is
+ * previewed by its frames, sought one by one, and not heard; an export never plays media, and has the whole range.
+ */
+export const MEDIA_RATE_MIN = 1 / 16;
+export const MEDIA_RATE_MAX = 16;
+/** Whether a browser plays media at `rate`. @param {number} rate */
+export const mediaPlays = (rate) => rate >= MEDIA_RATE_MIN - 1e-9 && rate <= MEDIA_RATE_MAX + 1e-9;
 const TRIM_EPS = 1e-6;
 
 const STILL_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif', 'bmp', 'svg']);

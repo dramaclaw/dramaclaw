@@ -8878,6 +8878,8 @@
       "hint": "Connect at least {{min}} video nodes to open",
       "counts": "Video {{video}} · Audio {{audio}}",
       "open": "Open video compose & edit",
+      "exporting": "Exporting…",
+      "exportFailed": "Export failed",
       "reopen": "Reopen",
       "resultName": "Composed video"
     },

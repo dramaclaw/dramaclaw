@@ -10,6 +10,8 @@
  *                 (OPENFILM_SHARED_HOME, else this one), so every OpenFilm on the computer shares it.
  *   keys          the keyboard shortcuts: the scheme in use and the custom ones (null: OpenFilm's). Kept as Studio's
  *                 page gives them, in shape only (keysOf); the page checks every action and key (ui/src/lib/keymap.ts).
+ *   autoVersions  whether a project open in Studio saves versions of itself while it is worked on (auto-versions.mjs)
+ *   showAutoVersions  legacy visibility hint for older clients; the current history dialog uses its type filter
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -17,10 +19,10 @@ import { studioHome } from './projects.mjs';
 import { chooseFolder, chosenFolder } from '../../src/locations.mjs';
 
 /** @typedef {{ scheme: string, custom: Record<string, { base: string, keys: Record<string, string[]> }> }} Keys */
-/** @typedef {{ proxies: { on: boolean, height: 540 | 720 | 1080 }, seenVersion: string | null, projectsFolder: string | null, keys: Keys | null }} Prefs */
+/** @typedef {{ proxies: { on: boolean, height: 540 | 720 | 1080 }, seenVersion: string | null, projectsFolder: string | null, keys: Keys | null, autoVersions: boolean, showAutoVersions: boolean }} Prefs */
 
-/** Proxies on by default, at 720p. */
-export const DEFAULT_PREFS = /** @type {Prefs} */ ({ proxies: { on: true, height: 720 }, seenVersion: null, projectsFolder: null, keys: null });
+/** Proxies on by default, at 720p; versions saved by the person only, and only theirs listed. */
+export const DEFAULT_PREFS = /** @type {Prefs} */ ({ proxies: { on: true, height: 720 }, seenVersion: null, projectsFolder: null, keys: null, autoVersions: false, showAutoVersions: false });
 const VERSION = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/;
 const HEIGHTS = [540, 720, 1080];
 
@@ -55,7 +57,7 @@ export function keysOf(raw) {
 
 /** What is kept, each field checked; anything missing or wrong is its default. @param {unknown} raw @returns {Prefs} */
 export function prefsOf(raw) {
-  const p = /** @type {{ proxies?: { on?: unknown, height?: unknown }, seenVersion?: unknown, projectsFolder?: unknown, keys?: unknown } | null} */ (raw && typeof raw === 'object' ? raw : null);
+  const p = /** @type {{ proxies?: { on?: unknown, height?: unknown }, seenVersion?: unknown, projectsFolder?: unknown, keys?: unknown, autoVersions?: unknown, showAutoVersions?: unknown } | null} */ (raw && typeof raw === 'object' ? raw : null);
   const folder = (/** @type {unknown} */ v) => (typeof v === 'string' && isAbsolute(v) ? resolve(v) : null);
   const height = Number(p?.proxies?.height);
   return {
@@ -66,6 +68,8 @@ export function prefsOf(raw) {
     seenVersion: typeof p?.seenVersion === 'string' && VERSION.test(p.seenVersion) ? p.seenVersion : null,
     projectsFolder: folder(p?.projectsFolder),
     keys: keysOf(p?.keys),
+    autoVersions: p?.autoVersions === true,
+    showAutoVersions: p?.showAutoVersions === true,
   };
 }
 
@@ -85,7 +89,7 @@ export function readPrefs() {
  */
 export function writePrefs(patch) {
   const now = readPrefs();
-  const asked = /** @type {{ proxies?: object, seenVersion?: unknown, projectsFolder?: unknown, keys?: unknown }} */ (patch && typeof patch === 'object' ? patch : {});
+  const asked = /** @type {{ proxies?: object, seenVersion?: unknown, projectsFolder?: unknown, keys?: unknown, autoVersions?: unknown, showAutoVersions?: unknown }} */ (patch && typeof patch === 'object' ? patch : {});
   const next = prefsOf({ ...now, ...asked, proxies: { ...now.proxies, ...(asked.proxies ?? {}) } });
   const at = file();
   let kept = {};

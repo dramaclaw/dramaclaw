@@ -448,9 +448,9 @@ function wordsOf(raw) {
 }
 
 /**
- * Land what a provider made: its files under assets/ (nothing else, no `..`), and for speech whose words came timed
- * (a voice-over from a service that times them, a transcript), its transcript beside it (transcripts.mjs). A voice-over
- * without word times gets none: `get asr` makes it.
+ * Land what a provider made: its files under assets/ (nothing else, no `..`), and for speech, its transcript beside it
+ * (transcripts.mjs): a voice-over's or a transcript's timed words, or a transcript's own text (a service that times no
+ * words), its lines spread over the speech. A voice-over without word times gets none: `get asr` makes it.
  * @param {string} root @param {string} verb @param {Record<string, unknown>} args @param {RunResult} result
  */
 async function land(root, verb, args, result) {
@@ -472,8 +472,9 @@ async function land(root, verb, args, result) {
        provider's file, under assets/ */
     const src = verb === 'asr' ? String(args.src) : row?.src;
     const words = wordsOf(row?.words);
-    if ((verb === 'tts' && !landable(src)) || !words.length) continue;
     const text = typeof row.text === 'string' && row.text.trim() ? row.text : words.map((w) => w.token).join(' ');
+    /* a voice-over's transcript needs its timed words; a transcript's own text is enough on its own */
+    if ((verb === 'tts' && (!landable(src) || !words.length)) || !text) continue;
     const dur = Number(row.dur);
     const lines = spokenLines(text, words, Number.isFinite(dur) && dur > 0 ? dur * 1000 : undefined);
     if (!lines.length) continue;

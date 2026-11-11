@@ -21,38 +21,42 @@ import { pipeline } from 'node:stream';
 import { mkdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { EditError, editProjectFilm, pageClipLook, readProjectFilm } from './film.mjs';
+import { EditError, editProjectFilm, pageClipLook, readProjectFilm, settleProjectFilm } from './film.mjs';
+import { readPage, writePage } from './page-text.mjs';
 import { FileError, bringIn, collect, extractAudio, freezeFrame, importFile, inside, listFiles, makeFolder, moveCheck, moveFile, readable, relink, trashFile } from './files.mjs';
 import { ExportError, createExports, draftApps, exportCapabilities, exportsRoot, projectSizes } from './exports.mjs';
 import { MediaError, frame, loudness, poster, probe, waveform } from './derived.mjs';
-import { HistoryError, checkout, commitChanges, deleteBranch, discardChanges, historyFiles, log, mergeBranch, renameBranch, restoreCommit, status as historyStatus } from './history.mjs';
+import { HistoryError, checkoutVersion, copyVersion, deleteVersions, discardChanges, keepAside, log, recoverVersions, restoreFilm, saveVersion, status as historyStatus, versionFilesChanged } from './history.mjs';
+import * as personEdits from './person-edits.mjs';
+import { createAutoVersions } from './auto-versions.mjs';
+import { createHistoryPreviews } from './history-previews.mjs';
 import { ownHost, startPages } from './pages.mjs';
 import { HttpError, cookie, json, readJson } from './http.mjs';
 import { acceptWebSocket } from './websocket.mjs';
 import {
   ProjectError, createFolder, createProject, deleteFolder, deleteProject, libraryRoot, listFolders, listProjects, locateProject, markOpened, moveFolder, moveLibrary,
-  moveProjectToFolder, openProject, projectById, renameFolder, renameProject, studioHome, studioKey, TOOL_DIR,
+  moveProjectToFolder, openProject, projectById, renameFolder, renameProject, studioHome, studioKey,
 } from './projects.mjs';
 import { FetchError, createFetches, fetchFilm, parseRepoUrl } from './fetch-repo.mjs';
 import { BrowseError, browseFolder, browsePlaces } from './browse.mjs';
 import { exampleFile, exampleFolder, listExamples } from './examples.mjs';
 import { pickFiles, pickFolder } from './folder-picker.mjs';
 import { readPrefs, writePrefs } from './prefs.mjs';
-import { ensureProxies } from './proxies.mjs';
+import { ensureProxies, playChecks } from './proxies.mjs';
 import { ensurePreviews, knownLate } from './preview-cache.mjs';
 import { npmOpenfilm, olderThanThis } from '../client.mjs';
-import { writeAtomic } from './atomic.mjs';
 import { createWatchers } from './watch.mjs';
+import { projectMissing } from './project-presence.mjs';
 import { installedFonts } from './fonts.mjs';
 import { projectFonts, resolveIn } from './project-fonts.mjs';
 import { FILM_PAGE, PageFrameError, closePageFrames, filmPoster, pageFacts, pageFrame, warmFilmPoster } from './pageframes.mjs';
 import { COVER_FRAME_W, CoverError, clearCover, readCover, readCoverBody, setCover, setCoverFromFile } from './cover.mjs';
-import { SavedError, bundlePoster, libraryPath, libraryRel, libraryRoot as savedLibrary, listLibrary, saveClip, saveFile, saveGroup, takeSaved } from './saved.mjs';
+import { SavedError, bundlePoster, libraryPath, libraryRel, libraryRoot as savedLibrary, listLibrary, bringClip, saveClip, saveFile, saveGroup, takeSaved } from './saved.mjs';
 import { FILM_FILE, clipKind, isPage } from '../../src/film-doc.mjs';
 import { moveToTrash } from './trash.mjs';
 import { listSkills, removeSkill, setSkillCover, setSkillInstalled, setSkillOn, skillOrigins, skillsInstalled, skillsOff } from '../../src/skills.mjs';
 import { providersRoute } from './providers/index.mjs';
-import { captionRoutes } from './captions.mjs';
+import { captionRoutes, writeSubtitleStyle } from './captions.mjs';
 import { projectSettingsRoute } from './project-settings.mjs';
 import { markersRoute } from './markers.mjs';
 import { transitionPageRoutes } from './transition-pages.mjs';
@@ -107,7 +111,8 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
   /** The key from either session cookie. */
   const cookieKey = (/** @type {Req} */ req) => (sameKey(cookie(req, COOKIE)) ? cookie(req, COOKIE) : cookie(req, FRAMED));
   key ??= advertise ? studioKey() : randomBytes(24).toString('hex');
-  const watchers = createWatchers();
+  /* every change of an open project's folder: a version once it rests, when the person asked for that */
+  const watchers = createWatchers({ onChange: (root, e) => { if (e.type === 'film' || e.type === 'files') autoVersions.changed(root); } });
   /** questions about spending for the person, in the pages showing a project (see get.mjs) */
   const asks = createAsks({ emit: (root, event) => watchers.emit(root, event), roots: watchers.roots });
   /** the editor pages open right now, and whether each is in sight: `/open` switches them to a project */
@@ -121,6 +126,18 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
   let updating = /** @type {{ status: 'updating' | 'failed', version: string, error?: string } | null} */ (null);
   /** whether an app's agent is working in the project at `path` now */
   const agentIn = (/** @type {string} */ path) => working().some((folder) => resolve(folder) === resolve(path));
+  /* the person's edits kept over an agent's writes, the texts a merge read and wrote kept aside in the history */
+  personEdits.configure({ keep: keepAside });
+  /** The project at `root`'s history changed: its pages hear of it. `moved`: the folder's files changed with it. */
+  const historyChanged = (/** @type {string} */ root, { moved = false } = {}) => watchers.emit(root, { type: 'history', ...(moved ? { moved: true } : {}) });
+  /* versions saved on their own (auto-versions.mjs), while the person has Auto versions on */
+  const autoVersions = createAutoVersions({
+    on: () => readPrefs().autoVersions,
+    working: agentIn,
+    roots: () => watchers.roots(),
+    save: async (root, kind) => { if (await saveVersion(root, { kind })) historyChanged(root); },
+  });
+  autoVersions.start();
   /** how many editor pages have connected since Studio started: whether one opened an address `/open` gave out */
   let pagesConnected = 0;
   /** @type {(event: unknown) => void} */
@@ -161,6 +178,8 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
     const stop = watchers.subscribe(project.path, send);
     /* A page reconnecting after a rename takes the current path even if it missed the live event. */
     send({ type: 'project', project });
+    /* film.html missing as the page connects (or reconnects): said at once, not only when it goes */
+    if (projectMissing(project.path) === 'film') send({ type: 'film-missing' });
     for (const ask of asks.pending(project.path)) send(ask);
     return stop;
   };
@@ -302,6 +321,21 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
     }
     /* ── own keys and who makes each kind of media (Settings → Providers): never a key back; see providers/index.mjs ── */
     if (parts[0] === 'providers') return providersRoute(req, res, parts.slice(1), { openBrowser });
+    /* what the person changed in a project while an agent worked, kept over its writes: the note for the agent named
+       `agent`, which its `openfilm` command prints, answered at once ({ id, line }, line null when nothing); it counts
+       as told once the command says it printed it (POST kept/said { id }; person-edits.mjs) */
+    if (parts[0] === 'kept' && parts.length === 1 && req.method === 'GET') {
+      const folder = url.searchParams.get('folder');
+      if (!folder || !isAbsolute(folder)) return json(res, 200, { line: null });
+      /* as projects are named: by the folder's real path */
+      let root = resolve(folder);
+      try { root = realpathSync(root); } catch { /* as given */ }
+      return json(res, 200, personEdits.noteFor(root, (url.searchParams.get('agent') || 'pid:unknown').slice(0, 200)) ?? { line: null });
+    }
+    if (parts[0] === 'kept' && parts[1] === 'said' && parts.length === 2 && req.method === 'POST') {
+      const { id } = /** @type {{ id?: unknown }} */ (await readJson(req));
+      return json(res, 200, { ok: typeof id === 'string' && personEdits.noteSaid(id) });
+    }
     /* ── `openfilm get`: media from a provider, landed in the project; spending is asked here first (see get.mjs) ── */
     if (parts[0] === 'get') {
       making += req.method === 'POST' ? 1 : 0;
@@ -515,8 +549,15 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
       if (req.method === 'GET') return json(res, 200, { projects: (await listProjects()).map((p) => (agentIn(p.path) ? { ...p, working: true } : p)) });
       /* `create` false: only a folder holding a film opens (the editor asks before starting one in a folder) */
       if (req.method === 'POST') {
-        const body = /** @type {{ path?: string, name?: string, create?: boolean }} */ (await readJson(req));
-        return json(res, 200, { project: body.path ? await openProject(body.path, { create: body.create !== false }) : await createProject(body.name) });
+        const body = /** @type {{ path?: string, name?: string, create?: boolean, subtitleStyle?: unknown, stateDir?: string, runtimeDir?: string }} */ (await readJson(req));
+        if (body.path) return json(res, 200, { project: await openProject(body.path, { create: body.create !== false, stateDir: body.stateDir, runtimeDir: body.runtimeDir }) });
+        const project = await createProject(body.name, { stateDir: body.stateDir, runtimeDir: body.runtimeDir });
+        /* a new film starts in the subtitle look this person used last (Studio remembers it): written before its first
+           version, so the project, its exports and Studio agree. An opened project keeps its own, or the default (#286). */
+        if (body.subtitleStyle && typeof body.subtitleStyle === 'object') {
+          await writeSubtitleStyle(project.path, body.subtitleStyle).catch(() => { /* the film still opens, in the default look */ });
+        }
+        return json(res, 200, { project });
       }
     }
     /* a film from GitHub (fetch-repo.mjs): POST { url } `projects/fetch` starts it → { job }; GET `projects/fetch/:id`
@@ -555,9 +596,18 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
     }
     const project = await projectById(parts[1]);
     const rest = parts.slice(2).join('/');
-    /* a project whose folder is gone (moved, renamed or deleted outside Studio): taking it off the list is all there is */
-    if (!existsSync(project.path) && !(!rest && req.method === 'DELETE')) {
-      throw new HttpError(410, 'This project’s folder is not there any more: it was moved, renamed or deleted.', { code: 'missing' });
+    /* Never enter or write into a project removed outside Studio, even if cache writers left its folder behind.
+       `film`: false where film.html alone missing is no reason to refuse (the project itself, as its page opens) */
+    const requireProject = ({ film = true } = {}) => {
+      const missing = projectMissing(project.path);
+      if (missing === 'folder' || (missing && film)) throw new HttpError(410, missing === 'film' ? 'This project’s film.html is missing.'
+        : 'This project’s folder is not there any more: it was moved, renamed or deleted.', { code: missing === 'film' ? 'missing-film' : 'missing' });
+    };
+    /* film.html missing from a folder still there (an agent writing it again, or it lost): the project stays open, and
+       says so; its version history is there to bring film.html back from; what writes the film waits for it */
+    const filmOptional = (!rest && req.method === 'GET') || rest === 'opened' || parts[2] === 'history';
+    if (!(!rest && req.method === 'DELETE')) {
+      requireProject({ film: !filmOptional });
     }
     /* ── subtitles: the film's lines, the person's subtitle style, translation (see captions.mjs) ── */
     if (await captionRoutes(req, res, project.path, rest, { translate: subtitleTranslator, transcribe: await subtitleTranscriber() })) return;
@@ -571,10 +621,12 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
     if (!rest) {
       /* `folder`: the project's files on the film's origin, where the preview loads them */
       if (req.method === 'GET') {
-        const film = await readProjectFilm(project.path);
+        const film = await settleProjectFilm(project.path);
+        requireProject({ film: false });
         /* opened: its card in the projects list gets a picture before the list first shows it */
         if (film.doc?.tracks.some((t) => t.clips.length)) warmFilmPoster(project.path, pages.folderUrl(project));
-        return json(res, 200, { project, folder: pages.folderUrl(project), ...film });
+        /* `filmMissing`: read as an empty film, and said to be missing (see watch.mjs `film-missing`) */
+        return json(res, 200, { project, folder: pages.folderUrl(project), ...film, ...(projectMissing(project.path) === 'film' ? { filmMissing: true } : {}) });
       }
       if (req.method === 'PATCH') {
         /* Dramaclaw patch: a rename moves the project folder, and the host looks a film up by that
@@ -620,96 +672,91 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
       const page = url.searchParams.get('page');
       return json(res, 200, await projectFonts(project.path, page ? resolveIn('', page) : null));
     }
-    /* ── version history: git, every change of it the person's (history.mjs) ──
-         GET    history                          → { status, commits }: the branch checked out, the branches, the
-                                                   uncommitted changes, the film's files against the folder's, and
-                                                   the commits of the branch, newest first
-         GET    history/files                    → { held, ignored }: the film's files, and the others (never kept)
-         GET    history/poster/:commit           the film's picture when it was committed (404: none was taken)
-         POST   history/commit    { message }    commit the uncommitted changes
-         POST   history/discard                  put the film back as the last commit holds it
-         POST   history/restore   { commit }     the film as a commit holds it, as uncommitted changes
-         POST   history/checkout  { branch, create?, from?, carry? }   check out a branch (or make one)
-         PATCH  history/branches/:name { name }  rename a branch
-         DELETE history/branches/:name[?force=1] delete one
-         POST   history/merge     { branch, message, prefer? }          merge a branch into the one checked out
-       Every change tells the project's pages ({ type: 'history' }); one that changed the folder, the film too. While
-       one runs, they hear how far it is ({ type: 'history-progress', op, phase, done, total }). */
+    /* ── version history (history.mjs) ──
+         GET    history[?limit=n]                → { status, versions, more }: the version checked out and the changes
+                                                   against it, and the versions, newest first, with their parents
+         GET    history/versions/:commit         → { files }: what that version changed
+         GET    history/versions/:commit/preview → { folder, doc, missing }: a read-only copy on the film origin
+         POST   history/save      { message? }   commit the changes as a version
+         POST   history/discard                  the folder as the version checked out holds it
+         POST   history/checkout  { commit, discard? }   check out a version (no version is made)
+         POST   history/film      { commit }     film.html missing: only film.html put back as that version has it
+         POST   history/copy      { commit, name } a new project holding that version → { project, missing }
+       Every change tells the project's pages ({ type: 'history' }; `moved`: the folder's files changed, so Studio's
+       state of the film is read again). While one runs, they hear how far it is ({ type: 'history-progress', op,
+       phase, done, total }). */
     if (parts[2] === 'history') {
       const history = parts.slice(3);
-      const changed = () => watchers.emit(project.path, { type: 'history' });
       /** @param {string} op */
       const onProgress = (op) => (/** @type {{ phase: string, done: number, total: number }} */ p) => watchers.emit(project.path, { type: 'history-progress', op, ...p });
       if (!history.length && req.method === 'GET') {
-        const [state, commits] = await Promise.all([historyStatus(project.path, { onProgress: onProgress('load') }), log(project.path)]);
-        return json(res, 200, { status: state, commits });
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 1000);
+        const [state, { versions, more, deletedCount }] = await Promise.all([historyStatus(project.path, { onProgress: onProgress('load') }), log(project.path, { limit, deleted: url.searchParams.get('deleted') === '1', includeDeletedCount: true })]);
+        return json(res, 200, { status: state, versions, more, deletedCount });
       }
-      if (history[0] === 'files' && history.length === 1 && req.method === 'GET') return json(res, 200, await historyFiles(project.path));
-      if (history[0] === 'poster' && history.length === 2 && req.method === 'GET') {
-        if (!/^[0-9a-f]{40}$/.test(history[1])) throw new HttpError(400, 'which commit?');
-        const jpeg = await readFile(join(project.path, TOOL_DIR, 'cache', 'commits', `${history[1]}.jpg`)).catch(() => null);
-        if (!jpeg) throw new HttpError(404, 'no picture of that commit');
-        res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=31536000, immutable', 'content-length': jpeg.length });
-        return res.end(jpeg);
+      if (history[0] === 'versions' && history.length === 2 && req.method === 'GET') return json(res, 200, { files: await versionFilesChanged(project.path, history[1]) });
+      if (history[0] === 'versions' && history.length === 3 && history[2] === 'preview' && req.method === 'GET') {
+        const snapshot = await historyPreviews.get(project.path, history[1]);
+        const film = await readProjectFilm(snapshot.path);
+        return json(res, 200, {
+          folder: pages.folderUrl({ id: `${project.id}/history/${history[1]}`, path: snapshot.path }),
+          doc: film.doc, missing: snapshot.missing,
+        });
       }
-      if (history[0] === 'commit' && req.method === 'POST') {
+      if (history[0] === 'save' && req.method === 'POST') {
         const { message } = /** @type {{ message?: string }} */ (await readJson(req));
-        const sha = await commitChanges(project.path, String(message ?? ''), { onProgress: onProgress('commit') });
-        changed();
-        /* the film's picture as it was committed, for the commit's card: drawn after the answer (it takes a moment) */
-        void pageFrame(project.path, pages.folderUrl(project), FILM_PAGE, -1, 480)
-          .then(async (jpeg) => {
-            const dir = join(project.path, TOOL_DIR, 'cache', 'commits');
-            await mkdir(dir, { recursive: true });
-            await writeAtomic(join(dir, `${sha}.jpg`), jpeg);
-          })
-          .then(changed, () => {});
+        /* a write of the agent's not merged yet is merged first, so the version has the person's edits */
+        await settleProjectFilm(project.path);
+        await personEdits.settleFiles(project.path);
+        const sha = await saveVersion(project.path, { message: String(message ?? ''), onProgress: onProgress('save') });
+        historyChanged(project.path);
         return json(res, 200, { commit: sha });
       }
-      if (history[0] === 'discard' && req.method === 'POST') {
-        await discardChanges(project.path, { onProgress: onProgress('discard') });
-        changed();
-        return json(res, 200, await readProjectFilm(project.path));
+      if ((history[0] === 'delete' || history[0] === 'recover') && history.length === 1 && req.method === 'POST') {
+        const { commits } = /** @type {{ commits?: unknown }} */ (await readJson(req));
+        const done = history[0] === 'delete' ? await deleteVersions(project.path, commits) : await recoverVersions(project.path, commits);
+        if (history[0] === 'delete') await historyPreviews.invalidate(project.path, done.commits);
+        historyChanged(project.path);
+        return json(res, 200, done);
       }
-      if (history[0] === 'restore' && req.method === 'POST') {
-        const { commit: target } = /** @type {{ commit?: string }} */ (await readJson(req));
-        const { missing } = await restoreCommit(project.path, String(target ?? ''), { onProgress: onProgress('restore') });
-        changed();
-        /* `missing`: media of that version history no longer has (left as it is in the folder) */
-        return json(res, 200, { missing, ...(await readProjectFilm(project.path)) });
+      if (history[0] === 'discard' && req.method === 'POST') {
+        /* the folder goes back as a version had it: the person's edits before are not kept over it */
+        personEdits.filmReplaced(project.path);
+        const done = await discardChanges(project.path, { onProgress: onProgress('discard') });
+        historyChanged(project.path, { moved: true });
+        return json(res, 200, { ...done, ...(await readProjectFilm(project.path)) });
       }
       if (history[0] === 'checkout' && req.method === 'POST') {
-        const { branch, create, from, carry } = /** @type {{ branch?: string, create?: boolean, from?: string, carry?: 'leave' | 'bring' }} */ (await readJson(req));
-        const back = await checkout(project.path, { target: String(branch ?? ''), create: create === true, ...(from ? { from: String(from) } : {}), carry: carry === 'bring' ? 'bring' : 'leave', onProgress: onProgress('checkout') });
-        changed();
-        /* `parkedBack` false: the changes left on that branch collide with it now and stay put away */
-        return json(res, 200, { parkedBack: back, ...(await readProjectFilm(project.path)) });
+        const { commit: target, discard } = /** @type {{ commit?: string, discard?: boolean }} */ (await readJson(req));
+        personEdits.filmReplaced(project.path);
+        const done = await checkoutVersion(project.path, String(target ?? ''), { discard: discard === true, onProgress: onProgress('checkout') });
+        historyChanged(project.path, { moved: true });
+        /* `missing`: media of that version history no longer has (left as it is in the folder) */
+        return json(res, 200, { ...done, ...(await readProjectFilm(project.path)) });
       }
-      if (history[0] === 'branches' && history.length === 2) {
-        if (req.method === 'PATCH') {
-          const { name } = /** @type {{ name?: string }} */ (await readJson(req));
-          const renamed = await renameBranch(project.path, history[1], String(name ?? ''));
-          changed();
-          return json(res, 200, { name: renamed });
-        }
-        if (req.method === 'DELETE') {
-          await deleteBranch(project.path, history[1], { force: url.searchParams.get('force') === '1' });
-          changed();
-          return json(res, 200, {});
-        }
+      if (history[0] === 'film' && history.length === 1 && req.method === 'POST') {
+        const { commit: target } = /** @type {{ commit?: string }} */ (await readJson(req));
+        personEdits.filmReplaced(project.path);
+        const done = await restoreFilm(project.path, String(target ?? ''), { onProgress: onProgress('restore') });
+        historyChanged(project.path, { moved: true });
+        return json(res, 200, { ...done, ...(await readProjectFilm(project.path)) });
       }
-      if (history[0] === 'merge' && req.method === 'POST') {
-        const { branch, message, prefer } = /** @type {{ branch?: string, message?: string, prefer?: string }} */ (await readJson(req));
-        const merged = await mergeBranch(project.path, { branch: String(branch ?? ''), message: String(message ?? ''), ...(prefer === 'ours' || prefer === 'theirs' ? { prefer } : {}), onProgress: onProgress('merge') });
-        changed();
-        return json(res, 200, { merged, ...(await readProjectFilm(project.path)) });
+      if (history[0] === 'copy' && req.method === 'POST') {
+        const { commit: target, name } = /** @type {{ commit?: string, name?: string }} */ (await readJson(req));
+        const copy = await createProject(String(name ?? '').trim() || `${project.name} copy`);
+        const { missing } = await copyVersion(project.path, String(target ?? ''), copy.path, { onProgress: onProgress('copy') });
+        return json(res, 200, { project: copy, missing });
       }
       throw new HttpError(404, 'no such history action');
     }
+    /* the chat's next message: the note for its agent (`agent`: app:<conversation>), as `GET /api/kept` gives one */
+    if (rest === 'kept' && req.method === 'GET') {
+      return json(res, 200, personEdits.noteFor(project.path, (url.searchParams.get('agent') || 'app:unknown').slice(0, 200)) ?? { line: null });
+    }
     if (rest === 'edit' && req.method === 'POST') {
-      const { base = null, ops } = /** @type {{ base?: string | null, ops?: import('./film.mjs').Op[] }} */ (await readJson(req));
+      const { base = null, ops, undo } = /** @type {{ base?: string | null, ops?: import('./film.mjs').Op[], undo?: boolean }} */ (await readJson(req));
       try {
-        return json(res, 200, await editProjectFilm(project.path, base, ops ?? []));
+        return json(res, 200, await editProjectFilm(project.path, base, ops ?? [], { undo: undo === true }));
       } catch (e) {
         if (!(e instanceof EditError)) throw e;
         /* the person's view is out of date or the edit cannot be: send the film as it is now with the reason */
@@ -741,12 +788,15 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
       return json(res, 200, { path: where ? await relink(project.path, String(rel ?? ''), where) : null });
     }
     /* the proxies the preview plays heavy footage from (proxies.mjs), asked for when not made yet: each heavy video's
-       state. Off: none */
+       state (off: none), and each one's the editor's browser does not decode (`undecoded`, which it tells by `checks`)
+       on or off */
     if (rest === 'proxies' && req.method === 'POST') {
       const { proxies } = readPrefs();
-      if (!proxies.on) return json(res, 200, { on: false, height: proxies.height, states: {} });
+      const { undecoded } = /** @type {{ undecoded?: unknown }} */ (await readJson(req));
       const videos = (await listFiles(project.path)).files.filter((f) => f.kind === 'video').map((f) => f.path);
-      return json(res, 200, { on: true, height: proxies.height, states: await ensureProxies(project.path, videos, proxies.height) });
+      const told = Array.isArray(undecoded) ? undecoded.filter((rel) => typeof rel === 'string' && videos.includes(rel)) : [];
+      const states = await ensureProxies(project.path, videos, proxies.height, { on: proxies.on, undecoded: told });
+      return json(res, 200, { on: proxies.on, height: proxies.height, states, checks: await playChecks(project.path, videos) });
     }
     /* renders of the stretches the preview played late (preview-cache.mjs), asked for when not made yet: each one's
        name and state, at the proxies' size */
@@ -829,6 +879,20 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
     if (rest === 'saved/take' && req.method === 'POST') {
       const { path: from } = /** @type {{ path?: unknown }} */ (await readJson(req) ?? {});
       return json(res, 200, await savedCall(() => takeSaved(project.path, from)));
+    }
+    /* a page as text, read and written by what Studio writes into a page (layers pasted, page-text.mjs) */
+    if (rest === 'page' && req.method === 'GET') return json(res, 200, await readPage(project.path, url.searchParams.get('path')));
+    if (rest === 'page' && req.method === 'PUT') {
+      const { path: at, text, expect, undo } = /** @type {{ path?: unknown, text?: unknown, expect?: unknown, undo?: unknown }} */ (await readJson(req) ?? {});
+      if (text !== null && typeof text !== 'string') throw new HttpError(400, 'the page\'s text, please');
+      return json(res, 200, await writePage(project.path, at, text, typeof expect === 'string' ? expect : null, { undo: undo === true }));
+    }
+    /* a clip of another project brought into this one, with the files it needs (layers pasted from there) */
+    if (rest === 'bring' && req.method === 'POST') {
+      const { from, clip } = /** @type {{ from?: unknown, clip?: any }} */ (await readJson(req) ?? {});
+      const source = typeof from === 'string' ? await projectById(from).catch(() => null) : null;
+      if (!source || source.missing) throw new HttpError(404, 'The project it was copied from is not there any more.');
+      return json(res, 200, await savedCall(() => bringClip(project.path, source.path, clip, source.name)));
     }
     /* what Studio works out from a media file: its length and size, a poster, a frame, a waveform (see derived.mjs) */
     if (rest === 'media' && req.method === 'GET') {
@@ -973,7 +1037,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
       if (res.headersSent) return res.end();
       json(res, status, { error: e instanceof Error ? e.message : String(e), ...(e instanceof HttpError ? e.extra : {}),
         ...((e instanceof ProjectError || e instanceof FetchError || e instanceof BrowseError) && e.code ? { code: e.code } : {}),
-        ...(e instanceof HistoryError && e.code ? { code: e.code, ...('commits' in e ? { commits: e.commits } : {}) } : {}) });
+        ...(e instanceof HistoryError && e.code ? { code: e.code } : {}) });
     });
   });
   /* the streams: the key, as for the API, and only from the editor's own origin (another site's page could otherwise
@@ -1007,7 +1071,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
       }
       if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'projects' && parts[3] === 'events') {
         const project = await projectById(parts[2]).catch(() => null);
-        if (!project || !existsSync(project.path)) return refuse('404 Not Found');
+        if (!project || (project.missing && project.missingReason !== 'film')) return refuse('404 Not Found');
         const send = acceptWebSocket(req, socket, () => stop());
         if (send) stop = projectStream(project, send);
         return;
@@ -1023,6 +1087,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
   COOKIE = cookieName(address.port);
   FRAMED = framedCookieName(address.port);
   /* the film's port is the next one: when it is not free, the editor's is let go again, so a caller can try others */
+  const historyPreviews = createHistoryPreviews();
   const pages = await startPages({ port: port ? address.port + 1 : 0, editorOrigin: () => origin, secret: key, projects: listProjects }).catch(async (e) => {
     watchers.closeAll();
     await new Promise((done) => editor.close(() => done(undefined)));
@@ -1048,14 +1113,18 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
   async function shutDown() {
     /* the file is ours unless a later Studio has written its own (with the same key: it is the machine's) */
     if (advertise && advertised()?.pid === process.pid) rmSync(runFile(), { force: true });
-    exports.stopAll();
+    /* a running export stops, and cleans up after itself while the rest closes: its half-made files go before Studio */
+    const exporting = exports.stopAll();
     fetches.stopAll();
+    autoVersions.stop();
     await closePageFrames();
     watchers.closeAll();
     await pages.close();
     editor.closeAllConnections();
     for (const socket of streamSockets) socket.destroy();
     await new Promise((done) => editor.close(() => done(undefined)));
+    await exporting;
+    await historyPreviews.close();
   }
   return studio;
 }

@@ -20,6 +20,7 @@
  *                                         no new frame, whether a render played, and per half second of film [its start,
  *                                         refreshes, late]
  *            { type: 'updated', seq, inPlace, duration, sounds, spans }   (inPlace false: load the page again)
+ *            { type: 'spans', spans }             a page opened for the first time said its own length and size
  *            { type: 'picked', seq, target }      (null: nothing there)
  *            { type: 'error', message }           the film or a page failed
  *
@@ -60,7 +61,13 @@
      and draws and answers nothing after — a page error for each later message would only repeat it */
   let up = null;
   const loaded = film.then(async (f) => {
-    try { await f.ready; up = f; post({ type: 'ready', ...facts(f), origin: performance.timeOrigin }); return f; } catch (e) { fail(e); return null; }
+    try {
+      await f.ready;
+      up = f;
+      post({ type: 'ready', ...facts(f), origin: performance.timeOrigin });
+      if (editor()) editor().learned = () => post({ type: 'spans', spans: facts(f).spans });
+      return f;
+    } catch (e) { fail(e); return null; }
   });
 
   /* one frame at a time: a seek that comes while one is drawing waits, and only the latest waiting one is drawn */
@@ -194,6 +201,9 @@
          Playing, the next frame draws it */
       if (inPlace && line) lastT = null;
       else if (inPlace && !next) { next = { t: asked, seq: m.seq }; draw(); }
+      /* a draw already waiting draws it too: it says so under this update's seq, which the editor waits for (a load
+         behind the picture is shown once it has drawn the film as it is now) */
+      else if (inPlace) next.seq = Math.max(Number(next.seq) || 0, Number(m.seq) || 0);
     }
     if (m.type === 'renders') editor()?.renders?.(m.list);
     if (m.type === 'preview') editor()?.preview(m.clip, m.overrides);
