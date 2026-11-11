@@ -8411,6 +8411,27 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 ),
             }
         )
+    if draft_status == "cancelled":
+        # A cancelled draft is settled, so no revision fence is needed.
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_draft_not_confirmable",
+                "retryable": False,
+                "draft_id": draft_id,
+                "revision": revision,
+                "current_revision": current_revision,
+                "error": "Workflow draft was cancelled.",
+                "user_message": "该工作流方案已取消，本次未创建任何节点。",
+                "agent_instruction": (
+                    "Do not call freezone_confirm_workflow_draft again for this draft. "
+                    "It was cancelled "
+                    "and nothing was created. If the user still wants this workflow, prepare a new "
+                    "draft with freezone_prepare_workflow and confirm it only after the user "
+                    "reviews it."
+                ),
+            }
+        )
     if draft_status in {None, "ready"} and revision > current_revision:
         return tool_result(
             {
