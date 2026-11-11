@@ -97,7 +97,7 @@ def test_tool_status_card_inline_data_is_dropped_from_ui_events(chat, caplog):
         "alice",
         scope,
         "turn",
-        {"type": "assistant.message_parts", "parts": [tool_card]},
+        {"type": "canvas_context_result", "parts": [tool_card]},
     )
 
     with store.connect("alice", scope) as conn:

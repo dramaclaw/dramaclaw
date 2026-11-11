@@ -19,7 +19,7 @@ const localeState = vi.hoisted(() => ({ language: "zh" }));
 
 const superChatMocks = vi.hoisted(() => ({
   send: vi.fn(async () => true),
-  appendNotification: vi.fn(async () => undefined),
+  appendNotification: vi.fn(() => true),
   messages: [] as ChatMessage[],
   busy: false,
   activeTurnId: null as string | null,
@@ -216,7 +216,6 @@ vi.mock("@/features/superchat/use-superchat", () => ({
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT: "superchat/canvas-context-request",
   useSuperChat: () => ({
     abort: vi.fn(),
-    approvals: [],
     activeTurnId: superChatMocks.activeTurnId,
     busy: superChatMocks.busy,
     connected: true,
@@ -237,7 +236,6 @@ vi.mock("@/features/superchat/use-superchat", () => ({
     refreshModels: vi.fn(),
     refreshRelayInstances: vi.fn(),
     relayInstances: [],
-    resolveApproval: vi.fn(),
     selectRelayInstance: vi.fn(),
     appendNotification: superChatMocks.appendNotification,
     send: superChatMocks.send,

@@ -204,11 +204,7 @@ export function normalizeMessagePart(part: unknown, index = 0): ChatMessagePart 
 }
 
 function normalizeMessageParts(value: Record<string, unknown>): ChatMessagePart[] | undefined {
-  const rawParts = Array.isArray(value.parts)
-    ? value.parts
-    : Array.isArray(value.message_parts)
-      ? value.message_parts
-      : undefined;
+  const rawParts = Array.isArray(value.parts) ? value.parts : undefined;
   if (!rawParts) return undefined;
   const parts = rawParts.flatMap((part, index) => {
     const normalized = normalizeMessagePart(part, index);

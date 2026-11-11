@@ -10,12 +10,11 @@ export function useBackgroundWorkflowNotifications({
 }: {
   scopeKey: string;
   busy: boolean;
-  appendNotification: (text: string, idempotencyKey?: string) => Promise<boolean>;
+  appendNotification: (text: string, idempotencyKey?: string) => boolean;
 }) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<Record<string, { scopeKey: string; text: string }>>({});
   const notified = useRef(new Set<string>());
-  const inFlight = useRef(new Set<string>());
 
   const enqueue = useCallback((runId: string, result: CanvasChatCommandApplyResult) => {
     if (result.commandResults.some((step) => step.status === "pending")) return;
@@ -32,18 +31,15 @@ export function useBackgroundWorkflowNotifications({
   useEffect(() => {
     if (busy) return;
     for (const [key, notice] of Object.entries(pending)) {
-      if (notice.scopeKey !== scopeKey || inFlight.current.has(key)) continue;
-      inFlight.current.add(key);
-      void appendNotification(notice.text, key).then(() => {
-        // The hook also displays an offline fallback. Do not repeatedly insert
-        // that fallback; the durable pending workflow can recover after reload.
-        notified.current.add(key);
-        setPending((current) => {
-          const next = { ...current };
-          delete next[key];
-          return next;
-        });
-      }).finally(() => inFlight.current.delete(key));
+      if (notice.scopeKey !== scopeKey || notified.current.has(key)) continue;
+      appendNotification(notice.text, key);
+      // Mark local notices delivered so recovered workflows do not repeat them.
+      notified.current.add(key);
+      setPending((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
     }
   }, [appendNotification, busy, pending, scopeKey]);
 

@@ -23,7 +23,6 @@ class ChatBackendEvent:
         "tool_started",
         "tool_updated",
         "tool_update",
-        "permission_requested",
         "usage_update",
         "complete",
         "egress_submitted",
@@ -43,8 +42,6 @@ class ChatBackendEvent:
     input: Any | None = None
     output: Any | None = None
     error: Any | None = None
-    request_id: str | int | None = None
-    options: list[dict[str, Any]] | None = None
     entries: list[dict[str, Any]] | None = None
     usage: dict[str, Any] | None = None
     structured: Any | None = None

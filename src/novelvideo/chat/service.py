@@ -4164,9 +4164,14 @@ async def interrupt_active_codex_turns(username: str) -> bool:
     normalized = str(username or "").strip()
     if not normalized:
         return False
+    entries = _load_active_codex_turns(normalized).values()
+    for entry in entries:
+        token_file = entry.get("token_file")
+        if token_file:
+            await _cleanup_codex_turn_token(Path(token_file))
     turns = [
         (entry.get("thread_id", ""), entry.get("turn_id", ""))
-        for entry in _load_active_codex_turns(normalized).values()
+        for entry in entries
     ]
     turns = list({turn for turn in turns if turn[0] and turn[1]})
 
@@ -4208,6 +4213,9 @@ async def interrupt_active_codex_turn(
     runtime_turn_id = str(persisted.get("turn_id") or "").strip()
     if not thread_id or not runtime_turn_id:
         return False
+    token_file = persisted.get("token_file")
+    if token_file:
+        await _cleanup_codex_turn_token(Path(token_file))
     interrupted = await asyncio.to_thread(
         interrupt_live_codex_turn, thread_id, runtime_turn_id
     )
@@ -5019,18 +5027,6 @@ async def _stream_assistant_reply_hermes(
                 await _emit_chat_event_best_effort(
                     on_event,
                     runtime_event_mapper.progress_event(event, include_details=False),
-                )
-                continue
-            if event.type == "permission_requested":
-                await _emit_chat_event_best_effort(
-                    on_event,
-                    {
-                        "type": "permission_requested",
-                        "request_id": event.request_id,
-                        "text": str(event.text or "需要操作授权"),
-                        "options": event.options or [],
-                        "tool_call": event.raw,
-                    },
                 )
                 continue
             if event.type in {"tool_started", "tool_updated", "tool_update"}:

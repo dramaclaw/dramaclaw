@@ -5605,25 +5605,31 @@ def _create_canvas_confirmation(
     if card:
         credits = " Say that it will consume credits; do not give any estimate." if paid else ""
         instruction = (
+            "Nothing has been executed yet: no canvas change was made, no generation was submitted "
+            "and no credits were spent. "
             "A confirmation card is now shown in the user's DramaClaw chat. Tell the user briefly "
             f"what will happen, naming each target node by title and type.{credits} "
             "Then end your turn. Do not call freezone_confirm_canvas_action in this turn and "
             "never confirm on the user's behalf. The outcome arrives later as a canvas "
             "background result. If the user answers in the conversation instead, call "
             "freezone_confirm_canvas_action or freezone_cancel_canvas_action with this "
-            "confirmation_id in that later turn. The confirmation expires in 30 minutes."
+            "confirmation_id in that later turn. The confirmation expires in 30 minutes. "
+            "Do not tell the user that anything was started, sent, submitted or done."
         )
     else:
         credits = " say that it will consume credits without giving any estimate," if paid else ""
         instruction = (
+            "Nothing has been executed yet: no canvas change was made, no generation was submitted "
+            "and no credits were spent. "
             "Tell the user what will happen, naming each target node by title and type,"
             f"{credits} and ask them to confirm. Only after the user explicitly confirms in a "
             "later message, call freezone_confirm_canvas_action with this confirmation_id; "
             "if they decline, call freezone_cancel_canvas_action. Never confirm on your own "
-            "or in this same turn. The confirmation expires in 30 minutes; after that, ask again."
+            "or in this same turn. The confirmation expires in 30 minutes; after that, ask again. "
+            "Do not tell the user that anything was started, sent, submitted or done."
         )
     return tool_result({
-        "ok": False,
+        "ok": True,
         "status": "confirmation_required",
         "code": "canvas_confirmation_required",
         "tool_call_status": "completed",
@@ -5636,7 +5642,7 @@ def _create_canvas_confirmation(
         "targets": data["targets"],
         "expires_at": data["expires_at"],
         "confirmation_via": "card" if card else "conversation",
-        "message": "需要用户确认后才会执行",
+        "message": "尚未执行：已创建待确认请求，用户确认后才会执行。",
         "agent_instruction": instruction,
     })
 

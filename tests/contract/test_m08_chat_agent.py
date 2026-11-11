@@ -7,6 +7,7 @@ import sys
 
 import pytest
 from fastapi import HTTPException
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 
 from novelvideo.ports.auth_contract import AuthError
@@ -86,6 +87,10 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
     app = create_app()
     with TestClient(app) as client:
         cancel = client.post("/api/v1/chat/cancel")
+        permission_result = client.post(
+            "/api/v1/chat/permission-result",
+            json={"request_id": "r1", "option_id": "allow"},
+        )
         ui_event = client.post(
             "/api/v1/chat/ui-events",
             json={
@@ -94,11 +99,25 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
                 "event": {"type": "noop"},
             },
         )
+        notification = client.post(
+            "/api/v1/chat/notifications",
+            json={"scope": {"kind": "home"}, "text": "通知", "idempotency_key": "k1"},
+        )
 
     assert cancel.status_code == 200
     assert cancel.json()["ok"] is True
-    assert ui_event.status_code == 200
-    assert ui_event.json()["ok"] is True
+    assert permission_result.status_code == 404
+    assert "/api/v1/chat/permission-result" not in {
+        route.path for route in iter_route_contexts(app.routes)
+    }
+    assert ui_event.status_code == 404
+    assert "/api/v1/chat/ui-events" not in {
+        route.path for route in iter_route_contexts(app.routes)
+    }
+    assert notification.status_code == 404
+    assert "/api/v1/chat/notifications" not in {
+        route.path for route in iter_route_contexts(app.routes)
+    }
 
 
 def test_director_auto_database_failure_does_not_block_api_startup(monkeypatch) -> None:

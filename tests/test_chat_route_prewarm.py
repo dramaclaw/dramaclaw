@@ -443,36 +443,6 @@ async def test_canvas_background_followup_is_saved_for_agent_without_reresolving
 
 
 @pytest.mark.anyio
-async def test_workflow_completion_notification_is_idempotent_per_canvas(monkeypatch, tmp_path):
-    from novelvideo.chat.store import ChatStore
-
-    store = ChatStore()
-    monkeypatch.setattr(store, "db_for", lambda _username, scope: tmp_path / f"{scope.canvas_id}.db")
-    monkeypatch.setattr(chat_route, "chat_store", store)
-
-    async def fake_project_context(_user, _scope):
-        return None
-
-    monkeypatch.setattr(chat_route, "_project_context_for_scope", fake_project_context)
-    payload = chat_route.ChatNotificationIn(
-        scope=chat_route.ChatScopePayload(
-            kind="project", id="p", surface="freezone", canvasId="canvas-a", agentId="main",
-        ),
-        text="本轮工作流已完成，是否继续？",
-        idempotency_key="workflow-completion:run-1",
-    )
-    first = await chat_route.append_chat_notification(payload, {"username": "admin"})
-    second = await chat_route.append_chat_notification(payload, {"username": "admin"})
-    assert first["data"]["id"] == second["data"]["id"]
-    with sqlite3.connect(tmp_path / "canvas-a.db") as conn:
-        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
-    payload.scope.canvasId = "canvas-b"
-    await chat_route.append_chat_notification(payload, {"username": "admin"})
-    with sqlite3.connect(tmp_path / "canvas-b.db") as conn:
-        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     "receipt_revision,receipt_task,expected_status",
     [
@@ -1205,13 +1175,16 @@ async def test_watch_pending_skill_studio_events_emits_freezone_bridge_event(
             "event": event,
         }
     ]
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
     messages = chat_route.chat_store.list_messages("admin", scope)
     assert messages[-1]["turn_id"] == "turn-a"
-    assert messages[-1]["ui_events"][0]["type"] == "skill_studio.questions"
-    assert messages[-1]["ui_events"][0]["skill_studio_session_id"] == "skill_studio_01"
-    assert messages[-1]["ui_events"][0]["bridge_key"] == "skill-key-1"
-    assert messages[-1]["ui_events"][0]["canvas_id"] == "canvas-a"
-    assert messages[-1]["ui_events"][0]["agent_id"] == "agent-1"
+    assert events_by_turn["turn-a"][0]["type"] == "skill_studio.questions"
+    assert events_by_turn["turn-a"][0]["skill_studio_session_id"] == "skill_studio_01"
+    assert events_by_turn["turn-a"][0]["bridge_key"] == "skill-key-1"
+    assert events_by_turn["turn-a"][0]["canvas_id"] == "canvas-a"
+    assert events_by_turn["turn-a"][0]["agent_id"] == "agent-1"
 
 
 @pytest.mark.anyio
@@ -1269,9 +1242,11 @@ async def test_watch_pending_skill_studio_events_emits_status_progress_event(
     assert websocket.sent[0]["type"] == "skill_studio.event"
     assert websocket.sent[0]["bridge_key"] == "skill-status-1"
     assert websocket.sent[0]["event"] == event
-    messages = chat_route.chat_store.list_messages("admin", scope)
-    assert messages[-1]["ui_events"][0]["type"] == "skill_studio.status"
-    assert messages[-1]["ui_events"][0]["message"] == "已生成 Recipe 1 / 2"
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
+    assert events_by_turn["turn-a"][0]["type"] == "skill_studio.status"
+    assert events_by_turn["turn-a"][0]["message"] == "已生成 Recipe 1 / 2"
 
 
 def test_skill_studio_status_frame_uses_backend_intent_detection() -> None:
@@ -1657,10 +1632,12 @@ async def test_resolve_skill_studio_tool_result_persists_submitted_ui_event(
         user={"username": "admin"},
     )
 
-    messages = chat_route.chat_store.list_messages("admin", scope)
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
     submitted_events = [
         event
-        for event in messages[-1]["ui_events"]
+        for event in events_by_turn["turn-a"]
         if event.get("type") == "skill_studio.questions"
         and event.get("submitted") is True
     ]
@@ -1727,10 +1704,12 @@ async def test_resolve_skill_studio_draft_tool_result_persists_submitted_ui_even
         user={"username": "admin"},
     )
 
-    messages = chat_route.chat_store.list_messages("admin", scope)
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
     submitted_events = [
         event
-        for event in messages[-1]["ui_events"]
+        for event in events_by_turn["turn-a"]
         if event.get("type") == "skill_studio.draft" and event.get("submitted") is True
     ]
     assert submitted_events
@@ -1944,11 +1923,14 @@ async def test_watch_pending_clarification_events_emits_freezone_bridge_event(
             "event": event,
         }
     ]
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
     messages = chat_route.chat_store.list_messages("admin", scope)
     assert messages[-1]["turn_id"] == "turn-a"
-    assert messages[-1]["ui_events"][0]["type"] == "assistant.clarification.request"
-    assert messages[-1]["ui_events"][0]["clarification_id"] == "clarify_01"
-    assert messages[-1]["ui_events"][0]["bridge_key"] == "clarify-key-1"
+    assert events_by_turn["turn-a"][0]["type"] == "assistant.clarification.request"
+    assert events_by_turn["turn-a"][0]["clarification_id"] == "clarify_01"
+    assert events_by_turn["turn-a"][0]["bridge_key"] == "clarify-key-1"
 
 
 async def test_watch_pending_clarification_events_redelivers_unanswered_card_to_next_turn(
@@ -2134,19 +2116,16 @@ async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
         user={"username": "admin"},
     )
 
-    messages = chat_route.chat_store.list_messages("admin", scope)
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a", "turn-b"]
+    )
     if replayed:
         for turn in ("turn-a", "turn-b"):
-            events = [
-                event
-                for message in messages
-                if message.get("turn_id") == turn
-                for event in message.get("ui_events", [])
-            ]
+            events = events_by_turn[turn]
             assert any(event.get("submitted") is True for event in events)
     submitted_events = [
         event
-        for event in messages[-1]["ui_events"]
+        for event in events_by_turn["turn-b" if replayed else "turn-a"]
         if event.get("type") == "assistant.clarification.request"
         and event.get("submitted") is True
     ]

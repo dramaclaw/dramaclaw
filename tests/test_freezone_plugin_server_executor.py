@@ -406,20 +406,26 @@ CONFIRMATION = {
 DELETE = [{"type": "delete_nodes", "node_ids": ["n1"]}]
 CONFIRMATION_PATH = "/api/v1/projects/p/freezone/canvases/c/confirmations"
 CARD_INSTRUCTION = (
+    "Nothing has been executed yet: no canvas change was made, no generation was submitted "
+    "and no credits were spent. "
     "A confirmation card is now shown in the user's DramaClaw chat. Tell the user briefly "
     "what will happen, naming each target node by title and type. Then end your turn. "
     "Do not call freezone_confirm_canvas_action in this turn and never confirm on the user's "
     "behalf. The outcome arrives later as a canvas background result. If the user answers "
     "in the conversation instead, call freezone_confirm_canvas_action or "
     "freezone_cancel_canvas_action with this confirmation_id in that later turn. "
-    "The confirmation expires in 30 minutes."
+    "The confirmation expires in 30 minutes. "
+    "Do not tell the user that anything was started, sent, submitted or done."
 )
 CONVERSATION_INSTRUCTION = (
+    "Nothing has been executed yet: no canvas change was made, no generation was submitted "
+    "and no credits were spent. "
     "Tell the user what will happen, naming each target node by title and type, and ask "
     "them to confirm. Only after the user explicitly confirms in a later message, call "
     "freezone_confirm_canvas_action with this confirmation_id; if they decline, call "
     "freezone_cancel_canvas_action. Never confirm on your own or in this same turn. "
-    "The confirmation expires in 30 minutes; after that, ask again."
+    "The confirmation expires in 30 minutes; after that, ask again. "
+    "Do not tell the user that anything was started, sent, submitted or done."
 )
 
 
@@ -451,12 +457,13 @@ def _tool(plugin, name, args):
 
 def _confirmation_result(data, via, instruction):
     return {
-        "ok": False, "status": "confirmation_required", "code": "canvas_confirmation_required",
+        "ok": True, "status": "confirmation_required", "code": "canvas_confirmation_required",
         "tool_call_status": "completed", "canvas_apply_status": "awaiting_confirmation",
         "applied": False, "project_id": "p", "canvas_id": "c",
         "confirmation_id": CONFIRMATION_ID, "kinds": data["kinds"], "targets": data["targets"],
         "expires_at": 1900001800.0, "confirmation_via": via,
-        "message": "需要用户确认后才会执行", "agent_instruction": instruction,
+        "message": "尚未执行：已创建待确认请求，用户确认后才会执行。",
+        "agent_instruction": instruction,
     }
 
 

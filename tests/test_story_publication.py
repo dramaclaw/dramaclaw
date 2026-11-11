@@ -248,7 +248,7 @@ def test_author_scope(source, monkeypatch):
 
 
 @pytest.fixture
-def publication_api(source, monkeypatch):
+def publication_api(source, monkeypatch, tmp_path):
     """Real bearer authentication and publication storage in an isolated project."""
     import asyncio
     from types import SimpleNamespace
@@ -267,7 +267,7 @@ def publication_api(source, monkeypatch):
     state.mkdir()
     monkeypatch.setenv("ST_PUBLICATION_DIR", str(index_store.root))
     monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "false")
-    auth = LocalAuthSession()
+    auth = LocalAuthSession(tmp_path / "agent_sessions")
     monkeypatch.setitem(registry._PORTS, "auth_session", auth)
     monkeypatch.setitem(registry._PORTS, "auth", FileAuthPort())
 

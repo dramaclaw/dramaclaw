@@ -29,25 +29,13 @@ from novelvideo.sqlite_pragmas import (
 )
 
 
-# Bound encoded payload bytes before SQLite transfers TEXT into Python.
-# A normal ~30 minute turn already produces a ~1.5 MiB merged snapshot, so a single
-# event may use a whole turn budget; the history budget still covers a couple of them.
+# Bound server-written UI events by encoded payload bytes before SQLite transfers
+# TEXT into Python. Per-event, per-turn and history budgets also cap large results.
 UI_EVENT_MAX_BYTES = 8 * 1024 * 1024
 UI_TURN_MAX_BYTES = UI_EVENT_MAX_BYTES
 UI_HISTORY_MAX_BYTES = 16 * 1024 * 1024
-# Row caps per turn. Only legacy (pre-merge) snapshot rows can pile up; other UI events
-# (e.g. ``canvas_context_result``) are small and legitimately numerous, so they get their
-# own generous cap and are otherwise bounded by the byte budget.
-UI_TURN_MAX_ROWS = 256
-UI_TURN_MAX_OTHER_ROWS = 4096
-SNAPSHOT_EVENT_TYPE = "assistant.message_parts"
-
-
-class ChatUiEventRejected(ValueError):
-    """The UI event can never be stored as-is; retrying the same write will not help.
-
-    The previously persisted snapshot for the turn is left untouched.
-    """
+# Server-written events can be small and numerous; cap rows as well as payload bytes.
+UI_TURN_MAX_ROWS = 4096
 
 
 def _assistant_prefix_candidates(previous_assistant: object) -> list[str]:
@@ -842,88 +830,16 @@ class ChatStore:
         ).strip()
         encoded = json.dumps(event, ensure_ascii=False)
         if len(encoded.encode("utf-8")) > UI_EVENT_MAX_BYTES:
-            raise ChatUiEventRejected("chat UI event exceeds payload byte budget")
+            raise ValueError("chat UI event exceeds payload byte budget")
         created_at = datetime.now(timezone.utc).isoformat()
         conn = self.connect(username, scope)
         try:
-            # Serialize the read/merge/write across API processes, not just tasks.
-            conn.execute("BEGIN IMMEDIATE")
-            previous_id = None
-            if event_type == "assistant.message_parts":
-                if not isinstance(event.get("parts"), list):
-                    raise ValueError("message parts must be an array")
-                rows = conn.execute(
-                    "SELECT id, CASE WHEN length(CAST(payload_json AS BLOB)) <= ? "
-                    "THEN payload_json END AS payload_json FROM chat_ui_events "
-                    "WHERE turn_id=? AND event_type=? ORDER BY id LIMIT ?",
-                    (UI_EVENT_MAX_BYTES, turn_id, event_type, UI_TURN_MAX_ROWS + 1),
-                )
-                merged = []
-                consumed = 0
-                revision = event.get("snapshot_revision")
-                if revision is not None and (type(revision) is not int or revision < 0):
-                    raise ValueError("invalid snapshot revision")
-                count = 0
-                for row in rows:
-                    count += 1
-                    raw = row["payload_json"]
-                    consumed += (
-                        len(raw.encode("utf-8"))
-                        if raw is not None
-                        else UI_TURN_MAX_BYTES + 1
-                    )
-                    if count > UI_TURN_MAX_ROWS or consumed > UI_TURN_MAX_BYTES:
-                        raise ChatUiEventRejected(
-                            "chat history requires offline compaction before writing"
-                        )
-                    previous = json.loads(raw)
-                    old_revision = previous.get("snapshot_revision")
-                    if (
-                        isinstance(old_revision, int)
-                        and revision is not None
-                        and revision <= old_revision
-                    ):
-                        return {
-                            "id": row["id"],
-                            "turn_id": turn_id,
-                            "type": event_type,
-                            "payload": previous,
-                            "created_at": created_at,
-                            "stale": True,
-                        }
-                    if revision is None and isinstance(old_revision, int):
-                        event = {**event, "snapshot_revision": old_revision}
-                    previous_id = row["id"]
-                    merged = self._merge_message_parts_snapshots(
-                        [merged, previous.get("parts", [])]
-                    )
-                event = {
-                    **event,
-                    "parts": self._merge_message_parts_snapshots(
-                        [merged, event["parts"]]
-                    ),
-                }
-                encoded = json.dumps(event, ensure_ascii=False)
-                if len(encoded.encode("utf-8")) > UI_EVENT_MAX_BYTES:
-                    raise ChatUiEventRejected(
-                        "merged chat UI event exceeds payload byte budget"
-                    )
-            if previous_id is not None:
-                conn.execute(
-                    "UPDATE chat_ui_events SET payload_json=?,created_at=? WHERE id=?",
-                    (encoded, created_at, previous_id),
-                )
-                conn.execute(
-                    "DELETE FROM chat_ui_events WHERE turn_id=? AND event_type=? AND id<>?",
-                    (turn_id, event_type, previous_id),
-                )
-                event_id = previous_id
-            else:
-                cursor = conn.execute(
-                    "INSERT INTO chat_ui_events(turn_id,event_type,payload_json,created_at) VALUES (?,?,?,?)",
-                    (turn_id, event_type, encoded, created_at),
-                )
-                event_id = cursor.lastrowid
+            cursor = conn.execute(
+                "INSERT INTO chat_ui_events(turn_id,event_type,payload_json,created_at) "
+                "VALUES (?,?,?,?)",
+                (turn_id, event_type, encoded, created_at),
+            )
+            event_id = cursor.lastrowid
             conn.commit()
             return {
                 "id": int(event_id),
@@ -947,14 +863,6 @@ class ChatStore:
         )
 
     @staticmethod
-    def _ui_event_query() -> str:
-        return """SELECT id, turn_id, event_type, created_at,
-                    length(CAST(payload_json AS BLOB)) AS size,
-                    CASE WHEN length(CAST(payload_json AS BLOB)) <= ?
-                         THEN payload_json END AS payload_json
-                  FROM chat_ui_events WHERE turn_id=? ORDER BY id DESC LIMIT ?"""
-
-    @staticmethod
     def _bounded_event(row, remaining: int):
         if row["payload_json"] is None or row["size"] > remaining:
             return None
@@ -973,130 +881,11 @@ class ChatStore:
         }
 
     @staticmethod
-    def _ui_event_row_limit() -> int:
-        return UI_TURN_MAX_ROWS + UI_TURN_MAX_OTHER_ROWS + 1
-
-    @staticmethod
-    def _row_cap_reached(row, counts: dict[bool, int]) -> bool:
-        is_snapshot = row["event_type"] == SNAPSHOT_EVENT_TYPE
-        cap = UI_TURN_MAX_ROWS if is_snapshot else UI_TURN_MAX_OTHER_ROWS
-        if counts[is_snapshot] >= cap:
-            return True
-        counts[is_snapshot] += 1
-        return False
-
-    @staticmethod
     def _finish_ui_events(events, incomplete):
         events.reverse()
         if incomplete:
             events.append({"type": "chat.history_incomplete"})
         return events
-
-    async def _load_ui_events_async(
-        self, db, turn_ids
-    ) -> dict[str, list[dict[str, Any]]]:
-        result = {}
-        total = UI_HISTORY_MAX_BYTES
-        for turn_id in dict.fromkeys(turn_ids):
-            budget = min(total, UI_TURN_MAX_BYTES)
-            events, incomplete, counts = [], False, {True: 0, False: 0}
-            async with db.execute(
-                self._ui_event_query(),
-                (min(UI_EVENT_MAX_BYTES, budget), turn_id, self._ui_event_row_limit()),
-            ) as cursor:
-                # fetchone avoids aiosqlite's multi-row prefetch of large TEXT.
-                while (row := await cursor.fetchone()) is not None:
-                    event = self._bounded_event(row, budget)
-                    if event is None or self._row_cap_reached(row, counts):
-                        incomplete = True
-                        break
-                    events.append(event)
-                    budget -= row["size"]
-                    total -= row["size"]
-            result[turn_id] = self._finish_ui_events(events, incomplete)
-        return result
-
-    def _load_ui_events(self, conn, turn_ids) -> dict[str, list[dict[str, Any]]]:
-        result = {}
-        total = UI_HISTORY_MAX_BYTES
-        for turn_id in dict.fromkeys(turn_ids):
-            budget = min(total, UI_TURN_MAX_BYTES)
-            events, incomplete, counts = [], False, {True: 0, False: 0}
-            cursor = conn.execute(
-                self._ui_event_query(),
-                (min(UI_EVENT_MAX_BYTES, budget), turn_id, self._ui_event_row_limit()),
-            )
-            try:
-                for row in cursor:
-                    event = self._bounded_event(row, budget)
-                    if event is None or self._row_cap_reached(row, counts):
-                        incomplete = True
-                        break
-                    events.append(event)
-                    budget -= row["size"]
-                    total -= row["size"]
-            finally:
-                cursor.close()
-            result[turn_id] = self._finish_ui_events(events, incomplete)
-        return result
-
-    @staticmethod
-    def _message_part_key(part: Any) -> str | None:
-        if not isinstance(part, dict):
-            return None
-        part_id = str(part.get("id") or "").strip()
-        if part_id:
-            return part_id
-        event = part.get("event")
-        if not isinstance(event, dict):
-            return None
-        event_type = str(event.get("type") or "").strip()
-        stable_id = (
-            str(event.get("bridge_key") or "").strip()
-            or str(event.get("skill_studio_session_id") or "").strip()
-            or str(event.get("clarification_id") or "").strip()
-        )
-        if event_type and stable_id:
-            return f"{event_type}:{stable_id}"
-        return None
-
-    @staticmethod
-    def _is_transient_message_part(part: Any) -> bool:
-        if not isinstance(part, dict):
-            return False
-        if str(part.get("type") or "") != "skill_studio":
-            return False
-        event = part.get("event")
-        return isinstance(event, dict) and str(event.get("type") or "") == "skill_studio.status"
-
-    @classmethod
-    def _merge_message_parts_snapshots(cls, snapshots: list[list[Any]]) -> list[Any]:
-        merged: list[Any] = []
-        for snapshot in snapshots:
-            if not isinstance(snapshot, list):
-                continue
-            snapshot_keys = {
-                key
-                for part in snapshot
-                if (key := cls._message_part_key(part))
-            }
-            preserved: list[Any] = []
-            for part in merged:
-                if not isinstance(part, dict):
-                    continue
-                part_type = str(part.get("type") or "")
-                key = cls._message_part_key(part)
-                if part_type == "canvas_approval":
-                    continue
-                if cls._is_transient_message_part(part):
-                    continue
-                if part_type == "text" and key not in snapshot_keys:
-                    continue
-                if key and key in snapshot_keys:
-                    continue
-                preserved.append(part)
-            merged = [*preserved, *snapshot]
-        return merged
 
     @staticmethod
     def _attach_ui_events_to_messages(
@@ -1159,29 +948,10 @@ class ChatStore:
                 target_index = len(messages) - 1
             if any(event.get("type") == "chat.history_incomplete" for event in events):
                 messages[target_index]["parts_incomplete"] = True
-            parts_events = [
-                event
-                for event in events
-                if str(event.get("type") or "") == "assistant.message_parts"
-                and isinstance(event.get("parts"), list)
-            ]
-            visible_events = [
-                event
-                for event in events
-                if str(event.get("type") or "") != "assistant.message_parts"
-            ]
-            if parts_events:
-                messages[target_index]["parts"] = ChatStore._merge_message_parts_snapshots(
-                    [
-                        event["parts"]
-                        for event in parts_events
-                        if isinstance(event.get("parts"), list)
-                    ]
-                )
             existing = messages[target_index].get("ui_events")
             if not isinstance(existing, list):
                 existing = []
-            messages[target_index]["ui_events"] = [*existing, *visible_events]
+            messages[target_index]["ui_events"] = [*existing, *events]
 
     def list_messages(
         self,
@@ -1202,7 +972,6 @@ class ChatStore:
                 """,
                 (limit,),
             ).fetchall()
-            events_by_turn = self._load_ui_events(conn, [row["turn_id"] for row in rows if row["turn_id"]])
         finally:
             conn.close()
         messages: list[dict[str, Any]] = []
@@ -1238,19 +1007,6 @@ class ChatStore:
                     "created_at": str(row["created_at"]),
                 }
             )
-        visible_turn_ids = {
-            str(message.get("turn_id") or "").strip()
-            for message in messages
-            if str(message.get("turn_id") or "").strip()
-        }
-        self._attach_ui_events_to_messages(
-            messages,
-            {
-                turn_id: events
-                for turn_id, events in events_by_turn.items()
-                if turn_id in visible_turn_ids
-            },
-        )
         return messages
 
     async def list_messages_async(
@@ -1277,7 +1033,6 @@ class ChatStore:
                 (limit,),
             )
             rows = await cursor.fetchall()
-            events_by_turn = await self._load_ui_events_async(db, [row["turn_id"] for row in rows if row["turn_id"]])
         finally:
             await db.close()
         messages: list[dict[str, Any]] = []
@@ -1299,19 +1054,6 @@ class ChatStore:
             if isinstance(metadata, dict):
                 message.update(metadata)
             messages.append(message)
-        visible_turn_ids = {
-            str(message.get("turn_id") or "").strip()
-            for message in messages
-            if str(message.get("turn_id") or "").strip()
-        }
-        self._attach_ui_events_to_messages(
-            messages,
-            {
-                turn_id: events
-                for turn_id, events in events_by_turn.items()
-                if turn_id in visible_turn_ids
-            },
-        )
         return messages
 
     async def history_rows_async(
@@ -1409,7 +1151,7 @@ class ChatStore:
             total = max_bytes
             for turn_id in dict.fromkeys(turn_ids):
                 budget = min(total, UI_TURN_MAX_BYTES)
-                events, incomplete, counts = [], False, {True: 0, False: 0}
+                events, incomplete = [], False
                 async with db.execute(
                     """SELECT id, turn_id, event_type, created_at,
                               length(CAST(payload_json AS BLOB)) AS size,
@@ -1418,11 +1160,11 @@ class ChatStore:
                          FROM chat_ui_events
                         WHERE turn_id=? AND event_type != 'assistant.message_parts'
                         ORDER BY id DESC LIMIT ?""",
-                    (min(UI_EVENT_MAX_BYTES, budget), turn_id, self._ui_event_row_limit()),
+                    (min(UI_EVENT_MAX_BYTES, budget), turn_id, UI_TURN_MAX_ROWS + 1),
                 ) as cursor:
                     while (row := await cursor.fetchone()) is not None:
                         event = self._bounded_event(row, budget)
-                        if event is None or self._row_cap_reached(row, counts):
+                        if event is None or len(events) >= UI_TURN_MAX_ROWS:
                             incomplete = True
                             break
                         events.append(event)

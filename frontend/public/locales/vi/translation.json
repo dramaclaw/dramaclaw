@@ -864,10 +864,6 @@
     "dropFiles": "Thả để tải file lên",
     "unsupportedDropFiles": "Chỉ hỗ trợ .txt, .md, .doc và .docx",
     "removeAttachment": "Xoá tệp đính kèm",
-    "approvalExpires": "Hết hạn sau {{seconds}}s",
-    "allowOnce": "Cho phép một lần",
-    "allowAlways": "Luôn cho phép",
-    "deny": "Từ chối",
     "instance": "Instance",
     "model": "Model",
     "noInstances": "Không có instance nào",
@@ -8979,6 +8975,7 @@
       "noMatches": "Không có nút phù hợp"
     },
     "runtime": {
+      "waitingForConfirmation": "Đang chờ bạn xác nhận",
       "waitingForGenerationParameters": "Đang chờ chọn thông số tạo",
       "clarificationPaused": "Đã tạm dừng chờ câu trả lời"
     }
