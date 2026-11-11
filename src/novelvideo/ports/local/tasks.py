@@ -6,7 +6,6 @@ import asyncio
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from functools import partial
 import logging
 import random
 import threading
@@ -35,6 +34,7 @@ from novelvideo.task_backend.subprocesses import kill_task_processes
 from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
 
 logger = logging.getLogger(__name__)
+_LANE_THREAD = threading.local()
 
 _AUTHZ_RETRY_MAX_RETRIES = 5
 _AUTHZ_RETRY_BASE_DELAY = 2.0
@@ -69,6 +69,7 @@ class _InlineLane:
 
 class InlineTaskBackend:
     def __init__(self, *, producer=None, consumer=None) -> None:
+        self._home_loop: asyncio.AbstractEventLoop | None = None
         self._producer = producer
         self._consumer = consumer
         self._background_tasks: set[asyncio.Task] = set()
@@ -85,6 +86,16 @@ class InlineTaskBackend:
             for lane in sorted(QUEUE_KINDS)
         }
 
+    def _forward_loop(self) -> asyncio.AbstractEventLoop | None:
+        loop = asyncio.get_running_loop()
+        if (
+            self._home_loop is None or self._home_loop.is_closed()
+        ) and not getattr(_LANE_THREAD, "active", False):
+            self._home_loop = loop
+        if self._home_loop is not None and self._home_loop is not loop:
+            return self._home_loop
+        return None
+
     async def enqueue_project_task(
         self,
         ctx,
@@ -97,6 +108,15 @@ class InlineTaskBackend:
         scope: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> QueuedTask:
+        home_loop = self._forward_loop()
+        if home_loop is not None:
+            return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
+                self.enqueue_project_task(
+                    ctx, task_type=task_type, product_surface=product_surface,
+                    queue_kind=queue_kind, episode=episode, beat_num=beat_num,
+                    scope=scope, payload=payload,
+                ), home_loop,
+            ))
         require_project_home_node(ctx, operation="enqueue project task")
         manager = get_task_manager()
         payload = payload or {}
@@ -328,18 +348,17 @@ class InlineTaskBackend:
             )
             return
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            lane.executor,
-            partial(
-                run_project_task_core_sync,
-                verified,
-                job.ctx,
-                job.manager,
-                run_task_id=job.run_task_id,
-                metadata=job.metadata,
-            ),
-        )
+        def run_in_lane_thread():
+            _LANE_THREAD.active = True
+            try:
+                return run_project_task_core_sync(
+                    verified, job.ctx, job.manager,
+                    run_task_id=job.run_task_id, metadata=job.metadata,
+                )
+            finally:
+                _LANE_THREAD.active = False
+
+        await asyncio.get_running_loop().run_in_executor(lane.executor, run_in_lane_thread)
 
     def _on_background_task_done(self, task: asyncio.Task, lane_name: str) -> None:
         self._background_tasks.discard(task)
@@ -368,6 +387,13 @@ class InlineTaskBackend:
         force: bool = False,
         acknowledge_no_refund: bool = False,
     ) -> dict:
+        home_loop = self._forward_loop()
+        if home_loop is not None:
+            return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
+                self.cancel_project_task(
+                    ctx, task_state, force=force, acknowledge_no_refund=acknowledge_no_refund,
+                ), home_loop,
+            ))
         del force, acknowledge_no_refund
         await get_cancellation_store().request_cancel(
             project_id=ctx.project_id,

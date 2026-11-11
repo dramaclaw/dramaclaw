@@ -1443,3 +1443,85 @@ def test_list_server_runs_needing_driver_filters_owner_status_and_lease(tmp_path
     assert sorted(run["canvas_id"] for run in listed) == ["default", "expired"]
     assert {run["run_id"] for run in listed} == {unowned["run_id"], expired["run_id"]}
     assert [run["status"] for run in listed] == ["running", "running"]
+
+
+@pytest.mark.parametrize(
+    ('owner', 'result', 'status', 'artifact'),
+    [
+        ('server', {'url': '/static/x.png'}, 'completed', 'valid'),
+        ('server', {}, 'failed', 'unverified'),
+        ('browser_legacy', {'url': '/static/x.png'}, 'running', None),
+    ],
+)
+def test_server_action_result_validation(tmp_path, owner, result, status, artifact):
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind=owner,
+        actions=[{'node_id': 'image', 'action': 'generate_image'}],
+    )
+    updated = update_workflow_run(
+        project_dir=tmp_path, canvas_id='default', run_id=run['run_id'], owner_kind=owner,
+        action_updates=[{
+            'node_id': 'image', 'action': 'generate_image', 'status': 'completed',
+            'result': result,
+        }],
+    )
+    assert updated['actions'][0]['status'] == status
+    assert updated['actions'][0].get('artifact_status') == artifact
+    if status == 'failed':
+        assert updated['actions'][0]['error'] == '任务已结束但没有可核验的持久化产物。'
+
+
+def test_server_action_can_clear_task_identity(tmp_path):
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'image', 'action': 'generate_image'}],
+    )
+    for identity in ('task-one', ''):
+        updated = update_workflow_run(
+            project_dir=tmp_path, canvas_id='default', run_id=run['run_id'], owner_kind='server',
+            action_updates=[{
+                'node_id': 'image', 'action': 'generate_image', 'status': 'running',
+                'task_key': identity, 'task_type': identity, 'job_id': identity,
+            }],
+        )
+    assert [updated['actions'][0][key] for key in ('task_key', 'task_type', 'job_id')] == [
+        None, None, None,
+    ]
+
+
+def test_mark_server_drive_generation(tmp_path):
+    from novelvideo.freezone import workflow_runs as store
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'image', 'action': 'generate_image'}], now=now,
+    )
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=now) == 1
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=now) is None
+    later = now + timedelta(seconds=store.WORKFLOW_RUN_LEASE_SECONDS)
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=later) == 2
+    store.acquire_server_workflow_run(**scope, runner_id='driver', now=later)
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=later) is None
+    store.update_workflow_run(
+        **scope, status='cancelled', now=later,
+    )
+    assert store.mark_server_workflow_drive_enqueued(
+        **scope, now=later + timedelta(seconds=store.WORKFLOW_RUN_LEASE_SECONDS),
+    ) is None
+    leased = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='leased', owner_kind='server',
+        actions=[{'node_id': 'image', 'action': 'generate_image'}], now=later,
+        runner_id='active',
+    )
+    assert store.mark_server_workflow_drive_enqueued(
+        project_dir=tmp_path, canvas_id='leased', run_id=leased['run_id'], now=later,
+    ) is None
+    browser = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='browser',
+        actions=[{'node_id': 'image', 'action': 'generate_image'}], now=now,
+    )
+    assert store.mark_server_workflow_drive_enqueued(
+        project_dir=tmp_path, canvas_id='browser', run_id=browser['run_id'], now=now,
+    ) is None

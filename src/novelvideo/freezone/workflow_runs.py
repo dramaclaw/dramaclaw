@@ -1188,6 +1188,36 @@ def acquire_server_workflow_run(
         return {"run": payload, "acquired": True, "took_over": took_over}
 
 
+def mark_server_workflow_drive_enqueued(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    run_id: str,
+    now: datetime | None = None,
+    lease_seconds: int = WORKFLOW_RUN_LEASE_SECONDS,
+) -> int | None:
+    """Reserve a fresh drive scope once per expired-driver lease window."""
+    _validate_scope(canvas_id, run_id)
+    current = now or datetime.now(timezone.utc)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run = _read_run(conn, canvas_id=canvas_id, run_id=run_id)
+        if run is None or run["owner_kind"] != "server" or run["status"] != "running":
+            return None
+        expires = _parse_timestamp(run.get("lease_expires_at"))
+        if run.get("runner_id") and (expires is None or expires > current):
+            return None
+        metadata = run["metadata"]
+        marked = _parse_timestamp(metadata.get("drive_enqueued_at"))
+        if marked is not None and current < marked + timedelta(seconds=lease_seconds):
+            return None
+        generation = int(metadata.get("drive_generation") or 0) + 1
+        metadata["drive_generation"] = generation
+        metadata["drive_enqueued_at"] = _timestamp(current)
+        _write_run(conn, run)
+        return generation
+
+
 def list_server_workflow_runs_needing_driver(
     *, project_dir: Path, now: datetime | None = None
 ) -> list[dict[str, Any]]:
@@ -1594,18 +1624,24 @@ def update_workflow_run(
                     f"terminal workflow action cannot transition from "
                     f"{current_node_status} to {node_status}"
                 )
-            if (
-                action in GENERATION_ACTIONS
-                and node_status == "completed"
-                and item.get("artifact_status") != "valid"
-            ):
-                # Browser callbacks are delivery hints, not completion authority.
-                # Durable task reconciliation below is the only path that can mark
-                # a generation action completed.
-                node_status = "running"
+            artifact_error = None
+            if action in GENERATION_ACTIONS and node_status == "completed":
+                if owner_kind == "server":
+                    artifact_status, artifact_error = _validate_action_artifact(
+                        action=action,
+                        task_result=update.get("result"),
+                        history_record=None,
+                        project_dir=project_dir,
+                    )
+                    item["artifact_status"] = artifact_status
+                    if artifact_status != "valid":
+                        node_status = "failed"
+                elif item.get("artifact_status") != "valid":
+                    # Browser callbacks are delivery hints, not completion authority.
+                    node_status = "running"
             item["status"] = node_status
             item["updated_at"] = timestamp
-            item["error"] = str(update.get("error") or "").strip() or None
+            item["error"] = artifact_error or str(update.get("error") or "").strip() or None
             if "phase" in update:
                 phase = str(update.get("phase") or "").strip()
                 if phase and phase not in NODE_PHASES:
