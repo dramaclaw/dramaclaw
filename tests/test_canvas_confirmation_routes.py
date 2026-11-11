@@ -580,12 +580,38 @@ def test_server_conversation_run_without_card_notice(setup):
     assert notices(setup) == []
 
 
-def test_video_requires_open_canvas_at_creation_and_decision(setup):
+def test_video_confirmation_starts_server_run_without_browser(setup):
     commands = [{"type": "run_node_action", "node_id": "n2", "action": "generate_video"}]
     setup.pool.plan["actions"][0].update(node_id="n2", action="generate_video", label="片头")
+    created = create(setup, commands=commands)
+    assert created["browser_open"] is False
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "running"
+    assert response.json()["data"]["refused"] == []
+    run = runs(setup)[0]
+    assert run["owner_kind"] == "server"
+    assert [(a["node_id"], a["action"]) for a in run["actions"]] == [
+        ("n2", "generate_video"),
+    ]
+    assert [task["task_type"] for task in setup.queued] == ["freezone_workflow_drive"]
+
+
+@pytest.mark.parametrize("action,data,reason", [
+    ("generate_text_video", {}, "action_not_on_server"),
+    ("generate_video", {"count": 2}, "video_count"),
+    ("generate_video", {"storyRole": "start", "continuityMode": "auto"},
+     "video_story_continuity"),
+])
+def test_browser_only_video_requires_open_canvas_at_creation_and_decision(setup, action, data, reason):
+    commands = [{"type": "run_node_action", "node_id": "n2", "action": action}]
+    setup.pool.plan["actions"][0].update(node_id="n2", action=action, label="片头")
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    canvas["nodes"][1]["data"].update(data)
+    canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), canvas)
     expected = {"code": "canvas_open_required", "message": "这些动作需要打开画布才能运行：片头",
-                "blocked": [{"node_id": "n2", "action": "generate_video", "label": "片头",
-                             "reason": "action_not_on_server"}]}
+                "blocked": [{"node_id": "n2", "action": action, "label": "片头",
+                             "reason": reason}]}
     response = setup.client.post(BASE + "/confirmations", json={"commands": commands})
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == expected

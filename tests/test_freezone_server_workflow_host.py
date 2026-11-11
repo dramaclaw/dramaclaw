@@ -633,3 +633,68 @@ async def test_audio_transport_structured_error(host, monkeypatch, returned):
         "display": "请先配置或选择声线", "details": None, "requestId": None,
         "referenceIssues": [],
     }
+
+
+async def test_catalogs_include_video_and_camera_templates(host, monkeypatch):
+    video_calls = []
+    async def image(user_id):
+        assert user_id == "requester-id"
+        return {"models": ["image-model"]}
+
+    async def video(user_id):
+        assert user_id == "requester-id"
+        video_calls.append(user_id)
+        return {"models": ["video-model"]}
+
+    monkeypatch.setattr(routes, "_freezone_image_models_data", image)
+    monkeypatch.setattr(routes, "_freezone_video_models_data", video)
+    monkeypatch.setattr(routes, "get_video_camera_templates", lambda: [
+        {"id": "fixed", "name": "Fixed", "prompt": "Still camera"},
+        {"id": "pan", "name": "Pan"}, {"id": "zoom", "name": "", "prompt": ""},
+    ])
+    assert await host.catalogs() == {"image": {"models": ["image-model"]}}
+    assert video_calls == []
+    assert await host.catalogs(video=True) == {
+        "image": {"models": ["image-model"]}, "video": {"models": ["video-model"]},
+        "camera_templates": [
+            {"id": "fixed", "label": "Fixed", "promptFragment": "Still camera", "videoUrl": None},
+            {"id": "pan", "label": "Pan", "promptFragment": "Pan", "videoUrl": None},
+            {"id": "zoom", "label": "zoom", "promptFragment": "zoom", "videoUrl": None},
+        ],
+    }
+    assert video_calls == ["requester-id"]
+
+
+@pytest.mark.parametrize("route,handler,body", [
+    ("gen", "freezone_video_gen", {"prompt": "A ship"}),
+    ("i2v", "freezone_video_i2v", {"image_urls": ["/static/frame.png"], "prompt": "Move",
+                                 "gen_mode": "imageToVideo"}),
+    ("keyframes", "freezone_video_keyframes", {"first_frame_url": "/static/frame.png",
+                                             "prompt": "Move", "gen_mode": "firstFrame"}),
+    ("omni-gen", "freezone_video_omni_gen", {"prompt": "Move", "references": []}),
+    ("video-edit", "freezone_video_edit", {"video_url": "/static/source.mp4"}),
+    ("video-extend", "freezone_video_extend", {"video_url": "/static/source.mp4",
+                                             "prompt": "Continue"}),
+    ("upscale", "freezone_video_upscale", {"source_url": "/static/source.mp4"}),
+])
+async def test_video_route_dispatch_preserves_identity_and_link(
+    host, monkeypatch, route, handler, body,
+):
+    from novelvideo.freezone.workflow_runs import get_server_workflow_media_link
+
+    link = {"run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1"}
+
+    async def submit(project, parsed, user):
+        assert project == "project"
+        assert parsed.canvas_id == "default"
+        assert parsed.node_id == "n"
+        assert user == {"id": "requester-id", "user_id": "requester-id", "username": ""}
+        assert get_server_workflow_media_link() == link
+        return {"ok": True, "data": {**TASK, "meta": {"ignored": True}}}
+
+    monkeypatch.setattr(routes, handler, submit)
+    assert await host.request(
+        "POST", f"projects/project/freezone/video/{route}",
+        {**body, "canvas_id": "default", "node_id": "n"}, media_link=link,
+    ) == TASK
+    assert get_server_workflow_media_link() is None

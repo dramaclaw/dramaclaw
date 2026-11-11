@@ -266,3 +266,17 @@ async def test_image_audio_translate_batch_is_runnable(setup):
         {"node_id": "text", "action": "translate_text", "recipe_id": "text-recipe",
          "recipe_version": "1.2.0", "generation_attempt_id": "confirmation:text:translate_text"},
     ]
+
+
+@pytest.mark.parametrize("data,reason", [
+    ({}, None), ({"count": 2}, "video_count"),
+    ({"storyRole": "start", "continuityMode": "auto"}, "video_story_continuity"),
+])
+async def test_video_check_support_and_manifest_refusals(setup, data, reason):
+    node = setup.canvas["nodes"][1]
+    node.update(type="videoNode", data=data)
+    setup.plan["actions"][1].update(action="generate_video", label="Video", execution_mode="task")
+    canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), setup.canvas)
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": ([{
+        "node_id": "text", "action": "generate_video", "label": "Video", "reason": reason,
+    }] if reason else [])}

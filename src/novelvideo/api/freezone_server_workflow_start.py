@@ -15,7 +15,10 @@ from novelvideo.api.freezone_server_workflow_host import InProcessActionHost
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
 from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
-from novelvideo.freezone.server_workflow_actions import server_action_supported
+from novelvideo.freezone.server_workflow_actions import (
+    server_action_refusal,
+    server_action_supported,
+)
 from novelvideo.freezone.server_workflow_index import (
     enqueue_server_workflow_drive,
     register_server_workflow_run,
@@ -99,7 +102,11 @@ async def check_server_workflow(
             action["action"], nodes.get(action["node_id"], {}).get("type"),
         ):
             reason = "action_not_on_server"
-        elif metered:
+        else:
+            reason = server_action_refusal(
+                action["action"], nodes.get(action["node_id"], {}), canvas.get("edges", []),
+            )
+        if reason is None and metered:
             try:
                 await routes.admit_canvas_workflow_run_actions(
                     ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, actions=[run_action],

@@ -45,6 +45,7 @@ def get_server_workflow_media_link() -> dict[str, str] | None:
 _WORKFLOW_MEDIA_ACTIONS = {
     "freezone_gen": {"generate_image"},
     "freezone_video_gen": {"generate_video", "generate_text_video"},
+    "freezone_video_upscale": {"generate_video"},
     "freezone_audio_speech": {"generate_audio"},
     "freezone_audio_eleven_music": {"generate_audio"},
     "freezone_text_translate": {"translate_text"},

@@ -3226,7 +3226,6 @@ async def _enqueue_or_start_freezone_media_job(
     project_dir: Path,
     task_type: Literal[
         "freezone_video_erase",
-        "freezone_video_upscale",
         "freezone_audio_separate",
         "freezone_video_compose",
         "freezone_audio_eleven_music",
@@ -11728,6 +11727,8 @@ async def freezone_video_extend(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode="video_extend",
@@ -11925,13 +11926,20 @@ async def freezone_video_upscale(
     try:
         job_id = _new_job_id()
         if ctx is not None:
-            return await _enqueue_or_start_freezone_media_job(
+            workflow_link = _verified_workflow_media_link(
                 ctx=ctx,
-                username=username,
-                project=project_name,
+                project_dir=project_dir,
+                canvas_id=body.canvas_id or None,
+                node_id=body.node_id or None,
+                operation_id=body.product_operation_id,
+                attempt_id=body.generation_attempt_id,
+            )
+            return await _enqueue_freezone_background_job(
+                ctx=ctx,
                 project_dir=project_dir,
                 task_type="freezone_video_upscale",
                 job_id=job_id,
+                queue_kind="ffmpeg",
                 payload={
                     "source_path": source_path.as_posix(),
                     "resolution": body.resolution,
@@ -11943,6 +11951,9 @@ async def freezone_video_upscale(
                     "source_meta": source_meta,
                     "billing": billing,
                     **processing_models,
+                    "canvas_id": body.canvas_id,
+                    "node_id": body.node_id,
+                    **workflow_link,
                 },
             )
         _start_freezone_video_upscale_task(

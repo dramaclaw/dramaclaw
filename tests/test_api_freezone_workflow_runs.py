@@ -6097,3 +6097,157 @@ def test_translate_media_claim_only_matches_translate_action(tmp_path, monkeypat
     )["actions"][0]
     assert row["task_type"] == "freezone_text_translate"
     assert row["job_id"] == "3" * 16
+
+
+@pytest.fixture
+def video_media(server_media, monkeypatch):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import workflow_runs as store
+    from novelvideo.ports import get_usage_meter
+
+    s = server_media
+    root = s.scope["project_dir"]
+    run = store.create_workflow_run(
+        project_dir=root, project_id="project", canvas_id="video", owner_kind="server",
+        actions=[{"node_id": "n", "action": "generate_video",
+                  "generation_attempt_id": "attempt-1"}],
+    )
+    s.scope = dict(project_dir=root, canvas_id="video", run_id=run["run_id"])
+    s.link = {**s.link, "run_id": run["run_id"]}
+    s.ctx.requester_user_id = "requester-id"
+    backend = freezone.get_task_backend()
+
+    async def enqueue(ctx, **kwargs):
+        await get_usage_meter().reserve_feature_start_credits(
+            user_id=ctx.requester_user_id, feature_key="video", product_surface="freezone",
+            project_id=ctx.project_id, task_type=kwargs["task_type"], task_id="media-task",
+        )
+        response = await backend.enqueue_project_task(ctx, **kwargs)
+        s.enqueued[-1]["queue_kind"] = kwargs["queue_kind"]
+        return response
+
+    async def resolve(project, user):
+        return s.ctx, "", project, root, str(root)
+
+    async def prepare(**kwargs):
+        return root / "source.mp4", {"duration": 5}, {}, {"feature_key": "video"}
+
+    async def catalog(*args, **kwargs):
+        return {"catalog_id": "video-model", "supportedModes": ["video_extend"],
+                "referenceVideoMax": 1}
+
+    async def backend_model(*args, **kwargs):
+        return "newapi_video-model"
+
+    async def request_schema(*args, **kwargs):
+        return {}, {}, await catalog()
+
+    async def validate(*args, **kwargs):
+        return []
+
+    async def duration(*args, **kwargs):
+        return 5.0
+
+    monkeypatch.setattr(freezone, "get_task_backend", lambda: SimpleNamespace(
+        enqueue_project_task=enqueue,
+    ))
+    monkeypatch.setattr(freezone, "_resolve_freezone_project", resolve)
+    monkeypatch.setattr(freezone, "_prepare_video_upscale", prepare)
+    monkeypatch.setattr(freezone, "_resolve_catalog_video_backend", backend_model)
+    monkeypatch.setattr(freezone, "_resolve_catalog_request", request_schema)
+    monkeypatch.setattr(freezone, "_require_scoped_media_model", catalog)
+    monkeypatch.setattr(freezone, "_resolve_url_list", lambda root, urls: ["source.mp4"])
+    monkeypatch.setattr(freezone, "probe_total_video_duration_seconds", duration)
+    monkeypatch.setattr("novelvideo.freezone.reference_validation.validate_reference_media",
+                        lambda *args: [])
+    return s
+
+
+@pytest.mark.parametrize("kind", ["upscale", "extend"])
+@pytest.mark.parametrize("recipe", [False, True])
+async def test_video_routes_claim_and_reserve_once(video_media, kind, recipe):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import agent_product_operations as products
+    from novelvideo.freezone import workflow_runs as store
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    s = video_media
+    link = {"canvas_id": "video", "node_id": "n"}
+    if recipe:
+        operation = products.create_agent_product_operation(
+            project_dir=s.scope["project_dir"], project_id="project", product_kind="recipe_result",
+            idempotency_key="video-recipe", generation_session_id=s.scope["run_id"],
+            canvas_id="video", artifact_id="n", metadata={"workflow_run_id": s.scope["run_id"],
+                                                        "node_id": "n",
+                                                        "generation_attempt_id": "attempt-1"},
+        )
+        operation_id = operation["operation_id"]
+        store.bind_workflow_action_product_operation(
+            **s.scope, node_id="n", action="generate_video", operation_id=operation_id,
+        )
+        products.bind_agent_product_model_execution(
+            project_dir=s.scope["project_dir"], operation_id=operation_id,
+            model_call_id="compile-1", executed_at=1.0,
+            source="server_recipe_compiler", compile_mode="model",
+        )
+        link.update(product_operation_id=operation_id, generation_attempt_id="attempt-1")
+    if kind == "upscale":
+        body = freezone.FreezoneVideoUpscaleRequest(source_url="/static/source.mp4", **link)
+        submit = freezone.freezone_video_upscale
+    else:
+        body = freezone.FreezoneVideoExtendRequest(
+            video_url="/static/source.mp4", prompt="Continue", model="video-model", **link,
+        )
+        submit = freezone.freezone_video_extend
+    with RecordingUsageMeter().registered() as meter:
+        with store.server_workflow_media_link(None if recipe else s.link):
+            first = await submit("project", body, {})
+            again = await submit("project", body, {})
+        assert again["data"]["job_id"] == first["data"]["job_id"]
+        reservations = [args for method, args in meter.calls
+                        if method == "reserve_feature_start_credits"]
+        assert [(r["user_id"], r["feature_key"]) for r in reservations] == [
+            ("requester-id", "video"),
+        ]
+    task_type = "freezone_video_upscale" if kind == "upscale" else "freezone_video_gen"
+    assert [(e["task_type"], e["queue_kind"]) for e in s.enqueued] == [
+        (task_type, "ffmpeg" if kind == "upscale" else "video"),
+    ]
+    assert s.enqueued[0]["payload"]["canvas_id"] == "video"
+    assert s.enqueued[0]["payload"]["node_id"] == "n"
+    row = store.read_workflow_run(**s.scope)["actions"][0]
+    assert (row["task_type"], row["job_id"]) == (task_type, first["data"]["job_id"])
+
+
+@pytest.mark.parametrize("kind", ["upscale", "extend"])
+async def test_video_routes_reject_mismatched_recipe_link(video_media, kind):
+    from novelvideo.api.routes import freezone
+
+    link = dict(canvas_id="video", node_id="n", product_operation_id="agent_product_missing",
+                generation_attempt_id="attempt-1")
+    if kind == "upscale":
+        body = freezone.FreezoneVideoUpscaleRequest(source_url="/static/source.mp4", **link)
+        submit = freezone.freezone_video_upscale
+    else:
+        body = freezone.FreezoneVideoExtendRequest(
+            video_url="/static/source.mp4", prompt="Continue", **link,
+        )
+        submit = freezone.freezone_video_extend
+    with pytest.raises(HTTPException) as caught:
+        await submit("project", body, {})
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "workflow media link does not match admitted Recipe attempt"
+    assert video_media.enqueued == []
+
+
+async def test_browser_upscale_plain_enqueue(video_media):
+    from novelvideo.api.routes import freezone
+
+    result = await freezone.freezone_video_upscale(
+        "project", freezone.FreezoneVideoUpscaleRequest(source_url="/static/source.mp4"), {},
+    )
+    assert [(e["task_type"], e["queue_kind"], e["scope"]) for e in video_media.enqueued] == [
+        ("freezone_video_upscale", "ffmpeg", result["data"]["job_id"]),
+    ]
+    assert video_media.enqueued[0]["payload"]["canvas_id"] == ""
+    assert video_media.enqueued[0]["payload"]["node_id"] == ""

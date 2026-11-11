@@ -32,7 +32,7 @@ class ActionHost(Protocol):
     locale: str
 
     def lease_held(self) -> bool: ...
-    async def catalogs(self) -> dict: ...
+    async def catalogs(self, *, video: bool = False) -> dict: ...
     async def read_canvas(self) -> dict: ...
     async def patch_node(self, node_id: str, patch: dict) -> None: ...
     async def request(
@@ -46,14 +46,34 @@ class ActionHost(Protocol):
 
 
 SERVER_WORKFLOW_ACTIONS = frozenset({
-    "generate_image", "generate_text", "generate_audio", "translate_text",
+    "generate_image", "generate_text", "generate_audio", "translate_text", "generate_video",
 })
 
 
 def server_action_supported(action: str, node_type: str | None) -> bool:
     return action in SERVER_WORKFLOW_ACTIONS and (
-        action != "translate_text" or node_type == "audioNode"
+        (action != "translate_text" or node_type == "audioNode")
+        and (action != "generate_video" or node_type == "videoNode")
     )
+
+
+def server_action_refusal(action: str, node: dict, edges: list[dict]) -> str | None:
+    if action != "generate_video" or node.get("type") != "videoNode":
+        return None
+    data = node.get("data") or {}
+    count = data.get("count")
+    if isinstance(count, (int, float)) and not isinstance(count, bool) and count > 1:
+        return "video_count"
+    story = (
+        bool(data.get("storySegmentId")) or data.get("storyRole") == "start"
+        or any(edge.get("type") == "storyChoiceEdge" and node.get("id") in {
+            edge.get("source"), edge.get("target"),
+        } for edge in edges)
+    )
+    if story and data.get("continuityMode") in {"auto", "independent"}:
+        return "video_story_continuity"
+    return None
+
 
 _CLEAR_OWNER = {"generationOwner": None, "generationRunId": None}
 CLEAR_GENERATION = {
@@ -148,6 +168,8 @@ class WorkflowActionRunner:
             execution.check()
             if action == "generate_image":
                 return await execution.image(existing_task)
+            if action == "generate_video":
+                return await execution.video(existing_task)
             if action == "generate_text":
                 return await execution.text()
             if action == "generate_audio":
@@ -203,7 +225,7 @@ class _ActionExecution:
 
     async def core(self, op, payload):
         self.check()
-        if op in {"audio_generation_patch", "audio_translate_patch"}:
+        if op in {"audio_generation_patch", "audio_translate_patch", "video_generation_patch"}:
             payload = {"locale": self.host.locale, **payload}
         result = await self.runner.core_call(op, payload)
         self.check()
@@ -224,8 +246,8 @@ class _ActionExecution:
             request["method"], request["path"], request["body"], media_link=media_link,
         )
 
-    async def start(self, op):
-        patch = await self.core(op, {"phase": "start", "started_at_ms": self.runner.now_ms()})
+    async def start(self, op, phase="start"):
+        patch = await self.core(op, {"phase": phase, "started_at_ms": self.runner.now_ms()})
         await self.patch({**patch, "generationOwner": "server",
                           "generationRunId": self.runner.run_id})
         self.started = True
@@ -316,12 +338,242 @@ class _ActionExecution:
             self.check()
         return await self.image_outcome(outcome, task, total)
 
+    async def video(self, existing_task):
+        canvas = await self.host.read_canvas()
+        node = next((n for n in canvas["nodes"] if n["id"] == self.node_id), {})
+        data = node.get("data") or {}
+        upscale = data.get("isUpscaleNode") is True
+        mode = "upscale" if upscale else data.get("genMode")
+        kind = "stopped"
+        logger.info(
+            "Server workflow video started run_id=%s node_id=%s mode=%s outcome=started",
+            self.runner.run_id, self.node_id, mode,
+        )
+        try:
+            if server_action_refusal("generate_video", node, canvas.get("edges", [])):
+                result = {"status": "failed", "error": "工作流动作 generate_video 需要打开画布运行"}
+            elif upscale:
+                result = await self.video_upscale(existing_task)
+            else:
+                result = await self.video_generate(existing_task, canvas, data)
+            kind = result["status"]
+            return result
+        finally:
+            logger.info(
+                "Server workflow video ended run_id=%s node_id=%s mode=%s outcome=%s",
+                self.runner.run_id, self.node_id, mode, kind,
+            )
+
+    async def video_payload(self, canvas, existing_task):
+        data = next((n["data"] for n in canvas["nodes"] if n["id"] == self.node_id), {})
+        catalogs = await self.host.catalogs(video=True)
+        env = {
+            "locale": self.host.locale, "project": self.runner.project_id,
+            "canvasId": self.runner.canvas_id, "catalogs": catalogs,
+            "camera_templates": catalogs.get("camera_templates"),
+            "executionSource": "workflow", "productOperation": self.product_operation,
+        }
+        # Bypass only a recovered task or this run's persisted start flag.
+        if existing_task is not None or (
+            data.get("generationOwner") == "server"
+            and data.get("generationRunId") == self.runner.run_id
+        ):
+            env["is_generating"] = False
+        return {"canvas": canvas, "node_id": self.node_id, "env": env}
+
+    async def video_error(self, message, *, name="Error", info=None):
+        return info if info is not None else await self.core("generation_error_describe", {
+            "locale": self.host.locale,
+            "failure": {"kind": "thrown", "name": name, "message": message},
+            "fallback_message": "视频生成失败",
+        })
+
+    async def video_generate(self, existing_task, canvas, data):
+        deadline = self.runner.monotonic() + self.runner.task_timeout_seconds
+        payload = await self.video_payload(canvas, existing_task)
+        built = await self.core("video_generation_request", payload)
+        compile_input = built["compile_input"]
+        if compile_input.get("ok") is False:
+            return {"status": "failed", "error": compile_input["message"]}
+        if built["trim_requirement"] is not None:
+            return {"status": "failed", "error": "工作流动作 generate_video 需要打开画布运行"}
+        request = built["request"]
+        # Browser guards can silently finish; the server must report absence of a submission.
+        if not request["ok"] and request["code"] != "no_effective_prompt":
+            return {"status": "failed", "error": request["message"]}
+        if request["ok"] and len(request["requests"]) != 1:
+            return {"status": "failed", "error": "工作流动作 generate_video 需要打开画布运行"}
+        if not existing_task:
+            await self.start("video_generation_patch")
+        plan = await self.core("recipe_compile_request", {
+            "node_id": self.node_id, "node_data": data, "compile_input": compile_input,
+            "env": {"executionSource": "workflow", "productOperation": self.product_operation,
+                    "locale": self.host.locale},
+        })
+        if existing_task:
+            prompt = (
+                data.get("workflowRecipeCompiledPrompt") or compile_input["fallbackPrompt"]
+                if plan["kind"] == "request" else plan["prompt"]
+            )
+        elif plan["kind"] == "request":
+            await self.phase("compiling_recipe")
+            try:
+                response = await self.request(plan["request"])
+            except ServerActionHttpError as exc:
+                info = await self.video_error(str(exc), info=exc.info)
+                await self.patch({**await self.core("video_generation_patch", {
+                    "phase": "failure", "error": info,
+                }), **_CLEAR_OWNER})
+                return {"status": "failed", "error": info["display"]}
+            compiled = await self.core("recipe_compile_result", {
+                "request_body": plan["request"]["body"], "data": response,
+            })
+            await self.patch(await self.core("video_generation_patch", {
+                "phase": "compile_metadata", "metadata": compiled["metadata"],
+                "compiled_at": self.current_result_patch()["workflowGeneratedAt"],
+            }))
+            prompt = compiled["prompt"]
+        else:
+            prompt = plan["prompt"]
+        payload["env"]["prompt"] = prompt
+        request = (await self.core("video_generation_request", payload))["request"]
+        if not request["ok"] or len(request["requests"]) != 1:
+            await self.patch({"isGenerating": False, "generationStartedAt": None, **_CLEAR_OWNER})
+            return {"status": "failed", "error": request["message"] if not request["ok"]
+                    else "工作流动作 generate_video 需要打开画布运行"}
+        task = existing_task
+        if task is None or await self.host.task_status(task) is None:
+            await self.phase("submitting")
+            await self.patch(await self.core("video_generation_patch", {"phase": "submit"}))
+            try:
+                task = await self.submit_task(
+                    request["requests"][0], deadline=deadline, timeout_message="视频生成超时",
+                )
+            except ServerActionHttpError as exc:
+                return await self.video_outcome({
+                    "kind": "failed", "error": await self.video_error(str(exc), info=exc.info),
+                }, task, data)
+            # Persist acceptance before observing a stop that arrived during submission.
+            await self.on_accepted(task)
+            await self.patch(await self.core("video_generation_patch", {
+                "phase": "accepted", "task": task,
+            }))
+        await self.phase("generating")
+        outcome = await self.wait_task(
+            task, timeout_message="视频生成超时", failed_message="视频生成失败",
+        )
+        if outcome["kind"] == "completed":
+            result = outcome.get("result") or {}
+            fallback = None
+            if not any(isinstance(result.get(key), str) and result[key] for key in (
+                "video_url", "output_url", "url",
+            )):
+                fallback = await self.host.job_result_url(task)
+            outcome = {"kind": "completed", "result": result or None, "fallbackUrl": fallback}
+        elif outcome.get("timed_out"):
+            outcome = {"kind": "poll_timeout"}
+        elif outcome["kind"] == "failed":
+            outcome = {"kind": "failed", "error": await self.video_error(
+                outcome["message"], name="TaskCompletionError",
+            )}
+        else:
+            outcome = {"kind": "cancelled"}
+        return await self.video_outcome(outcome, task, data)
+
+    async def clear_dead_video_task(self, task, kind):
+        data = await self.node_data()
+        if (kind in {"failed", "cancelled"} and task
+                and data.get("generationTaskKey") == task["task_key"]):
+            await self.patch({"generationTaskKey": None, "generationTaskType": None,
+                              "generationTaskJobId": None})
+
+    async def video_outcome(self, outcome, task, data):
+        run = await self.core("video_generation_patch", {
+            "phase": "run_outcome", "run_index": 0, "total": 1, "completed_urls": [],
+            "outcome": outcome,
+        })
+        urls = run["completedUrls"]
+        current = self.current_result_patch() if urls else {}
+        await self.patch({**(run["patch"] or {}), **_CLEAR_OWNER, **current})
+        settle = await self.core("video_generation_patch", {
+            "phase": "settle", "completed_urls": urls,
+            "run_errors": [run["runError"]] if run["runError"] else [], "total": 1,
+            "supports_human_review": False, "human_review": bool(data.get("humanReview")),
+        })
+        if settle["patch"] is not None:
+            await self.patch(settle["patch"])
+        await self.clear_dead_video_task(task, outcome["kind"])
+        if urls:
+            return {"status": "completed", "output": {"videoUrl": urls[0]},
+                    "artifact": {"output_url": urls[0]}}
+        # The browser action_result can publish an older videoUrl; use only this run's URLs.
+        return {"status": "failed", "error": (await self.node_data()).get("generationError") or (
+            "视频生成超时" if outcome["kind"] == "poll_timeout" else
+            "任务已取消" if outcome["kind"] == "cancelled" else "视频生成失败"
+        )}
+
+    async def video_upscale(self, existing_task):
+        deadline = self.runner.monotonic() + self.runner.task_timeout_seconds
+        payload = await self.video_payload(await self.host.read_canvas(), existing_task)
+        request = (await self.core("video_generation_request", payload))["request"]
+        if not request["ok"]:
+            return {"status": "failed", "error": "缺少高清视频源"
+                    if request["code"] == "missing_upscale_source" else request["message"]}
+        if len(request["requests"]) != 1:
+            return {"status": "failed", "error": "工作流动作 generate_video 需要打开画布运行"}
+        if not existing_task:
+            await self.start("video_generation_patch", phase="upscale_start")
+        task = existing_task
+        try:
+            if task is None or await self.host.task_status(task) is None:
+                await self.phase("submitting")
+                task = await self.submit_task(
+                    request["requests"][0], deadline=deadline, timeout_message="视频生成超时",
+                )
+                await self.on_accepted(task)
+                await self.patch(await self.core("video_generation_patch", {
+                    "phase": "upscale_accepted", "task": task,
+                }))
+        except ServerActionHttpError as exc:
+            return await self.video_upscale_outcome({"kind": "failed", "message": str(exc)}, task)
+        await self.phase("generating")
+        outcome = await self.wait_task(
+            task, timeout_message="视频生成超时", failed_message="视频增强失败",
+        )
+        if outcome["kind"] == "completed":
+            result = outcome.get("result") or {}
+            fallback = "" if result.get("output_url") else (await self.host.job_result_url(task) or "")
+            outcome = {"kind": "completed", "result": result or None, "fallbackUrl": fallback}
+        elif outcome.get("timed_out"):
+            outcome = {"kind": "poll_timeout"}
+        else:
+            outcome = {"kind": "failed", "message": "任务已取消" if outcome["kind"] == "cancelled"
+                       else outcome["message"]}
+        return await self.video_upscale_outcome(outcome, task)
+
+    async def video_upscale_outcome(self, outcome, task):
+        patch = await self.core("video_generation_patch", {
+            "phase": "upscale_outcome", "outcome": outcome,
+        })
+        url = ((outcome.get("result") or {}).get("output_url") or outcome.get("fallbackUrl")
+               if outcome["kind"] == "completed" else None)
+        current = self.current_result_patch() if url else {}
+        await self.patch({**(patch or {}), **_CLEAR_OWNER, **current})
+        await self.clear_dead_video_task(task, outcome["kind"])
+        if url:
+            return {"status": "completed", "output": {"videoUrl": url},
+                    "artifact": {"output_url": url}}
+        # Unlike the browser subscriber, a failed upscale is a failed server action.
+        return {"status": "failed", "error": (await self.node_data()).get("generationError") or (
+            "视频生成超时" if outcome["kind"] == "poll_timeout" else "视频增强失败"
+        )}
+
     async def wait_task(self, task, *, timeout_message, failed_message):
         started = self.runner.monotonic()
         while True:
             self.check()
             if self.runner.monotonic() - started > self.runner.task_timeout_seconds:
-                return {"kind": "failed", "message": timeout_message}
+                return {"kind": "failed", "message": timeout_message, "timed_out": True}
             status = await self.host.task_status(task)
             self.check()
             if status:
@@ -393,7 +645,8 @@ class _ActionExecution:
 
     async def audio(self, existing_task):
         result = await self.audio_execute(existing_task)
-        await self.patch(dict(_CLEAR_OWNER))
+        current = self.current_result_patch() if result["status"] in {"completed", "skipped"} else {}
+        await self.patch({**_CLEAR_OWNER, **current})
         return result
 
     async def audio_execute(self, existing_task):

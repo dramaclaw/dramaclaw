@@ -617,3 +617,23 @@ async def test_translate_waits_for_capacity_before_submission(tmp_path, monkeypa
     assert store.read_workflow_run(**scope)["actions"][0]["error"] == (
         "workflow lane capacity timed out"
     )
+
+
+async def test_generate_video_uses_video_lane_capacity(tmp_path, monkeypatch):
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{"node_id": "one", "action": "generate_video"}],
+                      levels=[[0]])
+
+    class VideoRunner(FakeRunner):
+        async def lane_capacity(self, lane):
+            return 0 if lane == "video" else 1
+
+    monkeypatch.setattr(driver, "WORKFLOW_CAPACITY_TIMEOUT_SECONDS", 4)
+    runner = VideoRunner(scope)
+    assert (await drive(scope, clock, runner))["status"] == "failed"
+    assert runner.calls == []
+    assert store.read_workflow_run(**scope)["actions"][0]["error"] == (
+        "workflow lane capacity timed out"
+    )

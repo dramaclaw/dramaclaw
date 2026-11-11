@@ -29,6 +29,13 @@ from novelvideo.api.schemas import (
     FreezoneRecipeCompileResponse,
     FreezoneRecipeTextGenerateResponse,
     FreezoneTextTranslateRequest,
+    FreezoneImageToVideoRequest,
+    FreezoneKeyframeVideoRequest,
+    FreezoneVideoGenRequest,
+    FreezoneVideoOmniGenRequest,
+    FreezoneVideoEditRequest,
+    FreezoneVideoExtendRequest,
+    FreezoneVideoUpscaleRequest,
 )
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
@@ -93,10 +100,18 @@ class InProcessActionHost:
         )
         await terminalize_undelivered_agent_product_task(ctx=self.ctx, operation=finished)
 
-    async def catalogs(self) -> dict:
+    async def catalogs(self, *, video: bool = False) -> dict:
         from novelvideo.api.routes import freezone as routes
 
-        return {"image": await routes._freezone_image_models_data(self.ctx.requester_user_id)}
+        catalogs = {"image": await routes._freezone_image_models_data(self.ctx.requester_user_id)}
+        if video:
+            catalogs["video"] = await routes._freezone_video_models_data(self.ctx.requester_user_id)
+            catalogs["camera_templates"] = [{
+                "id": template["id"], "label": template.get("name") or template["id"],
+                "promptFragment": template.get("prompt") or template.get("name") or template["id"],
+                "videoUrl": None,
+            } for template in routes.get_video_camera_templates()]
+        return catalogs
 
     async def read_canvas(self) -> dict:
         canvas = await asyncio.to_thread(
@@ -162,6 +177,20 @@ class InProcessActionHost:
         dispatch = {
             "gen": (FreezoneGenRequest, FreezoneJobAcceptedResponse,
                     partial(routes.freezone_gen, self.ctx.project_id)),
+            "video/gen": (FreezoneVideoGenRequest, FreezoneJobAcceptedResponse,
+                          partial(routes.freezone_video_gen, self.ctx.project_id)),
+            "video/i2v": (FreezoneImageToVideoRequest, FreezoneJobAcceptedResponse,
+                          partial(routes.freezone_video_i2v, self.ctx.project_id)),
+            "video/keyframes": (FreezoneKeyframeVideoRequest, FreezoneJobAcceptedResponse,
+                                partial(routes.freezone_video_keyframes, self.ctx.project_id)),
+            "video/omni-gen": (FreezoneVideoOmniGenRequest, FreezoneJobAcceptedResponse,
+                               partial(routes.freezone_video_omni_gen, self.ctx.project_id)),
+            "video/video-edit": (FreezoneVideoEditRequest, FreezoneJobAcceptedResponse,
+                                 partial(routes.freezone_video_edit, self.ctx.project_id)),
+            "video/video-extend": (FreezoneVideoExtendRequest, FreezoneJobAcceptedResponse,
+                                   partial(routes.freezone_video_extend, self.ctx.project_id)),
+            "video/upscale": (FreezoneVideoUpscaleRequest, FreezoneJobAcceptedResponse,
+                              partial(routes.freezone_video_upscale, self.ctx.project_id)),
             "audio/speech": (FreezoneAudioSpeechRequest, FreezoneJobAcceptedResponse,
                              partial(routes.freezone_audio_speech, self.ctx.project_id)),
             "audio/eleven-music": (

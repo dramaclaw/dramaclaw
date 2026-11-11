@@ -60,7 +60,7 @@ class FakeHost:
     def lease_held(self):
         return self.held
 
-    async def catalogs(self):
+    async def catalogs(self, *, video=False):
         return {"image": {"models": [{"id": "image-model", "model": "image-model",
                                      "provider": "openai", "label": "Image"}]}}
 
@@ -302,7 +302,7 @@ async def test_supported_actions_and_capacity(setup_runner):
     _, runner, _, _, _ = setup_runner
     assert runner.supports("generate_image") is True
     assert runner.supports("generate_text") is True
-    assert runner.supports("generate_video") is False
+    assert runner.supports("generate_video") is True
     assert runner.supports("run_skill") is False
     assert await runner.lane_capacity("image") == 2
     assert await runner.lane_capacity("unknown") is None
@@ -836,3 +836,332 @@ async def test_audio_compile_failure_clears_node(setup_runner):
     assert await run("generate_audio") == {"status": "failed", "error": "HTTP 400: bad recipe"}
     assert [r["path"] for r in host.requests] == ["freezone/recipes/compile"]
     assert_cleared(host)
+
+
+VIDEO_URL = "/static/new.mp4"
+VIDEO_TASK = {"task_key": "freezone_video_gen:project:j1",
+              "task_type": "freezone_video_gen", "job_id": "j1"}
+VIDEO_MODEL = {
+    "id": "video-model", "apiModel": "video-model", "providerId": "seedance",
+    "supportedModes": ["text_to_video", "image_to_video", "keyframe", "video_edit",
+                       "video_extend", "all_reference"],
+    "referenceImageMax": 9, "referenceVideoMax": 1, "referenceAudioMax": 1,
+}
+OPEN_VIDEO = "工作流动作 generate_video 需要打开画布运行"
+CURRENT = {"workflowResultStale": False, "workflowInvalidatedAt": None,
+           "workflowInvalidationReason": None, "workflowGeneratedAt": "1970-01-01T00:00:00.000Z"}
+
+
+def video_host(host, *, upscale=False):
+    host.canvas["nodes"][0].update(type="videoNode", data={
+        "prompt": "A ship", "model": "video-model", "genMode": "textToVideo",
+        "videoUrl": "/static/old.mp4", "workflowResultStale": True,
+    })
+    host.task = VIDEO_TASK
+    if upscale:
+        host.data.update(isUpscaleNode=True, upscaleSourceUrl="/static/source.mp4?version=1")
+        host.task = {**VIDEO_TASK, "task_key": "freezone_video_upscale:project:j1",
+                     "task_type": "freezone_video_upscale"}
+    host.responses = [host.task]
+    host.statuses = [{"status": "running"},
+                     {"status": "completed", "result": {"output_url": VIDEO_URL}}]
+
+    async def catalogs(*, video=False):
+        assert video is True
+        return {"video": {"models": [VIDEO_MODEL]}, "camera_templates": []}
+
+    host.catalogs = catalogs
+
+
+@pytest.mark.parametrize("upscale", [False, True])
+async def test_video_submission_fresh_result_and_owner(setup_runner, upscale, caplog):
+    import logging
+
+    host, _, run, phases, accepted = setup_runner
+    video_host(host, upscale=upscale)
+    with caplog.at_level(logging.INFO):
+        result = await run("generate_video", generation_attempt_id="attempt-1")
+    assert result == {"status": "completed", "output": {"videoUrl": VIDEO_URL},
+                      "artifact": {"output_url": VIDEO_URL}}
+    assert [r["path"] for r in host.requests] == [
+        "projects/project/freezone/video/" + ("upscale" if upscale else "gen"),
+    ]
+    assert host.requests[0]["body"]["canvas_id"] == "default"
+    assert host.requests[0]["body"]["node_id"] == "n"
+    assert host.media_links == [{"run_id": "run-1", "node_id": "n",
+                                 "generation_attempt_id": "attempt-1"}]
+    assert phases == ["submitting", "generating"]
+    assert accepted == [host.task]
+    assert host.patches[0]["generationOwner"] == "server"
+    assert host.patches[0]["generationStartedAt"] == 0
+    assert host.patches[0]["isGenerating"] is True
+    assert {"generationTaskKey": host.task["task_key"],
+            "generationTaskType": host.task["task_type"], "generationTaskJobId": "j1"} in (
+                host.patches
+            )
+    assert ({"generationBatch": None} in host.patches) is (not upscale)
+    assert {k: host.patches[-1][k] for k in CURRENT} == CURRENT
+    assert_cleared(host)
+    mode = "upscale" if upscale else "textToVideo"
+    assert [r.getMessage() for r in caplog.records if "Server workflow video" in r.getMessage()] == [
+        f"Server workflow video started run_id=run-1 node_id=n mode={mode} outcome=started",
+        f"Server workflow video ended run_id=run-1 node_id=n mode={mode} outcome=completed",
+    ]
+
+
+@pytest.mark.parametrize("upscale", [False, True])
+async def test_video_takeover_no_submission_or_compile(setup_runner, upscale):
+    host, _, run, phases, accepted = setup_runner
+    video_host(host, upscale=upscale)
+    host.data.update(workflowCatalog={"recipeId": "r"}, workflowRecipeCompiledPrompt="Compiled",
+                     isGenerating=True, generationOwner="server", generationRunId="run-1")
+    assert (await run("generate_video", existing_task=host.task))["artifact"] == {
+        "output_url": VIDEO_URL,
+    }
+    assert host.requests == []
+    assert phases == ["generating"]
+    assert accepted == []
+    assert_cleared(host)
+
+
+async def test_video_own_run_busy_without_task_submits_once(setup_runner):
+    host, runner, run, _, accepted = setup_runner
+    video_host(host)
+    host.data.update(isGenerating=True, generationOwner="server", generationRunId="run-1")
+    core_call = runner.core_call
+
+    async def inspect_request(op, payload):
+        if op == "video_generation_request":
+            assert payload["canvas"]["nodes"][0]["data"]["isGenerating"] is True
+            assert payload["env"]["is_generating"] is False
+        return await core_call(op, payload)
+
+    runner.core_call = inspect_request
+    assert await run("generate_video") == {
+        "status": "completed", "output": {"videoUrl": VIDEO_URL},
+        "artifact": {"output_url": VIDEO_URL},
+    }
+    assert len(host.requests) == 1
+    assert accepted == [host.task]
+    assert_cleared(host)
+
+
+@pytest.mark.parametrize("owner,run_id", [(None, None), (None, "run-1"),
+                                           ("server", "another-run")])
+async def test_video_foreign_busy_refused_without_effects(setup_runner, owner, run_id):
+    host, runner, run, _, _ = setup_runner
+    video_host(host)
+    host.data.update(isGenerating=True, generationOwner=owner, generationRunId=run_id)
+    before = deepcopy(host.canvas)
+    core_call = runner.core_call
+
+    async def inspect_request(op, payload):
+        if op == "video_generation_request":
+            assert "is_generating" not in payload["env"]
+        return await core_call(op, payload)
+
+    runner.core_call = inspect_request
+    assert await run("generate_video") == {
+        "status": "failed", "error": "Video generation is already running.",
+    }
+    assert host.canvas == before
+    assert host.patches == []
+    assert host.requests == []
+
+
+async def test_video_recipe_metadata_and_operation(setup_runner):
+    host, _, run, phases, _ = setup_runner
+    video_host(host)
+    host.data["workflowCatalog"] = {"recipeId": "r"}
+    host.responses.insert(0, {"prompt": "Compiled video", "compile_mode": "model",
+                              "recipe_ids": ["r"]})
+    assert (await run("generate_video", product_operation_id="operation-1",
+                      generation_attempt_id="attempt-1"))["status"] == "completed"
+    assert [r["path"] for r in host.requests] == [
+        "freezone/recipes/compile", "projects/project/freezone/video/gen",
+    ]
+    assert host.requests[-1]["body"]["prompt"] == "Compiled video"
+    assert host.requests[-1]["body"]["product_operation_id"] == "operation-1"
+    assert host.requests[-1]["body"]["generation_attempt_id"] == "attempt-1"
+    assert host.data["workflowRecipeCompiledPrompt"] == "Compiled video"
+    assert host.data["workflowRecipeCompiledAt"] == "1970-01-01T00:00:00.000Z"
+    assert host.media_links == [None, None]
+    assert phases == ["compiling_recipe", "submitting", "generating"]
+
+
+@pytest.mark.parametrize("upscale", [False, True])
+async def test_video_builder_refusal_before_start(setup_runner, upscale):
+    host, _, run, _, _ = setup_runner
+    video_host(host, upscale=upscale)
+    if upscale:
+        host.data["upscaleSourceUrl"] = ""
+    else:
+        host.data["genMode"] = "videoExtend"
+    assert await run("generate_video") == {"status": "failed", "error": (
+        "缺少高清视频源" if upscale else "An upstream source video is required."
+    )}
+    assert host.patches == []
+    assert host.requests == []
+
+
+async def test_video_refusal_after_compile_clears_loading(setup_runner):
+    host, _, run, _, _ = setup_runner
+    video_host(host)
+    host.data["prompt"] = ""
+    host.data["workflowCatalog"] = {"recipeId": "r"}
+    host.responses = [{"prompt": "", "compile_mode": "model", "recipe_ids": ["r"]}]
+    assert await run("generate_video") == {
+        "status": "failed", "error": "A video prompt or upstream text is required.",
+    }
+    assert [r["path"] for r in host.requests] == ["freezone/recipes/compile"]
+    assert_cleared(host)
+
+
+@pytest.mark.parametrize("upscale", [False, True])
+@pytest.mark.parametrize("status,message", [
+    ("failed", "Video failed"), ("cancelled", "任务已取消"), ("running", "视频生成超时"),
+])
+async def test_video_terminal_failures(setup_runner, upscale, status, message):
+    host, _, run, _, _ = setup_runner
+    video_host(host, upscale=upscale)
+    host.statuses = [{"status": status, "error": message if status == "failed" else None}]
+    assert await run("generate_video") == {"status": "failed", "error": message}
+    assert host.data["workflowResultStale"] is True
+    assert "workflowGeneratedAt" not in host.data
+    if status == "failed":
+        assert host.data["generationError"] == "Video failed"
+    if status != "running":
+        assert host.data["generationTaskKey"] is None
+        assert_cleared(host)
+    assert host.data["generationOwner"] is None
+
+
+@pytest.mark.parametrize("matching", [False, True])
+async def test_video_failure_clears_only_matching_descriptor(setup_runner, matching):
+    host, _, run, _, _ = setup_runner
+    video_host(host)
+    key = host.task["task_key"] if matching else "another-task"
+    host.data.update(generationTaskKey=key)
+    host.statuses = [{"status": "failed", "error": "Video failed"}]
+    assert (await run("generate_video", existing_task=host.task))["status"] == "failed"
+    assert host.data["generationTaskKey"] == (None if matching else key)
+
+
+@pytest.mark.parametrize("stage", ["compile", "submit"])
+async def test_video_http_error_info_is_preserved(setup_runner, stage):
+    host, _, run, _, _ = setup_runner
+    video_host(host)
+    if stage == "compile":
+        host.data["workflowCatalog"] = {"recipeId": "r"}
+    host.responses = [ServerActionHttpError("HTTP 400: rejected", info={
+        "name": "HttpError", "message": "rejected", "status": 400, "display": "Video rejected",
+        "details": "Reference invalid", "requestId": "request-1", "referenceIssues": [],
+    })]
+    assert await run("generate_video") == {"status": "failed", "error": "Video rejected"}
+    if stage == "compile":
+        assert host.data["generationError"] == "Video rejected"
+        assert "generationErrorDetails" not in host.patches[-1]
+        assert "generationErrorRequestId" not in host.patches[-1]
+    else:
+        assert host.data["generationErrorDetails"] == "Reference invalid"
+        assert host.data["generationErrorRequestId"] == "request-1"
+    assert_cleared(host)
+
+
+@pytest.mark.parametrize("data,edges", [
+    ({"count": 2}, []),
+    ({"storySegmentId": "segment", "continuityMode": "auto"}, []),
+    ({"continuityMode": "independent"}, [
+        {"id": "choice", "type": "storyChoiceEdge", "source": "other", "target": "n"},
+    ]),
+])
+async def test_video_runtime_refusal_has_no_effects(setup_runner, data, edges):
+    host, _, run, _, _ = setup_runner
+    video_host(host)
+    host.data.update(data)
+    host.canvas["edges"] = edges
+    assert await run("generate_video") == {"status": "failed", "error": OPEN_VIDEO}
+    assert host.patches == []
+    assert host.requests == []
+
+
+async def test_video_trim_requires_browser_without_writes(setup_runner):
+    host, _, run, _, _ = setup_runner
+    video_host(host)
+    host.data.update(genMode="allReference", isExtendMode=True, extendStartMs=1000,
+                     extendEndMs=3000)
+    host.canvas["nodes"].append({"id": "source", "type": "videoNode",
+                                 "position": {"x": 0, "y": 0},
+                                 "data": {"videoUrl": "/static/source.mp4", "durationMs": 8000}})
+    host.canvas["edges"] = [{"id": "ref", "source": "source", "target": "n"}]
+    assert await run("generate_video") == {"status": "failed", "error": OPEN_VIDEO}
+    assert host.patches == []
+    assert host.requests == []
+
+
+@pytest.mark.parametrize("upscale", [False, True])
+async def test_video_job_result_fallback(setup_runner, upscale):
+    host, _, run, _, _ = setup_runner
+    video_host(host, upscale=upscale)
+    host.statuses = [{"status": "completed", "result": {"video_url": ""}}]
+    host.fallback = VIDEO_URL
+    assert (await run("generate_video"))["artifact"] == {"output_url": VIDEO_URL}
+
+
+@pytest.mark.parametrize("kind", ["completed", "skipped", "failed"])
+async def test_audio_result_freshness(setup_runner, kind):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.data["workflowResultStale"] = True
+    if kind == "skipped":
+        host.data.update(voicePolicyConfirmed=True, voiceAvailable=False)
+    elif kind == "failed":
+        host.statuses = [{"status": "failed", "error": "Audio failed"}]
+    assert (await run("generate_audio"))["status"] == kind
+    if kind == "failed":
+        assert host.data["workflowResultStale"] is True
+        assert "workflowGeneratedAt" not in host.patches[-1]
+    else:
+        assert {k: host.patches[-1][k] for k in CURRENT} == CURRENT
+
+
+async def test_wait_timeout_marks_timeout(setup_runner):
+    from novelvideo.freezone.server_workflow_actions import _ActionExecution
+
+    host, runner, _, _, _ = setup_runner
+    host.statuses = [None]
+    execution = _ActionExecution(runner, "n", None, None, lambda: False, None, None)
+    assert await execution.wait_task(TASK, timeout_message="Timeout", failed_message="Failed") == {
+        "kind": "failed", "message": "Timeout", "timed_out": True,
+    }
+
+
+@pytest.mark.parametrize("count,expected", [
+    (None, None), (1, None), (2, "video_count"), (2.5, "video_count"), (True, None),
+])
+def test_video_count_refusal(count, expected):
+    from novelvideo.freezone.server_workflow_actions import server_action_refusal
+
+    assert server_action_refusal("generate_video", {
+        "id": "n", "type": "videoNode", "data": {"count": count},
+    }, []) == expected
+
+
+@pytest.mark.parametrize("mode", ["auto", "independent", "other", None])
+@pytest.mark.parametrize("story", ["segment", "start", "source", "target", "none"])
+def test_video_continuity_refusal(mode, story):
+    from novelvideo.freezone.server_workflow_actions import server_action_refusal
+
+    data = {"continuityMode": mode}
+    if story == "segment":
+        data["storySegmentId"] = "segment"
+    if story == "start":
+        data["storyRole"] = "start"
+    edges = [{"type": "storyChoiceEdge", "source": "n" if story == "source" else "other",
+              "target": "n" if story == "target" else "other"}]
+    node = {"id": "n", "type": "videoNode", "data": data}
+    assert server_action_refusal("generate_video", node, edges) == (
+        "video_story_continuity" if mode in {"auto", "independent"} and story != "none" else None
+    )
+    assert server_action_refusal("generate_image", node, edges) is None
+    assert server_action_refusal("generate_video", {**node, "type": "imageGenNode"}, edges) is None
