@@ -519,14 +519,19 @@ def test_film_route_says_when_there_is_no_film_yet(agent_client, monkeypatch):
     client, _seen = agent_client
 
     async def missing(**_kwargs):
-        raise StudioError("this compose node has no Studio film yet", 404)
+        raise StudioError(
+            "this compose node has no Studio film yet", 404, code="studio_film_missing"
+        )
 
     monkeypatch.setattr(freezone, "read_studio_film", missing)
     response = client.get(
         "/api/v1/projects/demo/freezone/canvases/canvas-1/compose/node-1/studio/film"
     )
     assert response.status_code == 404
-    assert "no Studio film yet" in response.json()["detail"]
+    assert response.json()["detail"] == {
+        "code": "studio_film_missing",
+        "message": "this compose node has no Studio film yet",
+    }
 
 
 def test_edit_route_returns_conflicts_as_a_200_body(agent_client, monkeypatch):
@@ -640,7 +645,10 @@ def test_export_route_needs_a_film_and_a_compose_node(agent_client, monkeypatch)
         json={},
     )
     assert response.status_code == 404
-    assert "open its compose workspace" in response.json()["detail"]
+    assert response.json()["detail"] == {
+        "code": "studio_film_missing",
+        "message": "this compose node has no Studio film yet: open its compose workspace first",
+    }
 
     film_dir = seen["project_dir"] / "freezone" / "studio" / "canvas-1" / "video-a"
     film_dir.mkdir(parents=True)

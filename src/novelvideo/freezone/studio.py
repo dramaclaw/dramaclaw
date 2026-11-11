@@ -77,6 +77,8 @@ _STUDIO_ENV_PASSTHROUGH = (
     "SYSTEMROOT",
     "WINDIR",
 )
+STUDIO_FILM_MISSING = "studio_film_missing"
+
 _STALE_CLIP_NAME = re.compile(r"^clip-\d+-")
 
 
@@ -93,9 +95,10 @@ def openfilm_studio_enabled() -> bool:
 class StudioError(RuntimeError):
     """A user-facing Studio bridge failure with an HTTP status."""
 
-    def __init__(self, message: str, status_code: int = 500):
+    def __init__(self, message: str, status_code: int = 500, *, code: str = ""):
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 def _repo_root() -> Path:
@@ -1067,6 +1070,7 @@ def _require_film(film: StudioFilm) -> Path:
             "this compose node has no Studio film yet: open its compose workspace "
             "once so the timeline becomes a film",
             404,
+            code=STUDIO_FILM_MISSING,
         )
     return film_dir
 
