@@ -97,9 +97,17 @@ describe("dynamic workflow node action contract", () => {
   it("compiles catalog-backed image workflow prompts before generation", () => {
     const source = readSource("src/features/canvas/nodes/shared/useImageGenerationForm.ts");
 
-    expect(source).toContain("compileWorkflowNodePrompt");
-    expect(source).toContain("workflowRecipeCompileMode: mode");
-    expect(source).toContain("workflowRecipeCompiledPrompt: compiledPrompt");
+    const requestSource = readSource("src/features/canvas/application/generationRequests/imageGenerationRequest.ts");
+    const compile = source.indexOf("await compileWorkflowNodePrompt({");
+    const build = source.indexOf("buildImageGenerationRequest(");
+    const submit = source.indexOf("await sendGenerationWireRequest");
+
+    expect(compile).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(compile);
+    expect(submit).toBeGreaterThan(build);
+    expect(source).toContain("imagePromptCompileMetadataPatch(");
+    expect(requestSource).toContain("workflowRecipeCompileMode: mode");
+    expect(requestSource).toContain("workflowRecipeCompiledPrompt: prompt");
   });
 
   it("compiles non-direct speech workflow prompts before TTS submission", () => {
@@ -134,7 +142,6 @@ describe("dynamic workflow node action contract", () => {
   });
 
   it.each([
-    ["image generation", "src/features/canvas/nodes/shared/useImageGenerationForm.ts", "prompt"],
     ["image edit", "src/features/canvas/nodes/ImageEditNode.tsx", "prompt"],
     ["video generation", "src/features/canvas/nodes/shared/useVideoGenerationForm.ts", "prompt"],
   ])("persists compiled workflow prompts back to %s node prompts", (_label, path, field) => {
@@ -144,6 +151,14 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toMatch(
       new RegExp(`workflowRecipeCompiledPrompt:\\s*compiledPrompt,\\s*\\n\\s*${field}:\\s*compiledPrompt`),
     );
+  });
+
+  it("persists compiled workflow prompts back to image generation node prompts", () => {
+    const source = readSource("src/features/canvas/nodes/shared/useImageGenerationForm.ts");
+    const requestSource = readSource("src/features/canvas/application/generationRequests/imageGenerationRequest.ts");
+
+    expect(source).toContain("imagePromptCompileMetadataPatch(");
+    expect(requestSource).toMatch(/workflowRecipeCompiledPrompt:\s*prompt,\s*\n\s*prompt,/);
   });
 
   it("does not persist timeout fallback production instructions as speech text", () => {

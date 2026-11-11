@@ -485,7 +485,11 @@ describe("freezone viewer contracts", () => {
 
     expect(imageGenForm).toContain("autoCommitOnGenerate");
     expect(imageGenForm).toContain("canvasEventBus.publish('freezone/commit-node'");
-    expect(imageGenForm).toContain("auto: true");
+    const imageGenerationResult = read(
+      "src/features/canvas/application/generationRequests/imageGenerationResult.ts",
+    );
+    expect(imageGenerationResult).toContain("auto: true");
+    expect(imageGenerationResult).toContain("kind: 'commit_node'");
   });
 
   it("routes projection group toolbar actions through projection sync and remove events", () => {
