@@ -539,6 +539,7 @@ def _codex_agent_skill_locator_instructions(workspace: Path) -> str:
         "read_mcp_resource, pass the exact server and uri from the same entry; never infer "
         "an MCP server from the Skill name or directory. workflow_catalog_server is only "
         "for Workflow Catalog discovery and compilation. "
+        "It reads only dramaclaw-workflow:// URIs and cannot read file:// Agent Skill files. "
     )
 
 
