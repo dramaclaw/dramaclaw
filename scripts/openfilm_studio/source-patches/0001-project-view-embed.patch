@@ -1,5 +1,5 @@
 diff --git a/packages/openfilm/studio/ui/src/components/ProjectView.tsx b/packages/openfilm/studio/ui/src/components/ProjectView.tsx
-index e91ddab..6b57b1f 100644
+index 32fd790..aebc24d 100644
 --- a/packages/openfilm/studio/ui/src/components/ProjectView.tsx
 +++ b/packages/openfilm/studio/ui/src/components/ProjectView.tsx
 @@ -7,7 +7,7 @@
@@ -11,7 +11,7 @@ index e91ddab..6b57b1f 100644
  import { applyOps } from '../../../server/ops.mjs';
  import { api, ApiError, PREFS_EVENT, projectEvents, type Clip, type Film, type Listing, type Op, type ProjectFilm, type ProjectSettings } from '@/api';
  import { useT } from '@/i18n';
-@@ -683,7 +683,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
+@@ -717,7 +717,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
    const [assetsPaneOpen, setAssetsPaneOpen] = useKeptFlag('openfilm.project.assets');
    const [assetsWidth, setAssetsWidth] = React.useState(280);
    /* the Layers panel (components/LayersPanel), left of the picture, after the assets */
@@ -20,7 +20,7 @@ index e91ddab..6b57b1f 100644
    const [layersWidth, setLayersWidth] = React.useState(240);
    const layersPaneRef = React.useRef<HTMLDivElement | null>(null);
    const [timelineOpen, setTimelineOpen] = useKeptFlag('openfilm.project.timeline');
-@@ -2662,12 +2662,16 @@ export function ProjectView({ projectId, onProject, onLeave }: {
+@@ -3029,12 +3029,16 @@ export function ProjectView({ projectId, onProject, onLeave }: {
  
    const value = film.film;
    const viewerReady = Boolean(info);
@@ -38,7 +38,7 @@ index e91ddab..6b57b1f 100644
              {inTabs ? null : <div className="pointer-events-none absolute inset-0 flex min-w-0 items-center justify-center">
                <div className="pointer-events-auto flex min-w-0 max-w-full items-center">
                  {renaming ? (
-@@ -2704,10 +2708,16 @@ export function ProjectView({ projectId, onProject, onLeave }: {
+@@ -3071,10 +3075,16 @@ export function ProjectView({ projectId, onProject, onLeave }: {
                    <BrandLogo size={15} />
                  </button>
                </Tooltip>

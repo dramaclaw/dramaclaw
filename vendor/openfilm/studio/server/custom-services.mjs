@@ -121,11 +121,17 @@ export const servicesHelp = (services) => services.map((s) => `--service ${s.id}
 /* ── a request ───────────────────────────────────────────────────────────── */
 
 /**
- * The address a path asks for, under the service's own: `/v1/audio/transcriptions?x=1` → its URL. Never another host,
- * never out of the service's path. @param {string} base @param {string} path
+ * The address a path asks for, under the service's own: `/v1/audio/transcriptions?x=1` (or without its leading /) → its
+ * URL. Never another host, never out of the service's path. @param {string} base @param {string} path
  */
 export function targetOf(base, path) {
-  if (!path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u001f#]/.test(path)) throw bad('--path starts with / and stays under the service, e.g. --path /v1/audio/transcriptions');
+  /* Git Bash on Windows turns an argument that starts with / into a folder path: /speech → C:/Program Files/Git/speech.
+     Not said back: its {key} is filled in by now */
+  if (/^[a-z]:[\\/]/i.test(path)) {
+    throw bad('Git Bash turned --path into a folder path: write it without its leading /, e.g. --path v1/audio/transcriptions, or put MSYS_NO_PATHCONV=1 in front of the command');
+  }
+  if (!path.startsWith('/') && !/^[a-z][a-z\d+.-]*:/i.test(path)) path = `/${path}`;
+  if (!path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u001f#]/.test(path)) throw bad('--path is a path under the service, e.g. --path /v1/audio/transcriptions');
   const at = new URL(base);
   const prefix = at.pathname.replace(/\/+$/, '');
   const url = new URL(`${at.origin}${prefix}${path}`);

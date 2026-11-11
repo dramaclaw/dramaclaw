@@ -3,41 +3,42 @@
  * A project's version history: a git repository of its own in `.film/history`. It never touches a `.git` the folder
  * may have (the person's or the agent's own repository): every call names this one explicitly.
  *
- * What a version holds is the film: film.html and every file it uses, as closure.mjs reads them from it (each clip's
- * file, what its pages load, subtitles beside its media, Studio's settings and markers of it). Restoring a version
- * brings all of that back exactly, footage included. Files the film does not use (renders, frames, logs, other takes)
- * are not in history, and history never writes, moves or deletes them. Media is kept by its content outside git, as
- * clones where the disk can (history-store.mjs), so keeping a version of a large project takes moments and no space.
+ * A version holds the project: film.html and every file it uses (closure.mjs), and every other file of the folder
+ * that is not a video, a sound or a picture the film does not use, nor larger than UNUSED_MAX (versionFiles). So the
+ * pages, their code, data and fonts, Studio's settings and markers of the film, and the agent's notes and scripts are
+ * all kept, however a page names them; renders, frames and other takes are not, and history never writes, moves or
+ * deletes them. Media is kept by its content outside git, as clones where the disk can (history-store.mjs), so keeping
+ * a version of a large project takes moments and no space.
  *
- * It is git, as a person knows it from GitHub: commits on branches, uncommitted changes, switching, merging. Every
- * commit is the person's — made when they commit, with their message — and nothing here commits on its own: going back
- * to a version puts its files in the folder as uncommitted changes, switching branches leaves the changes on the
- * branch they were made on (a parked version, put back on coming back) or brings them along. What a commit changed is
- * told in the film's terms (scenes and sounds added, removed, edited: `summary`), not as files; smaller steps are the
- * editor's undo, not commits.
+ * It is git as VS Code's Source Control shows it: the folder's changes against the version checked out, committed
+ * as a version (with the person's message, or on its own while they work when they asked for that:
+ * auto-versions.mjs), and every version drawn as a graph. Checking one out makes the folder hold its files, as git
+ * does, and makes no version of its own; with changes it is refused unless they are discarded. A commit on a version
+ * checked out on its own goes on main from there; main's later versions stay, on a line of their own. What a version
+ * changed is also told in the film's terms (scenes and sounds added, removed, edited: `summary`), which decides
+ * whether one is saved on its own.
+ *
+ * Each version is a commit. Its message is the person's (or what kind of version it is) and a trailer saying its
+ * kind: `Openfilm-Version: named` and so on (Kind). Histories of earlier editions had branches, names as tags and
+ * changes parked on branches: their versions are listed too, and any of them can be checked out.
  *
  * Every action takes an optional `onProgress` (history-store.mjs Progress) to say how far it is; a history an earlier
  * Studio made is brought up to date on first use (history-migrate.mjs).
  */
-import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { FILM_FILE, kindOf, readFilmFile } from '../../src/film-doc.mjs';
-import { clipFile, filmClosure, folderView, projectFiles } from './closure.mjs';
-import { FORMAT, formatOf, markFormat, migrateHistory } from './history-migrate.mjs';
+import { STUDIO_STATE, clipFile, filmClosure, folderView, isMediaFile, projectFiles } from './closure.mjs';
+import { FORMAT, formatOf, markFormat, migrateHistory, upgradeHistory } from './history-migrate.mjs';
 import {
-  HistoryError, gitRun, keepFiles, openRepo, readBlobs, readVersion, sameAs, writeFiles, writeTree,
+  HistoryError, gitRun, keepFiles, openRepo, readVersion, sameAs, writeFiles, writeTree,
 } from './history-store.mjs';
 import { TOOL_DIR } from './projects.mjs';
 import { moveToTrash } from './trash.mjs';
+import { readDeletedVersions, writeDeletedVersions } from './history-deleted.mjs';
 
 export { HistoryError };
-
-const run = promisify(execFile);
 
 /** @typedef {import('./history-store.mjs').Progress} Progress */
 /** @typedef {{ onProgress?: Progress }} Options */
@@ -49,11 +50,12 @@ const historyDir = (/** @type {string} */ root) => join(root, TOOL_DIR, 'history
  * taken from the history's settings (its `core.worktree` is where the folder was when the history was made, and a
  * project moved or renamed since would have every call fail). Its hooks are never run (history-store.mjs gitRun).
  */
-async function git(/** @type {string} */ root, /** @type {string[]} */ args) {
+async function git(/** @type {string} */ root, /** @type {string[]} */ args, /** @type {{ input?: string | Buffer }} */ o = {}) {
   const gitDir = historyDir(root);
   if (!ownHistory(gitDir)) throw new HistoryError('this project\'s version history was not made by Studio, so Studio does not use it', 409);
-  await followMove(root, gitDir);
-  return gitRun(root, gitDir, args);
+  /* a history being made has no settings of its own to put right yet */
+  if (existsSync(join(gitDir, 'HEAD'))) await followMove(root, gitDir);
+  return gitRun(root, gitDir, args, o);
 }
 
 /**
@@ -105,6 +107,11 @@ async function ready(root, progress) {
   if (!existsSync(root)) throw new HistoryError('the project\'s folder is not there', 404, 'none');
   const gitDir = historyDir(root);
   if (existsSync(gitDir) && !ownHistory(gitDir)) await rename(gitDir, `${gitDir}-from-elsewhere-${Date.now()}`);
+  /* git takes a folder for a history only with these in it, empty as they are until the first version: a copy or a
+     sync that leaves out empty folders would have every call fail ("not in a git directory") */
+  if (existsSync(join(gitDir, 'HEAD'))) {
+    for (const dir of ['objects', join('refs', 'heads'), join('refs', 'tags')]) await mkdir(join(gitDir, dir), { recursive: true });
+  }
   if (!existsSync(join(gitDir, 'HEAD'))) {
     await mkdir(join(gitDir, 'info'), { recursive: true });
     await git(root, ['init', '--quiet', '--template=', '--initial-branch=main', '--object-format=sha1']);
@@ -115,7 +122,9 @@ async function ready(root, progress) {
     await markFormat(gitDir);
   } else {
     await followMove(root, gitDir);
-    if (formatOf(gitDir) < FORMAT) await migrateHistory(root, gitDir, progress);
+    const format = formatOf(gitDir);
+    if (format < 2) await migrateHistory(root, gitDir, versionFiles, progress);
+    else if (format < FORMAT) await upgradeHistory(root, gitDir, versionFiles);
   }
   return openRepo(root, gitDir);
 }
@@ -163,6 +172,26 @@ const headOf = async (/** @type {string} */ root) => (await git(root, ['rev-pars
 /** The branch checked out (a new history's first branch has no commit yet). */
 const currentBranch = async (/** @type {string} */ root) => (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => '')).trim();
 
+/** Larger than this, a file the film does not use is not kept (a disk image, an archive, a project of another app). */
+export const UNUSED_MAX = 50 << 20;
+
+/* what is never the project's own, wherever it is: a tool's dot folder or file, what builds and packages make */
+const NOT_KEPT = /(^|\/)(\.[^/]*|node_modules|dist|build)(\/|$)/;
+
+/**
+ * The files a version of the folder at `root` holds: path → size. The film's (filmClosure), and the folder's others
+ * but videos, sounds and pictures, files over UNUSED_MAX, and what NOT_KEPT says. None without a film.html.
+ * @param {string} root @returns {Promise<Map<string, number>>}
+ */
+export async function versionFiles(root) {
+  const held = await filmClosure(folderView(root));
+  if (!held.size) return held;
+  for (const [path, size] of await projectFiles(root)) {
+    if (!held.has(path) && !isMediaFile(path) && size <= UNUSED_MAX && !NOT_KEPT.test(path)) held.set(path, size);
+  }
+  return held;
+}
+
 /** @typedef {{ path: string, change: 'added' | 'modified' | 'deleted' }} Change */
 
 /**
@@ -172,7 +201,7 @@ const currentBranch = async (/** @type {string} */ root) => (await git(root, ['s
  * @returns {Promise<{ changes: Change[], closure: Map<string, number> }>}
  */
 async function changesNow(repo, head, progress) {
-  const closure = await filmClosure(folderView(repo.root));
+  const closure = await versionFiles(repo.root);
   const was = head ? await readVersion(repo, head) : new Map();
   /** @type {Change[]} */
   const changes = [];
@@ -214,8 +243,12 @@ function clipsOf(/** @type {string} */ text) {
  * @typedef {{ scenes: Counts, sounds: Counts, stage: boolean, other: boolean }} Summary
  *   what changed, as the film tells it: its scenes (the clips with a picture) and its sounds, each added, removed or
  *   edited (moved, trimmed, restyled, or its file changed); `stage`: the picture's size; `other`: files no clip names
- *   changed (a page's shared code, a font): the picture may look different though no clip did
+ *   changed that a page may draw with (its shared code, a font, a picture): the picture may look different though no
+ *   clip did. Notes, scripts and Studio's markers change nothing of the picture.
  */
+
+/* what a page may draw with */
+const PICTURE = /\.(html?|css|[cm]?js|json|svg|woff2?|ttf|otf|png|jpe?g|gif|webp|avif|mp4|mov|m4v|webm|mp3|m4a|wav|aac|ogg|opus|flac)$/i;
 
 /**
  * What changed from `from` (a commit; null: nothing, the start) to `to` (a commit; null: the folder now), `paths` being
@@ -240,81 +273,134 @@ async function summarize(root, from, to, paths) {
   for (const [id, clip] of before.clips) {
     if (!after.clips.has(id)) (clip.sound ? summary.sounds : summary.scenes).removed += 1;
   }
-  summary.other = paths.some((path) => path !== FILM_FILE && !files.has(path));
+  summary.other = paths.some((path) => path !== FILM_FILE && !files.has(path) && PICTURE.test(path) && !path.startsWith(`${TOOL_DIR}/`));
   return summary;
 }
 
-/** @type {Map<string, Summary>} what each commit changed (a commit never changes, nor does what it changed) */
-const summaries = new Map();
-
-/** What `commit` changed from its first parent. */
-async function commitSummary(/** @type {string} */ root, /** @type {string} */ commit, /** @type {string | undefined} */ parent) {
-  const key = `${root}\0${commit}`;
-  const known = summaries.get(key);
-  if (known) return known;
-  const paths = (await git(root, ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-z', commit])).split('\0').filter(Boolean);
-  const summary = await summarize(root, parent ?? null, commit, paths);
-  summaries.set(key, summary);
-  if (summaries.size > 5000) summaries.delete(summaries.keys().next().value ?? '');
-  return summary;
-}
-
-/* a branch's uncommitted changes, left on it when another was switched to: a version of its own under this ref */
-const parkedRef = (/** @type {string} */ branch) => `refs/openfilm/parked/${branch}`;
-
-/** The branches whose changes are parked. */
-async function parkedBranches(/** @type {string} */ root) {
-  const list = await git(root, ['for-each-ref', '--format=%(refname)', 'refs/openfilm/parked']).catch(() => '');
-  return new Set(list.split('\n').map((s) => s.slice('refs/openfilm/parked/'.length)).filter(Boolean));
-}
+/** Whether `summary` changes the film: a scene or a sound, the picture's size, or a file its pages draw with. */
+const filmChanged = (/** @type {Summary} */ summary) => summary.stage || summary.other
+  || [summary.scenes, summary.sounds].some((c) => c.added || c.removed || c.edited);
 
 /**
- * @typedef {{ name: string, commit: string, at: number, message: string, current: boolean, parked: boolean }} Branch
- * @typedef {{ held: number, heldBytes: number, ignored: number }} Files
- *   the film's files now (in history once committed), and how many other files the folder has (never in history)
- * @typedef {{ branch: string, head: string | null, branches: Branch[], changes: { count: number, summary: Summary } | null, files: Files }} Status
+ * @typedef {{ head: string | null, branch: string | null, changes: { count: number, summary: Summary, files: Change[] } | null, filmMissing?: boolean }} Status
+ *   `branch`: the branch checked out (null: a version checked out on its own, as git's detached HEAD)
  */
 
+/** How many changed files a status lists (the count says how many there are). */
+const LISTED = 500;
+
 /**
- * Where the history is: the branch checked out, every branch (the most recently committed first), the uncommitted
- * changes (null: none), and what the film holds against what the folder has. A project never committed has no branch
- * to list yet, and all it holds is uncommitted.
+ * Where the history is: the version checked out (null: none yet), and what the folder holds that it does not: the
+ * files added, modified and deleted, and what that does to the film (null: nothing). A project never saved holds all
+ * it has as changes. `filmMissing`: the folder has no film.html, so all the version holds counts as deleted, and
+ * restoreFilm is how it comes back.
  * @param {string} root @param {Options} [o] @returns {Promise<Status>}
  */
 export function status(root, { onProgress } = {}) {
   return queued(root, async () => {
     const repo = await ready(root, throttled(onProgress));
-    const branch = await currentBranch(root) || 'main';
     const head = await headOf(root);
-    const parked = await parkedBranches(root);
-    const refs = await git(root, ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)%1f%(objectname)%1f%(committerdate:unix)%1f%(contents:subject)', 'refs/heads']);
-    const branches = refs.split('\n').filter(Boolean).map((line) => {
-      const [name, commit, at, message] = line.split('\x1f');
-      return { name, commit, at: Number(at) * 1000, message: shownMessage(message), current: name === branch, parked: parked.has(name) };
-    });
-    const { changes: paths, closure } = await changesNow(repo, head);
-    const changes = paths.length ? { count: paths.length, summary: await summarize(root, head, null, paths.map((p) => p.path)) } : null;
-    const all = await projectFiles(root, { sizes: false });
-    const files = {
-      held: closure.size,
-      heldBytes: [...closure.values()].reduce((n, s) => n + s, 0),
-      ignored: [...all.keys()].filter((p) => !closure.has(p)).length,
-    };
-    return { branch, head, branches, changes, files };
+    const { changes: files } = await changesNow(repo, head);
+    const changes = files.length
+      ? { count: files.length, summary: await summarize(root, head, null, files.map((p) => p.path)), files: files.slice(0, LISTED) }
+      : null;
+    return { head, branch: head ? (await currentBranch(root)) || null : 'main', changes, ...(filmIsMissing(root) ? { filmMissing: true } : {}) };
   });
 }
 
+/** Whether the folder at `root` has no film.html (a version then holds none of its files: versionFiles). */
+const filmIsMissing = (/** @type {string} */ root) => !statSync(join(root, FILM_FILE), { throwIfNoEntry: false })?.isFile();
+
 /**
- * The film's files now, and the folder's other files (which history leaves alone), each with its size, by path.
- * @param {string} root @returns {Promise<{ held: { path: string, size: number }[], ignored: { path: string, size: number }[] }>}
+ * What a version is, as its trailer says: `named` (saved by the person with a message), `saved` (by the person,
+ * without one), `auto` (on its own while they worked), `agent` (on its own before an agent's turn), `upgrade` (what an
+ * earlier history did not keep, added when it was brought up to date), `parked` (changes an earlier edition left on a
+ * branch); `before-restore` and `restore` from an edition that saved a version to restore one. A commit with no trailer
+ * is the person's, named by its message.
+ * @typedef {'named' | 'saved' | 'auto' | 'agent' | 'before-restore' | 'restore' | 'upgrade' | 'parked'} Kind
  */
-export function historyFiles(root) {
+const KINDS = new Set(['named', 'saved', 'auto', 'agent', 'before-restore', 'restore', 'upgrade', 'parked']);
+
+/** The subject a version of `kind` gets when the person gave it no message (what plain git shows of it). */
+const SUBJECT = { saved: 'Saved version', auto: 'Auto-saved', agent: 'Before agent\'s turn', upgrade: 'Kept all the project\'s files' };
+
+/** A version's message: its subject, then the trailer saying its kind. */
+const messageOf = (/** @type {Kind} */ kind, /** @type {string} */ text) =>
+  `${text || SUBJECT[/** @type {keyof typeof SUBJECT} */ (kind)] || kind}\n\nOpenfilm-Version: ${kind}\n`;
+
+/* a name an earlier edition gave a version: a tag on it, `v-<the name, base64url>[.<the version's first hex>]` */
+const decodeName = (/** @type {string} */ tag) => (tag.startsWith('v-') ? Buffer.from(tag.slice(2).split('.')[0], 'base64url').toString('utf8') : tag);
+
+/**
+ * @typedef {{ commit: string, parents: string[], at: number, kind: Kind, name: string, restored: string | null }} Version
+ *   `name`: the person's message ('' when there is none: it is told by its kind); `restored`: the version a
+ *   `restore` of an earlier edition brought back
+ */
+
+/* where the versions are: every branch, what HEAD is on, the line a commit on a checked-out version moved aside
+   (`kept`), and what an earlier edition parked */
+const ALL_VERSIONS = ['HEAD', '--branches', '--glob=refs/openfilm/kept/*', '--glob=refs/openfilm/parked/*'];
+
+/**
+ * The versions of the project, newest first, `limit` of them (more: there are older ones), each with its parents, so
+ * they draw as a graph.
+ * @param {string} root @param {{ limit?: number, deleted?: boolean, includeDeletedCount?: boolean } & Options} [options] @returns {Promise<{ versions: Version[], more: boolean, deletedCount?: number }>}
+ */
+export function log(root, { limit = 50, deleted = false, includeDeletedCount = false, onProgress } = {}) {
   return queued(root, async () => {
-    if (!existsSync(root)) throw new HistoryError('the project\'s folder is not there', 404, 'none');
-    const closure = await filmClosure(folderView(root));
-    const all = await projectFiles(root);
-    const list = (/** @type {Iterable<[string, number]>} */ m) => [...m].map(([path, size]) => ({ path, size })).sort((a, b) => a.path.localeCompare(b.path));
-    return { held: list(closure), ignored: list([...all].filter(([p]) => !closure.has(p))) };
+    const gitDir = historyDir(root);
+    if (!existsSync(join(gitDir, 'HEAD')) || !ownHistory(gitDir)) return { versions: [], more: false, ...(includeDeletedCount ? { deletedCount: 0 } : {}) };
+    await ready(root, throttled(onProgress));
+    const head = await headOf(root);
+    if (!head) return { versions: [], more: false, ...(includeDeletedCount ? { deletedCount: 0 } : {}) };
+    const removed = await readDeletedVersions(gitDir);
+    removed.delete(head);
+    const extra = includeDeletedCount ? { deletedCount: removed.size } : {};
+    if (deleted && !removed.size) return { versions: [], more: false, ...extra };
+    /** @type {Map<string, string>} */
+    const names = new Map();
+    const refs = await git(root, ['for-each-ref', '--sort=creatordate', '--format=%(objectname)%1f%(*objectname)%1f%(refname:strip=2)', 'refs/tags']);
+    for (const line of refs.split('\n')) {
+      const [tag, peeled, name] = line.split('\x1f');
+      const sha = peeled || tag;
+      if (sha && name) names.set(sha, decodeName(name));
+    }
+    const format = '--format=%H%x1f%P%x1f%ct%x1f%s%x1f%b%x1e';
+    const out = deleted
+      ? await git(root, ['log', '--no-walk=sorted', format, '--stdin', '--'], { input: [...removed.keys()].join('\n') + '\n' })
+      : await git(root, ['log', '--date-order', `--max-count=${limit + removed.size + 1}`, format, ...ALL_VERSIONS, '--']);
+    /** @type {Version[]} */
+    const versions = [];
+    for (const record of out.split('\x1e')) {
+      const [commit, parents = '', at, subject = '', body = ''] = record.replace(/^\n/, '').split('\x1f');
+      if (!commit) continue;
+      if (!deleted && removed.has(commit)) continue;
+      if (deleted && !removed.has(commit)) continue;
+      const said = /^Openfilm-Version: (\S+)$/m.exec(body)?.[1] ?? '';
+      const parked = /^parked: (.*)$/.exec(subject);
+      const kind = /** @type {Kind} */ (KINDS.has(said) ? said : parked ? 'parked' : 'named');
+      const own = kind === 'named' ? shownMessage(subject) : kind === 'parked' ? (parked?.[1] ?? '') : '';
+      versions.push({
+        commit, parents: parents.split(' ').filter(Boolean), at: Number(at) * 1000, kind, name: names.get(commit) ?? own,
+        restored: /^Openfilm-Restored: ([0-9a-f]+)$/m.exec(body)?.[1] ?? null,
+      });
+    }
+    /** @param {string} id @returns {string[]} */
+    const nearest = (id) => {
+      const pending = [id], seen = new Set();
+      /** @type {string[]} */
+      const found = [];
+      while (pending.length) {
+        const next = pending.pop();
+        if (!next || seen.has(next)) continue;
+        seen.add(next);
+        const entry = removed.get(next);
+        if (entry) pending.push(...[...entry.parents].reverse()); else found.push(next);
+      }
+      return found;
+    };
+    const visible = deleted ? versions : versions.map((version) => ({ ...version, parents: [...new Set(version.parents.flatMap((parent) => nearest(parent)))] }));
+    return { versions: visible.slice(0, limit), more: visible.length > limit, ...extra };
   });
 }
 
@@ -327,93 +413,161 @@ function shownMessage(/** @type {string} */ subject) {
   return named ? named[1] : subject;
 }
 
-/* a tag's name is anything a person typed in an earlier edition (a named version); stored encoded */
-const decodeName = (/** @type {string} */ tag) => (tag.startsWith('v-') ? Buffer.from(tag.slice(2), 'base64url').toString('utf8') : tag);
-
 /**
- * @typedef {{ commit: string, parents: string[], at: number, message: string, body: string, tags: string[], summary: Summary }} Commit
+ * The files a version changed from the one before it (its first parent; none: all it holds is added), as git's
+ * status letters say them.
+ * @param {string} root @param {string} commit @returns {Promise<Change[]>}
  */
-
-/**
- * The commits of `ref` (a branch; the one checked out by default), newest first, each with what it changed.
- * @param {string} root @param {{ ref?: string, limit?: number } & Options} [options] @returns {Promise<Commit[]>}
- */
-export function log(root, { ref = 'HEAD', limit = 100, onProgress } = {}) {
+export function versionFilesChanged(root, commit) {
   return queued(root, async () => {
-    const gitDir = historyDir(root);
-    if (!existsSync(join(gitDir, 'HEAD')) || !ownHistory(gitDir)) return [];
-    await ready(root, throttled(onProgress));
-    if (!(await headOf(root))) return [];
-    /** @type {Map<string, string[]>} */
-    const tags = new Map();
-    const refs = await git(root, ['for-each-ref', '--format=%(objectname)%1f%(*objectname)%1f%(refname:strip=2)', 'refs/tags']);
-    for (const line of refs.split('\n')) {
-      const [tag, peeled, name] = line.split('\x1f');
-      const sha = peeled || tag;
-      if (sha && name) tags.set(sha, [...(tags.get(sha) ?? []), decodeName(name)]);
-    }
-    const out = await git(root, ['log', `--max-count=${limit}`, '--format=%H%x1f%P%x1f%ct%x1f%s%x1f%b%x1e', ref, '--']);
-    const commits = [];
-    for (const record of out.split('\x1e')) {
-      const [commit, parents, at, subject, body] = record.replace(/^\n/, '').split('\x1f');
-      if (!commit) continue;
-      const parentList = parents ? parents.split(' ').filter(Boolean) : [];
-      commits.push({
-        commit, parents: parentList, at: Number(at) * 1000, message: shownMessage(subject ?? ''), body: (body ?? '').trim(),
-        tags: tags.get(commit) ?? [], summary: await commitSummary(root, commit, parentList[0]),
-      });
-    }
-    return commits;
+    await ready(root);
+    const full = await resolveCommit(root, commit);
+    const out = await git(root, ['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', '-z', '--no-renames', full]);
+    const parts = out.split('\0').filter(Boolean);
+    /** @type {Change[]} */
+    const files = [];
+    const CHANGE = /** @type {Record<string, Change['change']>} */ ({ A: 'added', M: 'modified', D: 'deleted', T: 'modified' });
+    for (let i = 0; i + 1 < parts.length; i += 2) files.push({ path: parts[i + 1], change: CHANGE[parts[i][0]] ?? 'modified' });
+    return files;
   });
 }
 
-/* ── changing it: only ever when the person asks ─────────────────────────── */
+/* ── changing it ─────────────────────────────────────────────────────────── */
 
-/** A commit or branch the person named, as git knows it: its full id, or a 404. */
+/** A version the person named, as git knows it: its full id, or a 404. */
 async function resolveCommit(/** @type {string} */ root, /** @type {string} */ rev) {
-  if (!/^[0-9a-f]{7,64}$/.test(String(rev))) throw new HistoryError('which commit?', 400, 'none');
+  if (!/^[0-9a-f]{7,64}$/.test(String(rev))) throw new HistoryError('which version?', 400, 'none');
   const full = (await git(root, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]).catch(() => '')).trim();
-  if (!full) throw new HistoryError('no such commit', 404, 'none');
+  if (!full) throw new HistoryError('no such version', 404, 'none');
+  if ((await readDeletedVersions(historyDir(root))).has(full) && full !== await headOf(root)) throw new HistoryError('this version was deleted; recover it first', 409, 'deleted');
   return full;
 }
 
-const needClean = async (/** @type {import('./history-store.mjs').Repo} */ repo, /** @type {string | null} */ head) => {
-  if ((await changesNow(repo, head)).changes.length) throw new HistoryError('there are uncommitted changes: commit or discard them first', 409, 'dirty');
-};
+/** Resolve a bounded selection in one Git call, before changing any records.
+ * @param {string} root @param {unknown} commits @returns {Promise<Map<string, string[]>>}
+ */
+async function selectedCommits(root, commits) {
+  if (!Array.isArray(commits) || !commits.length || commits.length > 1000 || !commits.every((id) => typeof id === 'string' && /^[0-9a-f]{7,64}$/.test(id))) throw new HistoryError('select 1 to 1000 versions', 400, 'selection');
+  const ids = [...new Set(/** @type {string[]} */ (commits))];
+  const out = await git(root, ['log', '--no-walk=unsorted', '--format=%H%x1f%P', '--stdin', '--'], { input: ids.join('\n') + '\n' }).catch(() => { throw new HistoryError('no such version', 404, 'none'); });
+  const found = new Map(out.trim().split('\n').filter(Boolean).map((line) => { const [id, parents = ''] = line.split('\x1f'); return [id, parents.split(' ').filter(Boolean)]; }));
+  if (ids.some((id) => ![...found.keys()].some((full) => full.startsWith(id)))) throw new HistoryError('no such version', 404, 'none');
+  return found;
+}
 
-/** The film's files in the folder now, kept as a tree (`head`: the version they are compared with). */
+/** Move selected records out of the active history. Snapshots stay recoverable; no working file or Git ref moves.
+ * @param {string} root @param {unknown} commits
+ */
+export function deleteVersions(root, commits) {
+  return queued(root, async () => {
+    await ready(root);
+    const found = await selectedCommits(root, commits);
+    if (found.has(await headOf(root) ?? '')) throw new HistoryError('the version currently in use cannot be deleted', 409, 'current');
+    const removed = await readDeletedVersions(historyDir(root));
+    for (const [id, parents] of found) if (!removed.has(id)) removed.set(id, { at: Date.now(), parents });
+    await writeDeletedVersions(historyDir(root), removed);
+    return { commits: [...found.keys()] };
+  });
+}
+
+/** Recover deleted records, without checking them out or changing any files.
+ * @param {string} root @param {unknown} commits
+ */
+export function recoverVersions(root, commits) {
+  return queued(root, async () => {
+    await ready(root);
+    const found = await selectedCommits(root, commits);
+    const removed = await readDeletedVersions(historyDir(root));
+    for (const id of found.keys()) removed.delete(id);
+    await writeDeletedVersions(historyDir(root), removed);
+    return { commits: [...found.keys()] };
+  });
+}
+
+/** The files a version holds, as they are in the folder now, kept as a tree (`head`: the version they are compared with). */
 async function keepFolder(/** @type {import('./history-store.mjs').Repo} */ repo, /** @type {string | null} */ head, /** @type {Progress | undefined} */ progress) {
-  const closure = await filmClosure(folderView(repo.root));
-  const version = await keepFiles(repo, closure.keys(), head ? await readVersion(repo, head) : null, progress);
+  const files = await versionFiles(repo.root);
+  const version = await keepFiles(repo, files.keys(), head ? await readVersion(repo, head) : null, progress);
   return writeTree(repo, version);
 }
 
+const treeOf = async (/** @type {string} */ root, /** @type {string} */ commit) => (await git(root, ['rev-parse', `${commit}^{tree}`])).trim();
+const isAncestor = (/** @type {string} */ root, /** @type {string} */ a, /** @type {string} */ b) => git(root, ['merge-base', '--is-ancestor', a, b]).then(() => true, () => false);
+
 /**
- * Commit the uncommitted changes with the person's message (its first line is the summary). The first commit of a
- * project takes all the film holds. Returns the commit.
- * @param {string} root @param {string} message @param {Options} [o]
+ * Commit the folder as a version. On a branch, it goes on it. On a version checked out on its own (detached), it goes
+ * on main from there, as the newest; main's versions after that one stay in the history, on a line of their own
+ * (`refs/openfilm/kept/<its tip>`), and main is checked out again. Null when the folder holds the version checked out.
+ * Not queued: the caller is.
+ * @param {import('./history-store.mjs').Repo} repo @param {Kind} kind @param {string} text @param {Progress} [progress]
  */
-export function commitChanges(root, message, { onProgress } = {}) {
+async function commitFolder(repo, kind, text, progress) {
+  const root = repo.root;
+  const head = await headOf(root);
+  const tree = await keepFolder(repo, head, progress);
+  if (head && tree === await treeOf(root, head)) return null;
+  const commit = (await git(root, ['commit-tree', tree, ...(head ? ['-p', head] : []), '-F', '-'], { input: messageOf(kind, text) })).trim();
+  const branch = (await git(root, ['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim();
+  if (branch || !head) {
+    await git(root, ['update-ref', '-m', `${kind}: ${text || kind}`, branch || 'refs/heads/main', commit, head ?? '']);
+  } else {
+    const main = (await git(root, ['rev-parse', '--verify', '--quiet', 'refs/heads/main']).catch(() => '')).trim();
+    if (main && !(await isAncestor(root, main, commit))) await git(root, ['update-ref', `refs/openfilm/kept/${main}`, main]);
+    await git(root, ['update-ref', '-m', `${kind}: ${text || kind}`, 'refs/heads/main', commit]);
+    await git(root, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  }
+  maintain(root);
+  return commit;
+}
+
+/**
+ * Commit the folder as a version. By the person: `message` is theirs (none: 'saved'); with nothing changed it is
+ * refused ('nothing'). On its own (`kind` 'auto' or 'agent'): null unless the film changed (filmChanged). Returns the
+ * version. Without film.html there is none to save (it would hold nothing: versionFiles): refused ('missing-film'), and
+ * on its own, null.
+ * @param {string} root @param {{ message?: string, kind?: 'auto' | 'agent' } & Options} [o] @returns {Promise<string | null>}
+ */
+export function saveVersion(root, { message = '', kind, onProgress } = {}) {
   return queued(root, async () => {
-    const text = String(message ?? '').trim().slice(0, 5000);
-    if (!text) throw new HistoryError('a commit needs a message', 400, 'message');
-    const progress = throttled(onProgress);
-    const repo = await ready(root, progress);
-    const head = await headOf(root);
-    const branchRef = (await git(root, ['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim() || 'refs/heads/main';
-    const tree = await keepFolder(repo, head, progress);
-    if (head && tree === (await git(root, ['rev-parse', `${head}^{tree}`])).trim()) throw new HistoryError('nothing to commit', 409, 'nothing');
-    const commit = (await git(root, ['commit-tree', tree, ...(head ? ['-p', head] : []), '-m', text])).trim();
-    await git(root, ['update-ref', '-m', `commit: ${text.split('\n')[0]}`, branchRef, commit, head ?? '']);
-    maintain(root);
-    return commit;
+    if (filmIsMissing(root)) {
+      if (kind) return null;
+      throw new HistoryError('film.html is missing, so there is nothing to save: restore it first', 409, 'missing-film');
+    }
+    const text = String(message ?? '').trim().replace(/\s+/g, ' ').slice(0, 200);
+    const repo = await ready(root, throttled(onProgress));
+    /* on its own, only when the film changed: notes, logs and scripts an agent writes, or markers, are kept with the
+       next version, not one of their own */
+    if (kind) {
+      const head = await headOf(root);
+      const { changes } = await changesNow(repo, head);
+      if (!changes.length || !filmChanged(await summarize(root, head, null, changes.map((c) => c.path)))) return null;
+    }
+    const saved = await commitFolder(repo, kind ?? (text ? 'named' : 'saved'), kind ? '' : text, throttled(onProgress));
+    if (!saved && !kind) throw new HistoryError('nothing changed since the version checked out', 409, 'nothing');
+    return saved;
   });
 }
 
 /**
- * Put the film back as the last commit holds it: its files written where they differ. A file the film takes that the
- * commit does not have (made since, beside a page) goes to the trash, as a delete in Studio does, so a discard can be
- * taken back from there; files the film does not use are left as they are.
+ * Put the folder back as `head` holds it, `changes` (changesNow) being what differs: its files written where they
+ * differ, and a file the version does not have (made since) to the trash, as a delete in Studio does. Files the
+ * versions leave out are not touched.
+ * @param {import('./history-store.mjs').Repo} repo @param {import('./history-store.mjs').Version} version
+ * @param {Change[]} changes @param {Progress} [progress]
+ */
+async function putBack(repo, version, changes, progress) {
+  const { missing } = await writeFiles(repo, version, { progress });
+  for (const { path, change } of changes) {
+    if (change === 'added' && !version.has(path) && existsSync(join(repo.root, path))) await moveToTrash(join(repo.root, path));
+  }
+  /* Studio's state of the film (markers, settings, subtitle style) the version did not have: it had none */
+  for (const path of STUDIO_STATE) if (!version.has(path) && existsSync(join(repo.root, path))) await moveToTrash(join(repo.root, path));
+  return missing;
+}
+
+/**
+ * Discard the changes: the folder as the version checked out holds it. Returns the media it holds that could not be
+ * found.
  * @param {string} root @param {Options} [o]
  */
 export function discardChanges(root, { onProgress } = {}) {
@@ -422,261 +576,100 @@ export function discardChanges(root, { onProgress } = {}) {
     const repo = await ready(root, progress);
     const head = await headOf(root);
     if (!head) throw new HistoryError('nothing is committed yet, so there is nothing to go back to', 409, 'nothing');
-    await writeFiles(repo, await readVersion(repo, head), { progress });
-    for (const { path, change } of (await changesNow(repo, head)).changes) {
-      if (change === 'added' && existsSync(join(root, path))) await moveToTrash(join(root, path));
-    }
+    const { changes } = await changesNow(repo, head);
+    return { missing: await putBack(repo, await readVersion(repo, head), changes, progress) };
   });
 }
 
 /**
- * Put the film as `commit` holds it, as uncommitted changes on the branch checked out: nothing is committed, the
- * person commits them (or discards them, which comes back to where it was). Asked with uncommitted changes, it says so
- * ('dirty'): they would be lost. Returns the commit, and the media it holds that could not be found (none, unless
- * the history's store lost some).
- * @param {string} root @param {string} commit @param {Options} [o]
+ * Check out `commit`, as git does: the folder holds its files (those of the version checked out that it does not
+ * have go to the trash) and it is where the next commit goes. No version is made. The branch whose tip it is is
+ * checked out; any other version, on its own (detached). With changes, refused ('dirty') unless `discard`: they would
+ * be lost. Returns the version, and the media it holds that could not be found.
+ * @param {string} root @param {string} commit @param {{ discard?: boolean } & Options} [o]
  */
-export function restoreCommit(root, commit, { onProgress } = {}) {
+export function checkoutVersion(root, commit, { discard = false, onProgress } = {}) {
   return queued(root, async () => {
     const progress = throttled(onProgress);
     const repo = await ready(root, progress);
     const full = await resolveCommit(root, commit);
-    await needClean(repo, await headOf(root));
-    const { missing } = await writeFiles(repo, await readVersion(repo, full), { progress });
+    const head = await headOf(root);
+    const { changes } = await changesNow(repo, head);
+    if (changes.length && !discard) throw new HistoryError('there are changes: commit or discard them first', 409, 'dirty');
+    const version = await readVersion(repo, full);
+    const missing = await putBack(repo, version, changes, progress);
+    if (head) {
+      for (const path of (await readVersion(repo, head)).keys()) {
+        if (!version.has(path) && existsSync(join(root, path))) await moveToTrash(join(root, path));
+      }
+    }
+    const tips = (await git(root, ['for-each-ref', `--points-at=${full}`, '--format=%(refname)', 'refs/heads'])).split('\n').filter(Boolean);
+    const branch = tips.includes('refs/heads/main') ? 'refs/heads/main' : tips[0];
+    if (branch) await git(root, ['symbolic-ref', 'HEAD', branch]);
+    else await git(root, ['update-ref', '--no-deref', 'HEAD', full]);
     return { commit: full, missing };
   });
 }
 
-/** A branch name a person typed, as git takes it (spaces become dashes), or a 400. */
-async function branchName(/** @type {string} */ root, /** @type {string} */ name) {
-  const clean = String(name ?? '').trim().replace(/\s+/g, '-');
-  if (!clean || clean.length > 100) throw new HistoryError('a branch needs a name', 400, 'name');
-  const ok = await git(root, ['check-ref-format', '--branch', clean]).then(() => true, () => false);
-  if (!ok || clean.startsWith('-')) throw new HistoryError(`"${clean}" cannot be a branch name`, 400, 'name');
-  return clean;
-}
-
-const branchExists = async (/** @type {string} */ root, /** @type {string} */ name) => Boolean(await git(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`]).catch(() => ''));
-
-/** The paths whose files differ between two versions. */
-function differing(/** @type {import('./history-store.mjs').Version} */ a, /** @type {import('./history-store.mjs').Version} */ b) {
-  const out = new Set();
-  for (const [path, e] of a) if (b.get(path)?.oid !== e.oid) out.add(path);
-  for (const path of b.keys()) if (!a.has(path)) out.add(path);
-  return out;
-}
-
 /**
- * Leave the film's uncommitted changes on `branch`: the folder's film kept as a version of its own (`parkedRef`),
- * put back when the branch is checked out again. An older one left there and not put back stays in its history.
+ * film.html missing: put back only film.html, as version `commit` has it. Every other file stays as it is (none written
+ * over, none to the trash: an agent's other work is kept), and the version checked out does not change. Refused when
+ * film.html is there again ('dirty': restoring the version is then the way) or the version has none ('no-film').
+ * @param {string} root @param {string} commit @param {Options} [o]
  */
-async function park(/** @type {import('./history-store.mjs').Repo} */ repo, /** @type {string} */ branch, /** @type {string} */ head, /** @type {Progress | undefined} */ progress) {
-  const tree = await keepFolder(repo, head, progress);
-  const older = (await git(repo.root, ['rev-parse', '--verify', '--quiet', parkedRef(branch)]).catch(() => '')).trim();
-  const commit = (await git(repo.root, ['commit-tree', tree, '-p', head, ...(older ? ['-p', older] : []), '-m', `parked: ${branch}`])).trim();
-  await git(repo.root, ['update-ref', parkedRef(branch), commit]);
-}
-
-/**
- * Put back the changes left on `branch`, if any, over the version `tip` now in the folder. False when they collide
- * (the branch changed the same files since, or `carried` changes did): they stay parked.
- * @param {import('./history-store.mjs').Repo} repo @param {string} branch @param {string} tip @param {Set<string>} carried @param {Progress} [progress]
- */
-async function unpark(repo, branch, tip, carried, progress) {
-  const parked = (await git(repo.root, ['rev-parse', '--verify', '--quiet', parkedRef(branch)]).catch(() => '')).trim();
-  if (!parked) return true;
-  const base = (await git(repo.root, ['rev-parse', `${parked}^1`])).trim();
-  const left = await readVersion(repo, parked);
-  const changed = differing(await readVersion(repo, base), left);
-  const moved = base === tip ? new Set() : differing(await readVersion(repo, base), await readVersion(repo, tip));
-  if ([...changed].some((p) => moved.has(p) || carried.has(p))) return false;
-  await writeFiles(repo, left, { paths: changed, progress });
-  await git(repo.root, ['update-ref', '-d', parkedRef(branch)]);
-  return true;
-}
-
-/**
- * Check out `target` (a branch, or `create` one first, from `from`: a commit; the one checked out by default). The
- * uncommitted changes are left on the branch they were made on (`carry` 'leave', put back when it is checked out again)
- * or brought along ('bring': refused with 'conflict' when they collide with what the other branch holds). Changes left
- * on `target` before come back. Returns whether they did (false: they collide and stay parked).
- * @param {string} root @param {{ target: string, create?: boolean, from?: string, carry?: 'leave' | 'bring' } & Options} o
- */
-export function checkout(root, { target, create = false, from, carry = 'leave', onProgress }) {
+export function restoreFilm(root, commit, { onProgress } = {}) {
   return queued(root, async () => {
     const progress = throttled(onProgress);
     const repo = await ready(root, progress);
-    const head = await headOf(root);
-    if (!head) throw new HistoryError('commit once before making branches', 409, 'nothing');
-    const name = await branchName(root, target);
-    const here = await currentBranch(root);
-    if (create && await branchExists(root, name)) throw new HistoryError(`a branch "${name}" exists already`, 409, 'exists');
-    if (!create && !(await branchExists(root, name))) throw new HistoryError(`no branch "${name}"`, 404, 'none');
-    if (!create && name === here) return true;
-    const to = create ? (from ? await resolveCommit(root, from) : head) : (await git(root, ['rev-parse', `refs/heads/${name}`])).trim();
-    const checkOut = async () => {
-      if (create) await git(root, ['update-ref', '-m', `branch: from ${to}`, `refs/heads/${name}`, to, '']);
-      await git(root, ['symbolic-ref', '-m', `checkout: to ${name}`, 'HEAD', `refs/heads/${name}`]);
-    };
-    /* a new branch where the folder is: the changes simply go with it, nothing to leave or bring */
-    if (create && to === head) { await checkOut(); return true; }
-    const { changes } = await changesNow(repo, head, progress);
-    const dirty = new Set(changes.map((c) => c.path));
-    const goal = await readVersion(repo, to);
-    if (carry === 'bring' && dirty.size) {
-      /* what the other branch holds differently from here, where the person changed it too: refused, nothing moved */
-      const differ = differing(await readVersion(repo, head), goal);
-      for (const path of dirty) {
-        if (differ.has(path) && !(await sameAs(repo, path, goal.get(path)))) throw new HistoryError('the uncommitted changes collide with what that branch holds', 409, 'conflict');
-      }
-      await writeFiles(repo, goal, { paths: [...differ].filter((p) => !dirty.has(p)), progress });
-      await checkOut();
-      return unpark(repo, name, to, dirty, progress);
-    }
-    if (dirty.size && here) await park(repo, here, head, progress);
-    await writeFiles(repo, goal, { progress });
-    await checkOut();
-    return unpark(repo, name, to, new Set(), progress);
+    const full = await resolveCommit(root, commit);
+    if (!filmIsMissing(root)) throw new HistoryError('film.html is there: restore the whole version instead', 409, 'dirty');
+    const version = await readVersion(repo, full);
+    if (!version.has(FILM_FILE)) throw new HistoryError('that version has no film.html', 409, 'no-film');
+    await writeFiles(repo, version, { paths: [FILM_FILE], progress });
+    return { commit: full };
   });
 }
 
-/** Rename a branch (its parked changes go with it). */
-export function renameBranch(/** @type {string} */ root, /** @type {string} */ from, /** @type {string} */ to) {
-  return queued(root, async () => {
-    await ready(root);
-    const old = await branchName(root, from);
-    const name = await branchName(root, to);
-    if (!(await branchExists(root, old))) throw new HistoryError(`no branch "${old}"`, 404, 'none');
-    if (old === name) return name;
-    if (await branchExists(root, name)) throw new HistoryError(`a branch "${name}" exists already`, 409, 'exists');
-    await git(root, ['branch', '-m', old, name]);
-    const parked = (await git(root, ['rev-parse', '--verify', '--quiet', parkedRef(old)]).catch(() => '')).trim();
-    if (parked) {
-      await git(root, ['update-ref', parkedRef(name), parked]);
-      await git(root, ['update-ref', '-d', parkedRef(old)]);
-    }
-    return name;
-  });
-}
+/** Where the texts of merges are kept aside, one ref each: no list of versions reads them (ALL_VERSIONS). */
+export const MERGES_REFS = 'refs/openfilm/merges/';
+/** How many are kept per project: the oldest go (and their texts, once git tidies the history). */
+export const MERGES_KEPT = 50;
 
 /**
- * Delete a branch (not the one checked out). One with commits on no other branch is refused ('unmerged', with how
- * many) unless `force`: those commits would be gone. Its parked changes go too.
- * @param {string} root @param {string} name @param {{ force?: boolean }} [o]
+ * Keep `files` (a name and its text or bytes each) aside in the history, out of every list of versions: a commit of its own
+ * with `message`, under MERGES_REFS by the time it was made, the last MERGES_KEPT kept. What a merge of the person's
+ * edits over an agent's write read and wrote (person-edits.mjs), so a merge can always be undone by hand:
+ * `git --git-dir .film/history for-each-ref refs/openfilm/merges`, then `git show <ref>:agent.html`. It waits for no
+ * history action (git writes objects and refs of its own safely beside one); a history not made yet is made first,
+ * in turn, as opening the project's versions would.
+ * @param {string} root @param {Record<string, string | Buffer>} files @param {string} message
  */
-export function deleteBranch(root, name, { force = false } = {}) {
-  return queued(root, async () => {
-    await ready(root);
-    const branch = await branchName(root, name);
-    if (!(await branchExists(root, branch))) throw new HistoryError(`no branch "${branch}"`, 404, 'none');
-    if (branch === await currentBranch(root)) throw new HistoryError('the branch checked out cannot be deleted', 409, 'current');
-    if (!force) {
-      /* its commits no other branch has (`--exclude` takes a name as `--branches` sees it, without refs/heads/) */
-      const only = Number((await git(root, ['rev-list', '--count', branch, '--not', `--exclude=${branch}`, '--branches'])).trim());
-      if (only > 0) throw Object.assign(new HistoryError(`"${branch}" has ${only} commit(s) on no other branch`, 409, 'unmerged'), { commits: only });
-    }
-    await git(root, ['branch', '-D', branch]);
-    await git(root, ['update-ref', '-d', parkedRef(branch)]).catch(() => {});
-  });
-}
-
-/**
- * Merge the trees of `ours` and `theirs` from `base`, as `git merge` would, in a scratch index: what one side changed
- * is taken; where both changed one file, its text is merged line by line. What both changed in the same place (or a
- * media file both changed, or one changed and the other deleted) is a conflict, unless `prefer` says whose side wins.
- * Returns the tree.
- * @param {import('./history-store.mjs').Repo} repo @param {string} base @param {string} ours @param {string} theirs @param {'ours' | 'theirs'} [prefer]
- */
-async function mergeTrees(repo, base, ours, theirs, prefer) {
-  const index = join(repo.gitDir, `openfilm-index-${process.pid}-${randomBytes(4).toString('hex')}`);
-  const env = { GIT_INDEX_FILE: index };
-  const scratch = join(tmpdir(), `openfilm-merge-${randomBytes(6).toString('hex')}`);
-  const conflict = () => new HistoryError('the two branches changed the same thing', 409, 'conflict');
-  try {
-    await repo.git(['read-tree', '-m', '-i', '--aggressive', base, ours, theirs], { env });
-    const unmerged = await repo.git(['ls-files', '-u', '-z'], { env });
-    /** @type {Map<string, Record<string, { mode: string, oid: string }>>} */
-    const stages = new Map();
-    for (const line of unmerged.split('\0')) {
-      const tab = line.indexOf('\t');
-      if (tab < 0) continue;
-      const [mode, oid, stage] = line.slice(0, tab).split(' ');
-      const path = line.slice(tab + 1);
-      stages.set(path, { ...(stages.get(path) ?? {}), [stage]: { mode, oid } });
-    }
-    if (!stages.size) return (await repo.git(['write-tree'], { env })).trim();
-    const [oursV, theirsV] = [await readVersion(repo, ours), await readVersion(repo, theirs)];
-    const zero = '0'.repeat(repo.algo === 'sha256' ? 64 : 40);
-    const lines = [];
-    await mkdir(scratch, { recursive: true });
-    for (const [path, s] of stages) {
-      const [b, o, t] = [s['1'], s['2'], s['3']];
-      const pick = prefer === 'ours' ? o : prefer === 'theirs' ? t : undefined;
-      let result = /** @type {{ mode: string, oid: string } | null | undefined} */ (undefined);
-      if (!o || !t || oursV.get(path)?.media || theirsV.get(path)?.media) {
-        if (!prefer) throw conflict();
-        result = pick ?? null;
-      } else {
-        const blobs = await readBlobs(repo, [o.oid, t.oid, ...(b ? [b.oid] : [])]);
-        const files = ['ours', 'base', 'theirs'].map((n) => join(scratch, n));
-        await writeFile(files[0], blobs.get(o.oid) ?? '');
-        await writeFile(files[1], b ? blobs.get(b.oid) ?? '' : '');
-        await writeFile(files[2], blobs.get(t.oid) ?? '');
-        const merged = await run('git', ['merge-file', '-p', ...(prefer ? [`--${prefer}`] : []), ...files], { maxBuffer: 64 << 20, windowsHide: true })
-          .then((r) => r.stdout, () => null);
-        if (merged == null) {
-          /* conflicts left (without `prefer`), or files it cannot merge (binary) */
-          if (!prefer) throw conflict();
-          result = pick ?? null;
-        } else {
-          const oid = (await repo.git(['hash-object', '-w', '--stdin'], { input: merged })).trim();
-          result = { mode: o.mode, oid };
-        }
-      }
-      lines.push(`0 ${zero}\t${path}`);
-      if (result) lines.push(`${result.mode} ${result.oid}\t${path}`);
-    }
-    await repo.git(['update-index', '--index-info'], { input: `${lines.join('\n')}\n`, env });
-    return (await repo.git(['write-tree'], { env })).trim();
-  } finally {
-    await rm(index, { force: true });
-    await rm(scratch, { recursive: true, force: true });
+export async function keepAside(root, files, message) {
+  if (!existsSync(join(historyDir(root), 'HEAD'))) await queued(root, () => ready(root));
+  const entries = [];
+  for (const [name, text] of Object.entries(files)) {
+    const blob = (await git(root, ['hash-object', '-w', '--stdin'], { input: text })).trim();
+    entries.push(`100644 blob ${blob}\t${name}\n`);
   }
+  const tree = (await git(root, ['mktree'], { input: entries.join('') })).trim();
+  const commit = (await git(root, ['commit-tree', tree, '-m', message.slice(0, 2000)])).trim();
+  await git(root, ['update-ref', `${MERGES_REFS}${String(Date.now()).padStart(15, '0')}-${commit.slice(0, 8)}`, commit, '']);
+  const refs = (await git(root, ['for-each-ref', '--sort=refname', '--format=%(refname)', MERGES_REFS])).split('\n').filter(Boolean);
+  for (const ref of refs.slice(0, Math.max(0, refs.length - MERGES_KEPT))) await git(root, ['update-ref', '-d', ref]);
+  return commit;
 }
 
 /**
- * Merge `branch` into the one checked out, with the person's message (a merge that only moves forward makes no commit
- * of its own). Where both changed the same thing it stops ('conflict'), unless `prefer` says whose wins there: 'ours'
- * (the branch checked out) or 'theirs'. Needs no uncommitted changes ('dirty'). Returns false when there was nothing to
- * merge.
- * @param {string} root @param {{ branch: string, message: string, prefer?: 'ours' | 'theirs' } & Options} o
+ * Put `commit`'s files in the folder `into` (a new project's): a copy of that version, to try another way from it.
+ * Media comes from the store as clones where the disk can. Returns the media that could not be found.
+ * @param {string} root @param {string} commit @param {string} into @param {Options} [o]
  */
-export function mergeBranch(root, { branch, message, prefer, onProgress }) {
+export function copyVersion(root, commit, into, { onProgress } = {}) {
   return queued(root, async () => {
     const progress = throttled(onProgress);
     const repo = await ready(root, progress);
-    const name = await branchName(root, branch);
-    if (!(await branchExists(root, name))) throw new HistoryError(`no branch "${name}"`, 404, 'none');
-    if (name === await currentBranch(root)) throw new HistoryError('a branch is not merged into itself', 409, 'current');
-    const head = /** @type {string} */ (await headOf(root));
-    await needClean(repo, head);
-    const branchRef = (await git(root, ['symbolic-ref', '--quiet', 'HEAD'])).trim();
-    const theirs = (await git(root, ['rev-parse', `refs/heads/${name}`])).trim();
-    const isAncestor = (/** @type {string} */ a, /** @type {string} */ b) => git(root, ['merge-base', '--is-ancestor', a, b]).then(() => true, () => false);
-    if (await isAncestor(theirs, head)) return false;
-    const text = String(message ?? '').trim() || `Merge ${name}`;
-    let commit = theirs;
-    if (!(await isAncestor(head, theirs))) {
-      const base = (await git(root, ['merge-base', head, theirs]).catch(() => '')).trim();
-      if (!base) throw new HistoryError(`"${name}" and this branch share no version`, 409, 'conflict');
-      const tree = await mergeTrees(repo, base, head, theirs, prefer).catch((e) => {
-        throw e instanceof HistoryError && e.code === 'conflict' ? new HistoryError(`"${name}" and this branch changed the same thing`, 409, 'conflict') : e;
-      });
-      commit = (await git(root, ['commit-tree', tree, '-p', head, '-p', theirs, '-m', text])).trim();
-    }
-    await git(root, ['update-ref', '-m', `merge ${name}`, branchRef, commit, head]);
-    await writeFiles(repo, await readVersion(repo, commit), { progress });
-    maintain(root);
-    return true;
+    const version = await readVersion(repo, await resolveCommit(root, commit));
+    const { missing } = await writeFiles(openRepo(into, repo.gitDir), version, { progress });
+    return { missing };
   });
 }

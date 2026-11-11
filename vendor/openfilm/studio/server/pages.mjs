@@ -28,7 +28,7 @@ import { HOST_FLAG, folderFiles } from '../../src/host.mjs';
 import { readableLink } from '../../src/media-links.mjs';
 import { clipKind } from '../../src/film-doc.mjs';
 import { readPrefs } from './prefs.mjs';
-import { readyProxy } from './proxies.mjs';
+import { readyProxy, undecodable } from './proxies.mjs';
 import { madeCopy } from '../../src/seekable.mjs';
 import { isPreviewKey, previewDir } from './preview-cache.mjs';
 import { soundOf } from './derived.mjs';
@@ -132,12 +132,14 @@ export async function startPages({ port, editorOrigin, secret, projects }) {
     inject: `<script>${HOST_FLAG}${PAGE_SCALE}</script>${scripts(BRIDGE)}`,
     timelineInject: `<script>${HOST_FLAG}</script>${scripts(BRIDGE, STAGE)}`,
     headers: policy(),
-    /* heavy footage is played from its proxy once it is made, while proxies are on (proxies.mjs); else from a copy made
-       for footage the browser does not decode, or that seeks slowly (src/seekable.mjs), when there is one */
+    /* heavy footage is played from its proxy once it is made, while proxies are on, and footage the editor's browser
+       does not decode whether they are or not (proxies.mjs); else from a copy made for footage a render's browser does
+       not decode, or that seeks slowly (src/seekable.mjs), when there is one */
     swap: (file) => {
       if (clipKind(file) !== 'video') return null;
       const { proxies } = readPrefs();
-      return (proxies.on ? readyProxy(root, relative(root, file).split(sep).join('/'), proxies.height) : null) ?? madeCopy(file, root);
+      const rel = relative(root, file).split(sep).join('/');
+      return (proxies.on || undecodable(root, rel) ? readyProxy(root, rel, proxies.height) : null) ?? madeCopy(file, root);
     },
   });
 
