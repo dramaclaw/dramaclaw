@@ -67,6 +67,14 @@ def _agent_canvas_body(
     return CanvasPayload(**known)
 
 
+def core_canvas_input(canvas: dict) -> dict:
+    return {
+        key: canvas[key]
+        for key in ("nodes", "edges", "viewport", "metadata", "revision")
+        if key in canvas
+    }
+
+
 async def dispatch_agent_canvas(
     *,
     project: str,
@@ -103,11 +111,7 @@ async def dispatch_agent_canvas(
                     get_canvas_core_pool().call,
                     "apply_commands",
                     {
-                        "canvas": {
-                            key: canvas[key]
-                            for key in ("nodes", "edges", "viewport", "metadata", "revision")
-                            if key in canvas
-                        },
+                        "canvas": core_canvas_input(canvas),
                         "envelopes": envelopes,
                         "env": env,
                     },

@@ -11697,6 +11697,51 @@ def test_confirm_unknown_revision_reports_current_revision_without_write_fence(m
     Draft202012Validator(schema["output_schema"]).validate(result)
 
 
+@pytest.mark.parametrize("requested_revision", [1, 2])
+def test_confirm_cancelled_draft_reports_state_without_write_fence(
+    monkeypatch, requested_revision,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET", "A cancelled draft must not be claimed"
+        return {"ok": True, "data": {
+            "draft_id": "workflow_draft_example", "revision": 1,
+            "status": "cancelled", "run_after_create": False,
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_confirm_workflow_draft(
+        {"draft_id": "workflow_draft_example", "revision": requested_revision},
+    )
+    assert result == {
+        "ok": False,
+        "status": "workflow_draft_not_confirmable",
+        "retryable": False,
+        "draft_id": "workflow_draft_example",
+        "revision": requested_revision,
+        "current_revision": 1,
+        "error": "Workflow draft was cancelled.",
+        "user_message": "该工作流方案已取消，本次未创建任何节点。",
+        "agent_instruction": (
+            "Do not call freezone_confirm_workflow_draft again for this draft. It was cancelled "
+            "and nothing was created. If the user still wants this workflow, prepare a new draft "
+            "with freezone_prepare_workflow and confirm it only after the user reviews it."
+        ),
+    }
+    assert calls == ["GET"]
+    assert plugin._revision_conflict_write_error("p", "c") is None
+    schema = next(
+        schema for name, schema, _handler in plugin.TOOLS
+        if name == "freezone_confirm_workflow_draft"
+    )
+    Draft202012Validator(schema["output_schema"]).validate(result)
+
+
 def test_confirm_wrong_revision_after_real_confirmation_keeps_canvas_writable(
     monkeypatch, tmp_path,
 ):

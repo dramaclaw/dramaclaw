@@ -5948,10 +5948,27 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
         })
     data = response["data"]
     if data["status"] == "executed":
-        return tool_result({
+        payload = {
             **_server_canvas_command_result(project, canvas, data["result"], [], slim_result=True),
             "confirmation_id": confirmation_id,
-        })
+        }
+        if run := data.get("run"):
+            payload["run"] = run
+            if run["code"] == "canvas_open_required":
+                labels = ", ".join(
+                    item.get("label") or item["action"] for item in run.get("blocked", [])
+                )
+                payload["agent_instruction"] = (
+                    "The canvas edits were applied, but the workflow run did not start because "
+                    f"these actions only run in the open canvas: {labels}. Ask the user to open "
+                    "this canvas and run them there. Do not call this confirmation again."
+                )
+            else:
+                payload["agent_instruction"] = (
+                    "The canvas edits were applied, but the workflow run did not start: "
+                    f"{run['message']}. Explain this to the user. Do not call this confirmation again."
+                )
+        return tool_result(payload)
     if data["status"] == "running":
         refusal_instruction = ""
         if data.get("refused"):
@@ -5963,7 +5980,11 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
             )
         return tool_result({
             "ok": True, "status": "running", "tool_call_status": "completed",
-            "canvas_apply_status": "running", "applied": False, **scope,
+            "canvas_apply_status": "running", "applied": bool(data.get("result")), **scope,
+            **({
+                "revision": data["result"]["revision"],
+                "created_node_ids": data["result"]["receipt"].get("created_node_ids", []),
+            } if data.get("result") else {}),
             "run_id": data["run_id"], "actions": data["actions"],
             **({"refused": data["refused"]} if data.get("refused") else {}),
             "agent_instruction": (
@@ -8408,6 +8429,27 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                     "Do not call freezone_confirm_workflow_draft again. "
                     f"The nodes of revision {current_revision} are or will be on the canvas. "
                     "Use freezone_run_workflow when the user asks to run them."
+                ),
+            }
+        )
+    if draft_status == "cancelled":
+        # A cancelled draft is settled, so no revision fence is needed.
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_draft_not_confirmable",
+                "retryable": False,
+                "draft_id": draft_id,
+                "revision": revision,
+                "current_revision": current_revision,
+                "error": "Workflow draft was cancelled.",
+                "user_message": "该工作流方案已取消，本次未创建任何节点。",
+                "agent_instruction": (
+                    "Do not call freezone_confirm_workflow_draft again for this draft. "
+                    "It was cancelled "
+                    "and nothing was created. If the user still wants this workflow, prepare a new "
+                    "draft with freezone_prepare_workflow and confirm it only after the user "
+                    "reviews it."
                 ),
             }
         )
