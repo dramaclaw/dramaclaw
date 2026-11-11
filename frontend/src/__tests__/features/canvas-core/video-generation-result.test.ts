@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from 'vitest';
 import type { ModelOption } from '@/features/canvas/domain/modelOptions';
-import { videoGenerationRefusalOutcome, videoGenerationActionResult, videoGenerationRunOutcome, videoGenerationSettleOutcome } from '@/features/canvas/application/generationRequests/videoGenerationResult';
+import { videoGenerationStartedRefusalOutcome, videoGenerationRefusalOutcome, videoGenerationActionResult, videoGenerationRunOutcome, videoGenerationSettleOutcome } from '@/features/canvas/application/generationRequests/videoGenerationResult';
 import { describeGenerationError } from '@/features/canvas/application/generationRequests/generationSubmitError';
 import { checkCapture, captureKeys, type VideoFixture } from './videoGenerationTestKit';
 
@@ -133,4 +133,56 @@ describe('pure result boundaries without a browser submission counterpart', () =
     videoGenerationSettleOutcome(settle, t);
     expect(settle).toStrictEqual(prior);
   });
+});
+
+describe('refusals after the start write', () => {
+  it.each([
+    ['missing_media', 'firstFrame', '[video-node] firstLastFrame submit without any frame', { generationError: 'node.videoNode.generation.missingKeyframe' }],
+    ['missing_media', 'firstLastFrame', '[video-node] firstLastFrame submit without any frame', { generationError: 'node.videoNode.generation.missingKeyframe' }],
+    ['missing_media', 'imageToVideo', '[video-node] i2v submit without any upstream image', {}],
+    ['missing_source_video', 'videoEdit', '[video-node] videoEdit submit without upstream video', {}],
+    ['missing_source_video', 'videoExtend', '[video-node] videoExtend submit without upstream video', {}],
+    ['missing_references', 'allReference', '[video-node] omni-gen submit without any reference', {}],
+    ['no_model', 'textToVideo', null, {}],
+  ] as const)('maps %s in %s', (code, genMode, warning, extra) => {
+    expect(videoGenerationStartedRefusalOutcome({ ok: false, code, message: 'refused', phase: 'guard' },
+      { genMode, startedAtMs: startedAt, isHappyHorseModel: false }, t)).toStrictEqual({
+      patches: [{ isGenerating: false, generationStartedAt: null, ...extra }], notice: null, warning,
+    });
+  });
+  it.each([true, false])('unsupported mode dialog happyHorse=%s', isHappyHorseModel => {
+    expect(videoGenerationStartedRefusalOutcome({ ok: false, code: 'mode_unsupported_by_model', message: '', phase: 'guard' },
+      { genMode: 'allReference', startedAtMs: startedAt, isHappyHorseModel }, t)).toStrictEqual({
+      patches: [{ isGenerating: false, generationStartedAt: null }], warning: null,
+      notice: { kind: 'error_dialog', message: isHappyHorseModel ? 'node.videoNode.allReference.happyHorseUnsupported'
+        : 'node.videoNode.allReference.modelUnsupported', title: 'common.error', details: null },
+    });
+  });
+  it.each([
+    { ok: false, code: 'missing_media', phase: 'keyframes', message: '' },
+    { ok: false, code: 'missing_media', phase: 'images', message: '' },
+    { ok: false, code: 'missing_references', phase: 'references', message: '' },
+    { ok: false, code: 'reference_duration_invalid', phase: 'duration', message: '', media: 'audio',
+      rejection: { kind: 'tooShort', clips: [{ index: 1, label: 'Audio', durationMs: 1000 }] }, durationLimits: { minMs: 3000 } },
+  ] satisfies Parameters<typeof videoGenerationStartedRefusalOutcome>[0][])('builder refusal $phase retains existing outcome', refusal => {
+    const old = videoGenerationRefusalOutcome({ ...refusal, startedAtMs: startedAt }, t);
+    const result = videoGenerationStartedRefusalOutcome(refusal,
+      { genMode: 'firstFrame', startedAtMs: startedAt, isHappyHorseModel: false }, t);
+    expect(result.patches).toStrictEqual(old.patches.slice(1));
+    expect(result.notice).toStrictEqual(old.notice);
+  });
+  it('duration refusal opens issues and writes the validation error without a second start', () => {
+    expect(videoGenerationStartedRefusalOutcome({ ok: false, code: 'reference_duration_invalid',
+      phase: 'duration', message: '', media: 'audio', durationLimits: { minMs: 3000 },
+      rejection: { kind: 'tooShort', clips: [{ index: 1, label: 'Audio', durationMs: 1000,
+        url: '/music.mp3', nodeId: 'audio-1' }] } },
+    { genMode: 'allReference', startedAtMs: startedAt, isHappyHorseModel: false }, t)).toStrictEqual({
+      patches: [{ isGenerating: false, generationStartedAt: null,
+        generationError: 'referenceValidation.title', generationErrorDetails: null, generationErrorRequestId: null }],
+      notice: { kind: 'reference_issues', issues: [{ media: 'audio', index: 1, name: 'Audio',
+        reference_key: '/music.mp3', code: 'minDuration', actual: '1', expected: '3', nodeId: 'audio-1' }] },
+      warning: null,
+    });
+  });
+
 });

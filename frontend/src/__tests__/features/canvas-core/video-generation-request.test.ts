@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import type { ModelOption } from '@/features/canvas/domain/modelOptions';
-import { buildVideoGenerationRequest, videoPromptCompileInput, type VideoGenerationRequestContext } from '@/features/canvas/application/generationRequests/videoGenerationRequest';
+import { buildVideoGenerationRequest, videoPromptCompileInput, videoUpscaleInput, videoUpscaleWireRequest, videoContinuityCompileInput, type VideoGenerationRequestContext } from '@/features/canvas/application/generationRequests/videoGenerationRequest';
 import { checkCapture, captureKeys, type VideoFixture } from './videoGenerationTestKit';
 
 const t = (key: string, fallback?: unknown) => typeof fallback === 'string' ? fallback : key;
@@ -141,5 +141,43 @@ describe('pure video request boundaries', () => {
     const before = structuredClone(ctx);
     videoPromptCompileInput(ctx); buildVideoGenerationRequest({ ...ctx, prompt: 'Test' });
     expect(ctx).toStrictEqual(before);
+  });
+});
+
+describe('video submission helpers', () => {
+  it.each([
+    [{ upscaleSourceUrl: '/v.mp4', upscaleResolution: '2k' }, { sourceUrl: '/v.mp4', resolution: '2k' }],
+    [{ upscaleSourceUrl: 7, upscaleResolution: 'unknown' }, { sourceUrl: '', resolution: '1080p' }],
+    [{}, { sourceUrl: '', resolution: '1080p' }],
+  ])('normalizes upscale input %j', (data, expected) => {
+    expect(videoUpscaleInput(data)).toStrictEqual(expected);
+  });
+  it.each([true, false])('upscale wire preserves order with attempt=%s', attempt => {
+    const request = videoUpscaleWireRequest({ projectId: 'project/a b', canvasId: 'canvas-1', nodeId: 'vid-1',
+      sourceUrl: '/static/v.mp4?version=2', resolution: '1080p',
+      productOperation: { projectId: 'p', operationId: 'op-1', ...(attempt ? { generationAttemptId: 'attempt-1' } : {}) } });
+    const body = { source_url: '/static/v.mp4', resolution: '1080p', slowdown: 'auto',
+      smart_interpolation: true, scene: 'realistic', face_enhance: false, canvas_id: 'canvas-1', node_id: 'vid-1',
+      ...(attempt ? { product_operation_id: 'op-1', generation_attempt_id: 'attempt-1' } : {}) };
+    expect(request).toStrictEqual({ method: 'POST', path: 'projects/project%2Fa%20b/freezone/video/upscale', body });
+    expect(JSON.stringify(request.body)).toBe(JSON.stringify(body));
+  });
+  it('continuity uses live prompt and ordered upstream text with camera prefix', () => {
+    const ctx = fixture('continuity', { prompt: ' Render ', cameraMovement: 'custom' }, {
+      ...sources(source('t1', { content: 'First' }, CANVAS_NODE_TYPES.textAnnotation),
+        source('t2', { content: 'Second' }, CANVAS_NODE_TYPES.textAnnotation)),
+      cameraTemplates: [{ id: 'custom', label: 'Custom', promptFragment: 'Slow pan', videoUrl: null }],
+    });
+    expect(videoContinuityCompileInput(ctx, ' Live ').nodePrompt).toBe('Live');
+    expect(videoContinuityCompileInput(ctx, ' Live ').upstreamText).toBe('First\n\nSecond');
+    expect(videoContinuityCompileInput(ctx, ' Live ').fallbackPrompt).toBe('Slow pan，First\n\nSecond\n\nLive');
+    expect(videoContinuityCompileInput(ctx, undefined).nodePrompt).toBe('Render');
+    expect(videoContinuityCompileInput(ctx, undefined).fallbackPrompt).toBe('Slow pan，First\n\nSecond\n\nRender');
+  });
+  it('empty continuity preserves extension fallback', () => {
+    const ctx = fixture('continuity', { prompt: '', genMode: 'allReference', isExtendMode: true,
+      extendStartMs: 2000, extendEndMs: 7000 }, { translate: t });
+    expect(videoContinuityCompileInput(ctx, '').fallbackPrompt).toBe('canvas.videoExtend.promptPrefixTrimmed');
+    expect(videoContinuityCompileInput(ctx, '').fallbackPrompt).toBe(videoPromptCompileInput(ctx).fallbackPrompt);
   });
 });

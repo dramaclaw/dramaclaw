@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { VideoGenMode } from '../../domain/canvasNodes';
 import type { CanvasEnvironment } from '../../core/environment';
 import type { ReferenceIssue } from '../../domain/referenceIssues';
 import { referenceDurationIssues } from '../../domain/referenceDurationIssues';
@@ -65,7 +66,7 @@ function referenceErrorPatch(translate: Translate): Patch {
  * For duration, supply the same resolved min/max limits used by the browser validator.
  *
  * Model/busy/capability/cap/prompt/media guards do no writes.
- * No project returns before start (also videoUpscale.ts:73).
+ * No project returns before start.
  * Missing keyframes writes a node error after start.
  * Missing images/video just resets loading.
  * Unsupported omni is normally a silent admission guard.
@@ -120,6 +121,34 @@ export function videoGenerationRefusalOutcome(refusal: VideoGenerationRefusalInp
       return exhaustive;
     }
   }
+}
+
+/** Refusals discovered after compilation must finish the already-started attempt. */
+export function videoGenerationStartedRefusalOutcome(refusal: RequestRefusal, context: {
+  genMode: VideoGenMode; startedAtMs: number; isHappyHorseModel: boolean;
+}, translate: Translate): { patches: Patch[]; notice: VideoGenerationNotice; warning: string | null } {
+  const { genMode } = context;
+  const mapped: VideoGenerationRefusalInput = { ...refusal, ...context };
+  if (mapped.phase === 'guard') {
+    switch (mapped.code) {
+      case 'missing_source_video': mapped.phase = 'source_video'; break;
+      case 'missing_references': mapped.phase = 'references'; break;
+      case 'mode_unsupported_by_model': mapped.phase = 'unsupported_mode'; break;
+      case 'missing_media':
+        mapped.phase = genMode === 'firstFrame' || genMode === 'firstLastFrame' ? 'keyframes' : 'images';
+        break;
+    }
+  }
+  const outcome = videoGenerationRefusalOutcome(mapped, translate);
+  const patches = outcome.patches.slice(1);
+  const warning = mapped.phase === 'keyframes' ? '[video-node] firstLastFrame submit without any frame'
+    : mapped.phase === 'images' ? '[video-node] i2v submit without any upstream image'
+      : mapped.phase === 'source_video' ? genMode === 'videoEdit'
+        ? '[video-node] videoEdit submit without upstream video' : '[video-node] videoExtend submit without upstream video'
+        : mapped.code === 'missing_references' && mapped.phase === 'references'
+          ? '[video-node] omni-gen submit without any reference' : null;
+  // A graph change during compilation can introduce a guard the form already admitted.
+  return { patches: patches.length ? patches : [{ ...resetLoading }], notice: outcome.notice, warning };
 }
 
 /**
@@ -229,23 +258,23 @@ function videoSuccessResult(data: Record<string, unknown> | null | undefined, ex
   return { status: 'success', output: { ...(videoUrl ? { videoUrl } : {}),
     ...(executionMode === 'single' ? { submitted: true } : {}) } };
 }
-/** videoUpscale.ts:79-83: unlike ordinary video, only generationError is cleared. */
+/** Unlike ordinary video, only generationError is cleared. */
 export function videoUpscaleStartPatch(startedAtMs: number): Patch {
   return { isGenerating: true, generationStartedAt: startedAtMs, generationError: null };
 }
-/** videoUpscale.ts:92: upscale persists its accepted handle. */
+/** Upscale persists its accepted handle. */
 export function videoUpscaleAcceptedPatch(ref: VideoGenerationTaskRef): Patch { return generationTaskDescriptor(ref); }
 export type VideoUpscaleOutcome =
   | { kind: 'completed'; result: Record<string, unknown> | null; fallbackUrl: string }
   | { kind: 'failed'; message: string }
   | { kind: 'poll_timeout' };
 /**
- * videoUpscale.ts:96-107: only output_url is read; otherwise use the job-result
+ * Only output_url is read; otherwise use the job-result
  * fallback, including an empty URL. Caller owns fallback fetch; a failed fetch is
- * a failed outcome (ordinary video swallows that fetch failure). videoUpscale.ts:108-119: timeout
+ * a failed outcome (ordinary video swallows that fetch failure). Timeout
  * gives no patch and calls notifyTaskStillRunning() without a translator. Other
  * failures write raw thrown Error.message (or String(thrown)), never display text.
- * videoUpscale.ts:102-107: success retains sourceFileName, diagnostics and task handle fields.
+ * Success retains sourceFileName, diagnostics and task handle fields.
  */
 export function videoUpscaleOutcomePatch(outcome: VideoUpscaleOutcome): Patch | null {
   if (outcome.kind === 'poll_timeout') return null;
@@ -256,7 +285,7 @@ export function videoUpscaleOutcomePatch(outcome: VideoUpscaleOutcome): Patch | 
 /**
  * Source absence publishes an error before submit. Otherwise
  * the resolved upscale helper ALWAYS publishes success, even with a node error.
- * No project returns silently (videoUpscale.ts:73-75), so the old URL is published.
+ * No project returns silently, so the old URL is published.
  * Caller must retain the admission source value if node data changes while waiting.
  */
 export function videoUpscaleActionResult(finalNodeData: Record<string, unknown> | null | undefined,

@@ -2,7 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import {
   fetchFreezoneJobResult,
-  submitFreezoneVideoUpscale,
+  sendGenerationWireRequest,
+  type FreezoneJobRef,
   type FreezoneVideoUpscaleResolution,
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
@@ -10,7 +11,9 @@ import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 
-import { generationTaskDescriptor } from './resumeGeneration';
+import { videoUpscaleWireRequest } from './generationRequests/videoGenerationRequest';
+import { videoUpscaleStartPatch, videoUpscaleAcceptedPatch, videoUpscaleOutcomePatch } from './generationRequests/videoGenerationResult';
+import { workflowProductOperation } from './workflowExecutionActivity';
 import { notifyTaskStillRunning } from './errorDialog';
 
 /**
@@ -76,46 +79,31 @@ export async function submitVideoUpscale(
   }
   const canvasId = readUrl().canvas ?? 'default';
 
-  useCanvasStore.getState().updateNodeData(nodeId, {
-    isGenerating: true,
-    generationStartedAt: Date.now(),
-    generationError: null,
-  });
+  useCanvasStore.getState().updateNodeData(nodeId, videoUpscaleStartPatch(Date.now()));
 
   try {
-    const ref = await submitFreezoneVideoUpscale(project, {
-      sourceUrl: opts.sourceUrl.split('?')[0],
-      resolution: opts.resolution,
-      canvasId,
-      nodeId,
-    });
-    useCanvasStore.getState().updateNodeData(nodeId, generationTaskDescriptor(ref));
+    const ref = await sendGenerationWireRequest<FreezoneJobRef>(videoUpscaleWireRequest({
+      projectId: project, canvasId, nodeId, productOperation: workflowProductOperation(nodeId) ?? null,
+      sourceUrl: opts.sourceUrl, resolution: opts.resolution,
+    }));
+    useCanvasStore.getState().updateNodeData(nodeId, videoUpscaleAcceptedPatch(ref));
     const completed = await awaitTaskCompletion(ref.task_key, project, {
       taskType: ref.task_type,
     });
-    const directUrl = completed.result?.['output_url'] as string | undefined;
-    let url = directUrl;
-    if (!url) {
+    let fallbackUrl = '';
+    if (!completed.result?.output_url) {
       const fallback = await fetchFreezoneJobResult(project, ref.task_type, ref.job_id);
-      url = fallback.url;
+      fallbackUrl = fallback.url;
     }
-    useCanvasStore.getState().updateNodeData(nodeId, {
-      videoUrl: url,
-      isGenerating: false,
-      generationStartedAt: null,
-      generationError: null,
-    });
+    const patch = videoUpscaleOutcomePatch({ kind: 'completed', result: completed.result ?? null, fallbackUrl });
+    if (patch) useCanvasStore.getState().updateNodeData(nodeId, patch);
   } catch (err) {
     if (isTaskPollTimeoutError(err)) {
       notifyTaskStillRunning();
       return;
     }
-    const message = err instanceof Error ? err.message : String(err);
     console.error('[video-upscale] generation failed', err);
-    useCanvasStore.getState().updateNodeData(nodeId, {
-      isGenerating: false,
-      generationStartedAt: null,
-      generationError: message,
-    });
+    const patch = videoUpscaleOutcomePatch({ kind: 'failed', message: err instanceof Error ? err.message : String(err) });
+    if (patch) useCanvasStore.getState().updateNodeData(nodeId, patch);
   }
 }

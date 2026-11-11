@@ -5,14 +5,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
 
-const submitFreezoneVideoUpscale = vi.hoisted(() => vi.fn());
+const apiCall = vi.hoisted(() => vi.fn());
 const fetchFreezoneJobResult = vi.hoisted(() => vi.fn());
 const awaitTaskCompletion = vi.hoisted(() => vi.fn());
 const readUrl = vi.hoisted(() => vi.fn());
 
+vi.mock('@/api/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()), apiCall,
+}));
 vi.mock('@/api/ops', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  submitFreezoneVideoUpscale,
   fetchFreezoneJobResult,
 }));
 vi.mock('@/api/tasks', async (importOriginal) => ({
@@ -47,7 +49,7 @@ function seedVideoNode() {
 describe('videoUpscale application（高清结果节点 + 提交编排）', () => {
   beforeEach(() => {
     readUrl.mockReturnValue({ project: 'proj-1', canvas: 'canvas-1' });
-    submitFreezoneVideoUpscale.mockReset();
+    apiCall.mockReset();
     fetchFreezoneJobResult.mockReset();
     awaitTaskCompletion.mockReset();
     seedVideoNode();
@@ -84,7 +86,7 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       displayName: '高清（1080P）',
       resolution: '1080p',
     }) as string;
-    submitFreezoneVideoUpscale.mockResolvedValue(JOB_REF);
+    apiCall.mockResolvedValue(JOB_REF);
     awaitTaskCompletion.mockResolvedValue({ result: {} });
     fetchFreezoneJobResult.mockResolvedValue({ url: '/static/v-hd.mp4' });
 
@@ -93,12 +95,13 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       resolution: '1080p',
     });
 
-    expect(submitFreezoneVideoUpscale).toHaveBeenCalledWith('proj-1', {
-      sourceUrl: '/static/v.mp4',
-      resolution: '1080p',
-      canvasId: 'canvas-1',
-      nodeId: upscaleId,
+    const json = { source_url: '/static/v.mp4', resolution: '1080p', slowdown: 'auto',
+      smart_interpolation: true, scene: 'realistic', face_enhance: false,
+      canvas_id: 'canvas-1', node_id: upscaleId };
+    expect(apiCall).toHaveBeenCalledWith('projects/proj-1/freezone/video/upscale', {
+      method: 'POST', json,
     });
+    expect(JSON.stringify(apiCall.mock.calls[0][1].json)).toBe(JSON.stringify(json));
     expect(awaitTaskCompletion).toHaveBeenCalledWith('tk-up', 'proj-1', {
       taskType: 'freezone_video_upscale',
     });
@@ -121,7 +124,7 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       displayName: '高清（4K）',
       resolution: '4k',
     }) as string;
-    submitFreezoneVideoUpscale.mockRejectedValue(new Error('backend down'));
+    apiCall.mockRejectedValue(new Error('backend down'));
 
     await submitVideoUpscale(upscaleId, {
       sourceUrl: '/static/v.mp4',

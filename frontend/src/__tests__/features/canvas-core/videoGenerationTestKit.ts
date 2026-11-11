@@ -8,12 +8,12 @@ import type { ModelOption } from '@/features/canvas/domain/modelOptions';
 import { TaskCompletionError } from '@/features/canvas/domain/taskCompletionError';
 import {
   buildVideoGenerationRequest, videoPromptCompileInput, videoPromptCompileMetadataPatch,
-  videoExtendTrimRequirement, videoReferenceDurationProbe, type VideoGenerationRequestContext,
+  videoUpscaleWireRequest, videoUpscaleInput, videoExtendTrimRequirement, videoReferenceDurationProbe, type VideoGenerationRequestContext,
   type VideoGenerationRequestResult,
 } from '@/features/canvas/application/generationRequests/videoGenerationRequest';
 import {
   videoGenerationStartPatch, videoGenerationSubmitPatch, videoGenerationAcceptedPatch,
-  videoGenerationRefusalOutcome, videoGenerationFailurePatch, videoGenerationRunOutcome,
+  videoGenerationRefusalOutcome, videoGenerationStartedRefusalOutcome, videoGenerationFailurePatch, videoGenerationRunOutcome,
   videoGenerationSettleOutcome, videoGenerationActionResult, videoUpscaleStartPatch,
   videoUpscaleAcceptedPatch, videoUpscaleOutcomePatch, videoUpscaleActionResult,
   type VideoGenerationRunError, type VideoGenerationNotice,
@@ -96,14 +96,16 @@ export function checkCapture(group: Group, fixture: VideoFixture, catalog: Model
   if (!isVideoNode(target)) throw new Error('Missing target video');
   const upscale = target.data.isUpscaleNode === true;
   const input = videoPromptCompileInput(ctx);
-  const pre = buildVideoGenerationRequest({ ...ctx, prompt: input.fallbackPrompt });
   const writes: Record<string, unknown>[] = [];
   const requests: unknown[] = [];
   const trims: unknown[] = [];
   const probed: string[] = [];
   let notice: VideoGenerationNotice = null;
   let finalRefusal: Extract<VideoGenerationRequestResult, { ok: false }> | undefined;
-  if (!pre.ok && pre.phase === 'guard') {
+  if (fixture.forwardRefusal?.phase === 'guard') {
+    // Admission guards return before the component writes start or compiles a prompt.
+    const pre = buildVideoGenerationRequest({ ...ctx, prompt: input.fallbackPrompt });
+    if (pre.ok) throw new Error('Expected admission refusal');
     finalRefusal = pre;
     const outcome = videoGenerationRefusalOutcome({ ...pre, startedAtMs }, t);
     expect(outcome.patches).toStrictEqual([]);
@@ -120,30 +122,34 @@ export function checkCapture(group: Group, fixture: VideoFixture, catalog: Model
       if (!upscale && fixture.metadata) writes.push(videoPromptCompileMetadataPatch(fixture.metadata, '2009-02-13T23:31:30.000Z'));
       const prompt = fixture.metadata?.prompt ?? fixture.compiledPrompt ?? input.fallbackPrompt;
       const post = { ...ctx, isGenerating: false };
-      const requirement = videoExtendTrimRequirement(post);
-      if (requirement) {
-        const { videoUrl, startMs, endMs } = requirement;
-        trims.push({ projectId: post.projectId, videoUrl, range: { startMs, endMs } });
-        post.preparedExtendClip = { sourceUrl: videoUrl, startMs, endMs,
-          ...(fixture.trim ?? { url: '/static/prepared.mp4', durationMs: 5000 }) };
+      let built = buildVideoGenerationRequest({ ...post, productOperation: null, prompt });
+      if (built.ok || built.code === 'extend_clip_not_prepared' || built.code === 'reference_duration_invalid') {
+        const requirement = videoExtendTrimRequirement(post);
+        if (requirement) {
+          const { videoUrl, startMs, endMs } = requirement;
+          trims.push({ projectId: post.projectId, videoUrl, range: { startMs, endMs } });
+          post.preparedExtendClip = { sourceUrl: videoUrl, startMs, endMs,
+            ...(fixture.trim ?? { url: '/static/prepared.mp4', durationMs: 5000 }) };
+        }
+        for (let round = 0; round < 2; round += 1) {
+          const probe = videoReferenceDurationProbe(post);
+          if (!probe) break;
+          probed.push(...probe.urls);
+          post.mediaDurationsMs = { ...post.mediaDurationsMs,
+            ...Object.fromEntries(probe.urls.map(url => [url,
+              typeof fixture.mediaDurationsMs?.[url] === 'number' ? fixture.mediaDurationsMs[url] : null])) };
+        }
+        expect(videoReferenceDurationProbe(post)).toBeNull();
+        built = buildVideoGenerationRequest({ ...post, prompt });
       }
-      for (let round = 0; round < 2; round += 1) {
-        const probe = videoReferenceDurationProbe(post);
-        if (!probe) break;
-        probed.push(...probe.urls);
-        post.mediaDurationsMs = { ...post.mediaDurationsMs,
-          ...Object.fromEntries(probe.urls.map(url => [url,
-            typeof fixture.mediaDurationsMs?.[url] === 'number' ? fixture.mediaDurationsMs[url] : null])) };
-      }
-      expect(videoReferenceDurationProbe(post)).toBeNull();
-      const built = buildVideoGenerationRequest({ ...post, prompt });
       if (!built.ok) {
         finalRefusal = built;
-        const outcome = videoGenerationRefusalOutcome({ ...built, startedAtMs }, t);
-        expect(outcome.patches.slice(1).length).toBeGreaterThan(0);
-        writes.push(...outcome.patches.slice(1)); notice = outcome.notice;
+        const outcome = videoGenerationStartedRefusalOutcome(built, { genMode: target.data.genMode ?? 'textToVideo',
+          startedAtMs, isHappyHorseModel: false }, t);
+        writes.push(...outcome.patches); notice = outcome.notice;
       } else {
-        requests.push(...JSON.parse(JSON.stringify(built.requests)));
+        requests.push(...JSON.parse(JSON.stringify(upscale
+          ? [videoUpscaleWireRequest({ ...post, ...videoUpscaleInput(target.data) })] : built.requests)));
         if (!upscale) writes.push(videoGenerationSubmitPatch());
         const runs: Run[] = fixture.runs ?? built.requests.map((_, index) => ({ kind: 'completed',
           result: { video_url: `/static/task-${index + 1}.mp4`,

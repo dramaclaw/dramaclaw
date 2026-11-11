@@ -263,17 +263,29 @@ function requestResult(ctx: VideoGenerationRequestContext, route: string, body: 
   return { ok: true, requests: Array.from({ length: count }, () => ({ method: 'POST',
     path: `projects/${encodeURIComponent(ctx.projectId)}/freezone/video/${route}`, body: structuredClone(body) })) };
 }
+export function videoUpscaleInput(data: VideoNodeData | Record<string, unknown>): {
+  sourceUrl: string; resolution: typeof VIDEO_UPSCALE_RESOLUTIONS[number];
+} {
+  return { sourceUrl: typeof data.upscaleSourceUrl === 'string' ? data.upscaleSourceUrl : '',
+    resolution: VIDEO_UPSCALE_RESOLUTIONS.find(value => value === data.upscaleResolution) ?? '1080p' };
+}
+
+export function videoUpscaleWireRequest(input: Pick<VideoGenerationRequestContext,
+  'projectId' | 'canvasId' | 'nodeId' | 'productOperation'> & ReturnType<typeof videoUpscaleInput>): VideoGenerationHttpRequest {
+  return { method: 'POST', path: `projects/${encodeURIComponent(input.projectId)}/freezone/video/upscale`,
+    body: { source_url: input.sourceUrl.split('?')[0], resolution: input.resolution,
+      slowdown: 'auto', smart_interpolation: true, scene: 'realistic', face_enhance: false,
+      ...nodeContextWireFields(input) } };
+}
+
 function buildUpscale(ctx: VideoGenerationRequestContext, data: VideoNodeData): VideoGenerationRequestResult {
-  const source = typeof data.upscaleSourceUrl === 'string' ? data.upscaleSourceUrl : '';
+  const input = videoUpscaleInput(data);
   // Published directly by the subscriber, before checking project/model/busy state.
-  if (!source) return refuse('missing_upscale_source', '缺少高清视频源'); // i18n-exempt -- exact wire or subscriber contract
-  // submitVideoUpscale silently returns; the subscriber then publishes SUCCESS.
+  if (!input.sourceUrl) return refuse('missing_upscale_source', '缺少高清视频源'); // i18n-exempt -- exact wire or subscriber contract
+  // A missing project silently returns; the subscriber then publishes success.
   if (!ctx.projectId) return refuse('no_project', 'A project is required.');
-  if (ctx.inlineMedia !== 'forward' && source.startsWith('data:')) return refuse('inline_media_reference', 'Upload inline media before building a video request.');
-  const resolution = VIDEO_UPSCALE_RESOLUTIONS.find((value) => value === data.upscaleResolution) ?? '1080p';
-  return requestResult(ctx, 'upscale', { source_url: source.split('?')[0], resolution,
-    slowdown: 'auto', smart_interpolation: true, scene: 'realistic', face_enhance: false,
-    ...nodeContextWireFields(ctx) });
+  if (ctx.inlineMedia !== 'forward' && input.sourceUrl.startsWith('data:')) return refuse('inline_media_reference', 'Upload inline media before building a video request.');
+  return { ok: true, requests: [videoUpscaleWireRequest({ ...ctx, ...input })] };
 }
 
 function collectEditReferences(ctx: VideoGenerationRequestContext, data: VideoNodeData, model: ModelOption) {
@@ -399,13 +411,30 @@ export function videoPromptCompileInput(ctx: VideoGenerationRequestContext): Vid
   const upstreamContents = upstream(ctx).map(extractUpstreamContent);
   const upstreamText = joinUpstreamText(upstreamContents);
   const nodePrompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
-  const cameraTemplates = ctx.cameraTemplates?.length ? ctx.cameraTemplates : CAMERA_MOVEMENT_PRESETS;
-  const fragment = findCameraMovementPreset(cameraTemplates, data.cameraMovement)?.promptFragment;
+  const fragment = cameraFragment(ctx, data);
   const userPrompt = [upstreamText, nodePrompt].filter((text) => text.length > 0).join('\n\n');
   return {
     nodeKind: 'video', nodePrompt, upstreamText, upstreamContents,
     fallbackPrompt: extensionPrefix(ctx, data) + (fragment ? userPrompt ? `${fragment}，${userPrompt}` : fragment : userPrompt),
   };
+}
+
+function cameraFragment(ctx: VideoGenerationRequestContext, data: VideoNodeData) {
+  const templates = ctx.cameraTemplates?.length ? ctx.cameraTemplates : CAMERA_MOVEMENT_PRESETS;
+  return findCameraMovementPreset(templates, data.cameraMovement)?.promptFragment;
+}
+
+/** Continuity replaces the prompt after preparation, retaining render-time upstream text. */
+export function videoContinuityCompileInput(ctx: VideoGenerationRequestContext, livePrompt: unknown): VideoPromptCompileInput {
+  const base = videoPromptCompileInput(ctx);
+  const data = nodeData(ctx);
+  if (!data) throw new Error(NOT_VIDEO_NODE);
+  const renderPrompt = typeof data.prompt === 'string' ? data.prompt : '';
+  const nodePrompt = String(livePrompt ?? renderPrompt).trim();
+  const continuity = [base.upstreamText, nodePrompt].filter(Boolean).join('\n\n');
+  const fragment = cameraFragment(ctx, data);
+  return { ...base, nodePrompt, fallbackPrompt: continuity
+    ? fragment ? `${fragment}，${continuity}` : continuity : base.fallbackPrompt };
 }
 
 /** Recipe metadata to persist after compilation; the caller supplies the timestamp. */

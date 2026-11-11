@@ -120,11 +120,23 @@ describe("dynamic workflow node action contract", () => {
     expect(speechTextSource).toContain("extractExplicitSpeakableAudioText(compiledPrompt)");
   });
 
+  it("compiles canvas video prompts before building and sending requests", () => {
+    const source = readNodeSource("VideoNode");
+    const compile = source.indexOf("await compileWorkflowNodePrompt({");
+    const build = source.indexOf("buildVideoGenerationRequest(");
+    const submit = source.indexOf("await sendGenerationWireRequest");
+    expect(compile).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(compile);
+    expect(submit).toBeGreaterThan(build);
+    expect(source).toContain("videoPromptCompileMetadataPatch(");
+    expect(readSource("src/features/canvas/application/generationRequests/videoGenerationRequest.ts"))
+      .toContain("workflowRecipeCompiledPrompt: prompt, prompt");
+  });
+
   it.each([
     ["image generation", "src/features/canvas/nodes/shared/useImageGenerationForm.ts", "prompt"],
     ["image edit", "src/features/canvas/nodes/ImageEditNode.tsx", "prompt"],
     ["video generation", "src/features/canvas/nodes/shared/useVideoGenerationForm.ts", "prompt"],
-    ["canvas video generation", "src/features/canvas/nodes/VideoNode.tsx", "prompt"],
   ])("persists compiled workflow prompts back to %s node prompts", (_label, path, field) => {
     const source = readSource(path);
 
