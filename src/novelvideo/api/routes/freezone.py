@@ -319,6 +319,7 @@ from novelvideo.freezone.recipe_runtime import (
     generate_recipe_text,
 )
 from novelvideo.freezone.studio import (
+    STUDIO_FILM_MISSING,
     StudioError,
     build_studio_film,
     edit_studio_film,
@@ -12439,13 +12440,18 @@ async def freezone_video_compose_studio(
             node=body.node_id,
         )
     except StudioError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        raise _studio_http_exception(exc) from exc
 
     return {"ok": True, "data": session}
 
 
 _STUDIO_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
 _STUDIO_MEDIA_URL_KEYS = ("resultVideoUrl", "videoUrl", "audioUrl", "imageUrl")
+
+
+def _studio_http_exception(exc: StudioError) -> HTTPException:
+    detail = {"code": exc.code, "message": str(exc)} if exc.code else str(exc)
+    return HTTPException(exc.status_code, detail=detail)
 
 
 def _require_openfilm_studio_enabled() -> None:
@@ -12626,7 +12632,7 @@ async def freezone_studio_film(
             node_id=node_id,
         )
     except StudioError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        raise _studio_http_exception(exc) from exc
     result["export"] = await run_in_threadpool(_studio_node_export, ctx, canvas_id, node_id)
     return result
 
@@ -12659,7 +12665,7 @@ async def freezone_studio_film_edit(
             ops=body.ops,
         )
     except StudioError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        raise _studio_http_exception(exc) from exc
 
 
 @router.post(
@@ -12701,7 +12707,7 @@ async def freezone_studio_import_media(
             label=label,
         )
     except StudioError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        raise _studio_http_exception(exc) from exc
 
 
 @router.post(
@@ -12724,11 +12730,15 @@ async def freezone_studio_export(
     try:
         film_dir = film_dir_for_node(project_dir, canvas_id, node_id)
     except StudioError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        raise _studio_http_exception(exc) from exc
     if not studio_film_exists(film_dir):
         raise HTTPException(
             404,
-            "this compose node has no Studio film yet: open its compose workspace first",
+            detail={
+                "code": STUDIO_FILM_MISSING,
+                "message": "this compose node has no Studio film yet: "
+                "open its compose workspace first",
+            },
         )
     job_id = _new_job_id()
     task_key = project_task_state_key(
