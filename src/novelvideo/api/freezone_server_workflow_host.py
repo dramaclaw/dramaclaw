@@ -27,6 +27,7 @@ from novelvideo.api.schemas import (
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
 from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
+from novelvideo.freezone.workflow_runs import server_workflow_media_link
 from novelvideo.freezone.server_workflow_actions import (
     ActionLeaseLost,
     CLEAR_GENERATION,
@@ -126,7 +127,9 @@ class InProcessActionHost:
                 await after_save(body, saved)
                 return
 
-    async def request(self, method: str, path: str, body: dict) -> dict:
+    async def request(
+        self, method: str, path: str, body: dict, *, media_link: dict[str, str] | None = None,
+    ) -> dict:
         from novelvideo.api.routes import freezone as routes
 
         gen_path = f"projects/{quote(self.ctx.project_id, safe='')}/freezone/gen"
@@ -153,7 +156,8 @@ class InProcessActionHost:
 
         async def request_in_usage_context():
             get_usage_meter().clear_llm_usage_context()
-            return await handler(parsed, self.user)
+            with server_workflow_media_link(media_link):
+                return await handler(parsed, self.user)
 
         try:
             response = await asyncio.create_task(

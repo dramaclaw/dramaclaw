@@ -427,3 +427,28 @@ async def test_retry_preserves_admitted_media_identity(tmp_path):
     saved = store.read_workflow_run(**scope)["actions"][0]
     assert {key: saved[key] for key in expected_task} == expected_task
     assert saved["retry_count"] == 1
+
+
+async def test_retry_preserves_ordinary_media_identity(tmp_path):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{
+        "node_id": "one", "action": "generate_image", "generation_attempt_id": "attempt-1",
+    }], levels=[[0]])
+    expected = {"task_key": "task:freezone_gen:project:project:0:claimed-job",
+                "task_type": "freezone_gen", "job_id": "claimed-job"}
+    store.update_workflow_run(**scope, owner_kind="server", now=clock.now(), action_updates=[{
+        "node_id": "one", "action": "generate_image", "status": "running", **expected,
+    }])
+    observed = []
+
+    class RetryingRunner(FakeRunner):
+        async def run_action(self, **kwargs):
+            row = store.read_workflow_run(**scope)["actions"][0]
+            observed.append({key: row[key] for key in expected})
+            if len(observed) == 1:
+                return {"status": "failed", "error": "HTTP 503"}
+            return {"status": "completed", "output": {"output_url": "/static/result.png"}}
+
+    assert (await drive(scope, clock, RetryingRunner(scope)))["status"] == "completed"
+    assert observed == [expected, expected]
+    assert store.read_workflow_run(**scope)["actions"][0]["retry_count"] == 1

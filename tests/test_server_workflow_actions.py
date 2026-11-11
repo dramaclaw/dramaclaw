@@ -41,6 +41,7 @@ class FakeHost:
         self.patches = []
         self.requests = []
         self.responses = [TASK]
+        self.media_links = []
         self.statuses = [{"status": "running"},
                          {"status": "completed", "result": {"output_url": URL}}]
         self.fallback = "/api/projects/project/static/fz/fallback.png"
@@ -70,8 +71,9 @@ class FakeHost:
         self.patches.append(deepcopy(patch))
         self.data.update(patch)
 
-    async def request(self, method, path, body):
+    async def request(self, method, path, body, *, media_link=None):
         self.requests.append({"method": method, "path": path, "body": deepcopy(body)})
+        self.media_links.append(media_link)
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -113,11 +115,11 @@ def setup_runner():
     async def on_accepted(value):
         accepted.append(value)
 
-    async def run(action="generate_image", existing_task=None, should_stop=None):
+    async def run(action="generate_image", existing_task=None, should_stop=None, **kwargs):
         return await runner.run_action(
             node_id="n", action=action, existing_task=existing_task,
             on_accepted=on_accepted, on_phase=on_phase,
-            should_stop=should_stop or (lambda: host.stopped),
+            should_stop=should_stop or (lambda: host.stopped), **kwargs,
         )
 
     yield host, runner, run, phases, accepted
@@ -377,3 +379,65 @@ async def test_core_product_operation_payload(setup_runner, action, operation_id
                          ("recipe_compile_request", expected),
                          ("image_generation_request", expected)] if action == "generate_image"
                         else [("text_generation_request", expected)])
+
+
+@pytest.mark.parametrize("recipe", [False, True])
+async def test_image_submission_media_link(setup_runner, recipe):
+    host, _, run, _, _ = setup_runner
+    if recipe:
+        host.data["workflowCatalog"] = {"recipeId": "r"}
+        host.responses.insert(0, {
+            "prompt": "Compiled", "compile_mode": "model", "recipe_ids": ["r"],
+        })
+    assert (await run(
+        generation_attempt_id="attempt-1", product_operation_id="operation-1" if recipe else None,
+    ))["status"] == "completed"
+    assert host.media_links == ([None, None] if recipe else [{
+        "run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1",
+    }])
+
+
+@pytest.mark.parametrize("recipe", [False, True])
+@pytest.mark.parametrize("errors", [[], ["HTTP 503: workflow media submission is still starting",
+                                       "HTTP 503: workflow media submission is being recovered"]])
+async def test_missing_takeover_task_resubmits_identical_request(setup_runner, recipe, errors):
+    host, _, run, _, accepted = setup_runner
+    # A stale compiled prompt must never override the ordinary node's fallback prompt.
+    host.data["workflowRecipeCompiledPrompt"] = "Old compiled prompt"
+    if recipe:
+        host.data["workflowCatalog"] = {"recipeId": "r"}
+        host.responses.insert(0, {
+            "prompt": "Compiled", "compile_mode": "model", "recipe_ids": ["r"],
+        })
+    kwargs = {"generation_attempt_id": "attempt-1",
+              "product_operation_id": "operation-1" if recipe else None}
+    assert (await run(**kwargs))["status"] == "completed"
+    first = deepcopy(host.requests[-1])
+    assert first["body"]["prompt"] == ("Compiled" if recipe else "A ship")
+    host.requests.clear()
+    host.media_links.clear()
+    accepted.clear()
+    host.statuses = [None, {"status": "completed", "result": {"output_url": URL}}]
+    host.responses = [*(ServerActionHttpError(e) for e in errors), TASK]
+    assert (await run(existing_task=TASK, **kwargs))["artifact"] == {"output_url": URL}
+    assert host.requests == [first] * (len(errors) + 1)
+    assert accepted == [TASK]
+    link = None if recipe else {
+        "run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1",
+    }
+    assert host.media_links == [link] * (len(errors) + 1)
+    assert host.clock == 2 + len(errors) * 2
+
+
+@pytest.mark.parametrize("error,expected", [
+    ("HTTP 409: changed claim", "HTTP 409: changed claim"),
+    ("HTTP 503: upstream busy", "HTTP 503: upstream busy"),
+    ("HTTP 503: workflow media submission is still starting", "图片生成超时"),
+])
+async def test_missing_takeover_task_submission_errors(setup_runner, error, expected):
+    host, _, run, _, _ = setup_runner
+    host.statuses = [None]
+    host.responses = [ServerActionHttpError(error)] * 4
+    assert await run(existing_task=TASK, generation_attempt_id="attempt-1") == {
+        "status": "failed", "error": expected,
+    }

@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,32 @@ from novelvideo.freezone.workflow_contract_generated import GENERATION_ACTION_TY
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 logger = logging.getLogger(__name__)
+
+_SERVER_WORKFLOW_MEDIA_LINK: ContextVar[dict[str, str] | None] = ContextVar(
+    "server_workflow_media_link", default=None,
+)
+
+
+@contextmanager
+def server_workflow_media_link(link: dict[str, str] | None):
+    """Scope an in-process media submission to its server-owned action."""
+    token = _SERVER_WORKFLOW_MEDIA_LINK.set(dict(link) if link is not None else None)
+    try:
+        yield
+    finally:
+        _SERVER_WORKFLOW_MEDIA_LINK.reset(token)
+
+
+def get_server_workflow_media_link() -> dict[str, str] | None:
+    return _SERVER_WORKFLOW_MEDIA_LINK.get()
+
+
+_WORKFLOW_MEDIA_ACTIONS = {
+    "freezone_gen": {"generate_image"},
+    "freezone_video_gen": {"generate_video", "generate_text_video"},
+    "freezone_audio_speech": {"generate_audio"},
+    "freezone_audio_eleven_music": {"generate_audio"},
+}
 
 RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 IDEMPOTENCY_KEY_RE = re.compile(r"^[a-zA-Z0-9._:-]{1,160}$")
@@ -759,8 +786,9 @@ def claim_workflow_media_action(
     attempt_id: str,
     task_type: str,
     fingerprint: str,
+    run_id: str = "",
 ) -> dict[str, Any]:
-    """Atomically admit one media request for a trusted Recipe operation."""
+    """Atomically admit one media request for a Recipe or server-owned action."""
     from novelvideo.freezone.agent_product_operations import (
         PENDING_STATUSES,
         is_direct_voice_recipe_action,
@@ -768,26 +796,25 @@ def claim_workflow_media_action(
     )
     from novelvideo.task_state import project_task_state_key
 
-    allowed_actions = {
-        "freezone_gen": {"generate_image"},
-        "freezone_video_gen": {"generate_video", "generate_text_video"},
-        "freezone_audio_speech": {"generate_audio"},
-        "freezone_audio_eleven_music": {"generate_audio"},
-    }
-    if task_type not in allowed_actions or len(fingerprint) != 64:
+    if task_type not in _WORKFLOW_MEDIA_ACTIONS or len(fingerprint) != 64:
         raise ValueError("invalid workflow media claim")
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        operation = conn.execute(
-            "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
-            (operation_id,),
-        ).fetchone()
-        if operation is None:
-            raise ValueError(
-                "workflow media link does not match admitted Recipe attempt"
-            )
-        metadata = _decode_metadata(operation["metadata_json"])
-        run_id = str(metadata.get("workflow_run_id") or "")
+        operation = None
+        metadata = {}
+        if operation_id:
+            operation = conn.execute(
+                "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if operation is None:
+                raise ValueError(
+                    "workflow media link does not match admitted Recipe attempt"
+                )
+            metadata = _decode_metadata(operation["metadata_json"])
+            run_id = str(metadata.get("workflow_run_id") or "")
+        elif not run_id or not attempt_id:
+            raise ValueError("invalid server workflow media link")
         _validate_scope(canvas_id, run_id)
         run = conn.execute(
             "SELECT * FROM workflow_runs WHERE run_id = ? AND project_id = ? AND canvas_id = ?",
@@ -795,79 +822,91 @@ def claim_workflow_media_action(
         ).fetchone()
         action = conn.execute(
             """SELECT * FROM workflow_run_actions
-               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+               WHERE run_id = ? AND node_id = ? AND COALESCE(product_operation_id, '') = ?
                  AND generation_attempt_id = ?""",
             (run_id, node_id, operation_id, attempt_id),
         ).fetchone()
         if (
             run is None
             or action is None
-            or action["action"] not in allowed_actions[task_type]
-            or operation["product_kind"] != "recipe_result"
-            or operation["project_id"] != project_id
-            or operation["canvas_id"] != canvas_id
-            or operation["artifact_id"] != node_id
-            or metadata.get("generation_attempt_id") != attempt_id
-            or metadata.get("node_id") != node_id
-        ):
-            raise ValueError(
-                "workflow media link does not match admitted Recipe attempt"
+            or action["action"] not in _WORKFLOW_MEDIA_ACTIONS[task_type]
+            or (
+                not operation_id
+                and _decode_metadata(run["metadata_json"]).get("owner_kind") != "server"
             )
-        if operation["status"] in RECIPE_ATTEMPT_ENDED_STATUSES:
+            or (operation is not None and (
+                operation["product_kind"] != "recipe_result"
+                or operation["project_id"] != project_id
+                or operation["canvas_id"] != canvas_id
+                or operation["artifact_id"] != node_id
+                or metadata.get("generation_attempt_id") != attempt_id
+                or metadata.get("node_id") != node_id
+            ))
+        ):
+            message = (
+                "workflow media link does not match admitted Recipe attempt" if operation_id
+                else "server workflow media link does not match admitted action"
+            )
+            raise ValueError(message)
+        if operation is not None and operation["status"] in RECIPE_ATTEMPT_ENDED_STATUSES:
             raise ValueError(recipe_attempt_ended_message(operation["status"]))
         existing = str(action["media_request_fingerprint"] or "")
+        if run["status"] != "running" and (not operation_id or not existing):
+            raise ValueError(
+                f"workflow run is {run['status']}; continue the workflow to submit media"
+            )
         if existing:
             if existing != fingerprint or action["task_type"] not in (None, task_type):
                 raise ValueError(
                     "workflow media attempt already claimed by another request"
                 )
-            result_ref = _decode_metadata(operation["result_ref_json"])
-            if (
-                operation["status"] == "delivered"
-                and not is_recipe_compile_receipt("recipe_result", operation_id, result_ref)
-                and (
-                    result_ref.get("kind") != "recipe_result"
-                    or result_ref.get("id") != action["job_id"]
-                    or result_ref.get("workflow_run_id") != run_id
-                    or result_ref.get("node_id") != node_id
-                )
-            ):
-                raise ValueError("delivered Recipe result belongs to another media task")
+            if operation is not None:
+                result_ref = _decode_metadata(operation["result_ref_json"])
+                if (
+                    operation["status"] == "delivered"
+                    and not is_recipe_compile_receipt("recipe_result", operation_id, result_ref)
+                    and (
+                        result_ref.get("kind") != "recipe_result"
+                        or result_ref.get("id") != action["job_id"]
+                        or result_ref.get("workflow_run_id") != run_id
+                        or result_ref.get("node_id") != node_id
+                    )
+                ):
+                    raise ValueError("delivered Recipe result belongs to another media task")
             return {
                 "job_id": action["job_id"],
                 "claimed_at": action["media_claimed_at"],
                 "created": False,
                 "run_id": run_id,
             }
-        receipt = _decode_metadata(operation["result_ref_json"])
-        evidence = _decode_metadata(operation["model_evidence_json"])
-        compiled = is_recipe_compile_receipt("recipe_result", operation_id, receipt)
-        modeled = (
-            operation["status"] in PENDING_STATUSES
-            and evidence.get("source") == "server_recipe_compiler"
-            and evidence.get("compile_mode") == "model"
-            and bool(evidence.get("model_call_id"))
-            and bool(evidence.get("executed_at"))
-        )
-        direct_voice = (
-            operation["status"] in PENDING_STATUSES
-            and is_direct_voice_recipe_action(
-                recipe_id=str(action["recipe_id"] or ""),
-                action=str(action["action"] or ""),
-                task_type=task_type,
+        if operation is not None:
+            receipt = _decode_metadata(operation["result_ref_json"])
+            evidence = _decode_metadata(operation["model_evidence_json"])
+            compiled = is_recipe_compile_receipt("recipe_result", operation_id, receipt)
+            modeled = (
+                operation["status"] in PENDING_STATUSES
+                and evidence.get("source") == "server_recipe_compiler"
+                and evidence.get("compile_mode") == "model"
+                and bool(evidence.get("model_call_id"))
+                and bool(evidence.get("executed_at"))
             )
-            and metadata.get("recipe_id") == action["recipe_id"]
-            and metadata.get("recipe_version") == action["recipe_version"]
-        )
-        if run["status"] != "running":
-            raise ValueError(
-                f"workflow run is {run['status']}; continue the workflow to submit media"
+            direct_voice = (
+                operation["status"] in PENDING_STATUSES
+                and is_direct_voice_recipe_action(
+                    recipe_id=str(action["recipe_id"] or ""),
+                    action=str(action["action"] or ""),
+                    task_type=task_type,
+                )
+                and metadata.get("recipe_id") == action["recipe_id"]
+                and metadata.get("recipe_version") == action["recipe_version"]
             )
         if action["status"] not in {"pending", "running"}:
             raise ValueError(
                 f"workflow action is {action['status']} and cannot submit media"
             )
-        if not (compiled and operation["status"] == "delivered" or modeled or direct_voice):
+        if operation is not None and not (
+            compiled and operation["status"] == "delivered" or modeled or direct_voice
+        ):
             raise ValueError("Recipe compilation is not ready for media submission")
         job_id = uuid.uuid4().hex[:16]
         task_key = project_task_state_key(task_type, project_id, 0, scope=job_id)
@@ -911,17 +950,23 @@ def bind_workflow_media_task(
         conn.execute("BEGIN IMMEDIATE")
         current = conn.execute(
             """SELECT task_key FROM workflow_run_actions
-               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+               WHERE run_id = ? AND node_id = ? AND COALESCE(product_operation_id, '') = ?
                  AND media_request_fingerprint IS NOT NULL AND job_id = ?
-                 AND task_type = ?""",
-            (run_id, node_id, operation_id, job_id, task_type),
+                 AND task_type = ?
+                 AND (? <> '' OR EXISTS (
+                     SELECT 1 FROM workflow_runs r
+                     WHERE r.run_id = workflow_run_actions.run_id
+                       AND json_extract(r.metadata_json, '$.owner_kind') = 'server'
+                 ))""",
+            (run_id, node_id, operation_id, job_id, task_type, operation_id),
         ).fetchone()
         if current is None or current["task_key"] not in (None, task_key):
             raise ValueError("workflow media task claim changed")
         conn.execute(
             """UPDATE workflow_run_actions SET task_key = ?
-               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?""",
-            (task_key, run_id, node_id, operation_id),
+               WHERE run_id = ? AND node_id = ? AND COALESCE(product_operation_id, '') = ?
+                 AND job_id = ? AND task_type = ?""",
+            (task_key, run_id, node_id, operation_id, job_id, task_type),
         )
 
 
@@ -939,15 +984,18 @@ def renew_workflow_media_claim(
         conn.execute("BEGIN IMMEDIATE")
         updated = conn.execute(
             """UPDATE workflow_run_actions SET media_claimed_at = ?
-               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+               WHERE run_id = ? AND node_id = ? AND COALESCE(product_operation_id, '') = ?
                  AND job_id = ? AND media_claimed_at = ?
                  AND status IN ('pending', 'running')
                  AND EXISTS (
                      SELECT 1 FROM workflow_runs
                       WHERE workflow_runs.run_id = workflow_run_actions.run_id
                         AND workflow_runs.status = 'running'
+                        AND (? <> '' OR json_extract(
+                            workflow_runs.metadata_json, '$.owner_kind'
+                        ) = 'server')
                  )""",
-            (time.time(), run_id, node_id, operation_id, job_id, claimed_at),
+            (time.time(), run_id, node_id, operation_id, job_id, claimed_at, operation_id),
         )
         return updated.rowcount == 1
 
@@ -978,13 +1026,15 @@ def reclaim_failed_workflow_media_action(
         action = conn.execute(
             """SELECT a.* FROM workflow_run_actions AS a
                  JOIN workflow_runs AS r ON r.run_id = a.run_id
-               WHERE a.run_id = ? AND a.node_id = ? AND a.product_operation_id = ?
+               WHERE a.run_id = ? AND a.node_id = ? AND COALESCE(a.product_operation_id, '') = ?
                  AND a.generation_attempt_id = ? AND r.project_id = ?
-                 AND r.canvas_id = ? AND r.status = 'running'""",
-            (run_id, node_id, operation_id, attempt_id, project_id, canvas_id),
+                 AND r.canvas_id = ? AND r.status = 'running'
+                 AND (? <> '' OR json_extract(r.metadata_json, '$.owner_kind') = 'server')""",
+            (run_id, node_id, operation_id, attempt_id, project_id, canvas_id, operation_id),
         ).fetchone()
         if (
             action is None
+            or action["action"] not in _WORKFLOW_MEDIA_ACTIONS.get(task_type, set())
             or action["status"] not in {"pending", "running"}
             or action["job_id"] != failed_job_id
             or action["task_type"] != task_type

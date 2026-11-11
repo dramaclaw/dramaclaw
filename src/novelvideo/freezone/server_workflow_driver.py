@@ -301,7 +301,9 @@ async def drive_server_workflow_run(
                     and retry_count < store.WORKFLOW_ACTION_MAX_RETRIES
                 ):
                     retry_count += 1
-                    cleared_task = ({} if item.get("product_operation_id") else {
+                    cleared_task = ({} if (
+                        item.get("product_operation_id") or item.get("generation_attempt_id")
+                    ) else {
                         "task_key": "", "task_type": "", "job_id": "",
                     })
                     await update(phase="retrying", retry_count=retry_count, **cleared_task)

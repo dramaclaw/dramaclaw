@@ -265,6 +265,7 @@ from novelvideo.freezone.workflow_runs import (
     bind_workflow_media_task,
     claim_workflow_media_action,
     create_workflow_run,
+    get_server_workflow_media_link,
     interrupt_stale_workflow_runs,
     list_workflow_runs,
     prune_workflow_runs,
@@ -613,7 +614,28 @@ async def _enqueue_claimed_workflow_media(
 ) -> dict:
     """Use the durable workflow claim and task scope for one media submission."""
     operation_id = str(payload.get("product_operation_id") or "")
-    if operation_id:
+    server_link = get_server_workflow_media_link() if not operation_id else None
+    attempt_id = str(payload.get("generation_attempt_id") or "")
+    if server_link is not None:
+        try:
+            run = await asyncio.to_thread(
+                read_workflow_run,
+                project_dir=_canvas_state_project_dir(ctx, project_dir),
+                canvas_id=str(payload.get("canvas_id") or ""),
+                run_id=server_link["run_id"],
+            )
+        except ValueError:
+            run = None
+        if (
+            run is None
+            or run["canvas_id"] != payload.get("canvas_id")
+            or server_link["node_id"] != payload.get("node_id")
+        ):
+            raise HTTPException(
+                409, "server workflow media link does not match the submitted node"
+            )
+        attempt_id = server_link["generation_attempt_id"]
+    if operation_id or server_link is not None:
         identity = {
             key: value
             for key, value in payload.items()
@@ -646,7 +668,8 @@ async def _enqueue_claimed_workflow_media(
                     canvas_id=str(payload.get("canvas_id") or ""),
                     node_id=str(payload.get("node_id") or ""),
                     operation_id=operation_id,
-                    attempt_id=str(payload.get("generation_attempt_id") or ""),
+                    attempt_id=attempt_id,
+                    run_id=server_link["run_id"] if server_link is not None else "",
                     task_type=task_type,
                     fingerprint=fingerprint,
                 )
@@ -683,7 +706,7 @@ async def _enqueue_claimed_workflow_media(
                 run_id=claim["run_id"],
                 node_id=str(payload.get("node_id") or ""),
                 operation_id=operation_id,
-                attempt_id=str(payload.get("generation_attempt_id") or ""),
+                attempt_id=attempt_id,
                 task_type=task_type,
                 fingerprint=fingerprint,
                 failed_job_id=str(claim["job_id"]),
@@ -751,7 +774,7 @@ async def _enqueue_claimed_workflow_media(
         scope=job_id,
         payload=payload,
     )
-    if operation_id:
+    if operation_id or server_link is not None:
         await asyncio.to_thread(
             bind_workflow_media_task,
             project_dir=_canvas_state_project_dir(ctx, project_dir),

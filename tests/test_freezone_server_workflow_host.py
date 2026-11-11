@@ -281,3 +281,154 @@ async def test_request_isolates_drive_usage_context(host, monkeypatch):
             assert get_llm_user_context() == "drive-user"
         finally:
             meter.clear_llm_usage_context()
+
+
+async def test_media_link_is_scoped_to_handler(host, monkeypatch):
+    from novelvideo.freezone import workflow_runs as store
+
+    seen = []
+    link = {"run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1"}
+
+    async def gen(project, body, user):
+        seen.append(store.get_server_workflow_media_link())
+        return {"ok": True, "data": TASK}
+
+    async def recipe(body, user):
+        seen.append(store.get_server_workflow_media_link())
+        return {"ok": True, "data": {
+            "prompt": "Compiled", "content": "Text", "compile_mode": "model",
+        }}
+
+    monkeypatch.setattr(routes, "freezone_gen", gen)
+    monkeypatch.setattr(routes, "compile_freezone_recipe", recipe)
+    monkeypatch.setattr(routes, "generate_freezone_recipe_text", recipe)
+    assert store.get_server_workflow_media_link() is None
+    await host.request("POST", "projects/project/freezone/gen", {"prompt": "A ship"},
+                       media_link=link)
+    assert store.get_server_workflow_media_link() is None
+    await host.request("POST", "projects/project/freezone/gen", {"prompt": "A ship"})
+    for path in ("freezone/recipes/compile", "freezone/recipes/generate-text"):
+        await host.request("POST", path, {"recipe_id": "r", "node_kind": "text"})
+    assert seen == [link, None, None, None]
+    assert store.get_server_workflow_media_link() is None
+
+
+async def test_media_link_clears_after_handler_error(host, monkeypatch):
+    from novelvideo.freezone import workflow_runs as store
+
+    async def gen(project, body, user):
+        assert store.get_server_workflow_media_link() == {
+            "run_id": "run-1", "node_id": "n", "generation_attempt_id": "attempt-1",
+        }
+        raise HTTPException(409, "rejected")
+
+    monkeypatch.setattr(routes, "freezone_gen", gen)
+    with pytest.raises(ServerActionHttpError, match="HTTP 409: rejected"):
+        await host.request("POST", "projects/project/freezone/gen", {"prompt": "A ship"},
+                           media_link={"run_id": "run-1", "node_id": "n",
+                                       "generation_attempt_id": "attempt-1"})
+    assert store.get_server_workflow_media_link() is None
+
+
+async def test_real_media_route_takeover_never_reserves_again(context, monkeypatch):
+    from novelvideo.api import freezone_server_workflow_host as host_module
+    from novelvideo.freezone import workflow_runs as store
+    from novelvideo.freezone.canvas_core_pool import CanvasCorePool
+    from novelvideo.freezone.server_workflow_actions import WorkflowActionRunner
+    from novelvideo.ports import get_usage_meter
+    from tests.recording_usage_meter import RecordingUsageMeter
+    from tests.test_server_workflow_actions import BUNDLE
+
+    canvas = canvas_store.ensure_default_canvas(context.state_dir, project_id="project").payload
+    canvas["nodes"] = [{"id": "n", "type": "imageGenNode", "position": {"x": 0, "y": 0},
+                        "data": {"prompt": "A ship", "model": "image-model"}}]
+    canvas_store.atomic_write_json(canvas_store.canvas_path(context.state_dir, "default"), canvas)
+    run = store.create_workflow_run(
+        project_dir=context.state_dir, project_id="project", canvas_id="default",
+        owner_kind="server", actions=[{"node_id": "n", "action": "generate_image",
+                                       "generation_attempt_id": "attempt-1"}],
+    )
+    tasks, enqueued = {}, []
+    model = {"id": "image-model", "apiModel": "image-model", "providerId": "openai"}
+
+    async def resolve(project, user):
+        assert user["id"] == "requester-id"
+        return context, "", project, context.state_dir, str(context.output_dir)
+
+    async def catalog(media_type, *, requester_user_id):
+        assert (media_type, requester_user_id) == ("image", "requester-id")
+        return [model]
+
+    async def image_models(user_id):
+        assert user_id == "requester-id"
+        return {"models": [model]}
+
+    async def enqueue(ctx, *, task_type, scope, **kwargs):
+        assert ctx.requester_user_id == "requester-id"
+        await get_usage_meter().reserve_feature_start_credits(
+            user_id=ctx.requester_user_id, feature_key="image", product_surface="freezone",
+            project_id=ctx.project_id, task_type=task_type, task_id="media-task",
+        )
+        enqueued.append(task_type)
+        state = SimpleNamespace(
+            task_id="media-task", status="completed", error=None,
+            result={"output_url": "/static/a.png"},
+            metadata={"backend": "celery", "queue": "default"},
+        )
+        tasks[scope] = state
+        return SimpleNamespace(task_state=state, backend="celery", queue="default")
+
+    manager = SimpleNamespace(get_task_for_project=lambda ctx, task_type, episode, **kw:
+                              tasks.get(kw["scope"]))
+    monkeypatch.setattr(routes, "_resolve_freezone_project", resolve)
+    monkeypatch.setattr(routes, "_scoped_media_model_catalog", catalog)
+    monkeypatch.setattr(routes, "_media_model_catalog_is_authoritative", lambda: True)
+    monkeypatch.setattr(routes, "_freezone_image_models_data", image_models)
+    monkeypatch.setattr(routes, "get_task_backend", lambda: SimpleNamespace(
+        enqueue_project_task=enqueue,
+    ))
+    monkeypatch.setattr(routes, "get_task_manager", lambda: manager)
+    monkeypatch.setattr(host_module, "get_task_manager", lambda: manager)
+    host = InProcessActionHost(ctx=context, canvas_id="default", assert_lease=lambda: None)
+    pool = CanvasCorePool(BUNDLE, size=1)
+
+    async def core(op, payload):
+        return await asyncio.to_thread(pool.call, op, payload)
+
+    def runner():
+        return WorkflowActionRunner(
+            host=host, project_id="project", canvas_id="default", run_id=run["run_id"],
+            core_call=core,
+        )
+
+    async def died(task):
+        raise RuntimeError("drive died before acceptance")
+
+    async def ignore(value):
+        pass
+
+    args = dict(node_id="n", action="generate_image", generation_attempt_id="attempt-1",
+                on_phase=ignore, should_stop=lambda: False)
+    try:
+        with RecordingUsageMeter({"freezone_gen"}).registered() as meter:
+            with pytest.raises(RuntimeError, match="drive died before acceptance"):
+                await runner().run_action(**args, existing_task=None, on_accepted=died)
+            row = store.read_workflow_run(
+                project_dir=context.state_dir, canvas_id="default", run_id=run["run_id"],
+            )["actions"][0]
+            assert row["job_id"] is not None
+            assert enqueued == ["freezone_gen"]
+            assert [name for name, _ in meter.calls if name == "reserve_feature_start_credits"] == [
+                "reserve_feature_start_credits",
+            ]
+            meter.calls.clear()
+            task = {key: row[key] for key in ("task_key", "task_type", "job_id")}
+            result = await runner().run_action(**args, existing_task=task, on_accepted=ignore)
+            assert result["status"] == "completed"
+            assert result["artifact"] == {"output_url": "/static/a.png"}
+            assert enqueued == ["freezone_gen"]
+            assert [name for name, _ in meter.calls if name in {
+                "reserve_current_model_call_credit", "reserve_feature_start_credits",
+            }] == []
+    finally:
+        pool.close()

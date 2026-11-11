@@ -26,7 +26,9 @@ class ActionHost(Protocol):
     async def catalogs(self) -> dict: ...
     async def read_canvas(self) -> dict: ...
     async def patch_node(self, node_id: str, patch: dict) -> None: ...
-    async def request(self, method: str, path: str, body: dict) -> dict: ...
+    async def request(
+        self, method: str, path: str, body: dict, *, media_link: dict[str, str] | None = None,
+    ) -> dict: ...
     async def task_status(self, task: dict) -> dict | None: ...
     async def job_result_url(self, task: dict) -> str | None: ...
     async def lane_capacity(self, lane: str) -> int | None: ...
@@ -85,6 +87,7 @@ class WorkflowActionRunner:
         } if product_operation_id else None)
         execution = _ActionExecution(
             self, node_id, on_accepted, on_phase, should_stop, product_operation,
+            generation_attempt_id,
         )
         try:
             execution.check()
@@ -109,7 +112,10 @@ class WorkflowActionRunner:
 class _ActionExecution:
     """Per-call state; concurrent actions never share cancellation or ownership state."""
 
-    def __init__(self, runner, node_id, on_accepted, on_phase, should_stop, product_operation):
+    def __init__(
+        self, runner, node_id, on_accepted, on_phase, should_stop, product_operation,
+        generation_attempt_id,
+    ):
         self.runner = runner
         self.host = runner.host
         self.node_id = node_id
@@ -118,6 +124,10 @@ class _ActionExecution:
         self.should_stop = should_stop
         self.started = False
         self.product_operation = product_operation
+        self.media_link = ({
+            "run_id": runner.run_id, "node_id": node_id,
+            "generation_attempt_id": generation_attempt_id,
+        } if generation_attempt_id and not product_operation else None)
 
     def check(self):
         if self.should_stop():
@@ -143,9 +153,11 @@ class _ActionExecution:
         await self.on_phase(phase)
         self.check()
 
-    async def request(self, request):
+    async def request(self, request, *, media_link=None):
         self.check()
-        return await self.host.request(request["method"], request["path"], request["body"])
+        return await self.host.request(
+            request["method"], request["path"], request["body"], media_link=media_link,
+        )
 
     async def start(self, op):
         patch = await self.core(op, {"phase": "start", "started_at_ms": self.runner.now_ms()})
@@ -154,6 +166,7 @@ class _ActionExecution:
         self.started = True
 
     async def image(self, existing_task):
+        deadline = self.runner.monotonic() + self.runner.task_timeout_seconds
         canvas = await self.host.read_canvas()
         self.check()
         data = next((n["data"] for n in canvas["nodes"] if n["id"] == self.node_id), {})
@@ -165,60 +178,72 @@ class _ActionExecution:
         compile_input = built["compile_input"]
         if compile_input.get("ok") is False:
             return {"status": "failed", "error": compile_input["message"]}
-        if existing_task:
-            env["prompt"] = (
-                data.get("workflowRecipeCompiledPrompt") or compile_input["fallbackPrompt"]
-            )
-            built = await self.core("image_generation_request", payload)
-            request = built["request"]
-            total = request["requests"][0]["body"].get("variant_count", 1) if request["ok"] else 1
-            task = existing_task
-        else:
+        if not existing_task:
             await self.start("image_generation_patch")
-            plan = await self.core("recipe_compile_request", {
-                "node_id": self.node_id, "node_data": data, "compile_input": compile_input,
-                "env": {"executionSource": "workflow", "productOperation": self.product_operation,
-                        "locale": self.host.locale},
-            })
-            if plan["kind"] == "request":
-                await self.phase("compiling_recipe")
-                try:
-                    response = await self.request(plan["request"])
-                except ServerActionHttpError as exc:
-                    return await self.image_outcome(
-                        {"kind": "compile_failed", "message": str(exc)}, None, 1,
-                    )
-                compiled = await self.core("recipe_compile_result", {
-                    "request_body": plan["request"]["body"], "data": response,
-                })
-                compiled_at = datetime.fromtimestamp(
-                    self.runner.now_ms() / 1000, timezone.utc,
-                ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                await self.patch(await self.core("image_generation_patch", {
-                    "phase": "compile_metadata", "metadata": compiled["metadata"],
-                    "compiled_at": compiled_at,
-                }))
-                prompt = compiled["prompt"]
-            else:
-                prompt = plan["prompt"]
-            env["prompt"] = prompt
-            request = (await self.core("image_generation_request", payload))["request"]
-            if not request["ok"]:
+        plan = await self.core("recipe_compile_request", {
+            "node_id": self.node_id, "node_data": data, "compile_input": compile_input,
+            "env": {"executionSource": "workflow", "productOperation": self.product_operation,
+                    "locale": self.host.locale},
+        })
+        if existing_task:
+            prompt = (
+                data.get("workflowRecipeCompiledPrompt") or compile_input["fallbackPrompt"]
+                if plan["kind"] == "request" else plan["prompt"]
+            )
+        elif plan["kind"] == "request":
+            await self.phase("compiling_recipe")
+            try:
+                response = await self.request(plan["request"])
+            except ServerActionHttpError as exc:
                 return await self.image_outcome(
-                    {"kind": "failed", "message": request["message"]}, None, 1,
+                    {"kind": "compile_failed", "message": str(exc)}, None, 1,
                 )
+            compiled = await self.core("recipe_compile_result", {
+                "request_body": plan["request"]["body"], "data": response,
+            })
+            compiled_at = datetime.fromtimestamp(
+                self.runner.now_ms() / 1000, timezone.utc,
+            ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            await self.patch(await self.core("image_generation_patch", {
+                "phase": "compile_metadata", "metadata": compiled["metadata"],
+                "compiled_at": compiled_at,
+            }))
+            prompt = compiled["prompt"]
+        else:
+            prompt = plan["prompt"]
+        env["prompt"] = prompt
+        request = (await self.core("image_generation_request", payload))["request"]
+        task = existing_task
+        needs_submission = task is None or await self.host.task_status(task) is None
+        if not request["ok"] and needs_submission:
+            return await self.image_outcome(
+                {"kind": "failed", "message": request["message"]}, None, 1,
+            )
+        total = request["requests"][0]["body"].get("variant_count", 1) if request["ok"] else 1
+        if needs_submission:
             gen_request = request["requests"][0]
-            total = gen_request["body"].get("variant_count", 1)
             await self.phase("submitting")
             await self.patch(await self.core("image_generation_patch", {
                 "phase": "submit", "started_at_ms": self.runner.now_ms(),
             }))
-            try:
-                response = await self.request(gen_request)
-            except ServerActionHttpError as exc:
-                return await self.image_outcome(
-                    {"kind": "failed", "message": str(exc)}, None, total,
-                )
+            while True:
+                self.check()
+                if self.runner.monotonic() > deadline:
+                    return await self.image_outcome(
+                        {"kind": "failed", "message": "图片生成超时"}, None, total,
+                    )
+                try:
+                    response = await self.request(gen_request, media_link=self.media_link)
+                    break
+                except ServerActionHttpError as exc:
+                    if str(exc) not in {
+                        "HTTP 503: workflow media submission is still starting",
+                        "HTTP 503: workflow media submission is being recovered",
+                    }:
+                        return await self.image_outcome(
+                            {"kind": "failed", "message": str(exc)}, None, total,
+                        )
+                    await self.runner.sleep(self.runner.poll_seconds)
             task = {key: response[key] for key in ("task_key", "task_type", "job_id")}
             # Persist acceptance before observing a cancellation that arrived during submission.
             await self.on_accepted(task)
