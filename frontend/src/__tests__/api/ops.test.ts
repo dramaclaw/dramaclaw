@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiCall } from "@/api/client";
 import {
   compileFreezoneRecipePrompt,
-  generateFreezoneRecipeText,
+  sendGenerationWireRequest,
   listFreezoneStyleTemplates,
   submitFreezoneAudioSpeech,
   submitFreezoneGen,
@@ -128,20 +128,15 @@ describe("freezone recipe API", () => {
   it("allows long-running text generation requests", async () => {
     vi.mocked(apiCall).mockResolvedValueOnce({ content: "创意大纲" });
 
-    const content = await generateFreezoneRecipeText({
-      recipeId: "video-creative-outline",
-      nodePrompt: "生成广告创意大纲",
-      userGoal: "制作运动相机广告",
-    });
+    const request = { method: 'POST', path: 'freezone/recipes/generate-text', body: {
+      recipe_id: 'video-creative-outline', node_prompt: '生成广告创意大纲', user_goal: '制作运动相机广告',
+    } } as const;
+    const data = await sendGenerationWireRequest<{ content: string }>(request, { timeout: 600000 });
 
-    expect(content).toBe("创意大纲");
-    expect(apiCall).toHaveBeenCalledWith(
-      "freezone/recipes/generate-text",
-      expect.objectContaining({
-        method: "POST",
-        timeout: 10 * 60 * 1000,
-      }),
-    );
+    expect(data).toStrictEqual({ content: '创意大纲' });
+    expect(apiCall).toHaveBeenCalledWith(request.path, {
+      method: 'POST', json: request.body, timeout: 600000,
+    });
   });
 
   it("allows long-running prompt compilation before media submission", async () => {

@@ -67,7 +67,7 @@ export interface FreezoneRecipeCompilePayload {
   onCompileMetadata?: (metadata: FreezoneRecipeCompileMetadata) => void;
 }
 
-const RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
+export const RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
 const RECIPE_COMPILE_BATCH_WINDOW_MS = 15;
 const RECIPE_COMPILE_BATCH_MAX_ITEMS = 12;
 
@@ -192,35 +192,15 @@ export function compileFreezoneRecipePrompt(
   });
 }
 
-export async function generateFreezoneRecipeText(
-  payload: Omit<FreezoneRecipeCompilePayload, "nodeKind">,
-): Promise<string> {
-  const data = await apiCall<{ content: string }>("freezone/recipes/generate-text", {
-    method: "POST",
-    // Recipe-backed text generation is a model call and can legitimately take
-    // longer than the shared 30s API-client timeout.
-    timeout: RECIPE_MODEL_TIMEOUT_MS,
-    json: {
-      ...(payload.projectId ? { project_id: payload.projectId } : {}),
-      ...(payload.productOperationId
-        ? { product_operation_id: payload.productOperationId }
-        : {}),
-      recipe_id: payload.recipeId,
-      recipe_version: payload.recipeVersion ?? "",
-      ...(payload.recipePipeline?.length
-        ? { recipe_pipeline: payload.recipePipeline }
-        : {}),
-      skill_id: payload.skillId ?? "",
-      skill_version: payload.skillVersion ?? "",
-      confirmed_inputs: payload.confirmedInputs ?? {},
-      node_kind: "text",
-      node_prompt: payload.nodePrompt ?? "",
-      user_goal: payload.userGoal ?? "",
-      upstream_text: payload.upstreamText ?? "",
-      reference_media: payload.referenceMedia ?? [],
-    },
+export async function sendGenerationWireRequest<T>(
+  request: { method: 'POST'; path: string; body: Record<string, unknown> },
+  options?: { timeout?: number },
+): Promise<T> {
+  return apiCall<T>(request.path, {
+    method: request.method,
+    json: request.body,
+    ...(options?.timeout !== undefined ? { timeout: options.timeout } : {}),
   });
-  return data.content;
 }
 
 /**
