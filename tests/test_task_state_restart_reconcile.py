@@ -1,5 +1,6 @@
 """inline 任务按持有文件锁的进程 owner 回收，存活任务不受时间戳影响。"""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -17,6 +18,8 @@ import pytest
 
 from novelvideo import config, task_state as task_state_module
 from novelvideo.project_context import ProjectContext
+from novelvideo.ports.usage import FeatureSettlementResolution, VerifiedTaskSettlementIdentity
+from tests.recording_usage_meter import RecordingUsageMeter
 from novelvideo.task_state import TaskStateManager
 
 pytestmark = pytest.mark.m07
@@ -78,11 +81,16 @@ def _kill(child):
     assert child.wait(timeout=10) == -signal.SIGKILL
 
 
-def _inline_task(manager, ctx, owner=None, status="running", error=""):
-    metadata = {"backend": "inline"}
+def _inline_task(
+    manager, ctx, owner=None, status="running", error="", *,
+    extra_metadata=None, beat_num=None, scope=None,
+):
+    metadata = {"backend": "inline", **(extra_metadata or {})}
     if owner is not None:
         metadata["owner"] = owner
-    created = manager.create_task_for_project(ctx, "ingest_fast", 0, metadata=metadata)
+    created = manager.create_task_for_project(
+        ctx, "ingest_fast", 0, metadata=metadata, beat_num=beat_num, scope=scope
+    )
     with manager._connect_path(ctx.state_dir / "data.db", skip_auto_sweep=True) as conn:
         conn.execute(
             "UPDATE task_states SET status = ?, error = ? WHERE task_id = ?",
@@ -312,7 +320,10 @@ def test_inline_sweep_compare_and_set(tmp_path, monkeypatch, replacement):
 
     monkeypatch.setattr(task_state_module, "owner_alive", finish_before_update)
 
-    assert manager.sweep_stale_tasks_for_project(ctx) == 0
+    meter = RecordingUsageMeter(billable_task_types=["ingest_fast"])
+    with meter.registered():
+        assert manager.sweep_stale_tasks_for_project(ctx) == 0
+    assert meter.calls == []
     listed = manager.list_tasks_for_project(ctx)
     if replacement:
         assert listed[0].task_id == "replacement"
@@ -320,3 +331,106 @@ def test_inline_sweep_compare_and_set(tmp_path, monkeypatch, replacement):
     else:
         assert listed[0].status == "completed"
         assert listed[0].error == "done"
+
+
+@pytest.mark.parametrize("running_loop", [False, True])
+@pytest.mark.parametrize("billable", [False, True])
+def test_dead_owner_releases_reservation_once(tmp_path, owner_process, running_loop, billable):
+    child, owner, _ = owner_process
+    ctx = _ctx(tmp_path)
+    created = _inline_task(
+        TaskStateManager(), ctx, owner, beat_num=3, scope="canvas-node",
+        extra_metadata={"billing_feature_key": "canvas.generate"},
+    )
+    _kill(child)
+    meter = RecordingUsageMeter(billable_task_types=["ingest_fast"] if billable else [])
+
+    def sweep():
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 1
+        assert TaskStateManager().list_tasks_for_project(ctx)[0].status == "failed"
+
+    async def sweep_in_loop():
+        sweep()
+
+    with meter.registered():
+        if running_loop:
+            asyncio.run(sweep_in_loop())
+        else:
+            sweep()
+        expected = [
+            ("resolve_feature_credit_reservation", {"identity": VerifiedTaskSettlementIdentity(
+                root_task_id=created.task_id, project_id="proj_reconcile",
+                requester_user_id="editor", task_type="ingest_fast", episode=0,
+                beat_num=3, scope="canvas-node", feature_key="canvas.generate",
+            )}),
+        ]
+        if billable:
+            expected.append(("settle_cancelled_feature_credit_reservation", {
+                "reservation_id": f"res:{created.task_id}",
+                "metadata": {"source": "task_owner_exited"},
+            }))
+        assert meter.calls == expected
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 0
+        assert meter.calls == expected
+
+
+@pytest.mark.parametrize("status", ["completed", "running"])
+def test_unclaimed_inline_rows_do_not_resolve(tmp_path, owner_process, status):
+    child, owner, _ = owner_process
+    ctx = _ctx(tmp_path)
+    _inline_task(TaskStateManager(), ctx, owner, status=status)
+    if status == "completed":
+        _kill(child)
+    meter = RecordingUsageMeter(billable_task_types=["ingest_fast"])
+    with meter.registered():
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 0
+        assert TaskStateManager().list_tasks_for_project(ctx)[0].status == status
+    assert meter.calls == []
+
+
+@pytest.mark.parametrize("outcome", ["ambiguous", "conflict", "error"])
+def test_resolution_failure_keeps_processing_claimed_rows(
+    tmp_path, owner_process, caplog, outcome,
+):
+    child, owner, _ = owner_process
+    ctx = _ctx(tmp_path)
+    manager = TaskStateManager()
+    first = _inline_task(manager, ctx, owner, scope="first")
+    second = _inline_task(manager, ctx, owner, scope="second")
+    _kill(child)
+
+    class FailingResolutionMeter(RecordingUsageMeter):
+        async def resolve_feature_credit_reservation(self, identity):
+            # The release must observe committed terminal states from another connection.
+            with sqlite3.connect(ctx.state_dir / "data.db") as conn:
+                assert conn.execute(
+                    "SELECT DISTINCT status FROM task_states"
+                ).fetchall() == [("failed",)]
+            resolution = await super().resolve_feature_credit_reservation(identity)
+            if identity.scope == "first":
+                if outcome == "error":
+                    raise RuntimeError("private-resolution-detail")
+                return FeatureSettlementResolution(outcome=outcome)
+            return resolution
+
+    meter = FailingResolutionMeter(billable_task_types=["ingest_fast"])
+    with meter.registered():
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 2
+    resolutions = [call for call in meter.calls if call[0] == "resolve_feature_credit_reservation"]
+    assert resolutions == [
+        ("resolve_feature_credit_reservation", {"identity": VerifiedTaskSettlementIdentity(
+            root_task_id=task_id, project_id="proj_reconcile", requester_user_id="editor",
+            task_type="ingest_fast", episode=0, beat_num=None, scope=scope, feature_key="",
+        )}) for task_id, scope in [(first.task_id, "first"), (second.task_id, "second")]
+    ]
+    assert [call for call in meter.calls if call[0] != "resolve_feature_credit_reservation"] == [
+        ("settle_cancelled_feature_credit_reservation", {
+            "reservation_id": f"res:{second.task_id}",
+            "metadata": {"source": "task_owner_exited"},
+        }),
+    ]
+    records = [r for r in caplog.records if r.name == "novelvideo.task_backend.run_core"]
+    assert len(records) == 1
+    assert records[0].levelname == ("ERROR" if outcome == "error" else "WARNING")
+    for value in (first.task_id, second.task_id, "proj_reconcile", "private-resolution-detail"):
+        assert value not in str(records[0].__dict__)
