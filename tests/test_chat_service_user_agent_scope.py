@@ -4747,15 +4747,32 @@ def test_codex_backend_validates_explicit_binary(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    revoked = []
+
+    async def revoke_agent_session(token):
+        revoked.append(token)
+
+    monkeypatch.setattr(
+        chat_service, "get_auth_session_port",
+        lambda: SimpleNamespace(revoke_agent_session=revoke_agent_session),
+    )
     calls = []
     monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
                         lambda thread, turn: calls.append((thread, turn)) or True)
     for user, scope, thread, turn in [("alice", "a", "thread-a", "turn-a"),
                                        ("alice", "b", "thread-b", "turn-b"),
                                        ("bob", "c", "thread-c", "turn-c")]:
-        chat_service._set_active_codex_turn(user, scope, {"thread_id": thread, "turn_id": turn})
+        token_file = tmp_path / f"token-{scope}"
+        token_file.write_text(f"token-{scope}", encoding="utf-8")
+        chat_service._set_active_codex_turn(user, scope, {
+            "thread_id": thread, "turn_id": turn, "token_file": str(token_file),
+        })
     assert await chat_service.interrupt_active_codex_turns("alice") is True
     assert sorted(calls) == [("thread-a", "turn-a"), ("thread-b", "turn-b")]
+    assert sorted(revoked) == ["token-a", "token-b"]
+    assert not (tmp_path / "token-a").exists()
+    assert not (tmp_path / "token-b").exists()
+    assert (tmp_path / "token-c").exists()
 
 
 @pytest.mark.asyncio
@@ -4763,16 +4780,31 @@ async def test_cancel_interrupts_only_the_exact_codex_scope_and_business_turn(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    revoked = []
+
+    async def revoke_agent_session(token):
+        revoked.append(token)
+
+    monkeypatch.setattr(
+        chat_service, "get_auth_session_port",
+        lambda: SimpleNamespace(revoke_agent_session=revoke_agent_session),
+    )
     calls = []
     monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
                         lambda thread, turn: calls.append((thread, turn)) or True)
     for scope in ("a", "b"):
+        token_file = tmp_path / f"token-{scope}"
+        token_file.write_text(f"token-{scope}", encoding="utf-8")
         chat_service._set_active_codex_turn("alice", scope, {
             "thread_id": f"thread-{scope}", "turn_id": f"runtime-{scope}",
             "business_turn_id": f"business-{scope}",
+            "token_file": str(token_file),
         })
     assert await chat_service.interrupt_active_codex_turn("alice", "a", "business-a") is True
     assert calls == [("thread-a", "runtime-a")]
+    assert revoked == ["token-a"]
+    assert not (tmp_path / "token-a").exists()
+    assert (tmp_path / "token-b").exists()
 
 
 @pytest.mark.asyncio
@@ -4780,9 +4812,21 @@ async def test_exact_cancel_rejects_a_stale_business_turn_without_interrupting_n
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    revoked = []
+
+    async def revoke_agent_session(token):
+        revoked.append(token)
+
+    monkeypatch.setattr(
+        chat_service, "get_auth_session_port",
+        lambda: SimpleNamespace(revoke_agent_session=revoke_agent_session),
+    )
+    token_file = tmp_path / "token-new"
+    token_file.write_text("token-new", encoding="utf-8")
     chat_service._set_active_codex_turn("alice", "scope-a", {
         "thread_id": "thread-new", "turn_id": "runtime-new",
         "business_turn_id": "business-new",
+        "token_file": str(token_file),
     })
     calls = []
     monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
@@ -4791,6 +4835,8 @@ async def test_exact_cancel_rejects_a_stale_business_turn_without_interrupting_n
         "alice", "scope-a", "business-old"
     ) is False
     assert calls == []
+    assert revoked == []
+    assert token_file.exists()
 
 
 @pytest.mark.asyncio
