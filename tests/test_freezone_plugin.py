@@ -11346,11 +11346,18 @@ def test_studio_import_and_export_bodies(monkeypatch):
 def test_studio_tools_explain_a_missing_film(monkeypatch):
     plugin, _requests = _studio_plugin(monkeypatch)
     handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
-    monkeypatch.setattr(
-        plugin,
-        "_request",
-        lambda *_a, **_k: {"ok": False, "status": "failed", "status_code": 404, "error": "no film"},
-    )
+    def missing_film(*_args, **_kwargs):
+        return plugin._http_error_result(
+            404,
+            json.dumps({"detail": {
+                "code": "studio_film_missing",
+                "message": "this compose node has no Studio film yet: "
+                "open its compose workspace once so the timeline becomes a film",
+            }}),
+            "Not Found",
+        )
+
+    monkeypatch.setattr(plugin, "_request", missing_film)
 
     result = _as_result(handler({"node_id": "node-1"}))
 

@@ -9610,6 +9610,22 @@ _STORY_SUCCESS_REQUIRED = (
 )
 
 
+_RESULT_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
+    "freezone_studio_import_media": {
+        "source": {
+            "type": "object",
+            "properties": {
+                "source_url": {"type": "string"},
+                "node_id": {"type": "string"},
+                "label": {"type": "string"},
+            },
+            "required": ["source_url", "node_id", "label"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 _STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_studio_get_film": (
         "node_id", "rev", "problems", "film", "media", "studio", "export",
@@ -9914,7 +9930,7 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 _STUDIO_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     "freezone_studio_get_film": ("rev", "film"),
     "freezone_studio_edit_film": ("rev", "film"),
-    "freezone_studio_import_media": ("asset_path",),
+    "freezone_studio_import_media": ("asset_path", "source"),
     "freezone_studio_export_film": ("job_id", "task_key"),
 }
 
@@ -10221,6 +10237,7 @@ def _output_schema(name: str) -> dict[str, Any]:
         raise RuntimeError(f"missing output contract for {name}")
     properties = dict(_RESULT_COMMON_PROPERTIES)
     properties.update({field: _result_field_schema(field) for field in fields})
+    properties.update(_RESULT_SCHEMA_OVERRIDES.get(name, {}))
     schema: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": f"{name}.result",
@@ -11657,7 +11674,7 @@ def _studio_tool_result(response: dict[str, Any], *, node_id: str) -> dict[str, 
         result["ok"] = 200 <= int(response.get("status_code") or 0) < 300
     if not result.get("status"):
         result["status"] = "ok" if result.get("ok") else "failed"
-    if not result.get("ok") and int(response.get("status_code") or 0) == 404:
+    if result.get("code") == "studio_film_missing":
         result.setdefault(
             "agent_instruction",
             "The compose node has no Studio film yet. Ask the user to open the node's "
@@ -11818,8 +11835,9 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
         _schema(
             "freezone_studio_import_media",
             "Compose workspace only: copy a canvas node's finished media (video, audio or "
-            "image) or a project media URL into the film's assets. Returns asset_path and the "
-            "probed duration; then insert it with freezone_studio_edit_film "
+            "image) or a project media URL into the film's assets. Returns asset_path, kind, "
+            "media (first entry includes probed duration), and source; then insert asset_path "
+            "with freezone_studio_edit_film "
             "({op:'insert', clip:{src: asset_path, at, time}}). Use source_node_id for "
             "canvas nodes; it does not create or change canvas nodes.",
             {
