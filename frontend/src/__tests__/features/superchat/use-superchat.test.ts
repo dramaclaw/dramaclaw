@@ -6804,6 +6804,50 @@ describe("tool status parts", () => {
     })).toBe("等待选择生成参数");
   });
 
+  it("renders canvas confirmation as waiting for user confirmation", () => {
+    const card = (toolCard({
+      turn_id: "turn-a",
+      call_id: "call-confirmation",
+      name: "freezone_emit_canvas_command",
+      status: "completed",
+      result_json: {
+        ok: true,
+        status: "confirmation_required",
+        code: "canvas_confirmation_required",
+        applied: false,
+      },
+    }) as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: zhT,
+      status: "done",
+      title: genericToolTitleForTest(card),
+      toolMessage: card,
+    })).toBe("等待你确认");
+  });
+
+  it("translates confirmation_required in the English interface", () => {
+    const card = (toolCard({
+      turn_id: "turn-a",
+      call_id: "call-confirmation",
+      name: "freezone_emit_canvas_command",
+      status: "completed",
+      result_json: {
+        ok: true,
+        status: "confirmation_required",
+        code: "canvas_confirmation_required",
+        applied: false,
+      },
+    }) as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: enT,
+      status: "done",
+      title: genericToolTitleForTest(card),
+      toolMessage: card,
+    })).toBe("Waiting for your confirmation");
+  });
+
   it.each([
     ["clarification_required", "Waiting for generation parameters"],
     ["clarification_frontend_timeout", "Waiting for an answer is paused"],

@@ -8975,6 +8975,7 @@
       "noMatches": "Không có nút phù hợp"
     },
     "runtime": {
+      "waitingForConfirmation": "Đang chờ bạn xác nhận",
       "waitingForGenerationParameters": "Đang chờ chọn thông số tạo",
       "clarificationPaused": "Đã tạm dừng chờ câu trả lời"
     }

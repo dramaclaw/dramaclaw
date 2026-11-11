@@ -2116,6 +2116,7 @@ function toolStatusRuntimeText(params: {
   const raw = toolRawRecord(toolMessage);
   const businessStatus = toolBusinessStatus(toolMessage);
   if (businessStatus === "clarification_required") return t("superchat.runtime.waitingForGenerationParameters");
+  if (businessStatus === "confirmation_required") return t("superchat.runtime.waitingForConfirmation");
   if (businessStatus === "clarification_frontend_timeout") return t("superchat.runtime.clarificationPaused");
   if (
     status === "failed" &&

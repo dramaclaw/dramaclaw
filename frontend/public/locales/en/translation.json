@@ -9101,6 +9101,7 @@
       "noMatches": "No matching nodes"
     },
     "runtime": {
+      "waitingForConfirmation": "Waiting for your confirmation",
       "waitingForGenerationParameters": "Waiting for generation parameters",
       "clarificationPaused": "Waiting for an answer is paused"
     }

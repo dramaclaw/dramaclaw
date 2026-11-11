@@ -9101,6 +9101,7 @@
       "noMatches": "没有匹配的节点"
     },
     "runtime": {
+      "waitingForConfirmation": "等待你确认",
       "waitingForGenerationParameters": "等待选择生成参数",
       "clarificationPaused": "等待回答已暂停"
     }

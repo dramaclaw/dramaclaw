@@ -9225,6 +9225,7 @@
       "descriptionLabel": "Descrição"
     },
     "runtime": {
+      "waitingForConfirmation": "Aguardando sua confirmação",
       "waitingForGenerationParameters": "Waiting for generation parameters",
       "clarificationPaused": "Waiting for an answer is paused"
     }
