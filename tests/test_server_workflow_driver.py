@@ -77,7 +77,7 @@ class FakeRunner:
         }
 
 
-def setup_run(tmp_path, clock, actions=None, levels=None):
+def setup_run(tmp_path, clock, actions=None, levels=None, metadata=None):
     actions = actions or [
         {'node_id': 'one', 'action': 'generate_image'},
         {'node_id': 'two', 'action': 'generate_image'},
@@ -85,7 +85,7 @@ def setup_run(tmp_path, clock, actions=None, levels=None):
     ]
     run = store.create_workflow_run(
         project_dir=tmp_path, project_id='project', canvas_id='default',
-        actions=actions, metadata={'levels': levels or [[0, 1], [2]]},
+        actions=actions, metadata={'levels': levels or [[0, 1], [2]], **(metadata or {})},
         owner_kind='server', now=clock.now(),
     )
     return dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
@@ -133,7 +133,7 @@ async def test_retry_or_final_failure(tmp_path, error, expected):
         assert runner.calls[:2] == [('one', None), ('one', None)]
         assert runner.node_snapshots['one']['actions'][0]['task_key'] is None
     else:
-        assert [a['status'] for a in run['actions']] == ['failed', 'blocked', 'blocked']
+        assert [a['status'] for a in run['actions']] == ['failed', 'completed', 'completed']
 
 
 @pytest.mark.asyncio
@@ -159,6 +159,103 @@ async def test_unsupported(tmp_path):
     assert store.read_workflow_run(**scope)['actions'][0]['error'] == (
         '工作流动作 generate_image 需要打开画布运行'
     )
+
+
+@pytest.mark.parametrize('refused', [False, True])
+async def test_failed_upstream_blocks_transitively_but_independent_later_action_runs(
+    tmp_path, refused,
+):
+    clock = Clock()
+    metadata = {'dependencies': {'two': ['absent', 'one'], 'three': ['two']}}
+    if refused:
+        metadata['action_manifest'] = [{
+            'node_id': 'one', 'action': 'generate_image',
+            'refusal': {'code': 'canvas_open_required', 'reason': 'recipe_required'},
+        }]
+    scope = setup_run(tmp_path, clock, actions=[
+        {'node_id': node, 'action': 'generate_image'}
+        for node in ('one', 'two', 'three', 'independent')
+    ], levels=[[0], [1], [2, 3]], metadata=metadata)
+    runner = FakeRunner(scope, scripts={'one': [{'status': 'failed', 'error': 'HTTP 401'}]})
+    assert (await drive(scope, clock, runner))['status'] == 'failed'
+    run = store.read_workflow_run(**scope)
+    assert run['status'] == 'failed'
+    assert [(a['node_id'], a['status'], a['error']) for a in run['actions']] == [
+        ('one', 'failed', '工作流动作 generate_image 需要打开画布运行' if refused else 'HTTP 401'),
+        ('two', 'blocked', '跳过 generate_image：上游节点 one 未成功完成。'),
+        ('three', 'blocked', '跳过 generate_image：上游节点 two 未成功完成。'),
+        ('independent', 'completed', None),
+    ]
+    assert runner.calls == ([('independent', None)] if refused else [
+        ('one', None), ('independent', None),
+    ])
+    assert clock.delays == []
+
+
+async def test_refused_action_never_waits_for_capacity_or_calls_runner(tmp_path):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{'node_id': 'one', 'action': 'generate_image'}],
+                      levels=[[0]], metadata={'action_manifest': [{
+                          'node_id': 'one', 'action': 'generate_image', 'refusal': {
+                              'code': 'canvas_open_required', 'reason': 'recipe_required'},
+                      }]})
+    runner = FakeRunner(scope, capacity=[0])
+    assert (await drive(scope, clock, runner))['status'] == 'failed'
+    assert runner.calls == []
+    assert clock.delays == []
+    assert store.read_workflow_run(**scope)['actions'][0]['error'] == (
+        '工作流动作 generate_image 需要打开画布运行'
+    )
+
+
+@pytest.mark.parametrize('error', [None, 'No changes needed'])
+async def test_skipped_upstream_allows_dependent(tmp_path, error):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[
+        {'node_id': node, 'action': 'generate_image'} for node in ('one', 'two')
+    ], levels=[[0], [1]], metadata={'dependencies': {'two': ['one']}})
+    outcome = {'status': 'skipped', **({'error': error} if error else {})}
+    runner = FakeRunner(scope, scripts={'one': [outcome]})
+    assert (await drive(scope, clock, runner))['status'] == 'completed'
+    assert [(a['status'], a['error']) for a in store.read_workflow_run(**scope)['actions']] == [
+        ('skipped', error), ('completed', None),
+    ]
+    assert runner.calls == [('one', None), ('two', None)]
+
+
+async def test_takeover_preserves_blocked_action(tmp_path):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, levels=[[0], [1, 2]])
+    store.acquire_server_workflow_run(**scope, runner_id='dead', now=clock.now())
+    store.update_workflow_run(
+        **scope, owner_kind='server', runner_id='dead', now=clock.now(), action_updates=[{
+            'node_id': 'one', 'action': 'generate_image', 'status': 'blocked', 'error': 'Blocked',
+        }],
+    )
+    clock.advance(181)
+    runner = FakeRunner(scope)
+    result = await drive(scope, clock, runner)
+    assert result['took_over'] is True
+    assert result['status'] == 'failed'
+    assert sorted(runner.calls) == [('three', None), ('two', None)]
+    assert [(a['status'], a['error']) for a in store.read_workflow_run(**scope)['actions']] == [
+        ('blocked', 'Blocked'), ('completed', None), ('completed', None),
+    ]
+
+
+@pytest.mark.parametrize('metadata', [
+    {}, {'action_manifest': None, 'dependencies': None},
+    {'action_manifest': [None, {}, {'node_id': [], 'action': {}}],
+     'dependencies': {'one': 'two', 'two': [None], 'three': {}}},
+])
+async def test_missing_or_malformed_manifest_runs_supported_action(tmp_path, metadata):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, actions=[{'node_id': 'one', 'action': 'generate_image'}],
+                      levels=[[0]], metadata=metadata)
+    runner = FakeRunner(scope)
+    assert (await drive(scope, clock, runner))['status'] == 'completed'
+    assert runner.calls == [('one', None)]
+    assert store.read_workflow_run(**scope)['actions'][0]['status'] == 'completed'
 
 
 @pytest.mark.asyncio
@@ -277,7 +374,8 @@ async def test_stalled_factory_cannot_write_past_lease(tmp_path):
 @pytest.mark.asyncio
 async def test_heartbeat_keeps_blocked_action_alive_until_action_timeout(tmp_path):
     clock = Clock()
-    scope = setup_run(tmp_path, clock, levels=[[0], [1, 2]])
+    scope = setup_run(tmp_path, clock, levels=[[0], [1, 2]],
+                      metadata={'dependencies': {'two': ['one'], 'three': ['one']}})
     runner = FakeRunner(scope)
     runner.release = asyncio.Event()
     task = asyncio.create_task(drive(scope, clock, runner))

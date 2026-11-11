@@ -139,6 +139,19 @@ async def drive_server_workflow_run(
     if acquired is None:
         return result("missing")
     run = acquired["run"]
+    metadata = run["metadata"]
+    raw_dependencies = metadata.get("dependencies")
+    dependencies = {
+        node_id: upstream for node_id, upstream in raw_dependencies.items()
+        if isinstance(node_id, str) and isinstance(upstream, list)
+        and all(isinstance(value, str) for value in upstream)
+    } if isinstance(raw_dependencies, dict) else {}
+    raw_manifest = metadata.get("action_manifest")
+    manifest = {
+        (item["node_id"], item["action"]): item for item in raw_manifest
+        if isinstance(item, dict) and isinstance(item.get("node_id"), str)
+        and isinstance(item.get("action"), str)
+    } if isinstance(raw_manifest, list) else {}
     if not acquired["acquired"]:
         return result(run["status"], acquired=False)
     acquired_run = True
@@ -225,7 +238,7 @@ async def drive_server_workflow_run(
 
     async def action(item: dict) -> None:
         node_id, name = item["node_id"], item["action"]
-        if item["status"] in {"completed", "skipped", "failed"}:
+        if item["status"] in {"completed", "skipped", "failed", "blocked"}:
             return
 
         async def update(**kwargs) -> dict:
@@ -233,7 +246,13 @@ async def drive_server_workflow_run(
                 "node_id": node_id, "action": name, "status": "running", **kwargs,
             }])
 
-        if not runner.supports(name):
+        for upstream in dependencies.get(node_id, []):
+            if any(row["node_id"] == upstream and row["status"] in {"failed", "blocked"}
+                   for row in run["actions"]):
+                await update(status="blocked",
+                             error=f"跳过 {name}：上游节点 {upstream} 未成功完成。")
+                return
+        if "refusal" in manifest.get((node_id, name), {}) or not runner.supports(name):
             await update(status="failed", error=f"工作流动作 {name} 需要打开画布运行")
             return
         if (
@@ -305,6 +324,9 @@ async def drive_server_workflow_run(
                 if should_stop() or outcome["status"] == "stopped":
                     assert_lease()
                     return
+                if outcome["status"] == "skipped":
+                    await update(status="skipped", error=outcome.get("error"))
+                    return
                 if outcome["status"] == "completed":
                     # The store validates ``result`` as the artifact; ``output`` is the
                     # canvas-facing projection and may use different field names.
@@ -338,9 +360,8 @@ async def drive_server_workflow_run(
             if should_stop():
                 assert_lease()
                 return ended_status
-            if any(item["status"] == "failed" for item in run["actions"]):
-                return (await write(status="failed"))["status"]
-        return (await write(status="completed"))["status"]
+        failed = any(item["status"] in {"failed", "blocked"} for item in run["actions"])
+        return (await write(status="failed" if failed else "completed"))["status"]
 
     driver_tasks: set[asyncio.Task] = set()
     try:

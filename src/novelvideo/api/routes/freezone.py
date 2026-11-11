@@ -18260,7 +18260,11 @@ async def decide_canvas_confirmation(
             if not await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id, now=now):
                 detail = canvas_open_required_detail(check)
                 raise reject(409, **detail)
-        if check["status"] == "runnable":
+        if check["status"] == "runnable" and not (
+            check["refused"] and await asyncio.to_thread(
+                canvas_browser_open, state_dir, canvas_id, now=now,
+            )
+        ):
             active = await asyncio.to_thread(
                 active_workflow_run, project_dir=state_dir, canvas_id=canvas_id, now=current,
             )
@@ -18301,7 +18305,7 @@ async def decide_canvas_confirmation(
         if body.via == "card":
             await append_canvas_confirmation_notice(user, record, "voided", ",".join(changed))
         raise reject(409, "targets_changed", node_ids=changed)
-    if check["status"] == "runnable":
+    if check["status"] == "runnable" and not needs_browser:
         plan = check["plan"]
         if not plan["actions"]:
             await asyncio.to_thread(
@@ -18317,6 +18321,7 @@ async def decide_canvas_confirmation(
             run = await start_server_workflow_run(
                 ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, plan=plan,
                 confirmation=record, actor_id=_canvas_actor_id(user), now=current,
+                refused=check["refused"],
             )
         except WorkflowRunLeaseConflict as exc:
             await asyncio.to_thread(
@@ -18356,6 +18361,7 @@ async def decide_canvas_confirmation(
             "confirmation_id": confirmation_id, "status": "running", "run_id": run_id,
             "actions": [{key: action[key] for key in ("node_id", "action", "label")}
                         for action in plan["actions"]],
+            "refused": [{**item, "code": "canvas_open_required"} for item in check["refused"]],
         }}
     envelope = {
         "schema_version": "canvas_chat_commands.v1", "project_id": project,

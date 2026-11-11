@@ -24,6 +24,7 @@ from novelvideo.freezone.workflow_runs import (
     GENERATION_ACTIONS,
     create_workflow_run,
     mark_server_workflow_drive_enqueued,
+    read_workflow_run,
 )
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
@@ -89,14 +90,12 @@ async def check_server_workflow(
     if not plan["ok"]:
         return {"status": "invalid", "message": plan["message"]}
     metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
-    blocked = []
+    refused = []
     run_actions = _server_run_actions(canvas, plan, "canvas-confirmation:preflight")
     for action, run_action in zip(plan["actions"], run_actions):
         reason = None
         if action["action"] not in SERVER_WORKFLOW_ACTIONS:
             reason = "action_not_on_server"
-        elif "parameters" in action:
-            reason = "action_parameters"
         elif metered:
             try:
                 await routes.admit_canvas_workflow_run_actions(
@@ -105,11 +104,11 @@ async def check_server_workflow(
             except HTTPException:
                 reason = "recipe_required"
         if reason:
-            blocked.append({"node_id": action["node_id"], "action": action["action"],
+            refused.append({"node_id": action["node_id"], "action": action["action"],
                             "label": action["label"], "reason": reason})
-    if blocked:
-        return {"status": "blocked", "blocked": blocked, "plan": plan}
-    return {"status": "runnable", "plan": plan}
+    if plan["actions"] and len(refused) == len(plan["actions"]):
+        return {"status": "blocked", "blocked": refused, "plan": plan}
+    return {"status": "runnable", "plan": plan, "refused": refused}
 
 
 def canvas_open_required_detail(check: dict) -> dict:
@@ -121,6 +120,7 @@ def canvas_open_required_detail(check: dict) -> dict:
 async def start_server_workflow_run(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str, plan: dict,
     confirmation: dict, actor_id: str, now: datetime | None = None,
+    refused: list[dict] | None = None,
 ) -> dict:
     from novelvideo.api.routes import freezone as routes
 
@@ -128,10 +128,24 @@ async def start_server_workflow_run(
     idempotency_key = f"canvas-confirmation:{confirmation['id']}"
     canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
     actions = _server_run_actions(canvas, plan, idempotency_key)
+    refusals = {(item["node_id"], item["action"]): item for item in refused or []}
+    runnable_actions = [item for item in actions
+                        if (item["node_id"], item["action"]) not in refusals]
+    manifest = []
+    for planned in plan["actions"]:
+        entry = {key: planned[key] for key in (
+            "command_index", "node_id", "action", "label", "execution_mode",
+        )}
+        if "parameters" in planned:
+            entry["parameters"] = planned["parameters"]
+        refusal = refusals.get((planned["node_id"], planned["action"]))
+        if refusal:
+            entry["refusal"] = {"code": "canvas_open_required", "reason": refusal["reason"]}
+        manifest.append(entry)
     metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
     if metered:
         await routes.admit_canvas_workflow_run_actions(
-            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, actions=actions,
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, actions=runnable_actions,
         )
     requester = {"user_id": ctx.requester_user_id, "username": ctx.requester_username}
     run = await asyncio.to_thread(
@@ -141,6 +155,7 @@ async def start_server_workflow_run(
         actor_id=actor_id, owner_kind="server",
         idempotency_key=idempotency_key,
         metadata={"levels": plan["levels"], "dependencies": plan["dependencies"],
+                  "action_manifest": manifest,
                   "requester": requester,
                   "confirmation": {key: confirmation[key]
                                    for key in ("id", "agent_id", "username")}},
@@ -152,13 +167,21 @@ async def start_server_workflow_run(
         canvas_id=canvas_id, run_id=run["run_id"], requester=requester,
     )
     if metered:
-        run = await routes.admit_canvas_workflow_run_actions(
-            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, run=run,
+        await routes.admit_canvas_workflow_run_actions(
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id,
+            run={**run, "actions": [item for item in run["actions"]
+                                   if (item["node_id"], item["action"]) not in refusals]},
+        )
+        run = await asyncio.to_thread(
+            read_workflow_run, project_dir=state_dir, canvas_id=canvas_id, run_id=run["run_id"],
         )
     host = InProcessActionHost(ctx=ctx, canvas_id=canvas_id, assert_lease=lambda: None)
     timestamp = current.isoformat(timespec="milliseconds").replace("+00:00", "Z")
     for action in plan["actions"]:
-        if action["action"] in GENERATION_ACTIONS and action.get("invalidation_reason"):
+        if (
+            (action["node_id"], action["action"]) not in refusals
+            and action["action"] in GENERATION_ACTIONS and action.get("invalidation_reason")
+        ):
             await host.patch_node(action["node_id"], {
                 "workflowResultStale": True, "workflowInvalidatedAt": timestamp,
                 "workflowInvalidationReason": action["invalidation_reason"],
@@ -174,4 +197,6 @@ async def start_server_workflow_run(
             )
         except Exception:
             logger.error("Server workflow enqueue deferred run_id=%s", run["run_id"])
+    logger.info("Server workflow run started run_id=%s actions=%d refused=%d",
+                run["run_id"], len(actions), len(refusals))
     return run

@@ -538,7 +538,7 @@ def test_server_paid_confirmation_starts_without_browser_once(setup, monkeypatch
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data == {"confirmation_id": created["confirmation_id"], "status": "running",
-                    "run_id": data["run_id"], "actions": [
+                    "run_id": data["run_id"], "refused": [], "actions": [
                         {"node_id": "n1", "action": "generate_image", "label": "海报"}]}
     run = runs(setup)[0]
     assert run["run_id"] == data["run_id"]
@@ -607,13 +607,11 @@ def test_video_requires_open_canvas_at_creation_and_decision(setup):
         "external_mcp_command": True, "confirmation_id": created["confirmation_id"]}
 
 
-@pytest.mark.parametrize("reason", ["action_parameters", "recipe_required", "mixed_commands"])
+@pytest.mark.parametrize("reason", ["recipe_required", "mixed_commands"])
 def test_server_blocked_reasons_leave_no_confirmation(setup, reason, request):
     commands = PAID
     expected = {"node_id": "n1", "action": "generate_image", "label": "海报", "reason": reason}
-    if reason == "action_parameters":
-        setup.pool.plan["actions"][0]["parameters"] = {}
-    elif reason == "recipe_required":
+    if reason == "recipe_required":
         from tests.recording_usage_meter import RecordingUsageMeter
 
         stack = ExitStack()
@@ -633,6 +631,63 @@ def test_server_blocked_reasons_leave_no_confirmation(setup, reason, request):
     assert list(directory(setup).glob("cc_*.json")) == []
     if reason == "mixed_commands":
         assert setup.pool.plan_inputs == []
+
+
+@pytest.mark.parametrize("browser_open", [False, True])
+def test_partial_refusal_uses_server_without_browser_and_browser_when_open(setup, browser_open):
+    setup.pool.plan["actions"].append({
+        "command_index": 0, "node_id": "n2", "action": "auto_compose_video",
+        "execution_mode": "task", "label": "Compose",
+    })
+    setup.pool.plan.update(levels=[[0], [1]], dependencies={"n2": ["n1"]})
+    commands = [{"type": "run_workflow", "scope": "canvas"}]
+    if browser_open:
+        touch_canvas_presence(setup.root, "default", "browser", now=1000)
+    created = create(setup, commands=commands)
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    if browser_open:
+        assert data["status"] == "submitted"
+        assert runs(setup) == []
+        assert setup.queued == []
+        frames = list_pending_bridge_messages(
+            project_id="proj", canvas_id="default", bridge_dir=directory(setup).parent)
+        assert [frame["envelope"]["commands"] for frame in frames] == [commands]
+        return
+    assert data == {
+        "confirmation_id": created["confirmation_id"], "status": "running",
+        "run_id": data["run_id"], "actions": [
+            {"node_id": "n1", "action": "generate_image", "label": "海报"},
+            {"node_id": "n2", "action": "auto_compose_video", "label": "Compose"},
+        ], "refused": [{"node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+                        "reason": "action_not_on_server", "code": "canvas_open_required"}],
+    }
+    run = runs(setup)[0]
+    assert [(a["node_id"], a["action"], a["status"]) for a in run["actions"]] == [
+        ("n1", "generate_image", "pending"), ("n2", "auto_compose_video", "pending"),
+    ]
+    assert run["metadata"]["action_manifest"] == [
+        {"command_index": 0, "node_id": "n1", "action": "generate_image", "label": "海报",
+         "execution_mode": "task"},
+        {"command_index": 0, "node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+         "execution_mode": "task", "refusal": {
+             "code": "canvas_open_required", "reason": "action_not_on_server"}},
+    ]
+
+
+def test_action_parameters_start_server_run_without_browser(setup):
+    setup.pool.plan["actions"][0]["parameters"] = {"prompt": "A tree"}
+    commands = [dict(PAID[0], parameters={"prompt": "A tree"})]
+    created = create(setup, commands=commands)
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "running"
+    assert response.json()["data"]["refused"] == []
+    assert runs(setup)[0]["metadata"]["action_manifest"] == [
+        {"command_index": 0, "node_id": "n1", "action": "generate_image", "label": "海报",
+         "execution_mode": "task", "parameters": {"prompt": "A tree"}},
+    ]
 
 
 def test_invalid_plan_creation_and_pending_decision(setup):

@@ -5,14 +5,16 @@ from datetime import datetime, timezone
 import sqlite3
 from types import SimpleNamespace
 
-from fastapi import HTTPException
 import pytest
 
 from novelvideo.api import freezone_server_workflow_start as start
 from novelvideo.api.routes import freezone as routes
 from novelvideo import config
 from novelvideo.freezone import canvas_store, workflow_runs
-from novelvideo.freezone.agent_product_operations import read_agent_product_operation
+from novelvideo.freezone.agent_product_operations import (
+    list_agent_product_operations_for_session,
+    read_agent_product_operation,
+)
 from novelvideo.ports.local.usage import NoOpUsageMeter
 from novelvideo.ports.registry import register_port
 from tests.recording_usage_meter import RecordingUsageMeter
@@ -32,8 +34,10 @@ def setup(tmp_path, monkeypatch):
     ]
     canvas_store.atomic_write_json(canvas_store.canvas_path(tmp_path, "default"), canvas)
     plan = {"ok": True, "actions": [
-        {"node_id": "image", "action": "generate_image", "label": "Image"},
-        {"node_id": "text", "action": "generate_text", "label": "Text"},
+        {"command_index": 0, "node_id": "image", "action": "generate_image",
+         "label": "Image", "execution_mode": "task"},
+        {"command_index": 0, "node_id": "text", "action": "generate_text",
+         "label": "Text", "execution_mode": "inline"},
     ], "levels": [[0, 1]], "dependencies": {}}
     queued = []
 
@@ -71,11 +75,11 @@ async def check(setup):
     )
 
 
-async def launch(setup):
+async def launch(setup, **kwargs):
     return await start.start_server_workflow_run(
         ctx=setup.ctx, state_dir=setup.root, canvas_id="default", plan=setup.plan,
         confirmation={"id": "confirmation-1", "agent_id": "main", "username": ""},
-        actor_id="initiator", now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        actor_id="initiator", now=datetime(2026, 1, 1, tzinfo=timezone.utc), **kwargs,
     )
 
 
@@ -87,16 +91,96 @@ async def test_metered_text_requires_recipe_before_creation(setup):
     setup.canvas["nodes"][1]["data"] = {}
     canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), setup.canvas)
     result = await check(setup)
-    assert result["status"] == "blocked"
-    assert result["blocked"] == [{"node_id": "text", "action": "generate_text",
+    assert result["status"] == "runnable"
+    assert result["refused"] == [{"node_id": "text", "action": "generate_text",
                                   "label": "Text", "reason": "recipe_required"}]
-    with pytest.raises(HTTPException) as caught:
-        await launch(setup)
-    assert caught.value.status_code == 400
-    assert caught.value.detail == (
-        "model workflow actions require recipe_id and generation_attempt_id"
-    )
     assert workflow_runs.list_workflow_runs(project_dir=setup.root, canvas_id="default") == []
+
+
+async def test_parameters_do_not_refuse_server_actions(setup):
+    setup.plan["actions"][0]["parameters"] = {"prompt": "A tree"}
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": []}
+
+
+async def test_partial_unsupported_batch_is_runnable(setup):
+    setup.plan["actions"][1]["action"] = "auto_compose_video"
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": [
+        {"node_id": "text", "action": "auto_compose_video", "label": "Text",
+         "reason": "action_not_on_server"},
+    ]}
+
+
+async def test_every_action_unsupported_is_blocked(setup):
+    setup.plan["actions"] = [dict(setup.plan["actions"][0], action="auto_compose_video")]
+    assert await check(setup) == {"status": "blocked", "plan": setup.plan, "blocked": [
+        {"node_id": "image", "action": "auto_compose_video", "label": "Image",
+         "reason": "action_not_on_server"},
+    ]}
+
+
+async def test_empty_plan_is_runnable(setup):
+    setup.plan.update(actions=[], levels=[])
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": []}
+
+
+@pytest.mark.parametrize("ordinary_image", [False, True])
+async def test_start_refused_recipe_keeps_rows_filters_admission_and_invalidation(
+    setup, monkeypatch, ordinary_image,
+):
+    setup.plan["actions"][0].update(parameters={"prompt": "A tree"},
+                                     invalidation_reason="upstream_changed")
+    setup.plan["actions"][1]["invalidation_reason"] = "upstream_changed"
+    if ordinary_image:
+        setup.canvas["nodes"][0]["data"] = {}
+        canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"),
+                                       setup.canvas)
+    refused = [{"node_id": "text", "action": "generate_text", "label": "Text",
+                "reason": "recipe_required"}]
+    admission = routes.admit_canvas_workflow_run_actions
+    payloads = []
+
+    async def admit(**kwargs):
+        payloads.append(deepcopy(kwargs.get("actions", kwargs.get("run", {}).get("actions"))))
+        return await admission(**kwargs)
+
+    monkeypatch.setattr(routes, "admit_canvas_workflow_run_actions", admit)
+    run = await launch(setup, refused=refused)
+    assert [(a["node_id"], a["action"], a["status"]) for a in run["actions"]] == [
+        ("image", "generate_image", "pending"), ("text", "generate_text", "pending"),
+    ]
+    assert run["metadata"]["action_manifest"] == [
+        {"command_index": 0, "node_id": "image", "action": "generate_image", "label": "Image",
+         "execution_mode": "task", "parameters": {"prompt": "A tree"}},
+        {"command_index": 0, "node_id": "text", "action": "generate_text", "label": "Text",
+         "execution_mode": "inline", "refusal": {
+             "code": "canvas_open_required", "reason": "recipe_required"}},
+    ]
+    expected_action = {"node_id": "image", "action": "generate_image",
+                       "generation_attempt_id":
+                           "canvas-confirmation:confirmation-1:image:generate_image"}
+    if not ordinary_image:
+        expected_action.update(recipe_id="image-recipe", recipe_version="1.2.0")
+    assert payloads[0] == [expected_action]
+    assert [[(a["node_id"], a["action"]) for a in rows] for rows in payloads] == [
+        [("image", "generate_image")], [("image", "generate_image")],
+    ]
+    assert [{key: row[key] for key in expected_action} for row in payloads[1]] == [expected_action]
+    assert payloads[1][0]["product_operation_id"] is None
+    assert run["actions"][1]["product_operation_id"] is None
+    operations = list_agent_product_operations_for_session(
+        project_dir=setup.root, generation_session_id=run["run_id"],
+    )
+    assert [(op["artifact_id"], op["product_kind"]) for op in operations] == (
+        [] if ordinary_image else [("image", "recipe_result")]
+    )
+    assert [q["task_type"] for q in setup.queued] == (
+        ["freezone_workflow_drive"] if ordinary_image else
+        ["freezone_agent_recipe_result", "freezone_workflow_drive"]
+    )
+    assert setup.meter.calls == []
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    assert canvas["nodes"][0]["data"]["workflowResultStale"] is True
+    assert "workflowResultStale" not in canvas["nodes"][1]["data"]
 
 
 async def test_metered_start_admits_recipe_actions_once_before_drive(setup):

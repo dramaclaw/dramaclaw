@@ -824,6 +824,40 @@ def test_confirm_server_run_result(agent, monkeypatch, status, extra, instructio
     assert list(directory.iterdir()) == []
 
 
+@pytest.mark.parametrize("refused", [[], [
+    {"node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+     "reason": "action_not_on_server", "code": "canvas_open_required"},
+    {"node_id": "n3", "action": "generate_text", "label": "",
+     "reason": "recipe_required", "code": "canvas_open_required"},
+]])
+def test_running_decision_reports_only_nonempty_refusals(agent, monkeypatch, refused):
+    plugin, _, _, _ = agent
+    _respond(agent, monkeypatch, "/decision", {"ok": True, "data": {
+        "confirmation_id": CONFIRMATION_ID, "status": "running", "run_id": "run_1",
+        "actions": [], "refused": refused,
+    }})
+    result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+    instruction = (
+        "The confirmed workflow is running on the server as run_1. "
+        "Do not call the run tool again. To report progress or results, call "
+        "freezone_observe_workflow_run with this run_id (wait_seconds up to 20; pass the previous "
+        "observation_token as after). Report outcomes only from a terminal observation. "
+        "Call freezone_cancel_workflow_run only if the user asks to stop it."
+    )
+    if refused:
+        instruction += (
+            " These actions were not run because they need the open canvas: Compose, generate_text."
+            " They are recorded as failed in this run. Tell the user; "
+            "do not retry them on your own."
+        )
+    assert result == {
+        "ok": True, "status": "running", "tool_call_status": "completed",
+        "canvas_apply_status": "running", "applied": False, "confirmation_id": CONFIRMATION_ID,
+        "project_id": "p", "canvas_id": "c", "run_id": "run_1", "actions": [],
+        "agent_instruction": instruction, **({"refused": refused} if refused else {}),
+    }
+
+
 @pytest.mark.parametrize("run_status", ["cancelled", "completed"])
 @pytest.mark.parametrize("args,path", [
     ({"run_id": "run_1"}, "/api/v1/projects/p/freezone/canvases/c/workflow-runs/run_1"),
