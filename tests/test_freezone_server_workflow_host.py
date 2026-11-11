@@ -2,6 +2,7 @@
 # Copyright (c) 2026 ClaymoreLab
 """In-process request authorization identity and durable canvas writes."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -121,6 +122,41 @@ async def test_real_canvas_patch_events_idempotency_and_lease(context):
         await host.patch_node("n", {"prompt": "Never saved"})
     assert host.lease_held() is False
     assert canvas_store.read_canvas(root, "default") == saved
+
+
+async def test_concurrent_patches_from_one_host_all_land(host, context, monkeypatch):
+    root = context.state_dir
+    canvas = canvas_store.ensure_default_canvas(root, project_id="project").payload
+    canvas["nodes"] = [{
+        "id": f"n{i}", "type": "imageGenNode", "position": {"x": 0, "y": 0},
+        "data": {"prompt": "A ship"},
+    } for i in range(6)]
+    canvas_store.atomic_write_json(canvas_store.canvas_path(root, "default"), canvas)
+    save = canvas_store.save_canvas
+
+    async def read_canvas():
+        return canvas_store.read_canvas(root, "default")
+
+    async def save_canvas(*args, **kwargs):
+        await asyncio.sleep(0)
+        return save(*args, **kwargs)
+
+    monkeypatch.setattr(host, "read_canvas", read_canvas)
+    monkeypatch.setattr(canvas_store, "save_canvas_async", save_canvas)
+    await asyncio.gather(*(host.patch_node(
+        f"n{i}", {"imageUrl": f"/api/projects/project/static/fz/{i}.png"},
+    ) for i in range(6)))
+
+    saved = canvas_store.read_canvas(root, "default")
+    assert saved["revision"] == canvas["revision"] + 6
+    assert {node["id"]: node["data"]["imageUrl"] for node in saved["nodes"]} == {
+        "n0": "/api/projects/project/static/fz/0.png",
+        "n1": "/api/projects/project/static/fz/1.png",
+        "n2": "/api/projects/project/static/fz/2.png",
+        "n3": "/api/projects/project/static/fz/3.png",
+        "n4": "/api/projects/project/static/fz/4.png",
+        "n5": "/api/projects/project/static/fz/5.png",
+    }
 
 
 async def test_lane_capacity(host, monkeypatch):

@@ -45,6 +45,7 @@ class InProcessActionHost:
         self.ctx = ctx
         self.canvas_id = canvas_id
         self.assert_lease = assert_lease
+        self._patch_lock = asyncio.Lock()
         self.user = {"id": ctx.requester_user_id, "user_id": ctx.requester_user_id,
                      "username": ctx.requester_username}
         self.canvas_project_dir = routes._canvas_state_project_dir(ctx, Path(ctx.output_dir))
@@ -86,41 +87,42 @@ class InProcessActionHost:
             routes._after_canvas_save, project=self.ctx.project_id, canvas_id=self.canvas_id,
             canvas_project_dir=self.canvas_project_dir, user=self.user,
         )
-        for attempt in range(3):
-            canvas = await self.read_canvas()
-            nodes = deepcopy(canvas["nodes"])
-            node = next((node for node in nodes if node.get("id") == node_id), None)
-            if node is None:
-                return
-            data = node.get("data") or {}
-            merged = {**data, **patch}
-            if merged == data:
-                return
-            node["data"] = merged
-            fields = {key: value for key, value in canvas.items()
-                      if key in CanvasPayload.model_fields}
-            fields.update(
-                nodes=nodes, base_revision=canvas.get("revision"),
-                save_source="workflow_result", client_save_id=str(uuid.uuid4()),
-            )
-            body = CanvasPayload(**fields)
-            self._assert_write_lease()
-            try:
-                saved = await canvas_store.save_canvas_async(
-                    self.canvas_project_dir, self.canvas_id,
-                    base_revision=body.base_revision, save_source=body.save_source,
-                    client_save_id=body.client_save_id,
-                    request_hash=canvas_store.canvas_request_hash(
-                        body.model_dump(exclude={"client_save_id"}, exclude_none=True),
-                    ),
-                    build_payload=build_payload(body),
+        async with self._patch_lock:
+            for attempt in range(3):
+                canvas = await self.read_canvas()
+                nodes = deepcopy(canvas["nodes"])
+                node = next((node for node in nodes if node.get("id") == node_id), None)
+                if node is None:
+                    return
+                data = node.get("data") or {}
+                merged = {**data, **patch}
+                if merged == data:
+                    return
+                node["data"] = merged
+                fields = {key: value for key, value in canvas.items()
+                          if key in CanvasPayload.model_fields}
+                fields.update(
+                    nodes=nodes, base_revision=canvas.get("revision"),
+                    save_source="workflow_result", client_save_id=str(uuid.uuid4()),
                 )
-            except canvas_store.CanvasRevisionConflict:
-                if attempt == 2:
-                    raise
-                continue
-            await after_save(body, saved)
-            return
+                body = CanvasPayload(**fields)
+                self._assert_write_lease()
+                try:
+                    saved = await canvas_store.save_canvas_async(
+                        self.canvas_project_dir, self.canvas_id,
+                        base_revision=body.base_revision, save_source=body.save_source,
+                        client_save_id=body.client_save_id,
+                        request_hash=canvas_store.canvas_request_hash(
+                            body.model_dump(exclude={"client_save_id"}, exclude_none=True),
+                        ),
+                        build_payload=build_payload(body),
+                    )
+                except canvas_store.CanvasRevisionConflict:
+                    if attempt == 2:
+                        raise
+                    continue
+                await after_save(body, saved)
+                return
 
     async def request(self, method: str, path: str, body: dict) -> dict:
         from novelvideo.api.routes import freezone as routes
