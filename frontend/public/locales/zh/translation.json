@@ -8878,6 +8878,8 @@
       "hint": "连接至少 {{min}} 个视频节点后可打开",
       "counts": "视频 {{video}} · 音频 {{audio}}",
       "open": "打开视频合成与剪辑",
+      "exporting": "正在导出…",
+      "exportFailed": "导出失败",
       "reopen": "重新打开",
       "resultName": "合成视频"
     },

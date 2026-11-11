@@ -8752,6 +8752,8 @@
       "hint": "Nối ít nhất {{min}} node video để mở được",
       "counts": "Video {{video}} · Âm thanh {{audio}}",
       "open": "Mở dựng & chỉnh video",
+      "exporting": "Đang xuất…",
+      "exportFailed": "Xuất thất bại",
       "reopen": "Mở lại",
       "resultName": "Video đã dựng"
     },

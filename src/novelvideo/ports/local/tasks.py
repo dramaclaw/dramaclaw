@@ -32,6 +32,7 @@ from novelvideo.task_backend.limits import (
 from novelvideo.task_backend.queues import QUEUE_KINDS, normalize_queue_kind
 from novelvideo.task_backend.run_core import run_project_task_core_sync
 from novelvideo.task_backend.subprocesses import kill_task_processes
+from novelvideo.task_owner import current_owner
 from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ class InlineTaskBackend:
         lane_name = normalize_queue_kind(queue_kind)
         metadata = {
             "backend": "inline",
+            "owner": current_owner(),
             "queue_kind": lane_name,
             "project_id": ctx.project_id,
             "product_surface": product_surface,
@@ -118,7 +120,7 @@ class InlineTaskBackend:
             episode,
             beat_num=beat_num,
             scope=scope,
-            metadata={},
+            metadata=metadata,
             queue_kind=lane_name,
             project_lane_limit=project_lane_limit,
         )

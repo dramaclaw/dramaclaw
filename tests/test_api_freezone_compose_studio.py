@@ -15,7 +15,13 @@ def studio_client(monkeypatch, tmp_path: Path) -> TestClient:
     from novelvideo.api.auth import get_api_user
     from novelvideo.api.routes import freezone
 
-    ctx = SimpleNamespace(project_id="proj_demo", requester_user_id="u-alice")
+    ctx = SimpleNamespace(
+        project_id="proj_demo",
+        requester_user_id="u-alice",
+        output_dir=tmp_path,
+        state_dir=tmp_path / "state",
+        runtime_dir=tmp_path / "runtime",
+    )
     app_state = {"calls": []}
     monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
 
@@ -27,7 +33,9 @@ def studio_client(monkeypatch, tmp_path: Path) -> TestClient:
         return tmp_path / "film"
 
     async def fake_session(film_dir: Path, **kwargs):
-        assert film_dir == tmp_path / "film"
+        assert film_dir.root == tmp_path / "freezone/studio/canvas-1/node-1"
+        assert film_dir.state_dir == tmp_path / "state/openfilm/canvas-1/node-1"
+        assert film_dir.runtime_dir == tmp_path / "runtime/openfilm/canvas-1/node-1"
         app_state["calls"].append(kwargs)
         return {
             "url": "http://127.0.0.1:4747/open?key=k",
@@ -196,9 +204,17 @@ def agent_client(monkeypatch, tmp_path: Path) -> tuple[TestClient, dict]:
 
     state_dir = tmp_path / "state"
     ctx = SimpleNamespace(
-        project_id="proj_demo", requester_user_id="u-alice", state_dir=str(state_dir)
+        project_id="proj_demo",
+        requester_user_id="u-alice",
+        owner_username="alice",
+        project_name="demo",
+        requester_username="alice",
+        is_home_node=True,
+        state_dir=state_dir,
+        output_dir=tmp_path,
+        runtime_dir=tmp_path / "runtime",
     )
-    seen: dict = {"state_dir": state_dir, "project_dir": tmp_path}
+    seen: dict = {"state_dir": state_dir, "project_dir": tmp_path, "ctx": ctx}
     monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", "1")
 
     async def fake_resolve(project: str, user: dict, **_kwargs):
@@ -263,6 +279,225 @@ def test_film_route_returns_the_studio_summary(agent_client, monkeypatch):
     assert response.json()["rev"] == "r1"
     assert seen["read"]["canvas_id"] == "canvas-1" and seen["read"]["node_id"] == "node-1"
     assert seen["read"]["state_dir"] == seen["state_dir"]
+
+
+@pytest.mark.parametrize(
+    "node_data,task_status,task_error,expected",
+    [
+        pytest.param(
+            {
+                "generationTaskKey": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "generationTaskJobId": "export-1",
+                "generationError": "previous error",
+                "resultVideoUrl": "/static/previous.mp4",
+            },
+            task_status,
+            None,
+            {
+                "status": "running", "job_id": "export-1",
+                "task_key": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "error": None, "video_url": None,
+            },
+            id=task_status,
+        )
+        for task_status in ("submitting", "queued", "running")
+    ]
+    + [
+        pytest.param(
+            {
+                "generationTaskKey": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "generationTaskJobId": "export-1",
+                "generationError": "stale canvas error",
+                "resultVideoUrl": "/static/previous.mp4",
+            },
+            "failed",
+            "执行该任务的服务进程已退出,任务已中断,请重新发起",
+            {
+                "status": "failed", "job_id": "export-1",
+                "task_key": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "error": "执行该任务的服务进程已退出,任务已中断,请重新发起",
+                "video_url": None,
+            },
+            id="failed-row-error",
+        ),
+        pytest.param(
+            {
+                "generationTaskKey": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "generationTaskJobId": "export-1",
+                "generationError": "canvas export error",
+            },
+            "failed",
+            None,
+            {
+                "status": "failed", "job_id": "export-1",
+                "task_key": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "error": "canvas export error", "video_url": None,
+            },
+            id="failed-row-fallback",
+        ),
+        pytest.param(
+            {
+                "generationTaskKey": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "generationTaskJobId": "export-1",
+            },
+            "cancelled",
+            None,
+            {
+                "status": "failed", "job_id": "export-1",
+                "task_key": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "error": None, "video_url": None,
+            },
+            id="cancelled-row",
+        ),
+        pytest.param(
+            {
+                "generationTaskKey": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "generationTaskJobId": "export-1",
+                "resultVideoUrl": "/static/final.mp4",
+            },
+            "completed",
+            None,
+            {
+                "status": "completed", "job_id": "export-1",
+                "task_key": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "error": None, "video_url": "/static/final.mp4",
+            },
+            id="completed-row",
+        ),
+        pytest.param(
+            {
+                "generationTaskKey": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "generationTaskJobId": "export-1",
+                "generationError": "canvas export error",
+                "resultVideoUrl": "/static/previous.mp4",
+            },
+            None,
+            None,
+            {
+                "status": "unknown", "job_id": "export-1",
+                "task_key": "task:freezone_video_compose:project:proj_demo:0:export-1",
+                "error": "canvas export error", "video_url": None,
+            },
+            id="missing-row",
+        ),
+        pytest.param(
+            {
+                "generationTaskKey": "task:freezone_video_compose:project:proj_demo:0:other-job",
+                "generationTaskJobId": "export-1",
+            },
+            "failed",
+            "error from a different export",
+            {
+                "status": "unknown", "job_id": "export-1",
+                "task_key": "task:freezone_video_compose:project:proj_demo:0:other-job",
+                "error": None, "video_url": None,
+            },
+            id="mismatched-task-key",
+        ),
+        pytest.param(
+            {"generationError": "canvas export error", "resultVideoUrl": "/static/previous.mp4"},
+            None,
+            None,
+            {
+                "status": "failed", "job_id": None, "task_key": None,
+                "error": "canvas export error", "video_url": None,
+            },
+            id="node-error-only",
+        ),
+        pytest.param(
+            {"resultVideoUrl": "/static/final.mp4", "generationTaskJobId": "export-1"},
+            None,
+            None,
+            {
+                "status": "completed", "job_id": "export-1", "task_key": None,
+                "error": None, "video_url": "/static/final.mp4",
+            },
+            id="node-video-only",
+        ),
+        pytest.param(
+            {}, None, None,
+            {
+                "status": "none", "job_id": None, "task_key": None,
+                "error": None, "video_url": None,
+            },
+            id="no-export",
+        ),
+    ],
+)
+def test_film_route_reports_latest_export(
+    agent_client, monkeypatch, node_data, task_status, task_error, expected
+):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import canvas_store
+    from novelvideo.task_state import TaskStateManager
+
+    client, seen = agent_client
+
+    async def fake_read(**_kwargs):
+        return {"ok": True, "status": "studio_film", "rev": "r1", "film": {"tracks": []}}
+
+    monkeypatch.setattr(freezone, "read_studio_film", fake_read)
+    manager = TaskStateManager()
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: manager)
+    if task_status is not None:
+        manager.create_task_for_project(
+            seen["ctx"], "freezone_video_compose", 0, scope="export-1", status=task_status
+        )
+        if task_error is not None:
+            manager.fail_task_for_project(
+                seen["ctx"], "freezone_video_compose", 0, scope="export-1", error=task_error
+            )
+    canvas = canvas_store.read_canvas(seen["state_dir"], "canvas-1")
+    canvas["nodes"][2]["data"] = node_data
+    canvas_store.atomic_write_json(
+        canvas_store.canvas_path(seen["state_dir"], "canvas-1"), canvas
+    )
+
+    response = client.get(
+        "/api/v1/projects/demo/freezone/canvases/canvas-1/compose/node-1/studio/film"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True, "status": "studio_film", "rev": "r1", "film": {"tracks": []},
+        "export": expected,
+    }
+
+
+@pytest.mark.parametrize("canvas_problem", ["missing", "invalid-json", "unreadable"])
+def test_film_route_reports_no_export_when_canvas_cannot_be_read(
+    agent_client, monkeypatch, canvas_problem
+):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import canvas_store
+
+    client, seen = agent_client
+
+    async def fake_read(**_kwargs):
+        return {"ok": True, "status": "studio_film", "rev": "r1", "film": {"tracks": []}}
+
+    monkeypatch.setattr(freezone, "read_studio_film", fake_read)
+    path = canvas_store.canvas_path(seen["state_dir"], "canvas-1")
+    if canvas_problem == "missing":
+        path.unlink()
+    elif canvas_problem == "invalid-json":
+        path.write_text("{", encoding="utf-8")
+    else:
+        path.unlink()
+        path.mkdir()
+
+    response = client.get(
+        "/api/v1/projects/demo/freezone/canvases/canvas-1/compose/node-1/studio/film"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True, "status": "studio_film", "rev": "r1", "film": {"tracks": []},
+        "export": {
+            "status": "none", "job_id": None, "task_key": None,
+            "error": None, "video_url": None,
+        },
+    }
 
 
 def test_film_route_rejects_bad_ids(agent_client):
@@ -382,7 +617,7 @@ def test_export_route_claims_the_node_and_enqueues_a_studio_render(agent_client,
     body = response.json()
     assert body["status"] == "studio_export_started" and body["task_key"] == "tk"
     payload = seen["enqueue"]["payload"]
-    assert payload["studio_film_dir"] == str(film_dir)
+    assert payload["studio_export"] is True
     assert payload["fps"] == 24 and payload["node_id"] == "node-1" and payload["tracks"] == []
 
     canvas = canvas_store.read_canvas(seen["state_dir"], "canvas-1")
@@ -457,14 +692,14 @@ def test_compose_export_only_switches_to_studio_for_a_hand_cut_film(agent_client
     monkeypatch.setattr(freezone, "studio_export_film_dir", lambda *_args: None)
     response = client.post("/api/v1/projects/demo/freezone/video/compose", json=body)
     assert response.status_code == 200, response.text
-    assert seen["enqueue"]["payload"]["studio_film_dir"] == ""
+    assert seen["enqueue"]["payload"]["studio_export"] is False
     assert seen["enqueue"]["payload"]["tracks"][0]["items"][0]["item_id"] == "clip-1"
 
     film_dir = seen["project_dir"] / "freezone" / "studio" / "canvas-1" / "node-1"
     monkeypatch.setattr(freezone, "studio_export_film_dir", lambda *_args: film_dir)
     response = client.post("/api/v1/projects/demo/freezone/video/compose", json=body)
     assert response.status_code == 200, response.text
-    assert seen["enqueue"]["payload"]["studio_film_dir"] == str(film_dir)
+    assert seen["enqueue"]["payload"]["studio_export"] is True
 
 
 def test_compose_export_skips_studio_film_when_feature_is_disabled(agent_client, monkeypatch):
@@ -508,4 +743,4 @@ def test_compose_export_skips_studio_film_when_feature_is_disabled(agent_client,
         },
     )
     assert response.status_code == 200, response.text
-    assert seen["enqueue"]["payload"]["studio_film_dir"] == ""
+    assert seen["enqueue"]["payload"]["studio_export"] is False

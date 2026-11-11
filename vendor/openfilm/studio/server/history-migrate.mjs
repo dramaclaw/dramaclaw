@@ -14,6 +14,7 @@
  * person's files are never written. A version's film.html, pages and code come back exactly as they were; so does its
  * media where the old history had it.
  */
+import { filmDirs, mediaDir } from '../../src/film-dirs.mjs';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync, readFileSync } from 'node:fs';
@@ -24,7 +25,6 @@ import { filmClosure, folderView } from './closure.mjs';
 import {
   HistoryError, gitRun, isMedia, keepFiles, keepMedia, openRepo, pointerId, pointerText, readVersion, versionView, writeTree,
 } from './history-store.mjs';
-import { TOOL_DIR } from './projects.mjs';
 import { moveToTrash } from './trash.mjs';
 
 /** The format of a history Studio made: 2 kept the film's files only, media outside git; 3 keeps the project's files. */
@@ -61,7 +61,7 @@ async function addToVersion(repo, headRef, head, base, paths) {
  * @param {string} root @param {string} gitDir @param {(root: string) => Promise<Map<string, number>>} files
  */
 export async function upgradeHistory(root, gitDir, files) {
-  const repo = openRepo(root, gitDir);
+  const repo = openRepo(root, gitDir, mediaDir(root));
   const head = (await repo.git(['rev-parse', '--verify', '--quiet', 'HEAD']).catch(() => '')).trim();
   const headRef = (await repo.git(['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim();
   if (head && headRef) {
@@ -121,7 +121,7 @@ function rewriteCommit(/** @type {string} */ raw, /** @type {string} */ tree, /*
  * @param {import('./history-store.mjs').Progress} [progress]
  */
 export async function migrateHistory(root, gitDir, files, progress) {
-  const old = openRepo(root, gitDir);
+  const old = openRepo(root, gitDir, mediaDir(root));
   const refLines = (await old.git(['for-each-ref', '--format=%(objectname)%1f%(*objectname)%1f%(refname)', 'refs/heads', 'refs/tags'])).split('\n').filter(Boolean);
   const stashList = await old.git(['stash', 'list', '--format=%H%x1f%gs']).catch(() => '');
   /** @type {{ sha: string, branch: string }[]} */
@@ -144,7 +144,7 @@ export async function migrateHistory(root, gitDir, files, progress) {
   await writeFile(join(next, 'info', 'exclude'), '*\n');
   await mkdir(join(next, 'objects', 'info'), { recursive: true });
   await writeFile(join(next, 'objects', 'info', 'alternates'), `${join(gitDir, 'objects')}\n`);
-  const neu = openRepo(root, next);
+  const neu = openRepo(root, next, join(next, 'media'));
   const storeDir = join(next, 'media');
   await mkdir(storeDir, { recursive: true });
 
@@ -245,7 +245,7 @@ export async function migrateHistory(root, gitDir, files, progress) {
   progress?.({ phase: 'migrate', done: ++done, total });
 
   /* the pictures of the commits, under their new names (the old stay: they are a cache) */
-  const posters = join(root, TOOL_DIR, 'cache', 'commits');
+  const posters = filmDirs(root).commits;
   const shots = new Set(await readdir(posters).catch(() => []));
   for (const [from, to] of mapped) {
     if (shots.has(`${from}.jpg`) && !shots.has(`${to}.jpg`)) await copyFile(join(posters, `${from}.jpg`), join(posters, `${to}.jpg`)).catch(() => {});

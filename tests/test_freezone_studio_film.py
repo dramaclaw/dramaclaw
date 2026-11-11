@@ -435,6 +435,7 @@ def test_rebuild_leaves_unrelated_assets_alone(tmp_path: Path):
 def test_studio_env_keeps_api_secrets_out(monkeypatch, tmp_path: Path):
     from novelvideo.freezone import studio
 
+    monkeypatch.setattr(studio, "RUNTIME_DIR", tmp_path / "runtime")
     for name in ("MODEL_API_KEY", "ST_CONTROL_PLANE_DSN", "SESSION_SECRET"):
         monkeypatch.setenv(name, "secret")
     monkeypatch.setenv("PATH", "/usr/bin:/bin")

@@ -7,6 +7,7 @@
  * time, so thumbnails never compete with the person's own preview for long. Cached in .film/cache by the page file's
  * version, the moment and the width.
  */
+import { cacheDir } from '../../src/film-dirs.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
@@ -14,7 +15,6 @@ import { join } from 'node:path';
 import { FilmPage, launch } from '../../src/host.mjs';
 import { FILM_FILE, clipKind } from '../../src/film-doc.mjs';
 import { browserCopies, filmVideos, madeCopy } from '../../src/seekable.mjs';
-import { TOOL_DIR } from './projects.mjs';
 import { writeAtomic } from './atomic.mjs';
 import { inProject } from './files.mjs';
 
@@ -72,7 +72,7 @@ export async function pageFrame(root, base, rel, ms, width, overrides = null, si
   const tweaks = overrides?.some((o) => o && typeof o === 'object' && 'at' in o) ? JSON.stringify(overrides) : '';
   const laid = size ? `${Math.round(size.w)}x${Math.round(size.h)}` : '';
   const key = createHash('sha256').update(`black\0${rel}\0${Math.round(ms)}\0${w}${tweaks ? `\0${tweaks}` : ''}${laid ? `\0${laid}` : ''}`).digest('hex').slice(0, 24);
-  const dir = join(root, TOOL_DIR, 'cache', 'pageframes');
+  const dir = cacheDir(root, 'pageframes');
   const file = join(dir, `${key}.jpg`);
   /* a frame is good while every file the page loaded to draw it is as it was then: the page, and its styles, code,
      fonts, pictures (a page's look changes with a stylesheet it shares as much as with itself) */
@@ -110,9 +110,9 @@ export async function pageFrame(root, base, rel, ms, width, overrides = null, si
     await writeAtomic(join(dir, `${key}.json`), JSON.stringify({ files: deps }));
     if (rel === FILM_PAGE) {
       /* the whole film's length, learnt on the way: the projects list shows it (projects.mjs filmDuration) */
-      if (Number.isFinite(duration)) await writeAtomic(join(root, TOOL_DIR, 'cache', FILM_DURATION), JSON.stringify({ film: `${info.mtimeMs}:${info.size}`, duration }));
+      if (Number.isFinite(duration)) await writeAtomic(cacheDir(root, FILM_DURATION), JSON.stringify({ film: `${info.mtimeMs}:${info.size}`, duration }));
       /* the film's poster, kept as its last whatever film.html becomes (filmPoster) */
-      if (ms < 0 && w === POSTER_W) await writeAtomic(join(root, TOOL_DIR, 'cache', FILM_POSTER), jpeg);
+      if (ms < 0 && w === POSTER_W) await writeAtomic(cacheDir(root, FILM_POSTER), jpeg);
     }
     /* the stamp last: a request that finds it takes the frame as made, the film's length and poster written too */
     await writeAtomic(join(dir, `${key}.stamp`), await stampOf(root, deps));
@@ -179,7 +179,7 @@ export async function filmPoster(root, base) {
   fresh.catch(() => {});
   const soon = await within(fresh.catch(() => null), STALE_AFTER_MS);
   if (soon) return soon;
-  const last = await readFile(join(root, TOOL_DIR, 'cache', FILM_POSTER)).catch(() => null);
+  const last = await readFile(cacheDir(root, FILM_POSTER)).catch(() => null);
   if (last) return last;
   return within(fresh, FIRST_WAIT_MS - STALE_AFTER_MS);
 }
@@ -201,10 +201,10 @@ async function within(promise, ms) {
  * @param {string} root @param {string} base
  */
 export function warmFilmPoster(root, base) {
-  if (warming.has(root) || existsSync(join(root, TOOL_DIR, 'cache', FILM_POSTER))) return;
+  if (warming.has(root) || existsSync(cacheDir(root, FILM_POSTER))) return;
   warming.set(root, setTimeout(() => {
     warming.delete(root);
-    if (!existsSync(join(root, TOOL_DIR, 'cache', FILM_POSTER))) pageFrame(root, base, FILM_PAGE, -1, POSTER_W).catch(() => {});
+    if (!existsSync(cacheDir(root, FILM_POSTER))) pageFrame(root, base, FILM_PAGE, -1, POSTER_W).catch(() => {});
   }, WARM_MS).unref());
 }
 

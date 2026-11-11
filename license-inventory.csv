@@ -1202,6 +1202,7 @@ frontend/src/__tests__/features/canvas/video-breakdown-groups.test.ts,Elastic-2.
 frontend/src/__tests__/features/canvas/video-breakdown-lifecycle.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-breakdown-spawn.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-clip-panel.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/video-compose-node-status.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-compose-upstream-reconcile.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-compose-workspace.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-continuity-mode.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3364,6 +3365,7 @@ scripts/openfilm_studio/source-patches/0006-project-name-from-film-title.patch,E
 scripts/openfilm_studio/source-patches/0007-server-copy-branding.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/openfilm_studio/source-patches/0008-host-route-gates.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/openfilm_studio/source-patches/0009-hosted-render-network.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/openfilm_studio/source-patches/0010-hosted-film-dirs.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_arm_rig.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_gait.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/piko_leg_rig.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -3948,6 +3950,7 @@ src/novelvideo/task_backend/signing.py,Elastic-2.0,2026 SuperTale contributors,R
 src/novelvideo/task_backend/subprocesses.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/task_identity.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/task_jobs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/task_owner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/task_scopes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/task_state.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/telemetry.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4414,9 +4417,11 @@ tests/test_newapi_provider_sync.py,Elastic-2.0,2026 SuperTale contributors,REUSE
 tests/test_newapi_text_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_no_nicegui_character_ref_imports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openapi_edition_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_host_dirs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_hosted_proxy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_export_branding.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_image.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_openfilm_studio_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_route_guards.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_server_copy_branding.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_ui_patch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4562,6 +4567,7 @@ tests/test_task_envelope_consumer.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_task_envelope_local_signing_key.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_envelope_producer.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_envelope_signing_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_task_owner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_payload_projection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_payload_projection_guardrails.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_progress_i18n.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4625,6 +4631,7 @@ vendor/openfilm/src/browser-pool.mjs,MIT,2026 OpenFilm contributors,"vendored Op
 vendor/openfilm/src/burn.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/src/doctor.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/src/encoders.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/src/film-dirs.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/src/film-doc.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/src/film-doc.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/src/host.d.mts,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
@@ -4724,7 +4731,7 @@ vendor/openfilm/studio/server/trash.mjs,MIT,2026 OpenFilm contributors,"vendored
 vendor/openfilm/studio/server/watch.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/studio/server/websocket.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/studio/server/zip.mjs,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
-vendor/openfilm/studio/ui/dist/assets/index-7ByF79tc.dramaclaw13.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
+vendor/openfilm/studio/ui/dist/assets/index-7ByF79tc.dramaclaw14.js,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/studio/ui/dist/assets/index-Dw4FuWhK.css,MIT,2026 OpenFilm contributors,"vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE"
 vendor/openfilm/studio/ui/dist/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md
 vendor/openfilm/studio/ui/dist/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2,OFL-1.1,Rasmus Andersson,vendored @fontsource-variable/inter webfonts; vendor/openfilm/THIRD_PARTY_NOTICES.md

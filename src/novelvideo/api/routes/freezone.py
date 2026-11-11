@@ -321,6 +321,7 @@ from novelvideo.freezone.studio import (
     openfilm_studio_enabled,
     read_studio_film,
     studio_export_film_dir,
+    studio_film_for_node,
     studio_film_exists,
 )
 from novelvideo.ports import get_usage_meter
@@ -8209,7 +8210,6 @@ def _start_freezone_video_compose_task(
     job_id: str,
     body: FreezoneVideoComposeRequest,
     resolved_tracks: list[dict],
-    studio_film_dir: str = "",
 ) -> None:
     task_type = "freezone_video_compose"
     task_manager = get_task_manager()
@@ -8229,30 +8229,19 @@ def _start_freezone_video_compose_task(
                 current_task="validating_timeline",
                 logs=["开始合成视频时间线"],
             )
-            from novelvideo.freezone.jobs import (
-                run_freezone_studio_export,
-                run_freezone_video_compose,
-            )
+            from novelvideo.freezone.jobs import run_freezone_video_compose
 
-            if studio_film_dir:
-                output_path = await run_freezone_studio_export(
-                    project_dir=project_dir,
-                    job_id=job_id,
-                    film_dir=studio_film_dir,
-                    fps=body.fps,
-                )
-            else:
-                output_path = await run_freezone_video_compose(
-                    project_dir=project_dir,
-                    job_id=job_id,
-                    title=body.title,
-                    canvas_id=body.canvas_id,
-                    resolution=body.resolution,
-                    fps=body.fps,
-                    background_color=body.background_color,
-                    keep_original_audio=body.keep_original_audio,
-                    tracks=resolved_tracks,
-                )
+            output_path = await run_freezone_video_compose(
+                project_dir=project_dir,
+                job_id=job_id,
+                title=body.title,
+                canvas_id=body.canvas_id,
+                resolution=body.resolution,
+                fps=body.fps,
+                background_color=body.background_color,
+                keep_original_audio=body.keep_original_audio,
+                tracks=resolved_tracks,
+            )
             task_manager.complete_task(
                 task_type,
                 username,
@@ -12385,7 +12374,7 @@ async def freezone_video_compose(
                     "keep_original_audio": body.keep_original_audio,
                     "cover_url": body.cover_url,
                     "tracks": resolved_tracks,
-                    "studio_film_dir": str(studio_film) if studio_film else "",
+                    "studio_export": studio_film is not None,
                 },
             )
         _start_freezone_video_compose_task(
@@ -12395,7 +12384,6 @@ async def freezone_video_compose(
             job_id=job_id,
             body=body,
             resolved_tracks=resolved_tracks,
-            studio_film_dir=str(studio_film) if studio_film else "",
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(
@@ -12428,15 +12416,15 @@ async def freezone_video_compose_studio(
     只负责编辑与预览；成片导出仍走 `/video/compose` 异步任务。
     """
     _require_openfilm_studio_enabled()
-    _ctx, _username, _project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(project, user)
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
     )
 
     from novelvideo.freezone.studio_proxy import hosted_origins, public_session
 
     try:
         hosted_origins()
-        film_dir = await asyncio.to_thread(
+        await asyncio.to_thread(
             build_studio_film,
             project_dir=project_dir,
             canvas_id=body.canvas_id,
@@ -12449,7 +12437,13 @@ async def freezone_video_compose_studio(
             rebuild=body.rebuild,
         )
         session = await ensure_studio_session(
-            film_dir,
+            studio_film_for_node(
+                project_dir=ctx.output_dir,
+                state_dir=ctx.state_dir,
+                runtime_dir=ctx.runtime_dir,
+                canvas_id=body.canvas_id,
+                node_id=body.node_id,
+            ),
             host_back=body.host_back,
             host_back_label=body.host_back_label,
             lang=body.lang,
@@ -12574,6 +12568,55 @@ async def _mark_video_compose_node_generating(
     )
 
 
+def _studio_node_export(ctx: ProjectContext, canvas_id: str, node_id: str) -> dict[str, Any]:
+    """Read the latest export from the node and its matching project task."""
+    try:
+        canvas = canvas_store.read_canvas(ctx.state_dir, canvas_id)
+    except (OSError, canvas_store.CanvasStoreError):
+        canvas = None
+    node = _studio_canvas_node(canvas, node_id)
+    data = node.get("data") if node else None
+    if not isinstance(data, dict):
+        data = {}
+    job_id = str(data.get("generationTaskJobId") or "") or None
+    task_key = str(data.get("generationTaskKey") or "") or None
+    error = str(data.get("generationError") or "") or None
+    video_url = str(data.get("resultVideoUrl") or "") or None
+    status = "none"
+    if task_key:
+        status = "unknown"
+        task = (
+            get_task_manager().get_task_for_project(
+                ctx, "freezone_video_compose", 0, scope=job_id
+            )
+            if job_id else None
+        )
+        if task is not None and project_task_state_key(
+            task.task_type, task.project_id, task.episode, beat_num=task.beat_num, scope=task.scope
+        ) == task_key:
+            status = {
+                "submitting": "running",
+                "queued": "running",
+                "running": "running",
+                "failed": "failed",
+                "cancelled": "failed",
+                "completed": "completed",
+            }.get(task.status, "unknown")
+            if status == "failed":
+                error = task.error or error
+    elif error:
+        status = "failed"
+    elif video_url:
+        status = "completed"
+    return {
+        "status": status,
+        "job_id": job_id,
+        "task_key": task_key,
+        "error": error if status in {"failed", "unknown"} else None,
+        "video_url": video_url if status == "completed" else None,
+    }
+
+
 @router.get(
     "/projects/{project}/freezone/canvases/{canvas_id}/compose/{node_id}/studio/film",
     tags=[TAG_FREEZONE_VIDEO],
@@ -12591,14 +12634,17 @@ async def freezone_studio_film(
         await _resolve_freezone_project(project, user)
     )
     try:
-        return await read_studio_film(
+        result = await read_studio_film(
             project_dir=project_dir,
-            state_dir=_canvas_state_project_dir(ctx, project_dir),
+            state_dir=ctx.state_dir,
+            runtime_dir=ctx.runtime_dir,
             canvas_id=canvas_id,
             node_id=node_id,
         )
     except StudioError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    result["export"] = await run_in_threadpool(_studio_node_export, ctx, canvas_id, node_id)
+    return result
 
 
 @router.post(
@@ -12621,7 +12667,8 @@ async def freezone_studio_film_edit(
     try:
         return await edit_studio_film(
             project_dir=project_dir,
-            state_dir=_canvas_state_project_dir(ctx, project_dir),
+            state_dir=ctx.state_dir,
+            runtime_dir=ctx.runtime_dir,
             canvas_id=canvas_id,
             node_id=node_id,
             base_rev=body.base_rev,
@@ -12661,6 +12708,8 @@ async def freezone_studio_import_media(
     try:
         return await import_media_to_film(
             project_dir=project_dir,
+            state_dir=ctx.state_dir,
+            runtime_dir=ctx.runtime_dir,
             canvas_id=canvas_id,
             node_id=node_id,
             source_url=source_url,
@@ -12726,7 +12775,7 @@ async def freezone_studio_export(
                 "fps": body.fps,
                 "resolution": "1080p",
                 "tracks": [],
-                "studio_film_dir": str(film_dir),
+                "studio_export": True,
             },
         )
     except RuntimeError as exc:

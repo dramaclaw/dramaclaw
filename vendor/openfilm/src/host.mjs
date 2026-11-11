@@ -63,11 +63,18 @@ const TYPES = {
  * `root`, or leads out of it through a link.
  * `swap(file)` may name another file to serve in a file's place (a render's fast-seeking copy of a video, seekable.mjs;
  * the preview's proxy of heavy footage, studio/server/proxies.mjs); not for `?film-facts`, which asks what the file is.
- * @param {string} root @param {{ inject?: string, timelineInject?: string, headers?: Record<string, string>, swap?: (file: string) => string | null }} [options]
+ * @param {string} root @param {{ inject?: string, timelineInject?: string, headers?: Record<string, string>, swap?: (file: string) => string | null, runtime?: string }} [options]
  */
-export function folderFiles(root, { inject = `<script>${HOST_FLAG}</script>`, timelineInject = inject, headers: extraHeaders = {}, swap } = {}) {
+export function folderFiles(root, { inject = `<script>${HOST_FLAG}</script>`, timelineInject = inject, headers: extraHeaders = {}, swap, runtime } = {}) {
   root = resolve(root);
+  /* A hosted render's scratch lives outside the film; expose only that directory at a private mount. */
+  const scratch = runtime ? folderFiles(runtime, { inject, timelineInject, headers: extraHeaders, swap }) : null;
   return (req, res, path, query) => {
+    if (scratch && path.startsWith('/__film/runtime/')) {
+      const mounted = path.slice('/__film/runtime'.length);
+      if (!mounted.startsWith('/__film/')) return scratch(req, res, mounted, query);
+      path = mounted;
+    }
     /* beside any film, wherever in the folder it is (its page asks for them relative to itself) */
     if (path.endsWith('/__film/timeline.mjs')) {
       // the built-in timeline: plays a film.html (see timeline.mjs)
@@ -218,9 +225,10 @@ export function mediaFacts(file) {
 /**
  * Serve `root`. HTML gets the host flag injected before any page script;
  * ?film-host=0 serves the page untouched, as a visitor would see it.
+ * @param {string} root @param {{ port?: number, swap?: (file: string) => string | null, runtime?: string }} [options]
  */
-export function serve(root, { port = 0, swap } = {}) {
-  const files = folderFiles(root, { swap });
+export function serve(root, { port = 0, swap, runtime = undefined } = {}) {
+  const files = folderFiles(root, { swap, runtime });
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     if (!files(req, res, url.pathname, url.searchParams)) res.writeHead(403).end();

@@ -8,6 +8,7 @@
  * in Studio's own `.film/`, can be written through here, by its name or through a link in the folder; outside it, only
  * what the person linked can be read.
  */
+import { TOOL_DIR } from '../../src/film-dirs.mjs';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants, createReadStream, createWriteStream, existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
@@ -19,7 +20,6 @@ import { FILM_FILE, clipKind } from '../../src/film-doc.mjs';
 import { addLinkedPlaces, readableLink } from '../../src/media-links.mjs';
 import { changeProjectFilm, readProjectFilm } from './film.mjs';
 import { filesWritten } from './person-edits.mjs';
-import { TOOL_DIR } from './projects.mjs';
 import { moveToTrash } from './trash.mjs';
 import { linkKind, rewriteLinks } from './page-links.mjs';
 import { ffmpeg } from '../../src/shared.mjs';

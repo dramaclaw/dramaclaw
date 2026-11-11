@@ -16,6 +16,7 @@ from novelvideo.freezone import canvas_store
 from novelvideo.freezone import studio
 from novelvideo.freezone.studio import (
     StudioError,
+    StudioFilm,
     build_studio_film,
     edit_studio_film,
     export_studio_film,
@@ -23,6 +24,7 @@ from novelvideo.freezone.studio import (
     import_media_to_film,
     read_studio_film,
     studio_export_film_dir,
+    studio_film_for_node,
 )
 
 
@@ -127,8 +129,9 @@ def _write_canvas(state_dir: Path) -> None:
 class FakeStudio:
     """Answers Studio's API the way the vendored server does, from a scripted table."""
 
-    def __init__(self, film_dir: Path):
-        self.film_dir = film_dir
+    def __init__(self, film: StudioFilm):
+        self.film = film
+        self.film_dir = film.root
         self.calls: list[tuple[str, str, Any]] = []
         self.rev = "rev-1"
         self.doc = {
@@ -167,7 +170,12 @@ class FakeStudio:
 
     async def post(self, state, path, body):
         self.calls.append(("POST", path, body))
-        assert path == "/api/projects" and body["path"] == str(self.film_dir)
+        assert path == "/api/projects" and body == {
+            "path": str(self.film_dir),
+            "create": True,
+            "stateDir": str(self.film_dir.parents[3].parent / "state/openfilm/canvas-1/node-1"),
+            "runtimeDir": str(self.film_dir.parents[3].parent / "runtime/openfilm/canvas-1/node-1"),
+        }
         return {"project": {"id": "pid-1"}}
 
     async def request(self, state, method, path, body=None, *, timeout=20.0):
@@ -226,9 +234,17 @@ class FakeStudio:
 def fake_studio(monkeypatch, tmp_path: Path) -> tuple[FakeStudio, Path, Path]:
     project_dir = tmp_path / "project"
     state_dir = tmp_path / "state"
-    film_dir = _build_film(project_dir)
+    _build_film(project_dir)
     _write_canvas(state_dir)
-    fake = FakeStudio(film_dir)
+    fake = FakeStudio(
+        studio_film_for_node(
+            project_dir=project_dir,
+            state_dir=state_dir,
+            runtime_dir=tmp_path / "runtime",
+            canvas_id="canvas-1",
+            node_id="node-1",
+        )
+    )
     monkeypatch.setattr(studio, "_ensure_studio", fake.ensure)
     monkeypatch.setattr(studio, "_studio_post", fake.post)
     monkeypatch.setattr(studio, "_studio_request", fake.request)
@@ -242,6 +258,7 @@ async def test_read_film_maps_clips_to_their_canvas_sources(fake_studio):
     result = await read_studio_film(
         project_dir=project_dir,
         state_dir=state_dir,
+        runtime_dir=state_dir.parent / "runtime",
         canvas_id="canvas-1",
         node_id="node-1",
     )
@@ -280,6 +297,7 @@ async def test_read_film_needs_a_film(fake_studio):
         await read_studio_film(
             project_dir=project_dir,
             state_dir=state_dir,
+            runtime_dir=state_dir.parent / "runtime",
             canvas_id="canvas-1",
             node_id="never",
         )
@@ -294,6 +312,7 @@ async def test_edit_film_forwards_ops_with_the_base_rev(fake_studio):
     result = await edit_studio_film(
         project_dir=project_dir,
         state_dir=state_dir,
+        runtime_dir=state_dir.parent / "runtime",
         canvas_id="canvas-1",
         node_id="node-1",
         base_rev="rev-1",
@@ -319,6 +338,7 @@ async def test_edit_film_reports_a_conflict_instead_of_raising(fake_studio):
     result = await edit_studio_film(
         project_dir=project_dir,
         state_dir=state_dir,
+        runtime_dir=state_dir.parent / "runtime",
         canvas_id="canvas-1",
         node_id="node-1",
         base_rev="rev-1",
@@ -340,6 +360,7 @@ async def test_edit_film_reports_an_invalid_edit(fake_studio):
     result = await edit_studio_film(
         project_dir=project_dir,
         state_dir=state_dir,
+        runtime_dir=state_dir.parent / "runtime",
         canvas_id="canvas-1",
         node_id="node-1",
         base_rev="rev-1",
@@ -359,6 +380,7 @@ async def test_edit_film_rejects_malformed_ops(fake_studio):
         await edit_studio_film(
             project_dir=project_dir,
             state_dir=state_dir,
+            runtime_dir=state_dir.parent / "runtime",
             canvas_id="canvas-1",
             node_id="node-1",
             base_rev="rev-1",
@@ -374,6 +396,8 @@ async def test_import_media_copies_into_assets_and_remembers_the_source(fake_stu
 
     result = await import_media_to_film(
         project_dir=project_dir,
+        state_dir=project_dir.parent / "state",
+        runtime_dir=project_dir.parent / "runtime",
         canvas_id="canvas-1",
         node_id="node-1",
         source_url=url,
@@ -397,6 +421,8 @@ async def test_import_media_copies_into_assets_and_remembers_the_source(fake_stu
 
     again = await import_media_to_film(
         project_dir=project_dir,
+        state_dir=project_dir.parent / "state",
+        runtime_dir=project_dir.parent / "runtime",
         canvas_id="canvas-1",
         node_id="node-1",
         source_url=url,
@@ -411,6 +437,8 @@ async def test_import_media_accepts_stills_but_not_arbitrary_files(fake_studio):
     _fake, project_dir, _state_dir = fake_studio
     still = await import_media_to_film(
         project_dir=project_dir,
+        state_dir=project_dir.parent / "state",
+        runtime_dir=project_dir.parent / "runtime",
         canvas_id="canvas-1",
         node_id="node-1",
         source_url=_source(project_dir, "frame.png"),
@@ -419,6 +447,8 @@ async def test_import_media_accepts_stills_but_not_arbitrary_files(fake_studio):
     with pytest.raises(StudioError) as excinfo:
         await import_media_to_film(
             project_dir=project_dir,
+            state_dir=project_dir.parent / "state",
+            runtime_dir=project_dir.parent / "runtime",
             canvas_id="canvas-1",
             node_id="node-1",
             source_url=_source(project_dir, "notes.txt"),
@@ -437,9 +467,7 @@ async def test_export_waits_for_studio_and_moves_the_render_into_place(
     ]
     output = tmp_path / "out" / "job-1.mp4"
 
-    rendered = await export_studio_film(
-        film_dir=fake.film_dir, output_path=output, fps=25, poll_seconds=0
-    )
+    rendered = await export_studio_film(film=fake.film, output_path=output, fps=25, poll_seconds=0)
 
     assert rendered == output and output.read_bytes() == b"rendered"
     start = next(
@@ -462,7 +490,7 @@ async def test_export_surfaces_a_failed_render(fake_studio, tmp_path):
 
     with pytest.raises(StudioError) as excinfo:
         await export_studio_film(
-            film_dir=fake.film_dir,
+            film=fake.film,
             output_path=tmp_path / "job-2.mp4",
             fps=30,
             poll_seconds=0,
@@ -477,7 +505,7 @@ async def test_export_times_out_and_cancels(fake_studio, tmp_path):
 
     with pytest.raises(StudioError) as excinfo:
         await export_studio_film(
-            film_dir=fake.film_dir,
+            film=fake.film,
             output_path=tmp_path / "job-3.mp4",
             poll_seconds=0,
             timeout_seconds=0,
@@ -511,21 +539,36 @@ async def test_studio_export_leaf_keeps_the_film_inside_the_project(
     film_dir = _build_film(project_dir)
     seen: dict[str, Any] = {}
 
-    async def fake_export(*, film_dir, output_path, fps):
-        seen.update(film_dir=film_dir, output_path=output_path, fps=fps)
+    async def fake_export(*, film, output_path, fps):
+        seen.update(film=film, output_path=output_path, fps=fps)
         output_path.write_bytes(b"x")
         return output_path
 
     monkeypatch.setattr(studio, "export_studio_film", fake_export)
     output = await run_freezone_studio_export(
-        project_dir=project_dir, job_id="job-9", film_dir=str(film_dir), fps=24
+        project_dir=project_dir,
+        job_id="job-9",
+        film=studio_film_for_node(
+            project_dir=project_dir,
+            state_dir=tmp_path / "state",
+            runtime_dir=tmp_path / "runtime",
+            canvas_id="canvas-1",
+            node_id="node-1",
+        ),
+        fps=24,
     )
     assert output.name == "job-9.mp4" and output.parent.name == "freezone_video_compose"
-    assert seen["film_dir"] == film_dir and seen["fps"] == 24
+    assert seen["film"].root == film_dir and seen["fps"] == 24
 
     with pytest.raises(RuntimeError):
         await run_freezone_studio_export(
             project_dir=project_dir,
             job_id="job-10",
-            film_dir=str(tmp_path / "elsewhere"),
+            film=studio_film_for_node(
+                project_dir=tmp_path / "elsewhere",
+                state_dir=tmp_path / "state",
+                runtime_dir=tmp_path / "runtime",
+                canvas_id="canvas-1",
+                node_id="node-1",
+            ),
         )

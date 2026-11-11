@@ -379,6 +379,7 @@ async def test_video_compose_runner_renders_a_hand_cut_film_through_studio(
         project_id="project-a",
         output_dir=str(output_dir),
         state_dir=str(state_dir),
+        runtime_dir=tmp_path / "runtime",
         requester_user_id="user-a",
     )
     envelope = {
@@ -389,13 +390,15 @@ async def test_video_compose_runner_renders_a_hand_cut_film_through_studio(
             "node_id": "compose-a",
             "fps": 24,
             "tracks": [],
-            "studio_film_dir": str(film_dir),
+            "studio_export": True,
         }
     }
 
     result = await freezone_runner._run_freezone_video_compose_async(envelope, ctx)
 
-    assert seen["film_dir"] == str(film_dir) and seen["fps"] == 24
+    assert seen["film"].root == film_dir and seen["fps"] == 24
+    assert seen["film"].state_dir == state_dir / "openfilm/canvas-a/compose-a"
+    assert seen["film"].runtime_dir == tmp_path / "runtime/openfilm/canvas-a/compose-a"
     assert result["output_url"].endswith("job-s.mp4")
     projected = canvas_store.read_canvas(state_dir, "canvas-a")
     assert projected["nodes"][0]["data"]["resultVideoUrl"].endswith("job-s.mp4")

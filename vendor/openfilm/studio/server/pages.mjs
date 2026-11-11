@@ -18,6 +18,7 @@
  * fetches the media), which frames the pages. A media file asked for with `?film-sound` is its sound,
  * small (derived.mjs soundOf): what the mixer plays, never the whole of a video; 204 when it has none.
  */
+import { cacheDir } from '../../src/film-dirs.mjs';
 import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
@@ -37,7 +38,6 @@ const BRIDGE = readFileSync(new URL('./bridge.js', import.meta.url), 'utf8');
 
 /* sounds a browser cannot play (AIFF, which macOS's `say` writes): the preview gets a WAV of each, made once */
 const UNPLAYABLE = /\.(aif|aiff|aifc)$/i;
-const PLAYABLE_DIR = join('.film', 'cache', 'playable');
 /** @type {Map<string, Promise<string | null>>} copies being made, by where they go */
 const making = new Map();
 
@@ -55,12 +55,12 @@ async function playableCopy(root, rel) {
     if (!realpathSync(file).startsWith(realpathSync(root) + sep) && !readableLink(root, file)) return null;
   } catch { return null; }
   const name = `${createHash('sha1').update(`${rel}\0${info.size}\0${info.mtimeMs}`).digest('hex').slice(0, 20)}.wav`;
-  const out = join(root, PLAYABLE_DIR, name);
+  const out = cacheDir(root, 'playable', name);
   try { statSync(out); return name; } catch { /* not made yet */ }
   let made = making.get(out);
   if (!made) {
     made = (async () => {
-      await mkdir(join(root, PLAYABLE_DIR), { recursive: true });
+      await mkdir(cacheDir(root, 'playable'), { recursive: true });
       const part = `${out}.part.wav`;
       const ok = await new Promise((done) => execFile('ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'error', '-y', '-i', file, '-vn', '-c:a', 'pcm_s16le', part], { windowsHide: true }, (e) => done(!e)));
       if (!ok) return null;
@@ -144,7 +144,7 @@ export async function startPages({ port, editorOrigin, secret, projects }) {
   });
 
   /** a project's playable copies (UNPLAYABLE), served as its files are */
-  const copiesOf = (/** @type {string} */ root) => folderFiles(join(root, PLAYABLE_DIR), { headers: policy() });
+  const copiesOf = (/** @type {string} */ root) => folderFiles(cacheDir(root, 'playable'), { headers: policy() });
 
   /** @type {Map<string, { root: string, files: ReturnType<typeof folderFiles> }>} */
   const byToken = new Map();

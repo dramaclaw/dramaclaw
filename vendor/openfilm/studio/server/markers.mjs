@@ -8,11 +8,11 @@
  *   GET markers               → { markers }
  *   PUT markers { markers }   → { markers }: the whole list, as kept
  */
+import { TOOL_DIR } from '../../src/film-dirs.mjs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { writeAtomic } from './atomic.mjs';
 import { HttpError, json, readJson } from './http.mjs';
-import { TOOL_DIR } from './projects.mjs';
 
 export const MARKERS_FILE = `${TOOL_DIR}/markers.json`;
 const COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];

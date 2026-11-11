@@ -59,6 +59,7 @@
  * Time-based exports also accept `ranges: [[from, to], ...]` (1–100, seconds) to join the selections in their given
  * order, with the picture, sound and subtitles on the joined clock. Choose either `range` or `ranges`.
  */
+import { cacheDir, TOOL_DIR, historyDir, hostDirs, mediaDir } from '../../src/film-dirs.mjs';
 import { execFile, fork, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
@@ -86,7 +87,7 @@ import { filmSubtitleCuesInRange, filmSubtitleCuesInRanges, filmSubtitleShown, f
 import { zipFiles } from './zip.mjs';
 import { inProject } from './files.mjs';
 import { filmClosure, folderView } from './closure.mjs';
-import { PROJECT_PARTS, TOOL_DIR } from './projects.mjs';
+import { PROJECT_PARTS } from './projects.mjs';
 import { exportsRoot } from '../../src/locations.mjs';
 import { recordProblem } from '../../src/problems.mjs';
 
@@ -248,7 +249,7 @@ const tidy = (path) => rm(path, { recursive: true, force: true, maxRetries: 5, r
 const LEFT = {
   output: /^\..+\.partial-(\d+)-[0-9a-f]+/,
   scratch: /^(?:clip|burn|nle)-(\d+)-[0-9a-f]+$/,
-  parts: /^\.parts-(\d+)$/,
+  parts: /^\.parts-(\d+)(?:-[0-9a-f]+)?$/,
   copy: /\.part-(\d+)-[0-9a-f]+\.\w+$/,
 };
 
@@ -438,7 +439,12 @@ export async function projectFiles(root, parts, skip) {
   if (existsSync(style)) files.push({ name: `${TOOL_DIR}/subtitles.json`, file: style, size: statSync(style).size });
   const settings = join(root, TOOL_DIR, 'settings.json');
   if (existsSync(settings)) files.push({ name: `${TOOL_DIR}/settings.json`, file: settings, size: statSync(settings).size });
-  for (const part of parts) await walk(join(root, TOOL_DIR, part), `${TOOL_DIR}/${part}`);
+  for (const part of parts) {
+    await walk(part === 'history' ? historyDir(root) : join(root, TOOL_DIR, part), `${TOOL_DIR}/${part}`);
+    if (part === 'history' && hostDirs() && mediaDir(root) !== join(historyDir(root), 'media')) {
+      await walk(mediaDir(root), `${TOOL_DIR}/history/media`);
+    }
+  }
   return files;
 }
 
@@ -451,7 +457,7 @@ export async function projectSizes(root) {
   /** @type {{ work: number } & Record<ProjectPart, number | null>} */
   const sizes = { work: sum(await projectFiles(root, [])), history: null, chat: null, logs: null };
   for (const part of PROJECT_PARTS) {
-    if (!existsSync(join(root, TOOL_DIR, part))) continue;
+    if (!existsSync(part === 'history' ? historyDir(root) : join(root, TOOL_DIR, part)) && !(part === 'history' && hostDirs() && existsSync(mediaDir(root)))) continue;
     sizes[part] = sum((await projectFiles(root, [part])).filter((f) => f.name.startsWith(`${TOOL_DIR}/${part}/`)));
   }
   return sizes;
@@ -521,7 +527,7 @@ function clipPath(root, src) {
  * @param {string} root @param {string} dir @param {import('./ops.mjs').FilmValue} value
  */
 async function filmElsewhere(root, dir, value) {
-  const up = relative(dir, root).split(sep).join('/');
+  const up = hostDirs() && !dir.startsWith(root + sep) ? '' : relative(dir, root).split(sep).join('/');
   const back = (/** @type {string} */ path) => (/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(path) ? path : `${up}/${path}`);
   const urls = (/** @type {string} */ css) => css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_, q, /** @type {string} */ path) => `url(${q}${back(path)}${q})`);
   const own = existsSync(join(root, FILM_FILE)) ? readFileSync(join(root, FILM_FILE), 'utf8') : '';
@@ -542,7 +548,7 @@ async function clipFilm(root, clipId, { change = {}, doc = filmDoc(root) } = {})
   const track = doc.tracks.find((t) => t.clips.some((c) => c.id === clipId));
   const clip = track?.clips.find((c) => c.id === clipId);
   if (!track || !clip) throw new ExportError(`${FILM_FILE} has no clip "${clipId}"`);
-  const dir = join(root, '.film', 'cache', 'export', `clip-${process.pid}-${randomBytes(4).toString('hex')}`);
+  const dir = cacheDir(root, 'export', `clip-${process.pid}-${randomBytes(4).toString('hex')}`);
   await mkdir(dir, { recursive: true });
   await filmElsewhere(root, dir, { stage: doc.stage, tracks: [{ clips: [{ ...clip, ...change, at: 0 }], ...(track.muted ? { muted: true } : {}) }] });
   return { dir, stage: doc.stage, remove: () => tidy(dir) };
@@ -1197,7 +1203,7 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       if (fcp) throw error;
       return { cues: [], style: null };
     });
-    const scratch = join(root, '.film', 'cache', 'export', `nle-${process.pid}-${randomBytes(4).toString('hex')}`);
+    const scratch = cacheDir(root, 'export', `nle-${process.pid}-${randomBytes(4).toString('hex')}`);
     const final = freeFile(dir, baseName(job.name, ask), '');
     const staging = join(dir, `.${basename(final)}.partial-${process.pid}-${job.id}`);
     try {
@@ -1548,8 +1554,8 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
     try {
       await mkdir(folder, { recursive: true });
       /* what an export Studio could not finish left behind, gone before this one starts */
-      await Promise.all([sweep(folder, LEFT.output), sweep(join(root, '.film', 'cache', 'export'), LEFT.scratch),
-        sweep(join(root, '.film', 'cache', 'render'), LEFT.parts), sweep(join(root, '.film', 'cache', 'seek'), LEFT.copy)]);
+      await Promise.all([sweep(folder, LEFT.output), sweep(cacheDir(root, 'export'), LEFT.scratch),
+        sweep(cacheDir(root, 'render'), LEFT.parts), sweep(cacheDir(root, 'seek'), LEFT.copy)]);
       update(job, { status: 'running', phase: 'preparing', startedAt: Date.now() });
       const kind = job.ask.kind;
       /* the same export as one made just before it (asked together), but for its name: that one's files, cloned */

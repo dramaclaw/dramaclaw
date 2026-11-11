@@ -97,9 +97,11 @@ def test_source_edits_are_stored_as_patches() -> None:
         "0007-server-copy-branding.patch",
         "0008-host-route-gates.patch",
         "0009-hosted-render-network.patch",
+        "0010-hosted-film-dirs.patch",
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in patches)
     for path in (
+        "packages/openfilm/src/film-dirs.mjs",
         "packages/openfilm/studio/ui/src/components/ProjectView.tsx",
         "packages/openfilm/studio/ui/src/App.tsx",
         "packages/openfilm/src/host.mjs",
@@ -176,6 +178,45 @@ def test_embed_title_cannot_rename_the_film_folder(chunk: str) -> None:
         'text-[var(--text-muted)]",children:cJ(Gi||s("project.untitled"))})'
         ':ld?a.jsx("input",{autoFocus:!0,value:kr'
     ) in chunk
+
+
+def test_vendored_studio_names_its_own_folder_once() -> None:
+    """The hosted Studio keeps a film's history in host state and its cache in host runtime.
+    Every path into `.film/` goes through src/film-dirs.mjs, so an upgrade that brings back a
+    hard-coded `'.film'` join would quietly put history or cache back in the film folder."""
+    vendor = REPO_ROOT / "vendor" / "openfilm"
+    literal = re.compile(r"""['"]\.film(?:/[^'"]*)?['"]""")
+    hits = [
+        f"{path.relative_to(vendor).as_posix()}: {line.strip()}"
+        for root in (vendor / "src", vendor / "studio" / "server")
+        for path in sorted(root.rglob("*.mjs"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if literal.search(line)
+    ]
+    assert hits == ["src/film-dirs.mjs: export const TOOL_DIR = '.film';"]
+
+
+def test_hosted_studio_keeps_history_and_cache_out_of_the_film() -> None:
+    """Hosted: history in host state, retained media and removed files in the film folder,
+    every other cache in host runtime; no upstream history migration, no system Trash."""
+    vendor = REPO_ROOT / "vendor" / "openfilm"
+    dirs = (vendor / "src" / "film-dirs.mjs").read_text(encoding="utf-8")
+    assert (
+        "history: join(dirs.stateDir, 'history'), commits: join(dirs.stateDir, 'commits'),"
+    ) in dirs
+    assert (
+        "media: join(tool, 'media'), cache: join(dirs.runtimeDir, 'cache'), "
+        "removed: join(tool, 'removed'),"
+    ) in dirs
+    history = (vendor / "studio" / "server" / "history.mjs").read_text(encoding="utf-8")
+    assert "if (!hostDirs() && format < 2) await migrateHistory(" in history
+    assert "else if (!hostDirs() && format < FORMAT) await upgradeHistory(" in history
+    trash = (vendor / "studio" / "server" / "trash.mjs").read_text(encoding="utf-8")
+    assert "throw new HttpError(409, 'no trash in the hosted Studio')" in trash
+    launcher = (REPO_ROOT / "scripts" / "openfilm_studio" / "run.mjs").read_text(
+        encoding="utf-8"
+    )
+    assert 'process.env.OPENFILM_HOST_DIRS = "1";' in launcher
 
 
 def test_revendor_applies_the_stored_patches_and_guards_the_bundle() -> None:

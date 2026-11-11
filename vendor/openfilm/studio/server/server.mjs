@@ -35,7 +35,7 @@ import { HttpError, cookie, json, readJson } from './http.mjs';
 import { acceptWebSocket } from './websocket.mjs';
 import {
   ProjectError, createFolder, createProject, deleteFolder, deleteProject, libraryRoot, listFolders, listProjects, locateProject, markOpened, moveFolder, moveLibrary,
-  moveProjectToFolder, openProject, projectById, renameFolder, renameProject, studioHome, studioKey, TOOL_DIR,
+  moveProjectToFolder, openProject, projectById, renameFolder, renameProject, studioHome, studioKey,
 } from './projects.mjs';
 import { FetchError, createFetches, fetchFilm, parseRepoUrl } from './fetch-repo.mjs';
 import { BrowseError, browseFolder, browsePlaces } from './browse.mjs';
@@ -549,9 +549,9 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
       if (req.method === 'GET') return json(res, 200, { projects: (await listProjects()).map((p) => (agentIn(p.path) ? { ...p, working: true } : p)) });
       /* `create` false: only a folder holding a film opens (the editor asks before starting one in a folder) */
       if (req.method === 'POST') {
-        const body = /** @type {{ path?: string, name?: string, create?: boolean, subtitleStyle?: unknown }} */ (await readJson(req));
-        if (body.path) return json(res, 200, { project: await openProject(body.path, { create: body.create !== false }) });
-        const project = await createProject(body.name);
+        const body = /** @type {{ path?: string, name?: string, create?: boolean, subtitleStyle?: unknown, stateDir?: string, runtimeDir?: string }} */ (await readJson(req));
+        if (body.path) return json(res, 200, { project: await openProject(body.path, { create: body.create !== false, stateDir: body.stateDir, runtimeDir: body.runtimeDir }) });
+        const project = await createProject(body.name, { stateDir: body.stateDir, runtimeDir: body.runtimeDir });
         /* a new film starts in the subtitle look this person used last (Studio remembers it): written before its first
            version, so the project, its exports and Studio agree. An opened project keeps its own, or the default (#286). */
         if (body.subtitleStyle && typeof body.subtitleStyle === 'object') {
