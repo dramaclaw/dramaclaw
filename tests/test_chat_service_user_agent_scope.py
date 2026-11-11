@@ -3794,6 +3794,7 @@ def test_freezone_existing_execution_uses_focused_mcp_tools():
         "freezone_get_node_detail",
         "freezone_get_workflow",
         "freezone_observe_workflow_run",
+        "freezone_cancel_workflow_run",
         "freezone_request_user_clarification",
         "freezone_run_node_action",
         "freezone_run_workflow",
@@ -4248,6 +4249,7 @@ def test_codex_mcp_config_renders_focused_mcp_tools():
         '"freezone_get_canvas_ontology",'
         '"freezone_get_node_action_catalog","freezone_get_node_detail",'
         '"freezone_get_workflow","freezone_observe_workflow_run",'
+        '"freezone_cancel_workflow_run",'
         '"freezone_request_user_clarification","freezone_run_node_action",'
         '"freezone_run_workflow","freezone_update_node_data"]'
     ) in overrides
