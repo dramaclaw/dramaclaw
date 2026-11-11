@@ -2,16 +2,15 @@
 // Copyright (c) 2026 ClaymoreLab
 import {
   compileFreezoneRecipePrompt,
-  generateFreezoneRecipeText,
+  sendGenerationWireRequest,
+  RECIPE_MODEL_TIMEOUT_MS,
   type FreezoneRecipeCompileMetadata,
   type FreezoneRecipeNodeKind,
 } from '@/api/ops';
-import {
-  readCatalog, text, recipePipeline, skillRuntimeContext,
-  selectWorkflowUpstreamText,
-} from './workflowRecipeCatalog';
+import { selectWorkflowUpstreamText } from './workflowRecipeCatalog';
 export { selectWorkflowUpstreamText } from './workflowRecipeCatalog';
 import type { UpstreamContent } from './ports';
+import { buildRecipeTextRequest } from './generationRequests/textGenerationRequest';
 import { recipeCompilePlan } from './generationRequests/recipeCompileRequest';
 import {
   reportWorkflowExecutionActivity,
@@ -68,30 +67,22 @@ export async function generateWorkflowText(input: {
   /** HTML uses every directly connected content input, independent of Recipe step selection. */
   upstreamInputMode?: 'connected';
 }): Promise<string> {
-  const catalog = readCatalog(input.nodeData);
-  const recipeId = text(catalog?.recipeId);
-  if (!recipeId) throw new Error('文本节点缺少 Recipe');
   const upstreamText = input.upstreamInputMode === 'connected' ? input.upstreamText ?? '' : selectWorkflowUpstreamText(
     input.nodeData,
     input.upstreamContents,
     input.upstreamText ?? '',
   );
-  const pipeline = recipePipeline(catalog?.recipePipeline);
-  const productOperation = workflowProductOperation(input.nodeId);
-  reportWorkflowExecutionActivity(input.nodeId, 'generating');
-  return await generateFreezoneRecipeText({
-    ...(productOperation
-      ? {
-          projectId: productOperation.projectId,
-          productOperationId: productOperation.operationId,
-        }
-      : {}),
-    recipeId,
-    recipeVersion: text(catalog?.recipeVersion),
-    ...(pipeline.length > 0 ? { recipePipeline: pipeline } : {}),
-    ...skillRuntimeContext(catalog),
+  const decision = buildRecipeTextRequest({
+    nodeData: input.nodeData,
     nodePrompt: input.nodePrompt,
-    upstreamText: [input.requiredOutputContext, upstreamText].filter(Boolean).join("\n\n"),
-    userGoal: text(catalog?.userGoal) || text(catalog?.promptBuilder?.userGoal),
+    upstreamText,
+    requiredOutputContext: input.requiredOutputContext,
+    productOperation: workflowProductOperation(input.nodeId) ?? null,
   });
+  if (!decision.ok) throw new Error(decision.message);
+  reportWorkflowExecutionActivity(input.nodeId, 'generating');
+  const data = await sendGenerationWireRequest<{ content: string }>(decision.requests[0], {
+    timeout: RECIPE_MODEL_TIMEOUT_MS,
+  });
+  return data.content;
 }

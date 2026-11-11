@@ -29,7 +29,10 @@ from novelvideo.task_backend.limits import (
     project_lane_effective_active_limit,
 )
 from novelvideo.task_backend.queues import QUEUE_KINDS, normalize_queue_kind
-from novelvideo.task_backend.run_core import run_project_task_core_sync
+from novelvideo.task_backend.run_core import (
+    run_project_task_core_sync,
+    signed_billing_feature_key,
+)
 from novelvideo.task_backend.subprocesses import kill_task_processes
 from novelvideo.task_owner import current_owner
 from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
@@ -130,6 +133,9 @@ class InlineTaskBackend:
             "product_surface": product_surface,
             **display_metadata_for_task(task_type, payload),
         }
+        feature_key = signed_billing_feature_key(payload)
+        if feature_key:
+            metadata["billing_feature_key"] = feature_key
         project_lane_limit = project_lane_effective_active_limit(
             lane_name,
             eligible_user_count=1,

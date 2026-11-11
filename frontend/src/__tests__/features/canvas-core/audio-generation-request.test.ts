@@ -1,69 +1,28 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import path from 'node:path';
-import { act, cleanup, render, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReactFlowProvider } from '@xyflow/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiCall, apiClient } from '@/api/client';
+import { describe, expect, it } from 'vitest';
 import type { FreezoneRecipeCompileMetadata } from '@/api/ops';
+import { CANVAS_NODE_TYPES, isAudioNode, type AudioNodeData, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import {
-  audioNodeRepairPatch, audioPromptCompileInput, audioPromptCompileMetadataPatch,
+  audioNodeRepairPatch, audioMusicKindRepairPatch, audioMusicLengthRepairPatch,
+  audioSpeechInstructionRepairPatch, audioPromptCompileInput, audioPromptCompileMetadataPatch,
   buildAudioGenerationRequest, type AudioGenerationRequestContext,
 } from '@/features/canvas/application/generationRequests/audioGenerationRequest';
-import { canvasEventBus } from '@/features/canvas/application/canvasServices';
-import { dispatchNodeAction } from '@/features/canvas/application/nodeActionResult';
-import { compileWorkflowNodePrompt } from '@/features/canvas/application/workflowRecipeRuntime';
-import { bindWorkflowProductOperation, clearWorkflowProductOperation } from '@/features/canvas/application/workflowExecutionActivity';
-import { CANVAS_NODE_TYPES, isAudioNode, type AudioNodeData, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
-import { AudioNode } from '@/features/canvas/nodes/AudioNode';
-import { useCanvasStore } from '@/stores/canvasStore';
-import { collectImportGraph } from '../canvas-core/importGraph';
-
-const scope = vi.hoisted(() => ({ project: '', canvas: undefined as string | undefined, blocked: false, message: null as string | null }));
+import {
+  audioGenerationStartPatch, audioGenerationAcceptedPatch, audioGenerationOutcomePatch,
+  audioGenerationActionResult, audioGenerationHookError,
+  type AudioGenerationHookOutput, type AudioGenerationHookError,
+} from '@/features/canvas/application/generationRequests/audioGenerationResult';
+import { collectImportGraph } from './importGraph';
+import expected from './audioGenerationExpected.json';
+import { DEFAULT_NODE_DISPLAY_NAME } from '@/features/canvas/domain/nodeDisplay';
 const translate = (key: string) => key;
-// Keep the component, hook, store, graph projection and ops serializers real.
-// Translation and URL mocks make caller inputs deterministic without a browser URL.
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
-vi.mock('@/lib/url-params', async (original) => ({
-  ...(await original<typeof import('@/lib/url-params')>()),
-  readUrl: () => ({ project: scope.project, canvas: scope.canvas }),
-}));
-// Access and credit hooks otherwise query network state unrelated to request construction.
-vi.mock('@/lib/model-task-access', async (original) => ({
-  ...(await original<typeof import('@/lib/model-task-access')>()),
-  useModelTaskAccess: () => ({ blocked: scope.blocked, message: scope.message, denialReason: null }),
-}));
-vi.mock('@/lib/queries/generation-credit-cost', async (original) => ({
-  ...(await original<typeof import('@/lib/queries/generation-credit-cost')>()),
-  useGenerationCreditCost: () => ({ data: undefined, error: null }),
-}));
-// Lowest transport boundary: real ops still choose paths and serialize JSON.
-vi.mock('@/api/client', async (original) => ({
-  ...(await original<typeof import('@/api/client')>()),
-  apiClient: vi.fn(() => { throw new Error('Unexpected apiClient call'); }),
-  apiCall: vi.fn(async (route: string) => {
-    if (/\/freezone\/audio\/references$/.test(route)) return { available: [{ scope: 'project_narrator' }] };
-    if (/\/freezone\/audio\/(speech|eleven-music)$/.test(route)) return {
-      task_key: 'audio-task', job_id: 'audio-job',
-      task_type: route.endsWith('/speech') ? 'freezone_audio_speech' : 'freezone_audio_eleven_music',
-    };
-    if (/\/freezone\/jobs\/freezone_audio_(speech|eleven_music)\/audio-job\/result$/.test(route)) return { url: '/static/audio.mp3' };
-    throw new Error(`Unexpected API call: ${route}`);
-  }),
-}));
-// The real player fetches/decodes returned media on mount (observed in the first run).
-// Replace only that presentation child; request generation does not depend on playback.
-vi.mock('@/features/canvas/ui/AudioWaveformPlayer', () => ({ AudioWaveformPlayer: () => null }));
-// Polling and compilation are external operations; metadata callbacks still run against the real store.
-vi.mock('@/api/tasks', async (original) => ({
-  ...(await original<typeof import('@/api/tasks')>()), awaitTaskCompletion: vi.fn(async () => ({})),
-}));
-vi.mock('@/features/canvas/application/workflowRecipeRuntime', async (original) => ({
-  ...(await original<typeof import('@/features/canvas/application/workflowRecipeRuntime')>()),
-  compileWorkflowNodePrompt: vi.fn(async (input) => input.fallbackPrompt),
-}));
-
+const ISO = '2009-02-13T23:31:30.000Z';
+function exact(actual: unknown, captured: unknown) {
+  expect(actual).toStrictEqual(captured);
+  expect(JSON.stringify(actual)).toBe(JSON.stringify(captured));
+}
 function audioNode(data: Record<string, unknown> = {}): CanvasNode {
   return { id: 'audio-1', type: CANVAS_NODE_TYPES.audio, position: { x: 0, y: 0 },
     data: { audioUrl: null, text: 'A quiet morning.', ...data } };
@@ -147,140 +106,70 @@ const fixtures: Fixture[] = [
   fixture('invalid speech instruction repair', { text: '\u6839\u636e\u811a\u672c\u751f\u6210\u65c1\u767d\u914d\u97f3', audioUrl: '/static/old.mp3' }, { repairKeys: invalidationKeys, failure: true }),
 ];
 
-function TargetNode() {
-  const node = useCanvasStore((state) => state.nodes.find((candidate) => candidate.id === 'audio-1'));
-  if (!isAudioNode(node)) throw new Error('Missing audio node');
-  return <AudioNode id={node.id} type={node.type} data={node.data} selected={false} dragging={false}
-    draggable selectable deletable zIndex={0} isConnectable positionAbsoluteX={0} positionAbsoluteY={0} />;
-}
-function currentData() {
-  const node = useCanvasStore.getState().nodes.find((candidate) => candidate.id === 'audio-1');
-  if (!isAudioNode(node)) throw new Error('Missing audio node');
-  return node.data;
-}
-function pickPatch(patch: Record<string, unknown>) {
-  const data = currentData();
-  return Object.fromEntries(Object.keys(patch).map((key) => [key, data[key]]));
-}
-function wireRequests() {
-  return vi.mocked(apiCall).mock.calls.filter(([, options]) => options?.method === 'POST').map(([route, options]) => ({
-    method: options?.method, path: route, body: JSON.parse(JSON.stringify(options?.json)),
-  }));
-}
-beforeEach(() => {
-  vi.clearAllMocks(); scope.blocked = false; scope.message = null;
-  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
-  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
-  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected fetch'); }));
-  vi.mocked(compileWorkflowNodePrompt).mockImplementation(async (input) => input.fallbackPrompt);
-});
-afterEach(() => { cleanup(); clearWorkflowProductOperation('audio-1'); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-
-describe('AudioNode agent request wire parity', () => {
-  it.each(fixtures)('$name', async (ctx) => {
-    scope.project = ctx.projectId; scope.canvas = ctx.canvasId === 'default' ? undefined : ctx.canvasId;
-    scope.blocked = !!ctx.blocked; scope.message = ctx.blocked ? 'Model access unavailable' : null;
-    useCanvasStore.getState().setCanvasData(structuredClone(ctx.nodes), structuredClone(ctx.edges));
-    const repair = audioNodeRepairPatch(currentData(), 'unused');
-    expect(Object.keys(repair ?? {}).sort()).toStrictEqual([...(ctx.repairKeys ?? [])].sort());
-    if (!ctx.repairKeys) expect(repair).toBeNull();
-    if (ctx.productOperation) bindWorkflowProductOperation(ctx.nodeId, ctx.productOperation);
-    if (ctx.metadata) vi.mocked(compileWorkflowNodePrompt).mockImplementation(async (input) => {
-      input.onCompileMetadata?.(ctx.metadata!); return ctx.metadata!.prompt;
-    });
-    if (ctx.compiledPrompt !== undefined) vi.mocked(compileWorkflowNodePrompt).mockResolvedValue(ctx.compiledPrompt);
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={queryClient}><ReactFlowProvider><TargetNode /></ReactFlowProvider></QueryClientProvider>);
-    // Wait for the real default-voice initialization; it uses the mocked HTTP boundary.
-    if (scope.project && !currentData().voiceRef && currentData().audioKind !== 'music' && currentData().speechMode !== 'preset') {
-      await waitFor(() => expect(currentData().voiceRef).toBeDefined());
-    }
-    if (repair) {
-      const now = currentData().workflowInvalidatedAt ?? 'unused';
-      const original = ctx.nodes.find((node) => node.id === ctx.nodeId);
-      if (!isAudioNode(original)) throw new Error('Missing original audio node');
-      const expected = audioNodeRepairPatch(original.data, String(now));
-      expect(expected).not.toBeNull();
-      expect(pickPatch(expected!)).toStrictEqual(expected);
-    }
-    expect(audioNodeRepairPatch(currentData(), 'unused')).toBeNull();
-    // Ignore mount-time voice discovery when checking that the action submits nothing.
-    vi.mocked(apiCall).mockClear();
-    const state = useCanvasStore.getState();
-    const settled = { ...ctx, nodes: structuredClone(state.nodes).map((node) =>
-      node.id === ctx.nodeId && ctx.runtimePatch ? { ...node, data: { ...node.data, ...ctx.runtimePatch } } : node),
-      edges: structuredClone(state.edges) };
-    const decision = audioPromptCompileInput(settled);
-    let outcome: { status: string; output?: Record<string, unknown>; error?: unknown } | undefined;
-    const unsubscribe = canvasEventBus.subscribe('freezone/node-action-result', (event) => { if (event.requestId === ctx.name) outcome = event; });
-    try {
-      act(() => {
-        if (ctx.runtimePatch) useCanvasStore.getState().updateNodeData(ctx.nodeId, ctx.runtimePatch);
-        dispatchNodeAction({ nodeId: ctx.nodeId, action: 'generate_audio', executionMode: 'workflow', requestId: ctx.name }); });
-      await waitFor(() => expect(outcome).toBeDefined());
-      const calls = vi.mocked(compileWorkflowNodePrompt).mock.calls;
-      if (ctx.blocked) {
-        expect(calls).toHaveLength(0); expect(apiCall).not.toHaveBeenCalled(); expect(wireRequests()).toStrictEqual([]);
-        expect(currentData().generationError).toBe(scope.message); expect(outcome).toMatchObject({ status: 'success', output: {} });
-        return;
-      }
-      if (decision.kind === 'compile') {
-        expect(calls).toHaveLength(1);
-        const { nodeId, nodeData, executionSource, onCompileMetadata, ...input } = calls[0][0];
-        expect(nodeId).toBe(ctx.nodeId); expect(nodeData).toStrictEqual(settled.nodes.find((node) => node.id === ctx.nodeId)?.data);
-        expect(executionSource).toBeUndefined(); expect(onCompileMetadata).toBeTypeOf('function');
-        expect(input).toStrictEqual(decision.input);
-      } else expect(calls).toHaveLength(0);
-      if (ctx.skip) {
-        expect(decision.kind).toBe('skip');
-        if (decision.kind !== 'skip') throw new Error('Expected skip');
-        expect(decision.patch).toStrictEqual({ isGenerating: false, generationStartedAt: null, generationError: translate('node.audioNode.selectVoiceFirst') });
-        expect(decision.output).toStrictEqual({ skipped: true, reason: 'missing_custom_voice' });
-        expect(pickPatch(decision.patch)).toStrictEqual(decision.patch);
-        expect(outcome?.status).toBe('success');
-        expect(outcome?.output).toStrictEqual(decision.output); expect(apiCall).not.toHaveBeenCalled(); expect(wireRequests()).toStrictEqual([]);
-      } else if (ctx.refusal) {
-        expect(decision).toMatchObject({ kind: 'refuse', code: ctx.refusal });
-        if (decision.kind === 'refuse' && decision.code === 'no_project') {
-          expect(decision.patch).toStrictEqual({ generationError: translate('canvas.generation.missingProjectParam') });
-          expect(pickPatch(decision.patch)).toStrictEqual(decision.patch);
-        }
-        expect(outcome?.status).toBe('success'); expect(outcome?.output).toStrictEqual({});
-        expect(apiCall).not.toHaveBeenCalled(); expect(wireRequests()).toStrictEqual([]);
+describe('audio request capture', () => {
+  it('capture contains exactly the request and result fixtures', () => {
+    expect(Object.keys(expected).sort()).toStrictEqual([
+      ...fixtures.map(({ name }) => `request/${name}`),
+      ...["speech success", "music success", "direct voice success without compile metadata", "empty URL", "store audioUrl changed before publish", "empty store audioUrl retains hook URL", "nonstring store audioUrl retains hook URL", "submit rejected insufficient credits", "submit rejected plain backend error", "submit rejected envelope failure", "task failed", "task cancelled", "poll timeout", "job-result call rejects", "error with empty message", "non-Error thrown", "non-Error voice prerequisite", "voice prerequisite failure", "voice prerequisite task failure", "voice prerequisite envelope failure", "voice prerequisite job-result failure", "compile failure", "missing custom voice skip published as success"].map(name => `result/${name}`),
+    ].sort());
+  });
+  it.each(fixtures)('$name', fixture => {
+    const E = expected[`request/${fixture.name}` as keyof typeof expected];
+    if (!('mountData' in E)) throw new Error('Expected request capture');
+    // JSON imports widen the captured speechMode/voice scope string literals.
+    const mountData = E.mountData as AudioNodeData;
+    const repairs = [audioMusicKindRepairPatch(mountData, ISO),
+      audioMusicLengthRepairPatch(mountData), audioSpeechInstructionRepairPatch(mountData, ISO)]
+      .filter(patch => patch !== null);
+    exact(repairs, E.repairWrites);
+    const ctx: AudioGenerationRequestContext = { ...fixture,
+      // Store hydration supplies default names before the captured compiler call.
+      nodes: fixture.nodes.map(node => node.id === 'audio-1' ? { ...node, data: E.data }
+        : { ...node, data: { displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.textAnnotation], ...node.data } }),
+    };
+    const decision = audioPromptCompileInput(ctx);
+    const compileInput = decision.kind === 'compile' && !fixture.blocked ? decision.input : null;
+    // The browser JSON capture omits undefined optional content fields.
+    exact(JSON.parse(JSON.stringify(compileInput)), E.compileInput);
+    const writes: Partial<AudioNodeData>[] = [];
+    const requests: unknown[] = [];
+    let hookOutput: AudioGenerationHookOutput = {};
+    let hookError: AudioGenerationHookError | undefined;
+    if (decision.kind === 'refuse' && ['generation_in_progress', 'not_audio_node'].includes(decision.code)) {
+      // Busy precedes access and all prompt guards.
+    } else if (fixture.blocked) {
+      writes.push({ generationError: 'Model access unavailable' });
+    } else if (decision.kind === 'skip') {
+      writes.push(decision.patch); hookOutput = decision.output;
+    } else if (decision.kind === 'refuse') {
+      if (decision.code === 'no_project') writes.push(decision.patch);
+    } else {
+      writes.push(audioGenerationStartPatch(1234567890000));
+      const metadata = decision.kind === 'compile' ? fixture.metadata : undefined;
+      if (metadata) writes.push(audioPromptCompileMetadataPatch(ctx, metadata, ISO));
+      const prompt = decision.kind === 'literal' ? decision.prompt
+        : metadata?.prompt ?? fixture.compiledPrompt ?? decision.input.fallbackPrompt;
+      const build = buildAudioGenerationRequest({ ...ctx, prompt,
+        compileMode: metadata?.mode ?? null, recipeIds: metadata?.recipeIds ?? [] });
+      if (!build.ok) {
+        hookError = audioGenerationHookError(new Error(build.message));
+        writes.push(...audioGenerationOutcomePatch({ outcome: { kind: 'failed', ...hookError }, translate }).patches);
       } else {
-        if (decision.kind !== 'compile' && decision.kind !== 'literal') throw new Error('Expected prompt');
-        const prompt = ctx.metadata?.prompt ?? ctx.compiledPrompt ?? (decision.kind === 'compile' ? decision.input.fallbackPrompt : decision.prompt);
-        const result = buildAudioGenerationRequest({ ...settled, prompt, compileMode: ctx.metadata?.mode ?? null, recipeIds: ctx.metadata?.recipeIds ?? [] });
-        if (ctx.failure) {
-          expect(result).toMatchObject({ ok: false, code: 'no_speakable_text' });
-          if (result.ok) throw new Error('Expected failure');
-          expect(currentData().generationError).toBe(result.message); expect(outcome?.status).toBe('error'); expect(wireRequests()).toStrictEqual([]);
-        } else {
-          expect(result.ok).toBe(true);
-          if (!result.ok) throw new Error(result.message);
-          expect(wireRequests()).toStrictEqual(result.requests); expect(result.requests).toHaveLength(1);
-          expect(result.requests[0].body).toMatchObject(ctx.expected ?? {});
-          if (currentData().audioKind !== 'music') expect(result.requests[0].body).not.toHaveProperty('input');
-          if (ctx.name === 'music truncation 4101 code units') expect(String(result.requests[0].body.input)).toHaveLength(4101);
-          if (ctx.name === 'music explicit kind') expect(result.requests[0].body).not.toHaveProperty('music_length_ms');
-          expect(result.requests[0].body).not.toHaveProperty('model_params');
-          expect(result.requests[0].body).not.toHaveProperty('target_episode'); expect(result.requests[0].body).not.toHaveProperty('target_beat');
-          if (!ctx.productOperation?.generationAttemptId) expect(result.requests[0].body).not.toHaveProperty('product_operation_id');
-          expect(outcome).toMatchObject({ status: 'success', output: { audioUrl: '/static/audio.mp3' } });
-        }
-        if (ctx.metadata) {
-          const compiledAt = currentData().workflowRecipeCompiledAt;
-          expect(compiledAt).toBeTypeOf('string');
-          const patch = audioPromptCompileMetadataPatch(settled, ctx.metadata, String(compiledAt));
-          expect(Object.keys(patch).sort()).toStrictEqual(['workflowRecipeCompileMode', 'workflowRecipeCompiledAt', 'workflowRecipeCompiledPrompt', 'text', 'workflowRecipeIds'].sort());
-          expect(pickPatch(patch)).toStrictEqual(patch);
-        }
+        requests.push(...build.requests);
+        writes.push(audioGenerationAcceptedPatch({ task_key: 'audio-task', job_id: 'audio-job',
+          task_type: build.requests[0].path.endsWith('/speech') ? 'freezone_audio_speech' : 'freezone_audio_eleven_music' }));
+        const outcome = audioGenerationOutcomePatch({ outcome: { kind: 'completed', url: '/static/audio.mp3' }, translate });
+        writes.push(...outcome.patches);
+        if (!('hookOutput' in outcome)) throw new Error('Expected completion');
+        hookOutput = outcome.hookOutput;
       }
-      expect(apiClient).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
-    } finally { unsubscribe(); queryClient.clear(); }
+    }
+    exact(writes, E.writes); exact(requests, E.requests);
+    const result = audioGenerationActionResult({ ...(hookError ? { hookError } : { hookOutput }),
+      latestNodeData: Object.assign({}, E.data, ...writes) });
+    exact({ requestId: fixture.name, nodeId: 'audio-1', action: 'generate_audio', ...result }, E.result);
   });
 });
-
 describe('pure audio boundaries', () => {
   it('wrong node type', () => {
     const ctx = { ...fixtures[0], nodes: [source('audio-1', 'Text')] };

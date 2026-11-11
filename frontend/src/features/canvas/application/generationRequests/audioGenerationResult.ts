@@ -11,11 +11,11 @@ export interface AudioGenerationTaskRef {
   task_type: string;
   job_id: string;
 }
-export interface AudioGenerationHookOutput {
+export type AudioGenerationHookOutput = {
   audioUrl?: string;
   skipped?: boolean;
   reason?: string;
-}
+};
 export interface AudioGenerationHookError {
   /** Error.message for Errors, String(thrown) otherwise; never the translated display. */
   message: string;
@@ -23,24 +23,29 @@ export interface AudioGenerationHookError {
   /** isVoicePrerequisiteError(thrown), including its String conversion for non-Errors. */
   voicePrerequisite: boolean;
 }
+export function audioGenerationHookError(thrown: unknown): AudioGenerationHookError {
+  return { message: thrown instanceof Error ? thrown.message : String(thrown),
+    isError: thrown instanceof Error, voicePrerequisite: isVoicePrerequisiteError(thrown) };
+}
+
 export type AudioGenerationOutcome = { kind: 'completed'; url: string }
   | ({ kind: 'failed' } & AudioGenerationHookError);
 export type AudioGenerationOutcomeResult = {
   patches: Partial<AudioNodeData>[];
 } & ({ hookOutput: AudioGenerationHookOutput } | { hookError: AudioGenerationHookError });
 
-/** useAudioGeneration.ts:163: start clears only generationError, retaining previous media/diagnostics/handles. */
+/** Start clears only generationError, retaining previous media/diagnostics/handles. */
 export function audioGenerationStartPatch(startedAtMs: number): Partial<AudioNodeData> {
   return { isGenerating: true, generationStartedAt: startedAtMs, generationError: null };
 }
 
-/** useAudioGeneration.ts:259: persisted descriptor only, without resetting loading or previous media. */
+/** Persisted descriptor only, without resetting loading or previous media. */
 export function audioGenerationAcceptedPatch(ref: AudioGenerationTaskRef) {
   return generationTaskDescriptor(ref);
 }
 
 /**
- * audioVoicePrerequisite.ts:12 matches an unanchored, case-sensitive message:
+ * The voice prerequisite matcher matches an unanchored, case-sensitive message:
  * voice unconfigured; missing ... voice; configure or select voice first; or
  * upload or record ... audio. Each `.*` excludes line terminators. No error
  * class, status, structured code, translated display or diagnostics are checked.
@@ -60,25 +65,12 @@ const clearedTaskFields = {
 };
 
 /**
- * Apply start, any audioPromptCompileMetadataPatch (useAudioGeneration.ts:214),
- * accepted, then these patches in order. Compilation is skipped for the literal
- * voice recipe (useAudioGeneration.ts:189); early request skips never start.
- *
- * useAudioGeneration.ts:260-272 ignores the completion payload and fetches the
- * audio-specific job result; completed.url is that result.url, including ''.
- * Success clears the task handle/loading, resets durationMs, stores even an empty
- * audioUrl, clears only generationError, and returns {} for an empty URL.
- * Failure (useAudioGeneration.ts:273-282) also clears the handle/loading but
- * retains media/duration; Error.message is written verbatim, even when empty.
- * Non-Errors write the translated fallback but are rethrown unchanged; hookError
- * retains String(thrown) for publication (nodeActionResult.ts:107).
- * Cancellation and poll timeout have no special handling here: their handles
- * are cleared, preventing handle-based resumption despite the timeout contract
- * in api/tasks.ts:65. No phase writes generationErrorDetails/RequestId or clears
- * workflowResultStale (useAudioGeneration.ts:163,214,259,266,278).
- *
- * AudioNode.tsx:129-143 then handles voice prerequisites with a second write and
- * a successful skip, including agent_instruction; other failures publish errors.
+ * Apply start, compile metadata (except literal voice recipes), accepted, then outcome patches.
+ * Completion uses the fetched job URL, including an empty string, ignoring the task payload.
+ * Both outcomes clear task/loading fields and retain diagnostics and workflow staleness.
+ * Failure retains media/duration and writes Error.message verbatim, even when empty;
+ * non-Errors use the translated fallback. Cancellation and timeout also clear handles.
+ * The hook writes the first patch; the subscriber applies the voice-prerequisite skip patch.
  */
 export function audioGenerationOutcomePatch(input: {
   outcome: AudioGenerationOutcome;
@@ -100,12 +92,10 @@ export function audioGenerationOutcomePatch(input: {
 }
 
 /**
- * AudioNode.tsx:114-143: skipped hook output passes through unchanged. Otherwise
- * the latest truthy string audioUrl overrides the hook URL; empty/nonstring store
- * values do not erase the hook URL. Caller supplies latestNodeData only for an
- * audio node (undefined for a removed node or changed type), as at AudioNode.tsx:118.
- * No generationError field is consulted on successful hook completion.
- * Error.message / String(thrown) is published exactly (nodeActionResult.ts:107).
+ * Skipped output passes through. Otherwise the latest truthy string audioUrl overrides
+ * the hook URL; empty/nonstring values do not erase it. The caller supplies latest data
+ * only for an audio node. Successful completion ignores generationError; failures publish
+ * the original Error.message or String(thrown).
  */
 export function audioGenerationActionResult(input: {
   latestNodeData: Record<string, unknown> | undefined;

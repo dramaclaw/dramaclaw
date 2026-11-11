@@ -40,7 +40,7 @@ export type TextGenerationRequestResult =
 
 /**
  * Agent generate_text only: a paid synchronous model call returning { content }.
- * Browser generateFreezoneRecipeText uses RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000
+ * Browser transport uses RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000
  * (600000 ms), rather than the shared client's 30s timeout. Timeout is transport
  * configuration, not a JSON body field. No separate compilation or task handle.
  *
@@ -49,13 +49,27 @@ export type TextGenerationRequestResult =
  * and publish failure without an API call. It is not a silent validation refusal.
  */
 export function buildTextGenerationRequest(ctx: TextGenerationRequestContext): TextGenerationRequestResult {
+  const contents = upstreamNodesInEdgeOrder(ctx.nodes, ctx.edges, ctx.nodeId).map(extractUpstreamContent);
+  return buildRecipeTextRequest({
+    nodeData: ctx.nodeData,
+    nodePrompt: typeof ctx.nodeData.content === 'string' ? ctx.nodeData.content : '',
+    upstreamText: selectWorkflowUpstreamText(ctx.nodeData, contents, joinUpstreamText(contents)),
+    productOperation: ctx.productOperation,
+  });
+}
+
+export function buildRecipeTextRequest(ctx: {
+  nodeData: unknown;
+  nodePrompt: string;
+  upstreamText: string;
+  requiredOutputContext?: string;
+  productOperation: WorkflowProductOperationContext | null;
+}): TextGenerationRequestResult {
   const catalog = readCatalog(ctx.nodeData);
   const recipeId = text(catalog?.recipeId);
   if (!recipeId) {
     return { ok: false, code: 'missing_recipe', message: '文本节点缺少 Recipe' }; // i18n-exempt -- exact generateWorkflowText error
   }
-  const contents = upstreamNodesInEdgeOrder(ctx.nodes, ctx.edges, ctx.nodeId).map(extractUpstreamContent);
-  const upstreamText = selectWorkflowUpstreamText(ctx.nodeData, contents, joinUpstreamText(contents));
   const pipeline = recipePipeline(catalog?.recipePipeline);
   const skill = skillRuntimeContext(catalog);
   return { ok: true, requests: [{ method: 'POST', path: 'freezone/recipes/generate-text', body: {
@@ -68,9 +82,9 @@ export function buildTextGenerationRequest(ctx: TextGenerationRequestContext): T
     skill_version: skill.skillVersion ?? '',
     confirmed_inputs: skill.confirmedInputs ?? {},
     node_kind: 'text',
-    node_prompt: typeof ctx.nodeData.content === 'string' ? ctx.nodeData.content : '',
+    node_prompt: ctx.nodePrompt,
     user_goal: text(catalog?.userGoal) || text(catalog?.promptBuilder?.userGoal),
-    upstream_text: [upstreamText].filter(Boolean).join('\n\n'),
+    upstream_text: [ctx.requiredOutputContext, ctx.upstreamText].filter(Boolean).join('\n\n'),
     reference_media: [],
   } }] };
 }

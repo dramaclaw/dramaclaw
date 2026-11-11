@@ -75,7 +75,7 @@ function upscaleOutcome(value: unknown): pure.VideoUpscaleOutcome {
     default: return invalidRequest('Unknown upscale outcome');
   }
 }
-function durationRejection(value: unknown): NonNullable<Extract<pure.VideoGenerationRequestResult, { ok: false }>['rejection']> {
+function durationRejection(value: unknown): Extract<pure.VideoGenerationRequestResult, { code: 'reference_duration_invalid' }>['rejection'] {
   const input = p.record(value);
   const kind = p.choice(input.kind, ['tooShort', 'tooLong', 'totalTooShort', 'totalTooLong']);
   p.fields(input, kind === 'tooShort' || kind === 'tooLong' ? ['kind', 'clips'] : ['kind', 'clips', 'totalMs', 'limitMs']);

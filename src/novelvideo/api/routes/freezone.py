@@ -8254,75 +8254,6 @@ def _copy_image_matching_existing_target(source_path: Path, target: Path) -> dic
         }
 
 
-def _start_freezone_video_compose_task(
-    *,
-    username: str,
-    project: str,
-    project_dir: Path,
-    job_id: str,
-    body: FreezoneVideoComposeRequest,
-    resolved_tracks: list[dict],
-) -> None:
-    task_type = "freezone_video_compose"
-    task_manager = get_task_manager()
-    task_manager.create_task(
-        task_type, username, project, episode=0, scope=job_id, status="starting"
-    )
-
-    async def _runner() -> None:
-        try:
-            task_manager.update_progress(
-                task_type,
-                username,
-                project,
-                episode=0,
-                scope=job_id,
-                progress=0.05,
-                current_task="validating_timeline",
-                logs=["开始合成视频时间线"],
-            )
-            from novelvideo.freezone.jobs import run_freezone_video_compose
-
-            output_path = await run_freezone_video_compose(
-                project_dir=project_dir,
-                job_id=job_id,
-                title=body.title,
-                canvas_id=body.canvas_id,
-                resolution=body.resolution,
-                fps=body.fps,
-                background_color=body.background_color,
-                keep_original_audio=body.keep_original_audio,
-                tracks=resolved_tracks,
-            )
-            task_manager.complete_task(
-                task_type,
-                username,
-                project,
-                episode=0,
-                scope=job_id,
-                result={
-                    "output_format": "mp4",
-                    "output_path": str(output_path),
-                    "cover_url": body.cover_url or None,
-                },
-                current_task="completed",
-                logs=["视频合成完成"],
-            )
-        except Exception as exc:
-            task_manager.fail_task(
-                task_type,
-                username,
-                project,
-                episode=0,
-                scope=job_id,
-                error=str(exc),
-                current_task="failed",
-                logs=[f"错误: {exc}"],
-            )
-
-    asyncio.create_task(_runner())
-
-
 def _start_freezone_video_erase_task(
     *,
     username: str,
@@ -12420,34 +12351,25 @@ async def freezone_video_compose(
 
     try:
         job_id = _new_job_id()
-        if ctx is not None:
-            return await _enqueue_or_start_freezone_media_job(
-                ctx=ctx,
-                username=username,
-                project=project_name,
-                project_dir=project_dir,
-                task_type="freezone_video_compose",
-                job_id=job_id,
-                payload={
-                    "title": body.title,
-                    "canvas_id": body.canvas_id,
-                    "node_id": body.node_id,
-                    "resolution": body.resolution,
-                    "fps": body.fps,
-                    "background_color": body.background_color,
-                    "keep_original_audio": body.keep_original_audio,
-                    "cover_url": body.cover_url,
-                    "tracks": resolved_tracks,
-                    "studio_export": studio_film is not None,
-                },
-            )
-        _start_freezone_video_compose_task(
+        return await _enqueue_or_start_freezone_media_job(
+            ctx=ctx,
             username=username,
             project=project_name,
             project_dir=project_dir,
+            task_type="freezone_video_compose",
             job_id=job_id,
-            body=body,
-            resolved_tracks=resolved_tracks,
+            payload={
+                "title": body.title,
+                "canvas_id": body.canvas_id,
+                "node_id": body.node_id,
+                "resolution": body.resolution,
+                "fps": body.fps,
+                "background_color": body.background_color,
+                "keep_original_audio": body.keep_original_audio,
+                "cover_url": body.cover_url,
+                "tracks": resolved_tracks,
+                "studio_export": studio_film is not None,
+            },
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(
@@ -12456,13 +12378,6 @@ async def freezone_video_compose(
         raise HTTPException(
             503, f"failed to start freezone video compose task: {exc}"
         ) from exc
-
-    return _accepted_job_response(
-        task_type="freezone_video_compose",
-        username=username,
-        project=project_name,
-        job_id=job_id,
-    )
 
 
 @router.post(

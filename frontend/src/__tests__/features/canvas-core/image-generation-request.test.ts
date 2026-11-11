@@ -1,78 +1,19 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { apiCall, apiClient } from '@/api/client';
-import { fetchFreezoneImageModels, type FreezoneRecipeCompileMetadata } from '@/api/ops';
+import { afterAll, describe, expect, it } from 'vitest';
+import type { FreezoneRecipeCompileMetadata } from '@/api/ops';
 import {
-  buildImageGenerationRequest,
-  imagePromptCompileInput,
-  imagePromptCompileMetadataPatch,
+  buildImageGenerationRequest, imagePromptCompileInput, imagePromptCompileMetadataPatch,
   type ImageGenerationRequestContext,
 } from '@/features/canvas/application/generationRequests';
-import { compileWorkflowNodePrompt } from '@/features/canvas/application/workflowRecipeRuntime';
-import {
-  bindWorkflowProductOperation,
-  clearWorkflowProductOperation,
-} from '@/features/canvas/application/workflowExecutionActivity';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import type { ModelOption } from '@/features/canvas/domain/modelOptions';
-import { getFreezoneImageModelsSnapshot } from '@/features/canvas/hooks/useFreezoneImageModels';
-import { useImageGenerationForm } from '@/features/canvas/nodes/shared/useImageGenerationForm';
-import { useCanvasStore } from '@/stores/canvasStore';
+import { assertCaptureCoverage, assertObserved, expectedEntries, normalized } from './imageGenerationTestKit';
 
-const mocks = vi.hoisted(() => ({
-  projectId: '',
-  canvasId: 'canvas-7',
-  catalog: [] as ModelOption[],
-  taskSequence: 0,
-}));
-
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: unknown) => typeof fallback === 'string' ? fallback : key,
-    i18n: { language: 'en' },
-  }),
-}));
-vi.mock('@/lib/queries/generation-credit-cost', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/queries/generation-credit-cost')>()),
-  useGenerationCreditCost: () => ({ data: undefined, error: null }),
-}));
-vi.mock('@/lib/url-params', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/url-params')>()),
-  readUrl: () => ({ project: mocks.projectId, canvas: mocks.canvasId }),
-}));
-vi.mock('@/api/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/api/client')>()),
-  apiClient: vi.fn((path: string, options: Parameters<typeof apiCall>[1]) => ({
-    json: async () => ({ ok: true, data: await apiCall(path, options) }),
-  })),
-  apiCall: vi.fn(async (path: string) => {
-    if (path.endsWith('/freezone/upload')) return { url: uploadedReference };
-    if (!path.endsWith('/freezone/gen')) throw new Error(`Unexpected API call: ${path}`);
-    const sequence = ++mocks.taskSequence;
-    return { task_key: `task-${sequence}`, task_type: 'freezone_gen', job_id: `job-${sequence}` };
-  }),
-}));
-vi.mock('@/api/ops', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/api/ops')>()),
-  fetchFreezoneImageModels: vi.fn(async () => mocks.catalog),
-  listFreezoneStyleTemplates: vi.fn(async () => ({ templates: [], assetBase: '' })),
-  fetchFreezoneCameraOptions: vi.fn(async () => null),
-  listFreezoneGenerationHistory: vi.fn(async () => []),
-}));
-vi.mock('@/api/tasks', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/api/tasks')>()),
-  awaitTaskCompletion: vi.fn(async (taskKey: string) => ({
-    result: { output_url: `/static/${taskKey}.png` },
-  })),
-}));
-vi.mock('@/features/canvas/application/workflowRecipeRuntime', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/features/canvas/application/workflowRecipeRuntime')>()),
-  compileWorkflowNodePrompt: vi.fn(async (input) => input.fallbackPrompt),
-}));
-
+const mentionInput = expectedEntries['request/matching image mentions'].compileInput;
+if (!mentionInput || typeof mentionInput !== 'object' || !('nodePrompt' in mentionInput)
+  || typeof mentionInput.nodePrompt !== 'string') throw new Error('Missing mention fixture prompt');
+const mentionPrompt = mentionInput.nodePrompt;
 const ownReference = 'https://media.example.test/own.png';
 const upstreamReference = 'https://media.example.test/upstream.png';
 const uploadedReference = 'https://media.example.test/uploads/ref-1.png?sig=1';
@@ -278,10 +219,10 @@ const fixtures: Fixture[] = [
     }, executionSource === 'workflow' || productOperation?.generationAttemptId ? 1 : 3,
   ))),
   fixture('matching image mentions', {}, withSources({
-    referenceImageUrl: ownReference, prompt: 'Blend @图片1 with @图片2',
+    referenceImageUrl: ownReference, prompt: mentionPrompt,
   }, [sourceNode('image', CANVAS_NODE_TYPES.upload, { imageUrl: upstreamReference })]), {
     gen_mode: 'image_to_image', reference_urls: [ownReference, upstreamReference],
-  }, 1, 'Blend @图片1 with @图片2'),
+  }, 1, mentionPrompt),
   {
     ...fixture('reference limit blocks submit', {}, {
       ...withSources({ referenceImageUrl: ownReference }, [
@@ -298,171 +239,48 @@ const fixtures: Fixture[] = [
   },
 ];
 
-function wire(value: unknown): unknown {
-  return JSON.parse(JSON.stringify(value));
-}
-function recordedRequests() {
-  return vi.mocked(apiCall).mock.calls.filter(([path]) => path.endsWith('/freezone/gen')).map(([path, options]) => ({
-    method: options?.method, path, body: wire(options?.json),
-  }));
-}
 
-beforeEach(() => {
-  clearWorkflowProductOperation('img-1');
-  mocks.taskSequence = 0;
-  vi.mocked(apiCall).mockClear();
-  vi.mocked(apiClient).mockClear();
-  vi.mocked(fetchFreezoneImageModels).mockClear();
-  vi.mocked(compileWorkflowNodePrompt).mockReset();
-  vi.mocked(compileWorkflowNodePrompt).mockImplementation(async (input) => input.fallbackPrompt);
-  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Network is forbidden in request parity tests'); }));
-});
-afterEach(() => {
-  cleanup();
-  clearWorkflowProductOperation('img-1');
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
-});
-
-describe('image generation request parity', () => {
-  it.each(fixtures)('$name', async (input) => {
-    if (input.compileMetadata) {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date(compiledAt));
-      vi.mocked(compileWorkflowNodePrompt).mockImplementationOnce(async (compileInput) => {
-        compileInput.onCompileMetadata?.(compileMetadata);
-        return compileMetadata.prompt;
-      });
-    }
-    mocks.projectId = input.projectId;
-    mocks.catalog = input.imageModels;
-    mocks.canvasId = input.canvasId;
-    useCanvasStore.getState().setCanvasData(structuredClone(input.nodes), structuredClone(input.edges));
-    if (input.productOperation) bindWorkflowProductOperation(input.nodeId, input.productOperation);
-    const { result } = renderHook(() => useImageGenerationForm('img-1'));
-    await waitFor(() => {
-      expect(fetchFreezoneImageModels).toHaveBeenCalledWith(input.projectId);
-      const snapshot = getFreezoneImageModelsSnapshot(input.projectId);
-      expect(snapshot.isLoading).toBe(false);
-      expect(snapshot.isFallback).toBe(false);
-      expect(snapshot.models).toStrictEqual(input.imageModels);
-      expect(result.current.formProps.modelId).toBe(
-        input.imageModels.find((model) => model.id === input.nodes.find((node) => node.id === 'img-1')?.data.model)?.id
-        ?? input.imageModels[0].id,
-      );
-      expect(result.current.submitDisabled).toBe(Boolean(input.blocked));
-    });
-    // Mount effects may seed the draft, but must preserve the stored prompt.
-    expect(useCanvasStore.getState().nodes.find((node) => node.id === input.nodeId)?.data.prompt)
-      .toBe(input.nodes.find((node) => node.id === input.nodeId)?.data.prompt);
-    let submitResult: Awaited<ReturnType<typeof result.current.submit>>;
-    await act(async () => {
-      submitResult = await result.current.submit({
-        completionMode: 'completed', executionSource: input.executionSource, attachStoryFrame: false,
-      });
-    });
-    expect(result.current.isGenerating).toBe(false);
+describe('image generation request literals', () => {
+  it.each(fixtures)('$name', (input) => {
+    const key = `request/${input.name}`;
+    const before = structuredClone(input);
+    const prompt = input.expectedPrompt;
     if (input.blocked) {
-      expect(submitResult).toBeUndefined();
-      expect(recordedRequests()).toStrictEqual([]);
-      expect(apiCall).not.toHaveBeenCalled();
-      expect(compileWorkflowNodePrompt).not.toHaveBeenCalled();
-      expect(buildImageGenerationRequest({ ...input, prompt: input.expectedPrompt })).toStrictEqual({
+      expect(buildImageGenerationRequest({ ...input, prompt })).toStrictEqual({
         ok: false, code: 'reference_limit_exceeded',
         message: 'The selected model supports at most 1 reference images.',
       });
+      assertObserved(key, { requests: [] });
       return;
     }
-    expect(compileWorkflowNodePrompt).toHaveBeenCalledTimes(1);
-    const [compileInput] = vi.mocked(compileWorkflowNodePrompt).mock.calls[0];
-    const { nodeId, nodeData, executionSource, onCompileMetadata, ...promptInput } = compileInput;
-    expect(nodeId).toBe(input.nodeId);
-    expect(nodeData).toStrictEqual(input.nodes.find((node) => node.id === input.nodeId)?.data);
-    expect(executionSource).toBe(input.executionSource);
-    expect(onCompileMetadata).toBeTypeOf('function');
-    expect(promptInput).toStrictEqual(imagePromptCompileInput(input));
-    if (input.name.endsWith('draft')) {
-      expect(promptInput.nodePrompt).toBe(input.expectedPrompt);
-      expect(promptInput.upstreamText).toBe('Morning light');
-      expect(promptInput.fallbackPrompt).toBe(input.expectedPrompt);
-    }
-    const prompt = await vi.mocked(compileWorkflowNodePrompt).mock.results[0].value;
-    expect(prompt).toBe(input.expectedPrompt);
+    const compileInput = imagePromptCompileInput(input);
+    assertObserved(key, { compileInput });
     if (input.compileMetadata) {
-      const patch = imagePromptCompileMetadataPatch(input.compileMetadata, compiledAt);
-      expect(patch).toStrictEqual({
-        workflowRecipeCompileMode: 'model', workflowRecipeCompiledAt: '2026-11-11T04:05:06.000Z',
-        workflowRecipeCompiledPrompt: 'Compiled recipe image', prompt: 'Compiled recipe image',
-        workflowRecipeIds: ['recipe-1', 'recipe-2'],
+      assertObserved(key, {
+        metadataPatch: imagePromptCompileMetadataPatch(input.compileMetadata, compiledAt),
       });
-      const stored = useCanvasStore.getState().nodes.find((node) => node.id === input.nodeId)?.data;
-      expect(Object.fromEntries(Object.keys(patch).map((key) => [key, stored?.[key]]))).toStrictEqual(patch);
     }
     let buildInput = input;
     if (input.inlineUpload) {
       expect(buildImageGenerationRequest({ ...input, prompt })).toStrictEqual({
-        ok: false, code: 'inline_media_reference', message: 'Upload inline media before building an image request.',
+        ok: false, code: 'inline_media_reference',
+        message: 'Upload inline media before building an image request.',
       });
-      const uploads = vi.mocked(apiCall).mock.calls.filter(([path]) => path.endsWith('/freezone/upload'));
-      expect(uploads).toHaveLength(1);
-      const [[path, options]] = uploads;
-      expect(path).toBe(`projects/${encodeURIComponent(input.projectId)}/freezone/upload`);
-      expect(options?.method).toBe('POST');
-      expect(options?.body).toBeInstanceOf(FormData);
-      if (!(options?.body instanceof FormData)) throw new Error('Expected multipart upload');
-      const file = options.body.get('file');
-      expect(file).toBeInstanceOf(Blob);
-      if (!(file instanceof Blob)) throw new Error('Expected image blob');
-      expect(file.type).toBe('image/png');
-      expect(file.size).toBe(1);
-      expect(vi.mocked(apiCall).mock.calls[0][0]).toBe(path);
       buildInput = { ...input, nodes: input.nodes.map((node) => node.id === input.nodeId
         ? { ...node, data: { ...node.data, referenceImageUrl: uploadedReference } } : node) };
     }
     const built = buildImageGenerationRequest({ ...buildInput, prompt });
     expect(built.ok).toBe(true);
     if (!built.ok) throw new Error(built.message);
-    const actual = recordedRequests();
-    expect(actual).toStrictEqual(wire(built.requests));
-    expect(actual).toHaveLength(input.expectedRequestCount);
-    for (const request of actual) {
-      expect(request.body).toMatchObject({ ...input.expectedBody, prompt: input.expectedPrompt });
-    }
-    if (input.name === 'own reference only') {
-      expect(actual).toStrictEqual([{
-        method: 'POST', path: 'projects/parity%2Fown%20reference%20only/freezone/gen',
-        body: {
-          prompt: 'A cat on a windowsill', aspect_ratio: '16:9', image_size: '2K',
-          reference_urls: ['https://media.example.test/own.png'], camera: null, style: null,
-          provider: 'openai', model: 'test-image-api', model_id: 'openai/test-image',
-          gen_mode: 'image_to_image', quality: 'medium', canvas_id: 'canvas-7', node_id: 'img-1',
-        },
-      }]);
-    }
-    if (input.name === 'default fresh node') {
-      expect(promptInput).toStrictEqual({
-        nodeKind: 'image', nodePrompt: 'A cat on a windowsill', upstreamText: '',
-        upstreamContents: [], fallbackPrompt: 'A cat on a windowsill', referenceMedia: [],
-      });
-      expect(actual).toStrictEqual([{
-        method: 'POST', path: 'projects/parity%2Fdefault%20fresh%20node/freezone/gen',
-        body: {
-          prompt: 'A cat on a windowsill', aspect_ratio: '16:9', image_size: '2K',
-          reference_urls: [], camera: null, style: null, provider: 'openai', model: 'test-image-api',
-          model_id: 'openai/test-image', gen_mode: 'text_to_image', quality: 'medium',
-          canvas_id: 'canvas-7', node_id: 'img-1',
-        },
-      }]);
-    }
-    if (!('variant_count' in input.expectedBody)) {
-      for (const request of actual) expect(request.body).not.toHaveProperty('variant_count');
-    }
-    if (!input.productOperation?.generationAttemptId) {
-      for (const request of actual) {
-        expect(request.body).not.toHaveProperty('product_operation_id');
-        expect(request.body).not.toHaveProperty('generation_attempt_id');
-      }
-    }
+    const requests: unknown = JSON.parse(JSON.stringify(built.requests));
+    assertObserved(key, { requests });
+    expect(JSON.stringify(requests)).toBe(JSON.stringify(expectedEntries[key].requests));
+    expect(normalized(input)).toStrictEqual(normalized(before));
+  });
+  it('covers every captured request fixture', () => {
+    expect(fixtures.map(({ name }) => `request/${name}`).sort()).toStrictEqual(
+      Object.keys(expectedEntries).filter(key => key.startsWith('request/')).sort(),
+    );
   });
 });
 
@@ -476,7 +294,6 @@ describe('pure request validation', () => {
       ok: false, code: 'not_image_generation_node', message: 'The target node must be an image generation node.',
     });
     expect(() => imagePromptCompileInput(input)).toThrow(new Error('The target node must be an image generation node.'));
-    expect(apiCall).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -491,7 +308,6 @@ describe('pure request validation', () => {
       expected: { ok: false, code: 'inline_media_reference', message: 'Upload inline media before building an image request.' } },
   ])('$name', ({ input, prompt, expected }) => {
     expect(buildImageGenerationRequest({ ...input, prompt })).toStrictEqual(expected);
-    expect(apiCall).not.toHaveBeenCalled();
   });
 
   it('uses the compiled prompt verbatim and leaves its inputs unchanged', () => {
@@ -533,3 +349,5 @@ describe('pure request validation', () => {
       .toStrictEqual({ ok: false, code: 'no_effective_prompt', message: 'An image prompt or upstream text is required.' });
   });
 });
+
+afterAll(() => assertCaptureCoverage(['request']));

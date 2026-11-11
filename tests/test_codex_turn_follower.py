@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import threading
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -324,7 +325,7 @@ class Socket:
 @pytest.mark.parametrize("action", [
     "complete", "switch", "cancel", "busy", "disconnect", "bridge", "finish_race", "history",
 ])
-async def test_websocket_follows_persisted_turn(runtime, monkeypatch, tmp_path, action):
+async def test_websocket_follows_persisted_turn(runtime, monkeypatch, tmp_path, action, caplog):
     if action == "bridge":
         runtime = ChatScope(
             kind="project", id="project-1", surface="freezone",
@@ -483,9 +484,19 @@ async def test_websocket_follows_persisted_turn(runtime, monkeypatch, tmp_path, 
             assert service._load_active_codex_turns("test-user")[key]["turn_id"] == "turn-1"
             return
         if action == "busy":
+            caplog.clear()
+            caplog.set_level(logging.INFO, logger=routes.logger.name)
             await socket.incoming.put({"type": "chat.message", "text": "hello", "turn_id": "new"})
             busy = await socket.frame("chat.busy")
             assert busy["active_turn_id"] == "business-1"
+            assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+            assert not any(record.exc_info for record in caplog.records)
+            busy_logs = [
+                record for record in caplog.records if "chat turn busy" in record.getMessage()
+            ]
+            assert len(busy_logs) == 1
+            assert busy_logs[0].levelno == logging.INFO
+            assert busy_logs[0].getMessage() == "chat turn busy username=test-user turn_id=new"
         if action == "history":
             await socket.incoming.put({
                 "type": "scope.set", "scope": {"kind": "home"}, "history_before": "older",

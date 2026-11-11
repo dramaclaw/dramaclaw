@@ -14,6 +14,7 @@
 - worker 死亡不影响结果获取
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -1417,13 +1418,13 @@ class TaskStateManager:
             celery_stale_before = celery_stale_before.replace("Z", ".000000Z")
         try:
             inline_rows = conn.execute(
-                "SELECT task_key, task_id, "
+                "SELECT *, "
                 "json_extract(result_json, '$.task_metadata.owner') AS owner "
                 "FROM task_states WHERE status IN ('submitting', 'queued', 'running') "
                 "AND json_valid(result_json) "
                 "AND json_extract(result_json, '$.task_metadata.backend') = 'inline'"
             ).fetchall()
-            inline_changed = 0
+            claimed_inline_rows = []
             for row in inline_rows:
                 try:
                     owner = json.loads(row["owner"])
@@ -1446,7 +1447,8 @@ class TaskStateManager:
                         row["task_id"],
                     ),
                 )
-                inline_changed += result.rowcount
+                if result.rowcount == 1:
+                    claimed_inline_rows.append(row)
             celery_rows = conn.execute(
                 "SELECT task_key, task_id FROM task_states "
                 "WHERE status IN ('submitting', 'queued', 'running') "
@@ -1483,7 +1485,17 @@ class TaskStateManager:
             conn.rollback()
             logger.warning("stale task sweep skipped: %s", exc)
             return None
-        return inline_changed + celery_changed
+        if claimed_inline_rows:
+            from novelvideo.task_backend.run_core import release_interrupted_inline_task_reservation
+
+            async def release_claimed_reservations():
+                for row in claimed_inline_rows:
+                    await release_interrupted_inline_task_reservation(self._row_to_state(row))
+
+            thread = threading.Thread(target=lambda: asyncio.run(release_claimed_reservations()))
+            thread.start()
+            thread.join()
+        return len(claimed_inline_rows) + celery_changed
 
     def _sweep_stale_tasks_throttled(self, conn, db_path: Path) -> None:
         """普通连接按库定期清扫，失败则留给下次连接立即重试。"""
