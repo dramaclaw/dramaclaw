@@ -1657,6 +1657,7 @@ def update_workflow_run(
     run_id: str,
     status: str | None = None,
     action_updates: list[dict[str, Any]] | None = None,
+    story_attach_warnings: list[str] | None = None,
     runner_id: str = "",
     owner_kind: str = "browser_legacy",
     now: datetime | None = None,
@@ -1831,6 +1832,11 @@ def update_workflow_run(
                 metadata = metadata if isinstance(metadata, dict) else {}
                 metadata["cancel_requested_at"] = timestamp
                 payload["metadata"] = metadata
+        if story_attach_warnings:
+            metadata = payload.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            metadata["story_attach_warnings"] = list(story_attach_warnings)
+            payload["metadata"] = metadata
         if checked_runner_id and payload.get("status") == "running":
             payload["lease_expires_at"] = _lease_expires_at(current)
         payload["updated_at"] = timestamp

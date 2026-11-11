@@ -11,6 +11,7 @@ from typing import Protocol
 
 from novelvideo.freezone import workflow_runs as store
 from novelvideo.freezone.agent_canvas_metrics import count, observe
+from novelvideo.freezone.server_workflow_actions import ActionLeaseLost
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ class ServerWorkflowLeaseLost(RuntimeError):
 
 
 class ServerActionRunner(Protocol):
+    async def finalize_run(self, actions: list[dict]) -> list[str]: ...
+
     def supports(self, action: str) -> bool: ...
 
     async def lane_capacity(self, lane: str) -> int | None: ...
@@ -361,7 +364,23 @@ async def drive_server_workflow_run(
                 assert_lease()
                 return ended_status
         failed = any(item["status"] in {"failed", "blocked"} for item in run["actions"])
-        return (await write(status="failed" if failed else "completed"))["status"]
+        warnings = []
+        finalize = getattr(runner, "finalize_run", None)
+        if not should_stop() and finalize is not None:
+            assert_lease()
+            try:
+                warnings = await finalize(run["actions"])
+            except (ServerWorkflowLeaseLost, store.WorkflowRunLeaseConflict):
+                raise
+            except ActionLeaseLost as exc:
+                raise ServerWorkflowLeaseLost() from exc
+            except Exception as exc:
+                logger.warning("Story attachment failed run_id=%s error_class=%s",
+                               run_id, type(exc).__name__)
+                warnings = ["story_attach_failed"]
+        return (await write(status="failed" if failed else "completed", **(
+            {"story_attach_warnings": warnings} if warnings else {}
+        )))["status"]
 
     driver_tasks: set[asyncio.Task] = set()
     try:

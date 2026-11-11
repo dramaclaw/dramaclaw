@@ -11,6 +11,7 @@ import { withCanvasModelCatalogsAsync } from '../domain/canvasModelCatalogs';
 import { planCanvasNodeActions } from '@/features/freezone/workflowActionPlan';
 import { isRecord } from '@/features/freezone/canvasCommandEnvelope';
 import type { CanvasChatCommand } from '../core/commands/types';
+import { isSystemManagedNodeData } from '../domain/mainlineNodeFlags';
 import { invalidRequest, parseCanvasPayload } from './requestPayload';
 import { createServerTranslate } from './i18n';
 import { runServerRequest } from './requestScope';
@@ -59,6 +60,8 @@ export async function servePlanWorkflow(payload: unknown) {
         actions: plan.actions.map(action => ({
           command_index: action.commandIndex, node_id: action.nodeId, action: action.action,
           execution_mode: action.executionMode, label: action.label,
+          ...(action.action === 'generate_image' && state.nodes.some(node => node.id === action.nodeId &&
+            node.data.autoCommitOnGenerate === true && isSystemManagedNodeData(node.data)) ? { auto_commit: true } : {}),
           ...(action.parameters !== undefined ? { parameters: action.parameters } : {}),
           ...(action.invalidationReason !== undefined ? { invalidation_reason: action.invalidationReason } : {}),
         })),

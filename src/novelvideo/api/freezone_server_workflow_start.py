@@ -103,7 +103,9 @@ async def check_server_workflow(
     nodes = {node["id"]: node for node in canvas.get("nodes", [])}
     for action, run_action in zip(plan["actions"], run_actions):
         reason = None
-        if not server_action_supported(
+        if action.get("auto_commit") is True:
+            reason = "mainline_auto_commit"
+        elif not server_action_supported(
             action["action"], nodes.get(action["node_id"], {}).get("type"),
         ):
             reason = "action_not_on_server"

@@ -299,6 +299,9 @@ async def test_stop_during_action(tmp_path, mode, expected):
     scope = setup_run(tmp_path, clock, levels=[[0], [1, 2]])
     runner = FakeRunner(scope)
     runner.release = asyncio.Event()
+    async def finalize(actions):
+        pytest.fail('stopped run finalized')
+    runner.finalize_run = finalize
     task = asyncio.create_task(drive(scope, clock, runner))
     try:
         assert await asyncio.wait_for(runner.started.get(), 2) == 'one'
@@ -677,3 +680,59 @@ async def test_generate_world_uses_world_lane_capacity(tmp_path, monkeypatch):
     assert store.read_workflow_run(**scope)["actions"][0]["error"] == (
         "workflow lane capacity timed out"
     )
+
+
+@pytest.mark.parametrize('warnings', [[], ['target_changed']])
+async def test_finalize_run_before_terminal_write(tmp_path, warnings):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock)
+    runner = FakeRunner(scope)
+    calls = []
+
+    async def finalize(actions):
+        current = store.read_workflow_run(**scope)
+        assert current['status'] == 'running'
+        assert [a['status'] for a in actions] == ['completed'] * 3
+        assert actions == current['actions']
+        calls.append(actions)
+        return warnings
+
+    runner.finalize_run = finalize
+    assert (await drive(scope, clock, runner))['status'] == 'completed'
+    assert len(calls) == 1
+    metadata = store.read_workflow_run(**scope)['metadata']
+    if warnings:
+        assert metadata['story_attach_warnings'] == warnings
+    else:
+        assert 'story_attach_warnings' not in metadata
+
+
+async def test_finalize_run_failure_does_not_fail_run(tmp_path, caplog):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock)
+    runner = FakeRunner(scope)
+
+    async def finalize(actions):
+        raise ValueError('private canvas content')
+
+    runner.finalize_run = finalize
+    assert (await drive(scope, clock, runner))['status'] == 'completed'
+    assert store.read_workflow_run(**scope)['metadata']['story_attach_warnings'] == [
+        'story_attach_failed',
+    ]
+    assert 'private canvas content' not in caplog.text
+    assert 'ValueError' in caplog.text
+
+
+async def test_finalize_run_lease_loss_propagates(tmp_path):
+    from novelvideo.freezone.server_workflow_driver import ServerWorkflowLeaseLost
+    clock = Clock()
+    scope = setup_run(tmp_path, clock)
+    runner = FakeRunner(scope)
+
+    async def finalize(actions):
+        raise ServerWorkflowLeaseLost()
+
+    runner.finalize_run = finalize
+    assert (await drive(scope, clock, runner))['status'] == 'lease_lost'
+    assert store.read_workflow_run(**scope)['status'] == 'running'

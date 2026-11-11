@@ -1547,3 +1547,60 @@ async def test_world_product_operation_refused_without_effects(setup_runner):
     assert await run("generate_3gs_world", product_operation_id="recipe") == {
         "status": "failed", "error": "工作流动作 generate_3gs_world 需要打开画布运行"}
     assert host.patches == host.requests == []
+
+
+async def test_finalize_run_filters_images_and_applies_worker_changes():
+    host = FakeHost()
+    calls = []
+    edge = {'id': 'attached', 'source': 'n', 'target': 'video',
+            'data': {'link_type': 'media_input_for', 'edgeKind': 'story_frame_reference'}}
+
+    async def core(op, payload):
+        calls.append((op, payload))
+        return {'ok': True, 'edges': [edge], 'node_patches': [
+            {'node_id': 'n', 'patch': {'prompt': 'Synced'}}], 'warnings': ['target_changed']}
+
+    async def catalogs(*, video=False):
+        assert video is True
+        return {'image': {'models': []}, 'video': {'models': [{'id': 'v', 'referenceImageMax': 2}]},
+                'camera_templates': []}
+
+    host.catalogs = catalogs
+    runner = WorkflowActionRunner(host=host, project_id='project', canvas_id='default',
+                                  run_id='run-1', core_call=core)
+    actions = [{'node_id': node, 'action': action, 'status': status} for node, action, status in [
+        ('n', 'generate_image', 'completed'), ('failed', 'generate_image', 'failed'),
+        ('skip', 'generate_image', 'skipped'), ('text', 'generate_text', 'completed'),
+        ('n', 'generate_image', 'completed'), ('second', 'generate_image', 'completed'),
+    ]]
+    before = deepcopy(host.canvas)
+    assert await runner.finalize_run(actions) == ['target_changed']
+    assert calls == [('story_attach', {'canvas': before, 'image_node_ids': ['n', 'second'],
+                                      'env': {'locale': 'zh', 'catalogs': {'video': {
+                                          'models': [{'id': 'v', 'referenceImageMax': 2}]}}}})]
+    assert host.additions == [([], [edge])]
+    assert host.patch_nodes == ['n']
+    assert host.patches == [{'prompt': 'Synced'}]
+
+
+async def test_finalize_run_without_completed_images_does_not_read_canvas():
+    host = FakeHost()
+    async def unexpected(*args):
+        pytest.fail('no completed images must do no I/O')
+    host.read_canvas = unexpected
+    runner = WorkflowActionRunner(host=host, project_id='project', canvas_id='default',
+                                  run_id='run-1', core_call=unexpected)
+    assert await runner.finalize_run([
+        {'node_id': 'n', 'action': 'generate_image', 'status': 'failed'},
+        {'node_id': 'n', 'action': 'generate_image', 'status': 'skipped'},
+        {'node_id': 'text', 'action': 'generate_text', 'status': 'completed'},
+    ]) == []
+
+
+async def test_image_outcome_reports_unapplied_auto_commit(setup_runner):
+    host, _, run, _, _ = setup_runner
+    host.data.update(preset_managed=True, autoCommitOnGenerate=True)
+    result = await run()
+    assert result['status'] == 'completed'
+    assert result['output']['auto_commit_not_applied'] is True
+    assert all('commit' not in request['path'] for request in host.requests)

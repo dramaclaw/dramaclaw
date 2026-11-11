@@ -373,3 +373,19 @@ async def test_world_admission_and_attempt(setup, node_type, catalog, metered, r
     }] if reason else [])}
     actions = start._server_run_actions(setup.canvas, setup.plan, "confirmation")
     assert actions[1]["generation_attempt_id"] == "confirmation:text:generate_3gs_world"
+
+
+async def test_mainline_auto_commit_refused_before_metered_admission(setup, monkeypatch):
+    setup.plan['actions'] = [{**setup.plan['actions'][0], 'auto_commit': True}]
+    admissions = []
+    admission = routes.admit_canvas_workflow_run_actions
+    async def record(**kwargs):
+        admissions.append(kwargs)
+        return await admission(**kwargs)
+    monkeypatch.setattr(routes, 'admit_canvas_workflow_run_actions', record)
+    result = await check(setup)
+    assert result['status'] == 'blocked'
+    assert result['blocked'] == [{'node_id': 'image', 'action': 'generate_image',
+                                  'label': 'Image', 'reason': 'mainline_auto_commit'}]
+    assert admissions == []
+    assert [c for c in setup.meter.calls if c[0] == 'reserve_feature_start_credits'] == []

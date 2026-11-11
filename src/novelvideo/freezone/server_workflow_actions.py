@@ -155,6 +155,31 @@ class WorkflowActionRunner:
     async def lane_capacity(self, lane: str) -> int | None:
         return await self.host.lane_capacity(lane)
 
+    async def finalize_run(self, actions: list[dict]) -> list[str]:
+        image_ids = list(dict.fromkeys(
+            item["node_id"] for item in actions
+            if item["action"] == "generate_image" and item["status"] == "completed"
+        ))
+        if not image_ids:
+            return []
+        if not self.host.lease_held():
+            raise ActionLeaseLost()
+        # Reference limits follow the requester's video catalog, like the browser.
+        catalogs = await self.host.catalogs(video=True)
+        canvas = await self.host.read_canvas()
+        attached = await self.core_call("story_attach", {
+            "canvas": canvas, "image_node_ids": image_ids,
+            "env": {"locale": self.host.locale, "catalogs": {"video": catalogs["video"]}},
+        })
+        if not self.host.lease_held():
+            raise ActionLeaseLost()
+        await self.host.add_nodes([], attached["edges"])
+        for item in attached["node_patches"]:
+            await self.host.patch_node(item["node_id"], item["patch"])
+        logger.info("Story attachment run_id=%s edges=%d patches=%d", self.run_id,
+                    len(attached["edges"]), len(attached["node_patches"]))
+        return attached["warnings"]
+
     async def interrupt_action(
         self, *, node_id: str, action: str, product_operation_id: str | None,
     ) -> None:
@@ -1058,6 +1083,11 @@ class _ActionExecution:
             "first_accepted_task": task, "run_index": 0, "total": total,
             "completed_urls": [], "attach_story_frame": False, "outcome": outcome,
         })
+        auto_commit = any(effect.get("kind") == "commit_node"
+                          for effect in patch.get("effects", []))
+        if auto_commit:
+            logger.warning("Auto commit not applied run_id=%s node_id=%s",
+                           self.runner.run_id, self.node_id)
         if patch.get("error"):
             settled = [{"status": "rejected", "message": patch["error"]["message"]}]
         else:
@@ -1082,7 +1112,9 @@ class _ActionExecution:
             return {"status": "failed", "error": result["error"]}
         artifact = ({"output_url": outcome["fallbackUrl"]} if outcome.get("fallbackUrl")
                     else outcome.get("result") or {})
-        return {"status": "completed", "output": result.get("output", {}), "artifact": artifact}
+        return {"status": "completed", "output": {
+            **result.get("output", {}), **({"auto_commit_not_applied": True} if auto_commit else {}),
+        }, "artifact": artifact}
 
     async def text(self):
         canvas = await self.host.read_canvas()

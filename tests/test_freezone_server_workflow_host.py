@@ -982,3 +982,39 @@ async def test_world_route_claim_and_browser_payload(context, monkeypatch, linke
         "project_dir": str(root), "canvas_id": "default", "node_id": "n",
         "billing": {"feature_key": "freezone.image_to_3gs", "operation": "master"},
     }
+
+
+async def test_story_attach_real_worker_round_trip(host, context, monkeypatch):
+    from novelvideo.api import freezone_server_workflow_host as host_module
+    from novelvideo.freezone.canvas_core_pool import CanvasCorePool
+    from tests.test_server_workflow_actions import BUNDLE
+
+    canvas = canvas_store.ensure_default_canvas(context.state_dir, project_id='project').payload
+    canvas['nodes'] = [
+        {'id': 'group', 'type': 'groupNode', 'position': {'x': 0, 'y': 0},
+         'data': {'storyGroup': True, 'interactiveStoryId': 'story'}},
+        {'id': 'video', 'type': 'videoNode', 'parentId': 'group',
+         'position': {'x': 0, 'y': 0}, 'data': {'storySegmentId': 'segment',
+         'continuityMode': 'independent', 'prompt': 'A shot'}},
+        {'id': 'frame', 'type': 'imageGenNode', 'position': {'x': 0, 'y': 0},
+         'data': {'imageUrl': '/static/frame.png', 'storyFrameTarget': {
+             'storyId': 'story', 'segmentId': 'segment', 'videoNodeId': 'video'}}},
+    ]
+    canvas_store.atomic_write_json(canvas_store.canvas_path(context.state_dir, 'default'), canvas)
+    pool = CanvasCorePool(BUNDLE, size=1)
+    monkeypatch.setattr(host_module, 'get_canvas_core_pool', lambda: pool)
+    runner = build_server_action_runner(ctx=context, run={'canvas_id': 'default', 'run_id': 'run'},
+                                       runner_id='driver', assert_lease=lambda: None)
+    actions = [{'node_id': 'frame', 'action': 'generate_image', 'status': 'completed'}]
+    try:
+        assert await runner.finalize_run(actions) == []
+        saved = await host.read_canvas()
+        assert len(saved['edges']) == 1
+        assert saved['edges'][0]['data']['edgeKind'] == 'story_frame_reference'
+        assert saved['edges'][0]['source'] == 'frame'
+        assert saved['edges'][0]['target'] == 'video'
+        assert saved['nodes'][1]['data']['prompt'] != 'A shot'
+        assert await runner.finalize_run(actions) == []
+        assert await host.read_canvas() == saved
+    finally:
+        pool.close()
