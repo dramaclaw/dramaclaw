@@ -17,6 +17,7 @@ import { serveAudioTranslateRequest, serveAudioTranslatePatch } from './audioTra
 import { serveWorldGenerationRequest, serveWorldGenerationPatch, serveWorldGenerationUpstream } from './worldGeneration';
 import { serveGenerationErrorDescribe } from './generationError';
 import { servePlanWorkflow } from './planWorkflow';
+import { serveRecipeCompileRequest, serveRecipeCompileResult } from './recipeCompile';
 
 console = new Console({ stdout: process.stderr, stderr: process.stderr });
 
@@ -74,7 +75,7 @@ function parseContextPayload(payload: unknown) {
   return { ...input, envelopes, environment };
 }
 
-const operations = ['ping', 'plan_workflow', 'apply_commands', 'answer_context', 'image_generation_request', 'image_generation_patch',
+const operations = ['recipe_compile_request', 'recipe_compile_result', 'ping', 'plan_workflow', 'apply_commands', 'answer_context', 'image_generation_request', 'image_generation_patch',
   'video_generation_request', 'video_generation_patch', 'audio_generation_request', 'audio_generation_patch',
   'text_generation_request', 'text_generation_patch', 'generation_error_describe',
   'image_tool_request', 'image_tool_patch', 'audio_translate_request', 'audio_translate_patch',
@@ -101,6 +102,10 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     } else if (parsed.op === 'answer_context') {
       const payload = parseContextPayload(parsed.payload);
       result = await answerContextRequests(payload.canvas, payload.envelopes, payload.environment);
+    } else if (parsed.op === 'recipe_compile_request') {
+      result = await serveRecipeCompileRequest(parsed.payload);
+    } else if (parsed.op === 'recipe_compile_result') {
+      result = await serveRecipeCompileResult(parsed.payload);
     } else if (parsed.op === 'image_generation_request') {
       result = await serveImageGenerationRequest(parsed.payload);
     } else if (parsed.op === 'image_generation_patch') {

@@ -60,6 +60,10 @@ export function staleResumableWorkflowRunIds(
     .map((run) => run.run_id);
 }
 
+function serverOwnsNodeGeneration(nodeId: string): boolean {
+  return useCanvasStore.getState().nodes.find(node => node.id === nodeId)?.data.generationOwner === 'server';
+}
+
 function unresolvedWorkflowActions(
   run: FreezoneWorkflowRun,
   existingNodeIds: ReadonlySet<string>,
@@ -67,7 +71,7 @@ function unresolvedWorkflowActions(
   return run.actions.filter((action) =>
     RESUMABLE_ACTION_STATUSES.has(action.status) &&
     existingNodeIds.has(action.node_id) &&
-    !hasGeneratedResult(useCanvasStore, action.node_id, action.action)
+    (serverOwnsNodeGeneration(action.node_id) || !hasGeneratedResult(useCanvasStore, action.node_id, action.action))
   );
 }
 
@@ -77,6 +81,7 @@ function recoverableWorkflowActions(
 ) {
   return unresolvedWorkflowActions(run, existingNodeIds).filter(
     (action) => {
+      if (serverOwnsNodeGeneration(action.node_id)) return false;
       // A downstream action blocked by a failed dependency was recorded for
       // visibility, but has never been submitted. Do not surface it as an
       // independent retry target or create another waiting progress item.

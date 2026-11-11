@@ -15,3 +15,4 @@ export * from './audioTranslateRequest';
 export * from './worldGenerationRequest';
 export * from './worldGenerationResult';
 export * from './worldGenerationUpstream';
+export * from './recipeCompileRequest';

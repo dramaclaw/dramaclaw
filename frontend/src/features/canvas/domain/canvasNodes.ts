@@ -69,6 +69,8 @@ export type ImageSize = (typeof IMAGE_SIZES)[number];
 export type ImageQuality = string;
 
 export interface NodeDisplayData {
+  generationOwner?: 'server' | null;
+  generationRunId?: string | null;
   displayName?: string;
   /**
    * The workflow runner has scheduled this node action. This is deliberately
