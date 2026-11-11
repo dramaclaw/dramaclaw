@@ -14,6 +14,7 @@
  * Only the preview plays them (pages.mjs swaps a file for its proxy): the film's sound is mixed from the original, and
  * an export or a render reads the originals. Nothing in film.html changes.
  */
+import { cacheDir } from '../../src/film-dirs.mjs';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -23,7 +24,6 @@ import { colorTagsOf, encoders, h264ColorTags, hardwareEncoder, hardwareOptions,
 import { decodedAnywhere } from '../../src/seekable.mjs';
 import { probe } from './derived.mjs';
 import { readable } from './files.mjs';
-import { TOOL_DIR } from './projects.mjs';
 
 /** Changing how proxies are made makes new ones. */
 const VERSION = 1;
@@ -81,7 +81,7 @@ function proxyFile(/** @type {string} */ root, /** @type {string} */ rel, /** @t
   const abs = readable(root, rel);
   const info = statSync(abs);
   const name = createHash('sha1').update(`${VERSION}\0${info.dev}:${info.ino}\0${info.size}\0${Math.round(info.mtimeMs)}\0${height}`).digest('hex').slice(0, 20);
-  return { abs, out: join(root, TOOL_DIR, 'cache', 'proxies', `${name}.mp4`) };
+  return { abs, out: cacheDir(root, 'proxies', `${name}.mp4`) };
 }
 
 /** The proxy of `rel` at `height`, when it is made; else null. */

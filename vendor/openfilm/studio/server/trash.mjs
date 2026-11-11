@@ -9,8 +9,10 @@
  *   Linux    the freedesktop trash: ~/.local/share/Trash/{files,info}, with the .trashinfo that lets it be restored
  *   Windows  the Recycle Bin, through PowerShell
  */
+import { filmDirs, hostDirs, registeredFilmRoot } from '../../src/film-dirs.mjs';
+import { HttpError } from './http.mjs';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, renameSync } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join } from 'node:path';
@@ -31,6 +33,15 @@ function freeName(/** @type {string} */ dir, /** @type {string} */ name) {
 
 /** @param {string} path an absolute path */
 export async function moveToTrash(path) {
+  if (hostDirs()) {
+    const root = registeredFilmRoot(path);
+    if (!root) throw new HttpError(409, 'no trash in the hosted Studio');
+    const dir = /** @type {string} */ (filmDirs(root).removed);
+    await mkdir(dir, { recursive: true });
+    /* No async gap between choosing the name and moving: concurrent deletes keep both files. */
+    renameSync(path, join(dir, freeName(dir, basename(path))));
+    return;
+  }
   /* tests (and anyone who wants deletes kept elsewhere) name the folder that stands for the trash */
   if (process.env.OPENFILM_TRASH_DIR) {
     const dir = process.env.OPENFILM_TRASH_DIR;

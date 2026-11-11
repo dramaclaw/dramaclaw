@@ -1,3 +1,4 @@
+import { cacheDir, hostDirs } from './film-dirs.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -29,10 +30,11 @@ export function locate(target = '.', base = undefined) {
   }
   if (!existsSync(file)) throw new Error(`${target}: no ${FILM_FILE} here or above, and no index.html ('openfilm open' makes a project)`);
   const dir = dirname(file);
-  const root = base !== undefined && file.startsWith(resolve(base) + sep) ? resolve(base) : projectOf(dir);
-  const entry = relative(root, file).split(sep).join('/');
+  const runtime = hostDirs() && base !== undefined && file.startsWith(cacheDir(base) + sep) && !file.startsWith(resolve(base) + sep) ? dir : undefined;
+  const root = base !== undefined && (runtime || file.startsWith(resolve(base) + sep)) ? resolve(base) : projectOf(dir);
+  const entry = runtime ? `__film/runtime/${basename(file)}` : relative(root, file).split(sep).join('/');
   const name = basename(file) === 'index.html' || basename(file) === FILM_FILE ? basename(dir) : basename(file).replace(/\.html?$/i, '');
-  return { root, entry: encodeURI(entry), dir, name, isFilm: basename(file) === FILM_FILE };
+  return { root, entry: encodeURI(entry), dir, name, isFilm: basename(file) === FILM_FILE, ...(runtime ? { runtime } : {}) };
 }
 
 /** The nearest folder with film.html from `dir` up to the current folder, else `dir`. */
@@ -76,7 +78,7 @@ export async function open(target, opts = {}) {
   }
   /** @type {Map<string, string>} */
   const copies = new Map();
-  const site = await serve(loc.root, { swap: (file) => opts.swap?.(file) ?? copies.get(file) ?? null });
+  const site = await serve(loc.root, { runtime: loc.runtime, swap: (file) => opts.swap?.(file) ?? copies.get(file) ?? null });
   const lent = opts.browser ?? null;
   let browser;
   try { browser = lent ?? await launch(opts.launch); }
@@ -84,7 +86,7 @@ export async function open(target, opts = {}) {
   if (opts.playable) {
     try {
       const { browserCopies, filmVideos } = await import('./seekable.mjs');
-      const files = Array.isArray(opts.playable) ? opts.playable : loc.isFilm ? filmVideos(loc.root, loc.entry) : [];
+      const files = Array.isArray(opts.playable) ? opts.playable : loc.isFilm ? filmVideos(loc.root, loc.entry, loc.runtime ? join(loc.runtime, FILM_FILE) : undefined) : [];
       for (const [file, copy] of await browserCopies(browser, site.url, loc.root, files, { signal: opts.signal })) copies.set(file, copy);
     } catch { /* the footage as it is */ }
   }
@@ -109,7 +111,7 @@ export function homeFor(start) {
 }
 
 export function outDir(root, sub) {
-  const dir = join(root, '.film', 'cache', sub);
+  const dir = cacheDir(root, sub);
   mkdirSync(dir, { recursive: true });
   return dir;
 }

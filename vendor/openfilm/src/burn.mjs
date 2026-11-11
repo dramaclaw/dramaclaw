@@ -1,5 +1,6 @@
 /* The film with its subtitles burned in: a page drawn around the film, the subtitles over it (Studio's export and
    render --subtitles). */
+import { cacheDir } from './film-dirs.mjs';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -46,7 +47,7 @@ export function frameBox(stage, frame, fill) {
  */
 export async function burnFilm(root, stage, frame, fill, cues, style, transparent = false) {
   const box = frameBox(stage, frame, fill);
-  const dir = join(root, '.film', 'cache', 'export', `burn-${process.pid}-${randomBytes(4).toString('hex')}`);
+  const dir = cacheDir(root, 'export', `burn-${process.pid}-${randomBytes(4).toString('hex')}`);
   await mkdir(dir, { recursive: true });
   try {
     await copyFile(fileURLToPath(new URL('../studio/server/film-subtitle.mjs', import.meta.url)), join(dir, 'film-subtitle.mjs'));

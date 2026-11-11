@@ -14,11 +14,11 @@
  *   GET   settings            → { settings }
  *   PATCH settings  { fps?, trackNames?, trackHeights? } → { settings } (null takes a setting away)
  */
+import { TOOL_DIR } from '../../src/film-dirs.mjs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { writeAtomic } from './atomic.mjs';
 import { HttpError, json, readJson } from './http.mjs';
-import { TOOL_DIR } from './projects.mjs';
 
 export const PROJECT_SETTINGS_FILE = `${TOOL_DIR}/settings.json`;
 

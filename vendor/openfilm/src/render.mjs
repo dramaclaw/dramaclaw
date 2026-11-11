@@ -1,5 +1,7 @@
 // film render: the deliverable. Frames are rendered in parallel page instances, averaged
 // over the shutter for motion blur, encoded with tagged BT.709 color, and muxed with the mix of the film's sounds.
+import { hostDirs } from './film-dirs.mjs';
+import { randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, freemem, totalmem } from 'node:os';
@@ -148,7 +150,7 @@ export async function render(args, opts = {}) {
   const alpha = !!opts.alpha;
   /* the whole film is the person's, beside film.html; a stretch rendered to check something stays in the tool's folder */
   const out = resolve(opts.out ?? (range
-    ? join(outDir(dir, 'render'), `${name}-${from}-${to}${alpha ? '.webm' : '.mp4'}`)
+    ? join(outDir(hostDirs() ? root : dir, 'render'), `${name}-${from}-${to}${alpha ? '.webm' : '.mp4'}`)
     : join(dir, `${name}${alpha ? '.webm' : '.mp4'}`)));
   mkdirSync(dirname(out), { recursive: true });
   const container = FORMATS[extname(out).toLowerCase()];
@@ -176,7 +178,7 @@ export async function render(args, opts = {}) {
      subtitle export is, reads the project's); a page's own videos are the ones it asked for */
   if (opts.seekable !== false) {
     const film = isFilm ? entry : opts.root ? FILM_FILE : null;
-    const files = [...new Set([...videos, ...(film ? filmVideos(root, film) : [])])];
+    const files = [...new Set([...videos, ...(film ? filmVideos(root, film, isFilm && probe.runtime ? join(probe.runtime, FILM_FILE) : undefined) : [])])];
     /* one the browser does not decode then fails its first frame, by its clip (timeline.mjs): never drawn black */
     const failed = (/** @type {string} */ file) => {
       uncopied.push(file);
@@ -193,7 +195,7 @@ export async function render(args, opts = {}) {
 
   if (!process.stderr.isTTY && !opts.onProgress) process.stderr.write(`  rendering ${total} frames with ${workers} browser${workers > 1 ? 's' : ''}…\n`);
   /* a pool's process draws several renders at once, each of its own film folder (Studio's export makes one per page) */
-  const work = join(outDir(dir, 'render'), `.parts-${process.pid}`);
+  const work = join(outDir(hostDirs() ? root : dir, 'render'), `.parts-${process.pid}${hostDirs() ? `-${randomBytes(4).toString('hex')}` : ''}`);
   mkdirSync(work, { recursive: true });
   let done = 0;
   /* a terminal gets a live counter; an agent's shell (no TTY) a line every tenth, so a long render never looks hung */

@@ -786,3 +786,33 @@ async def test_cancel_leaf_functions_delegate_to_registered_store(monkeypatch):
     await cancel_module.request_cancel(**fields)
     assert await cancel_module.is_cancel_requested(**fields) is True
     assert [call[0] for call in calls] == ["request", "is"]
+
+
+@pytest.mark.asyncio
+async def test_inline_enqueue_persists_owner_at_reservation(monkeypatch, tmp_path):
+    from novelvideo.task_owner import current_owner
+
+    ctx = _ctx(tmp_path)
+    manager = get_task_manager()
+    backend = _inline_backend()
+    submitted = []
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    original = backend._producer.sign_top_level
+
+    async def inspect_reservation(**kwargs):
+        state = manager.get_task_for_project(ctx, "single_video", 1)
+        assert state.status == "submitting"
+        assert state.metadata["backend"] == "inline"
+        assert state.metadata["owner"] == current_owner()
+        return await original(**kwargs)
+
+    monkeypatch.setattr(backend._producer, "sign_top_level", inspect_reservation)
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
+
+    persisted = manager.get_task_for_project(ctx, "single_video", 1)
+    assert persisted.status == "queued"
+    assert persisted.metadata["backend"] == "inline"
+    assert persisted.metadata["owner"] == current_owner()
+    assert submitted[0].metadata["owner"] == current_owner()

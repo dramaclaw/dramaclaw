@@ -23,7 +23,7 @@ const DIST = process.env.OPENFILM_STUDIO_DIST
   : resolve(dirname(fileURLToPath(import.meta.url)), '../../vendor/openfilm/studio/ui/dist');
 const ASSETS = join(DIST, 'assets');
 const SOURCE_CHUNK = 'index-7ByF79tc.js';
-const PATCHED_CHUNK = 'index-7ByF79tc.dramaclaw13.js';
+const PATCHED_CHUNK = 'index-7ByF79tc.dramaclaw14.js';
 const INDEX = join(DIST, 'index.html');
 
 /** The OpenFilm "F" wordmark, wherever it is drawn (top bar, splash, about). */

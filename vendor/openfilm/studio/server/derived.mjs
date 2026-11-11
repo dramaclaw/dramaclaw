@@ -7,13 +7,13 @@
  * ffmpeg runs a few at a time: a project opened with fifty clips must not start fifty decoders. The editor's sound of
  * each file (soundOf) is made a few at a time of its own, so a long recording's does not hold up the thumbnails.
  */
+import { cacheDir } from '../../src/film-dirs.mjs';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readable } from './files.mjs';
-import { TOOL_DIR } from './projects.mjs';
 import { writeAtomic } from './atomic.mjs';
 
 export class MediaError extends Error {
@@ -60,7 +60,7 @@ async function source(/** @type {string} */ root, /** @type {string} */ rel) {
 
 /** A cached result: the file in `.film/cache/<kind>/`, made by `make` (written whole, through a temporary name). */
 async function cached(/** @type {string} */ root, /** @type {string} */ kind, /** @type {string} */ name, /** @type {() => Promise<Buffer>} */ make) {
-  const dir = join(root, TOOL_DIR, 'cache', kind);
+  const dir = cacheDir(root, kind);
   const file = join(dir, name);
   if (existsSync(file)) return readFile(file);
   const bytes = await make();
@@ -169,7 +169,7 @@ const makingSound = new Map();
 export async function soundOf(root, rel) {
   const { abs, key } = await source(root, rel);
   if (COMPACT.test(rel) && (await stat(abs)).size <= COMPACT_BYTES) return abs;
-  const out = join(root, TOOL_DIR, 'cache', 'audio', `${key}.m4a`);
+  const out = cacheDir(root, 'audio', `${key}.m4a`);
   if (existsSync(out)) return out;
   let made = makingSound.get(out);
   if (!made) {
@@ -180,7 +180,7 @@ export async function soundOf(root, rel) {
       const channels = Number(stream.channels) || 2;
       /* AAC is what a browser decodes everywhere: kept as it is when it is that already (no loss, no time) */
       const codec = stream.codec_name === 'aac' && channels <= 2 ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-b:a', '128k', '-ac', String(Math.min(2, channels))];
-      await mkdir(join(root, TOOL_DIR, 'cache', 'audio'), { recursive: true });
+      await mkdir(cacheDir(root, 'audio'), { recursive: true });
       const part = `${out}.part`;
       try {
         await tool('ffmpeg', ['-v', 'error', '-nostdin', '-y', '-i', abs, '-map', '0:a:0', '-vn', '-sn', '-dn', ...codec, '-f', 'mp4', part], SOUND_SLOTS);

@@ -14,6 +14,8 @@
  * here, so nothing outside a version's files is ever looked at or touched. Set NODE_DEBUG=openfilm-history to see
  * every git command and how long it took.
  */
+import { hostDirs, cacheDir } from '../../src/film-dirs.mjs';
+import { moveToTrash } from './trash.mjs';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { constants, createReadStream, existsSync, readFileSync } from 'node:fs';
@@ -22,7 +24,6 @@ import { dirname, join } from 'node:path';
 import { debuglog, promisify } from 'node:util';
 import { replaceFile, tempPath, writeAtomic } from './atomic.mjs';
 import { isMediaFile } from './closure.mjs';
-import { TOOL_DIR } from './projects.mjs';
 
 const run = promisify(execFile);
 const debug = debuglog('openfilm-history');
@@ -135,17 +136,17 @@ export function readBlobs(repo, oids) {
 /* ── a project's history, open ───────────────────────────────────────────── */
 
 /**
- * @typedef {{ root: string, gitDir: string, algo: 'sha1' | 'sha256', hashes: Hashes,
+ * @typedef {{ root: string, gitDir: string, mediaDir: string, algo: 'sha1' | 'sha256', hashes: Hashes,
  *   git: (args: string[], o?: { input?: string | Buffer, env?: Record<string, string> }) => Promise<string> }} Repo
  */
 
 /** The history in `gitDir` for the folder `root`, to read and write. */
-export function openRepo(/** @type {string} */ root, /** @type {string} */ gitDir) {
+export function openRepo(/** @type {string} */ root, /** @type {string} */ gitDir, /** @type {string} */ mediaDir) {
   let algo = /** @type {'sha1' | 'sha256'} */ ('sha1');
   try { if (/objectformat\s*=\s*sha256/i.test(readFileSync(join(gitDir, 'config'), 'utf8'))) algo = 'sha256'; } catch { /* none yet */ }
   /** @type {Repo} */
   const repo = {
-    root, gitDir, algo, hashes: hashesOf(root, algo),
+    root, gitDir, mediaDir, algo, hashes: hashesOf(root, algo),
     git: (args, o) => gitRun(root, gitDir, args, o),
   };
   return repo;
@@ -179,10 +180,10 @@ const allHashes = new Map();
 
 /** @returns {Hashes} */
 function hashesOf(/** @type {string} */ root, /** @type {'sha1' | 'sha256'} */ algo) {
-  const id = `${root}\0${algo}`;
+  const file = cacheDir(root, 'history-files.json');
+  const id = `${root}\0${algo}\0${file}`;
   const known = allHashes.get(id);
   if (known) return known;
-  const file = join(root, TOOL_DIR, 'cache', 'history-files.json');
   /** @type {Map<string, { key: string, sha256?: string, blob?: string }>} */
   let map = new Map();
   try {
@@ -258,7 +259,7 @@ const POINTER = /^openfilm-media 1\nsha256 ([0-9a-f]{64})\nsize (\d+)\n$/;
 export const pointerId = (/** @type {Repo} */ repo, /** @type {string} */ sha256, /** @type {number} */ size) => blobId(repo.algo, Buffer.from(pointerText(sha256, size)));
 
 /** Where the store keeps a media file. */
-export const mediaPath = (/** @type {string} */ gitDir, /** @type {string} */ sha256) => join(gitDir, 'media', sha256);
+export const mediaPath = (/** @type {Repo} */ repo, /** @type {string} */ sha256) => join(repo.mediaDir, sha256);
 
 /** Whether a file of this path and size is kept outside git. */
 export const isMedia = (/** @type {string} */ rel, /** @type {number} */ size) => size > BIG || isMediaFile(rel);
@@ -359,7 +360,7 @@ export async function cloneFile(/** @type {string} */ from, /** @type {string} *
 
 /** A media file of the folder put in the store, unless it is there: a clone where the disk can, else a copy. */
 export async function keepMedia(/** @type {Repo} */ repo, /** @type {string} */ rel, /** @type {{ sha256: string, size: number }} */ media) {
-  const target = mediaPath(repo.gitDir, media.sha256);
+  const target = mediaPath(repo, media.sha256);
   if (existsSync(target)) return;
   await mkdir(dirname(target), { recursive: true });
   const before = await repo.hashes.stat(rel);
@@ -454,13 +455,14 @@ export async function writeFiles(repo, version, { paths, progress } = {}) {
     await mkdir(dirname(target), { recursive: true });
     const mode = entry.mode === '100755' ? 0o755 : 0o644;
     if (entry.media) {
-      const sources = [mediaPath(repo.gitDir, entry.media.sha256), ...repo.hashes.withSha256(entry.media.sha256).filter((r) => r !== rel).map((r) => join(repo.root, r))];
+      const sources = [mediaPath(repo, entry.media.sha256), ...repo.hashes.withSha256(entry.media.sha256).filter((r) => r !== rel).map((r) => join(repo.root, r))];
       const from = sources.find((p) => existsSync(p));
       if (!from) { missing.push(rel); continue; }
       const tmp = tempPath(target);
       try {
         await cloneFile(from, tmp);
         await chmod(tmp, mode);
+        if (hostDirs() && existsSync(target)) await moveToTrash(target);
         await replaceFile(tmp, target);
       } catch (e) {
         await rm(tmp, { force: true });
@@ -471,6 +473,7 @@ export async function writeFiles(repo, version, { paths, progress } = {}) {
     } else {
       const bytes = blobs.get(entry.oid);
       if (!bytes) { missing.push(rel); continue; }
+      if (hostDirs() && existsSync(target)) await moveToTrash(target);
       await writeAtomic(target, bytes, { mode });
       const st = await repo.hashes.stat(rel);
       if (st) repo.hashes.know(rel, st, { blob: entry.oid });

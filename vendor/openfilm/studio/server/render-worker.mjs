@@ -12,6 +12,8 @@
  * and `failed` with the render's id. Its renders share one BrowserPool, so a browser is started once for many pages;
  * a render whose browser crashed or stopped answering is drawn once more in new browsers.
  */
+import { hostDirs } from '../../src/film-dirs.mjs';
+import { readState } from './projects.mjs';
 import { render } from '../../src/render.mjs';
 import { BrowserPool, browserFailed } from '../../src/browser-pool.mjs';
 
@@ -28,6 +30,7 @@ if (process.argv.includes('--pool')) {
   /** @param {string} id @param {string[]} args @param {Record<string, unknown>} opts @param {AbortSignal} signal */
   const draw = async (id, args, opts, signal) => {
     try {
+      if (hostDirs()) await readState();
       for (let tries = 1; ; tries++) {
         try {
           const result = await render(args, {
@@ -65,6 +68,7 @@ if (process.argv.includes('--pool')) {
     const abort = new AbortController();
     process.on('message', (/** @type {{ type?: string }} */ m) => { if (m?.type === 'cancel') abort.abort(); });
     try {
+      if (hostDirs()) await readState();
       let result;
       for (let tries = 1; ; tries++) {
         try {

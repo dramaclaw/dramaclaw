@@ -4,6 +4,7 @@
 // HEVC on a machine without a chip for it. Before rendering, such a video gets a copy the browser plays, with a key
 // frame every quarter second, all but lossless (with its alpha, when it has one), made once and kept in the project's
 // cache; the render's pages are served the copy, and the sound is still mixed from the original.
+import { cacheDir } from './film-dirs.mjs';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -121,7 +122,7 @@ export async function copyNeed(file, { plays, slow = true } = {}) {
 
 /** Where `file`'s copy is kept in `root`'s cache, by the file's version: the path without its extension. */
 const copyBase = (/** @type {string} */ file, /** @type {string} */ root, /** @type {import('node:fs').Stats} */ stat) =>
-  join(root, '.film', 'cache', 'seek', hash(Buffer.from(`${VERSION}\0${file}\0${stat.size}\0${stat.mtimeMs}`)));
+  cacheDir(root, 'seek', hash(Buffer.from(`${VERSION}\0${file}\0${stat.size}\0${stat.mtimeMs}`)));
 
 /** @type {Map<string, { copy: string | null, at: number }>} what madeCopy found, by file and version */
 const found = new Map();
@@ -145,11 +146,11 @@ export function madeCopy(file, root) {
 /**
  * The files of a film's video clips: film.html at `film` (a path in `root`, as a URL says it), as a render, a look or
  * a still of it plays them.
- * @param {string} root @param {string} film
+ * @param {string} root @param {string} film @param {string} [source]
  */
-export function filmVideos(root, film) {
+export function filmVideos(root, film, source = join(root, decodeURI(film))) {
   let doc;
-  try { doc = readFilmFile(readFileSync(join(root, decodeURI(film)), 'utf8')).doc; } catch { return []; }
+  try { doc = readFilmFile(readFileSync(source, 'utf8')).doc; } catch { return []; }
   const files = new Set();
   for (const track of doc?.tracks ?? []) {
     for (const clip of track.clips) {

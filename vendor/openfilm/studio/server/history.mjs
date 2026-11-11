@@ -25,6 +25,7 @@
  * Every action takes an optional `onProgress` (history-store.mjs Progress) to say how far it is; a history an earlier
  * Studio made is brought up to date on first use (history-migrate.mjs).
  */
+import { TOOL_DIR, historyDir, hostDirs, mediaDir } from '../../src/film-dirs.mjs';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -34,7 +35,6 @@ import { FORMAT, formatOf, markFormat, migrateHistory, upgradeHistory } from './
 import {
   HistoryError, gitRun, keepFiles, openRepo, readVersion, sameAs, writeFiles, writeTree,
 } from './history-store.mjs';
-import { TOOL_DIR } from './projects.mjs';
 import { moveToTrash } from './trash.mjs';
 import { readDeletedVersions, writeDeletedVersions } from './history-deleted.mjs';
 
@@ -42,8 +42,6 @@ export { HistoryError };
 
 /** @typedef {import('./history-store.mjs').Progress} Progress */
 /** @typedef {{ onProgress?: Progress }} Options */
-
-const historyDir = (/** @type {string} */ root) => join(root, TOOL_DIR, 'history');
 
 /**
  * git, run on the project's history only, on the folder where the project is now: both named on every call, never
@@ -106,7 +104,11 @@ async function followMove(/** @type {string} */ root, /** @type {string} */ gitD
 async function ready(root, progress) {
   if (!existsSync(root)) throw new HistoryError('the project\'s folder is not there', 404, 'none');
   const gitDir = historyDir(root);
-  if (existsSync(gitDir) && !ownHistory(gitDir)) await rename(gitDir, `${gitDir}-from-elsewhere-${Date.now()}`);
+  if (hostDirs() && existsSync(join(gitDir, 'HEAD')) && formatOf(gitDir) < FORMAT) throw new HistoryError('version history format is not supported', 409);
+  if (existsSync(gitDir) && !ownHistory(gitDir)) {
+    if (hostDirs()) throw new HistoryError('this project\'s version history was not made by Studio, so Studio does not use it', 409);
+    await rename(gitDir, `${gitDir}-from-elsewhere-${Date.now()}`);
+  }
   /* git takes a folder for a history only with these in it, empty as they are until the first version: a copy or a
      sync that leaves out empty folders would have every call fail ("not in a git directory") */
   if (existsSync(join(gitDir, 'HEAD'))) {
@@ -123,10 +125,10 @@ async function ready(root, progress) {
   } else {
     await followMove(root, gitDir);
     const format = formatOf(gitDir);
-    if (format < 2) await migrateHistory(root, gitDir, versionFiles, progress);
-    else if (format < FORMAT) await upgradeHistory(root, gitDir, versionFiles);
+    if (!hostDirs() && format < 2) await migrateHistory(root, gitDir, versionFiles, progress);
+    else if (!hostDirs() && format < FORMAT) await upgradeHistory(root, gitDir, versionFiles);
   }
-  return openRepo(root, gitDir);
+  return openRepo(root, gitDir, mediaDir(root));
 }
 
 /** Tidy the history now and then, after the answer (git decides when it is worth it; it never blocks anything). */
@@ -349,7 +351,7 @@ const ALL_VERSIONS = ['HEAD', '--branches', '--glob=refs/openfilm/kept/*', '--gl
 export function log(root, { limit = 50, deleted = false, includeDeletedCount = false, onProgress } = {}) {
   return queued(root, async () => {
     const gitDir = historyDir(root);
-    if (!existsSync(join(gitDir, 'HEAD')) || !ownHistory(gitDir)) return { versions: [], more: false, ...(includeDeletedCount ? { deletedCount: 0 } : {}) };
+    if (!existsSync(join(gitDir, 'HEAD')) || (!hostDirs() && !ownHistory(gitDir))) return { versions: [], more: false, ...(includeDeletedCount ? { deletedCount: 0 } : {}) };
     await ready(root, throttled(onProgress));
     const head = await headOf(root);
     if (!head) return { versions: [], more: false, ...(includeDeletedCount ? { deletedCount: 0 } : {}) };
@@ -669,7 +671,7 @@ export function copyVersion(root, commit, into, { onProgress } = {}) {
     const progress = throttled(onProgress);
     const repo = await ready(root, progress);
     const version = await readVersion(repo, await resolveCommit(root, commit));
-    const { missing } = await writeFiles(openRepo(into, repo.gitDir), version, { progress });
+    const { missing } = await writeFiles(openRepo(into, repo.gitDir, repo.mediaDir), version, { progress });
     return { missing };
   });
 }
