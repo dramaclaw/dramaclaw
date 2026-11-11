@@ -125,7 +125,7 @@ Authorization: Bearer xxx
 
 ## 画布操作说明
 
-删除节点、清空画布、会消耗积分的生成需要确认（30 分钟有效，过期需重新确认）；其它结构改动直接执行。外部 Agent 在自己的对话里得到用户明确同意后调用 `freezone_confirm_canvas_action`，取消用 `freezone_cancel_canvas_action`。运行节点和工作流仍需要浏览器打开画布。
+删除节点、清空画布、会消耗积分的生成需要确认（30 分钟有效，过期需重新确认）；其它结构改动直接执行。外部 Agent 在自己的对话里得到用户明确同意后调用 `freezone_confirm_canvas_action`，取消用 `freezone_cancel_canvas_action`。默认 `browser` 执行器运行节点和工作流需要浏览器打开画布；服务端执行见下方“服务端执行器”。
 
 互动故事四个工具是例外：Create/Patch 调用 CE API，由 `InteractiveStoryService` 在后端写入完整故事投影，不写 pending canvas command。产品内 Agent 会根据成功工具帧自动刷新当前画布并保护未保存本地编辑；外部 MCP 客户端当前没有通用的浏览器刷新广播，写入后需要宿主适配刷新或手动刷新/重新打开画布。
 
@@ -141,4 +141,35 @@ Authorization: Bearer xxx
 具体模型 ID。授权 MCP 会在提交画布前移除该符号值，由本地画布使用当前实际可用的默认模型；
 因此也不需要为了替换推荐项而重新生成整份工作流图。
 
-在 API 服务端设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server`（默认 `browser`），Agent 的结构修改和上下文读取会由服务端画布执行器处理；运行节点、工作流等 host 命令仍需打开对应画布。`server` 要求同时启用 `DRAMACLAW_CANVAS_PATCH_PUSH=1`。
+### 服务端执行器
+
+在 API 服务端同时设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server` 和 `DRAMACLAW_CANVAS_PATCH_PUSH=1` 即可启用，默认执行器为 `browser`。服务端处理结构修改、上下文读取，以及下列受支持的节点动作和工作流，无需浏览器打开画布。确认规则与浏览器相同，付费生成仍需用户确认；费用归发起运行的用户，每次媒体提交计费一次。
+
+`run_workflow` / `run_node_action` 支持以下动作，仍受下表拒绝条件限制：
+
+- `generate_image`、`generate_text`、`generate_audio`。
+- `translate_text` 仅限 `audioNode`，`generate_video` 仅限 `videoNode`。
+- `generate_3gs_world` 仅限 `threeDWorldNode`，通过 `run_node_action` 启动。3D 世界节点不属于工作流节点类型，`run_workflow` 不包含它们，浏览器也一样。
+- 图片工具仅限 `imageGenNode`、`uploadNode`、`imageNode`、`exportImageNode`：`run_outpaint_tool`、`run_upscale_tool`、`run_grid_multi_camera`、`run_grid_plot_four`、`run_grid_face_three_view`、`run_grid_product_three_view`、`run_grid_serial_storyboard_25`、`run_grid_cinematic_light_correction`、`run_grid_character_three_view`、`run_grid_scene_setting_sheet`、`run_grid_frame_projection_3s_later`、`run_grid_frame_projection_5s_earlier`。
+
+以下情况需要打开对应画布：
+
+| 原因码 | 拒绝条件 |
+|---|---|
+| `action_not_on_server` | 动作不在支持列表中，或节点类型不受支持。例如 `auto_compose_video`、`run_audio_separate`、`run_video_analyze_story`、`start_video_breakdown`、`generate_html`、`run_skill`、`generate_text_video`、`run_scene360_tool`、`run_matting_tool`。 |
+| `mixed_commands` | 一次调用混合运行命令与其它命令，整次调用不能在服务端运行。 |
+| `world_recipe` | 3D 世界节点设置了 `workflowCatalog.recipeId`。 |
+| `video_count` | 视频节点的 `count` 大于 1。 |
+| `video_story_continuity` | 视频节点带 `storySegmentId`、`storyRole=start` 或连接 `storyChoiceEdge`，且 `continuityMode` 为 `auto` 或 `independent`。 |
+| `recipe_required` | 仅在启用用量计量时，模型动作没有所需的 Recipe。 |
+| `mainline_auto_commit` | 系统管理的图片节点开启了生成后自动提交主线（`autoCommitOnGenerate`），服务端没有提交主线的路径。 |
+
+全部动作被拒绝时，工具返回 `canvas_open_required` 和拒绝列表，用户需打开画布运行。仅部分动作被拒绝时，其余可运行动作继续执行，拒绝项及原因列在运行记录中；依赖失败动作的下游会被阻断。
+
+最后一层执行完后，`finalize_run` 会像浏览器一样将已完成的分镜图片挂回原故事段落，挂接警告记录在 `story_attach_warnings`。
+
+同一次运行由一个进程持有 180 秒租约并持续续租。进程退出后，租约到期，恢复扫描每 30 秒检查一次，由另一个 API 进程接管并继续剩余动作；已完成、失败、跳过或阻断的动作不会重新执行。在已确认原进程退出时，其在途 inline 生成任务会标记为失败，节点显示 `执行该任务的服务进程已退出,任务已中断,请重新发起`。该任务不会自动重新提交，不会因此产生第二次费用，用户需重新运行。
+
+结果丢失窗口是：向上游提供方提交任务后、保存输出前。当前代码未在等待结果前将提供方任务句柄持久化到可恢复的任务状态；如果进程在此期间退出，提供方仍可能完成任务并计费，但结果无法重新挂接，会丢失，节点显示上述失败消息。中断任务的预留费用目前既不结算也不退还，这是已知限制。
+
+同机多进程必须共享运行目录 `NOVELVIDEO_RUNTIME_DIR`，通过 `task_owners` 中的进程文件锁判断在途任务的原进程是否仍存活。跨主机的 owner 检查返回未知，即使共享目录也不会据此把任务标记为失败，因此不能依赖上述进程退出检测完成跨主机恢复。

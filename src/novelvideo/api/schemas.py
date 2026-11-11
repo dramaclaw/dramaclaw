@@ -1359,7 +1359,7 @@ class FreezoneVideoEditRequest(FreezoneWorkflowMediaLink):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneVideoExtendRequest(BaseModel):
+class FreezoneVideoExtendRequest(FreezoneWorkflowMediaLink):
     """视频延长请求。输入一个源视频，并从其结尾继续生成指定时长。"""
 
     video_url: str = Field(description="待延长的源视频静态地址，必填")
@@ -1628,7 +1628,7 @@ class FreezoneVideoEraseRequest(BaseModel):
     )
 
 
-class FreezoneVideoUpscaleRequest(BaseModel):
+class FreezoneVideoUpscaleRequest(FreezoneWorkflowMediaLink):
     """视频增强请求。模型由媒体目录能力动态选择。"""
 
     source_url: str = Field(description="待高清处理视频的静态地址")

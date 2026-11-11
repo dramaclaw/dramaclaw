@@ -98,6 +98,22 @@ def test_failed_child_replaced(pool, op, code, caplog):
     assert pool.call("ping", {})["pid"] != before
 
 
+def test_call_value_accepts_any_json_result(pool):
+    assert pool.call_value("null_result", {}) is None
+    assert pool.call_value("bool_result", {}) is True
+    assert pool.call_value("ping", {})["pid"]
+    with pytest.raises(CanvasCoreError) as error:
+        pool.call_value("no_result", {})
+    assert error.value.code == "canvas_core_protocol"
+
+
+@pytest.mark.parametrize("op", ["null_result", "bool_result"])
+def test_call_requires_object_result(pool, op):
+    with pytest.raises(CanvasCoreError) as error:
+        pool.call(op, {})
+    assert error.value.code == "canvas_core_protocol"
+
+
 @pytest.mark.parametrize(
     "op,code,message,level",
     [

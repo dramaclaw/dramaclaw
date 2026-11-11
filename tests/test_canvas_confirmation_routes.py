@@ -2,6 +2,7 @@
 # Copyright (c) 2026 ClaymoreLab
 """Canvas confirmation HTTP policy, durable decisions, notices, and bridge payloads."""
 
+from contextlib import ExitStack
 from copy import deepcopy
 from datetime import datetime, timezone
 import logging
@@ -537,7 +538,7 @@ def test_server_paid_confirmation_starts_without_browser_once(setup, monkeypatch
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data == {"confirmation_id": created["confirmation_id"], "status": "running",
-                    "run_id": data["run_id"], "actions": [
+                    "run_id": data["run_id"], "refused": [], "actions": [
                         {"node_id": "n1", "action": "generate_image", "label": "海报"}]}
     run = runs(setup)[0]
     assert run["run_id"] == data["run_id"]
@@ -555,7 +556,7 @@ def test_server_paid_confirmation_starts_without_browser_once(setup, monkeypatch
     assert setup.queued == [{
         "task_type": "freezone_workflow_drive", "product_surface": "freezone_assistant",
         "queue_kind": "default", "scope": f"{run['run_id']}:d1",
-        "payload": {"canvas_id": "default", "run_id": run["run_id"]}}]
+        "payload": {"canvas_id": "default", "run_id": run["run_id"], "drive_attempt": 1}}]
     assert record(setup, created)["outcome"] == {"status": "running", "run_id": run["run_id"]}
     assert run["run_id"] in notices(setup)[0]["content"]
     assert "freezone_observe_workflow_run" in notices(setup)[0]["content"]
@@ -579,12 +580,38 @@ def test_server_conversation_run_without_card_notice(setup):
     assert notices(setup) == []
 
 
-def test_video_requires_open_canvas_at_creation_and_decision(setup):
+def test_video_confirmation_starts_server_run_without_browser(setup):
     commands = [{"type": "run_node_action", "node_id": "n2", "action": "generate_video"}]
     setup.pool.plan["actions"][0].update(node_id="n2", action="generate_video", label="片头")
+    created = create(setup, commands=commands)
+    assert created["browser_open"] is False
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "running"
+    assert response.json()["data"]["refused"] == []
+    run = runs(setup)[0]
+    assert run["owner_kind"] == "server"
+    assert [(a["node_id"], a["action"]) for a in run["actions"]] == [
+        ("n2", "generate_video"),
+    ]
+    assert [task["task_type"] for task in setup.queued] == ["freezone_workflow_drive"]
+
+
+@pytest.mark.parametrize("action,data,reason", [
+    ("generate_text_video", {}, "action_not_on_server"),
+    ("generate_video", {"count": 2}, "video_count"),
+    ("generate_video", {"storyRole": "start", "continuityMode": "auto"},
+     "video_story_continuity"),
+])
+def test_browser_only_video_requires_open_canvas_at_creation_and_decision(setup, action, data, reason):
+    commands = [{"type": "run_node_action", "node_id": "n2", "action": action}]
+    setup.pool.plan["actions"][0].update(node_id="n2", action=action, label="片头")
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    canvas["nodes"][1]["data"].update(data)
+    canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), canvas)
     expected = {"code": "canvas_open_required", "message": "这些动作需要打开画布才能运行：片头",
-                "blocked": [{"node_id": "n2", "action": "generate_video", "label": "片头",
-                             "reason": "action_not_on_server"}]}
+                "blocked": [{"node_id": "n2", "action": action, "label": "片头",
+                             "reason": reason}]}
     response = setup.client.post(BASE + "/confirmations", json={"commands": commands})
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == expected
@@ -606,15 +633,18 @@ def test_video_requires_open_canvas_at_creation_and_decision(setup):
         "external_mcp_command": True, "confirmation_id": created["confirmation_id"]}
 
 
-@pytest.mark.parametrize("reason", ["action_parameters", "metered_runtime", "mixed_commands"])
-def test_server_blocked_reasons_leave_no_confirmation(setup, monkeypatch, reason):
+@pytest.mark.parametrize("reason", ["recipe_required", "mixed_commands"])
+def test_server_blocked_reasons_leave_no_confirmation(setup, reason, request):
     commands = PAID
     expected = {"node_id": "n1", "action": "generate_image", "label": "海报", "reason": reason}
-    if reason == "action_parameters":
-        setup.pool.plan["actions"][0]["parameters"] = {}
-    elif reason == "metered_runtime":
-        from novelvideo.api import freezone_server_workflow_start as start
-        monkeypatch.setattr(start, "get_usage_meter", lambda: object())
+    if reason == "recipe_required":
+        from tests.recording_usage_meter import RecordingUsageMeter
+
+        stack = ExitStack()
+        request.addfinalizer(stack.close)
+        stack.enter_context(RecordingUsageMeter().registered())
+        setup.pool.plan["actions"][0].update(action="generate_text")
+        expected["action"] = "generate_text"
     else:
         commands = [{"type": "update_node_data", "node_id": "n3", "data": {"content": "Hi"}},
                     *PAID]
@@ -627,6 +657,63 @@ def test_server_blocked_reasons_leave_no_confirmation(setup, monkeypatch, reason
     assert list(directory(setup).glob("cc_*.json")) == []
     if reason == "mixed_commands":
         assert setup.pool.plan_inputs == []
+
+
+@pytest.mark.parametrize("browser_open", [False, True])
+def test_partial_refusal_uses_server_without_browser_and_browser_when_open(setup, browser_open):
+    setup.pool.plan["actions"].append({
+        "command_index": 0, "node_id": "n2", "action": "auto_compose_video",
+        "execution_mode": "task", "label": "Compose",
+    })
+    setup.pool.plan.update(levels=[[0], [1]], dependencies={"n2": ["n1"]})
+    commands = [{"type": "run_workflow", "scope": "canvas"}]
+    if browser_open:
+        touch_canvas_presence(setup.root, "default", "browser", now=1000)
+    created = create(setup, commands=commands)
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    if browser_open:
+        assert data["status"] == "submitted"
+        assert runs(setup) == []
+        assert setup.queued == []
+        frames = list_pending_bridge_messages(
+            project_id="proj", canvas_id="default", bridge_dir=directory(setup).parent)
+        assert [frame["envelope"]["commands"] for frame in frames] == [commands]
+        return
+    assert data == {
+        "confirmation_id": created["confirmation_id"], "status": "running",
+        "run_id": data["run_id"], "actions": [
+            {"node_id": "n1", "action": "generate_image", "label": "海报"},
+            {"node_id": "n2", "action": "auto_compose_video", "label": "Compose"},
+        ], "refused": [{"node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+                        "reason": "action_not_on_server", "code": "canvas_open_required"}],
+    }
+    run = runs(setup)[0]
+    assert [(a["node_id"], a["action"], a["status"]) for a in run["actions"]] == [
+        ("n1", "generate_image", "pending"), ("n2", "auto_compose_video", "pending"),
+    ]
+    assert run["metadata"]["action_manifest"] == [
+        {"command_index": 0, "node_id": "n1", "action": "generate_image", "label": "海报",
+         "execution_mode": "task"},
+        {"command_index": 0, "node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+         "execution_mode": "task", "refusal": {
+             "code": "canvas_open_required", "reason": "action_not_on_server"}},
+    ]
+
+
+def test_action_parameters_start_server_run_without_browser(setup):
+    setup.pool.plan["actions"][0]["parameters"] = {"prompt": "A tree"}
+    commands = [dict(PAID[0], parameters={"prompt": "A tree"})]
+    created = create(setup, commands=commands)
+    response = decide(setup, created)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "running"
+    assert response.json()["data"]["refused"] == []
+    assert runs(setup)[0]["metadata"]["action_manifest"] == [
+        {"command_index": 0, "node_id": "n1", "action": "generate_image", "label": "海报",
+         "execution_mode": "task", "parameters": {"prompt": "A tree"}},
+    ]
 
 
 def test_invalid_plan_creation_and_pending_decision(setup):
@@ -765,7 +852,11 @@ def test_first_enqueue_failure_keeps_index_for_recovery(setup, monkeypatch):
     assert response.json()["data"]["status"] == "running"
     indexed = server_workflow_index.list_server_workflow_runs()
     assert [item["run_id"] for item in indexed] == [run_id]
-    assert runs(setup)[0]["metadata"]["drive_generation"] == 1
+    metadata = runs(setup)[0]["metadata"]
+    assert metadata.get("drive_generation", 0) == 0
+    assert metadata["drive_attempt"] == 1
+    assert metadata["drive_enqueue_failures"] == 1
+    assert metadata["drive_last_enqueue_error"] == "RuntimeError"
     assert setup.queued == []
 
 
@@ -783,3 +874,29 @@ async def test_terminal_notices_are_idempotent_per_status(setup):
     assert all("run_example: 2 completed, 1 failed" in message["content"] for message in messages)
     assert all("Read the canvas or observe the run before reporting" in message["content"]
                for message in messages)
+
+
+def test_recipe_admission_failure_voids_confirmation(setup, monkeypatch):
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    canvas["nodes"][0]["data"]["workflowCatalog"] = {"recipeId": "image-recipe"}
+    canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), canvas)
+
+    async def reject(*args, **kwargs):
+        raise RuntimeError("recipe admission rejected")
+
+    monkeypatch.setattr(routes, "get_task_backend", lambda: SimpleNamespace(
+        enqueue_project_task=reject,
+    ))
+    with RecordingUsageMeter().registered():
+        created = create(setup, commands=PAID)
+        response = decide(setup, created)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "admission_failed", "message": "recipe admission rejected",
+    }
+    assert record(setup, created)["status"] == "voided"
+    assert record(setup, created)["outcome"] == {"reason": "admission_failed"}
+    assert [run["status"] for run in runs(setup)] == ["failed"]
+    assert setup.queued == []

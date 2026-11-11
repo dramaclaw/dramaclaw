@@ -72,12 +72,11 @@ import {
   resolveCaptureSeekSec,
 } from "@/features/canvas/application/videoCaptureFrame";
 import {
-  attachCompletedStoryFrame,
-  attachCompletedStoryAsset,
   ensureVideoContinuity,
   isFmvVideoNode,
-  syncStoryVideoReferencePrompt,
 } from "@/features/canvas/application/videoContinuity";
+import { syncCompletedStoryFramesIn } from "@/features/canvas/core/storyAttachment";
+import { videoReferenceEnvelopeForNode } from "@/features/canvas/application/videoReferenceEnvelope";
 
 export { CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, isGeneratedCanvasClientId };
 export type {
@@ -1216,18 +1215,10 @@ function syncCompletedStoryFrames(
   imageNodeIds: Iterable<string>,
   result: CanvasChatCommandApplyResult,
 ): void {
-  for (const imageNodeId of imageNodeIds) {
-    const attachmentError = attachCompletedStoryFrame(imageNodeId);
-    const assetError = attachCompletedStoryAsset(imageNodeId);
-    if (attachmentError) {
-      result.warnings = [...(result.warnings ?? []), attachmentError];
-    }
-    if (assetError) result.warnings = [...(result.warnings ?? []), assetError];
-    const state = useCanvasStore.getState();
-    for (const edge of state.edges.filter((item) => item.source === imageNodeId)) {
-      syncStoryVideoReferencePrompt(edge.target);
-    }
-  }
+  const warnings = syncCompletedStoryFramesIn(
+    useCanvasStore, imageNodeIds, (key, options) => i18next.t(key, options), videoReferenceEnvelopeForNode,
+  );
+  if (warnings.length) result.warnings = [...(result.warnings ?? []), ...warnings];
 }
 
 async function executeQueuedNodeActions(

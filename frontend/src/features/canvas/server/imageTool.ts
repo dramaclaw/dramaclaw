@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { createCanvasStore, createNodeCanvasEnvironment } from '../serverEntry';
+import { parseCanvasPayload } from './requestPayload';
 import * as pure from '../application/generationRequests';
 import { imageModelOptionsFromPayload } from '../domain/modelCatalogPayload';
-import { SHARED_MODELS } from '../domain/modelOptions';
+import { SHARED_MODELS, VIDEO_MODELS } from '../domain/modelOptions';
 import * as p from './generationPayload';
 import { project } from './toolPayload';
 import { invalidRequest } from './requestPayload';
@@ -73,4 +75,38 @@ export async function serveImageToolPatch(payload: unknown) {
     }
     default: return invalidRequest('Unknown image tool patch phase');
   }
+}
+
+export async function serveImageToolPlace(payload: unknown) {
+  const input = p.fields(payload, ['canvas', 'locale', 'child_node_id', 'child', 'edge']);
+  const { canvas } = parseCanvasPayload({ canvas: input.canvas, envelopes: [] });
+  const locale = p.string(input.locale);
+  const childNodeId = p.string(input.child_node_id);
+  const child = p.fields(input.child, ['type', 'data', 'layout']);
+  const type = p.choice(child.type, ['exportImageNode']);
+  const data = p.record(child.data);
+  const layout = p.fields(child.layout, ['anchorNodeId', 'width', 'height']);
+  const anchorNodeId = p.string(layout.anchorNodeId);
+  const width = p.number(layout.width), height = p.number(layout.height);
+  const edge = p.fields(input.edge, ['source', 'target']);
+  const source = p.string(edge.source);
+  p.choice(edge.target, ['child']);
+  return runServerRequest(locale, async () => {
+    let allocated = false;
+    const ids = { next: () => {
+      if (allocated) throw new Error('Image tool placement allocates one node');
+      allocated = true;
+      return childNodeId;
+    } };
+    const store = createCanvasStore(createNodeCanvasEnvironment({
+      translate: await createServerTranslate(locale), ids, now: Date.now, videoModels: VIDEO_MODELS,
+    }));
+    store.getState().setCanvasData(canvas.nodes, canvas.edges);
+    const position = store.getState().findNodePosition(anchorNodeId, width, height);
+    const id = store.getState().addNode(type, position, data);
+    const edgeId = store.getState().addEdge(source, id);
+    const state = store.getState();
+    return { node: state.nodes.find(node => node.id === id),
+      edge: edgeId === null ? null : state.edges.find(edge => edge.id === edgeId) ?? null };
+  });
 }

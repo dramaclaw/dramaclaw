@@ -56,7 +56,7 @@ async def test_overlapping_list_requests_authorize_separately_and_share_only_mai
         if user["id"] == "denied":
             raise HTTPException(403, "forbidden")
         return (
-            SimpleNamespace(project_id=project, state_dir=tmp_path),
+            SimpleNamespace(project_id=project, state_dir=tmp_path, output_dir=tmp_path),
             "alice",
             "demo",
             tmp_path,
@@ -282,6 +282,94 @@ def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
         workflow_run_client.get(base).json()["data"]["runs"][0]["run_id"]
         == created["run_id"]
     )
+
+
+def test_agent_credential_without_write_scope_cannot_patch_workflow_run(
+    workflow_run_client: TestClient,
+) -> None:
+    from novelvideo.api.auth import get_api_user
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base, json={"actions": [{"node_id": "image", "action": "generate_image"}]}
+    )
+    assert created.status_code == 200
+    target = f"{base}/{created.json()['data']['run_id']}"
+    overrides = workflow_run_client.app.dependency_overrides
+    browser_user = overrides[get_api_user]
+    overrides[get_api_user] = lambda: {
+        "id": "u-alice",
+        "username": "alice",
+        "credential_kind": "agent_session",
+        "scopes": ["projects:read"],
+        "current_scope_kind": "project",
+        "current_project_id": "proj_demo",
+    }
+
+    response = workflow_run_client.patch(target, json={"status": "cancelled"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "scope missing: 'projects:write' (token has ['projects:read'])"
+    )
+    overrides[get_api_user] = browser_user
+    observed = workflow_run_client.get(target)
+    assert observed.status_code == 200
+    assert observed.json()["data"]["status"] == "running"
+
+
+def test_agent_credential_in_other_project_cannot_patch_workflow_run(
+    workflow_run_client: TestClient,
+) -> None:
+    from novelvideo.api.auth import get_api_user
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base, json={"actions": [{"node_id": "image", "action": "generate_image"}]}
+    )
+    assert created.status_code == 200
+    target = f"{base}/{created.json()['data']['run_id']}"
+    overrides = workflow_run_client.app.dependency_overrides
+    browser_user = overrides[get_api_user]
+    overrides[get_api_user] = lambda: {
+        "id": "u-alice",
+        "username": "alice",
+        "credential_kind": "agent_session",
+        "scopes": ["projects:write"],
+        "current_scope_kind": "project",
+        "current_project_id": "proj_other",
+    }
+
+    response = workflow_run_client.patch(target, json={"status": "cancelled"})
+    assert response.status_code == 403
+    overrides[get_api_user] = browser_user
+    observed = workflow_run_client.get(target)
+    assert observed.status_code == 200
+    assert observed.json()["data"]["status"] == "running"
+
+
+def test_agent_credential_with_write_scope_can_cancel_workflow_run(
+    workflow_run_client: TestClient,
+) -> None:
+    from novelvideo.api.auth import get_api_user
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base, json={"actions": [{"node_id": "image", "action": "generate_image"}]}
+    )
+    assert created.status_code == 200
+    target = f"{base}/{created.json()['data']['run_id']}"
+    workflow_run_client.app.dependency_overrides[get_api_user] = lambda: {
+        "id": "u-alice",
+        "username": "alice",
+        "credential_kind": "agent_session",
+        "scopes": ["projects:write"],
+        "current_scope_kind": "project",
+        "current_project_id": "proj_demo",
+    }
+
+    response = workflow_run_client.patch(target, json={"status": "cancelled"})
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "cancelled"
 
 
 def test_recipe_media_claim_reports_interrupted_run_before_enqueue(
@@ -2407,6 +2495,83 @@ def test_generation_session_rejects_wrong_operation_identity(
 
     assert response.status_code == 400
     assert expected_error in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_server_recipe_delivery_without_get_confirms_once(workflow_run_client, monkeypatch):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import agent_product_operations as products
+    from novelvideo.freezone import workflow_runs as store
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    root = workflow_run_client.state_dir
+    ctx, *_ = await freezone._resolve_freezone_project("proj_demo", {})
+    run = store.create_workflow_run(
+        project_dir=root, project_id="proj_demo", canvas_id="default", owner_kind="server",
+        actions=[{"node_id": "image-1", "action": "generate_image", "recipe_id": "product-image",
+                  "generation_attempt_id": "attempt-image"}],
+    )
+    operation = products.create_agent_product_operation(
+        project_dir=root, project_id="proj_demo", product_kind="recipe_result",
+        idempotency_key="server-delivery", generation_session_id=run["run_id"],
+        canvas_id="default", artifact_id="image-1",
+    )
+    operation_id = operation["operation_id"]
+    products.bind_agent_product_task(
+        project_dir=root, operation_id=operation_id,
+        task_id="product-task", root_task_id="product-task",
+    )
+    products.bind_agent_product_model_execution(
+        project_dir=root, operation_id=operation_id, model_call_id="compile-image",
+        executed_at=1.0, source="server_recipe_compiler", compile_mode="model",
+    )
+    scope = dict(project_dir=root, canvas_id="default", run_id=run["run_id"])
+    store.bind_workflow_action_product_operation(
+        **scope, node_id="image-1", action="generate_image", operation_id=operation_id,
+    )
+    task_key = "task:freezone_gen:project:proj_demo:0:image-job"
+    artifact = {"output_url": "/static/image.png"}
+    store.update_workflow_run(
+        **scope, status="completed", owner_kind="server", action_updates=[{
+            "node_id": "image-1", "action": "generate_image", "status": "completed",
+            "task_key": task_key, "task_type": "freezone_gen", "job_id": "image-job",
+            "result": artifact,
+        }],
+    )
+    product_task = SimpleNamespace(task_id="product-task", status="running", metadata={
+        "feature_credit_reservation_id": "reservation-image",
+        "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+    })
+    media = SimpleNamespace(status="completed", result=artifact, error=None)
+
+    class Manager(_TaskMetadataWriter):
+        def get_tasks_for_project(self, context, keys, **kwargs):
+            return {task_key: media} if task_key in keys else {}
+
+        def get_task_for_project(self, *args, scope, **kwargs):
+            return product_task if scope == operation_id else None
+
+        def complete_task_for_project(self, *args, metadata, **kwargs):
+            product_task.status = "completed"
+            product_task.metadata.update(metadata)
+            return True
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    with RecordingUsageMeter().registered() as meter:
+        await freezone.maintain_server_workflow_canvas(ctx, "default")
+        assert products.read_agent_product_operation(
+            project_dir=root, operation_id=operation_id,
+        )["status"] == "delivered"
+        assert product_task.status == "completed"
+        expected = [("settle_feature_credit_reservation", {
+            "reservation_id": "reservation-image", "action": "confirm", "metadata": {
+                "source": "agent_product_late_delivery", "business_outcome": "delivered",
+                "operation_id": operation_id,
+            },
+        })]
+        assert meter.calls == expected
+        await freezone.maintain_server_workflow_canvas(ctx, "default")
+        assert meter.calls == expected
 
 
 @pytest.mark.asyncio
@@ -5673,3 +5838,416 @@ def test_http_create_always_uses_browser_owner(workflow_run_client):
     assert response.status_code == 200
     assert response.json()["data"]["owner_kind"] == "browser_legacy"
     assert response.json()["data"]["metadata"]["owner_kind"] == "browser_legacy"
+
+
+@pytest.fixture
+def server_media(tmp_path, monkeypatch):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import workflow_runs as store
+
+    run = store.create_workflow_run(
+        project_dir=tmp_path, project_id="project", canvas_id="default", owner_kind="server",
+        actions=[{"node_id": "n", "action": "generate_image",
+                  "generation_attempt_id": "attempt-1"}],
+    )
+    scope = dict(project_dir=tmp_path, canvas_id="default", run_id=run["run_id"])
+    tasks, enqueued = {}, []
+
+    async def enqueue(ctx, *, scope, task_type, payload, **kwargs):
+        enqueued.append({"task_type": task_type, "scope": scope, "payload": payload.copy()})
+        state = SimpleNamespace(task_id="media-task", status="running",
+                                metadata={"backend": "celery", "queue": "default"})
+        tasks[scope] = state
+        return SimpleNamespace(task_state=state, backend="celery", queue="default")
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: SimpleNamespace(
+        get_task_for_project=lambda ctx, task_type, episode, *, scope: tasks.get(scope),
+    ))
+    monkeypatch.setattr(freezone, "get_task_backend", lambda: SimpleNamespace(
+        enqueue_project_task=enqueue,
+    ))
+    return SimpleNamespace(
+        scope=scope, tasks=tasks, enqueued=enqueued,
+        ctx=SimpleNamespace(project_id="project", state_dir=tmp_path),
+        link={"run_id": run["run_id"], "node_id": "n", "generation_attempt_id": "attempt-1"},
+        claim={**scope, "project_id": "project", "node_id": "n", "operation_id": "",
+               "attempt_id": "attempt-1", "task_type": "freezone_gen", "fingerprint": "a" * 64},
+    )
+
+
+def test_server_media_claim_lifecycle(server_media, monkeypatch):
+    from novelvideo.freezone import workflow_runs as store
+
+    s = server_media
+    clock = [1000.0]
+    monkeypatch.setattr(store.time, "time", lambda: clock[0])
+    monkeypatch.setattr(store.uuid, "uuid4", lambda: SimpleNamespace(hex="1" * 32))
+    first = store.claim_workflow_media_action(**s.claim)
+    assert first == {"job_id": "1" * 16, "claimed_at": 1000.0,
+                     "created": True, "run_id": s.link["run_id"]}
+    task = {"job_id": "1" * 16, "task_type": "freezone_gen",
+            "task_key": "task:freezone_gen:project:project:0:" + "1" * 16}
+    row = store.read_workflow_run(**s.scope)["actions"][0]
+    assert {key: row[key] for key in task} == task
+    assert store.claim_workflow_media_action(**s.claim) == {**first, "created": False}
+    with pytest.raises(ValueError, match="already claimed by another request"):
+        store.claim_workflow_media_action(**{**s.claim, "fingerprint": "b" * 64})
+    store.bind_workflow_media_task(
+        project_dir=s.scope["project_dir"], run_id=s.link["run_id"],
+        node_id="n", operation_id="", **task,
+    )
+    clock[0] = 1020.0
+    assert store.renew_workflow_media_claim(
+        project_dir=s.scope["project_dir"], run_id=s.link["run_id"],
+        node_id="n", operation_id="", job_id=task["job_id"], claimed_at=1000.0,
+    ) is True
+    assert store.renew_workflow_media_claim(
+        project_dir=s.scope["project_dir"], run_id=s.link["run_id"],
+        node_id="n", operation_id="", job_id=task["job_id"], claimed_at=1000.0,
+    ) is False
+    assert store.claim_workflow_media_action(**s.claim)["claimed_at"] == 1020.0
+    assert store.reclaim_failed_workflow_media_action(
+        **s.claim, failed_job_id=task["job_id"],
+    ) is None
+    store.update_workflow_run(
+        **s.scope, owner_kind="server", action_updates=[{
+            "node_id": "n", "action": "generate_image", "status": "running", "retry_count": 1,
+        }],
+    )
+    monkeypatch.setattr(store.uuid, "uuid4", lambda: SimpleNamespace(hex="2" * 32))
+    fresh = store.reclaim_failed_workflow_media_action(**s.claim, failed_job_id=task["job_id"])
+    assert fresh == {"job_id": "2" * 16, "claimed_at": 1020.0,
+                     "created": True, "run_id": s.link["run_id"]}
+    assert store.claim_workflow_media_action(**s.claim) == {**fresh, "created": False}
+
+
+@pytest.mark.parametrize("invalid", [
+    "browser", "node", "attempt", "operation", "task_type", "action", "ended",
+    "project", "canvas", "missing_run", "no_run", "no_attempt",
+])
+def test_server_media_claim_refuses_invalid_link(server_media, invalid):
+    from novelvideo.freezone import workflow_runs as store
+
+    s = server_media
+    request = dict(s.claim)
+    if invalid == "browser":
+        run = store.create_workflow_run(
+            project_dir=s.scope["project_dir"], project_id="project", canvas_id="other",
+            actions=[{"node_id": "n", "action": "generate_image",
+                      "generation_attempt_id": "attempt-1"}],
+        )
+        request.update(run_id=run["run_id"], canvas_id="other")
+    elif invalid == "operation":
+        store.bind_workflow_action_product_operation(
+            **s.scope, node_id="n", action="generate_image", operation_id="operation-1",
+        )
+    elif invalid == "ended":
+        store.update_workflow_run(**s.scope, owner_kind="server", status="interrupted")
+    else:
+        key, value = {
+            "node": ("node_id", "wrong"), "attempt": ("attempt_id", "wrong"),
+            "task_type": ("task_type", "unknown"), "action": ("task_type", "freezone_video_gen"),
+            "project": ("project_id", "wrong"), "canvas": ("canvas_id", "wrong"),
+            "missing_run": ("run_id", "run_missing"), "no_run": ("run_id", ""),
+            "no_attempt": ("attempt_id", ""),
+        }[invalid]
+        request[key] = value
+    with pytest.raises(ValueError):
+        store.claim_workflow_media_action(**request)
+    assert store.read_workflow_run(**s.scope)["actions"][0]["job_id"] is None
+
+
+async def _submit_server_media(
+    s, *, task_type="freezone_gen", node_id="n", canvas_id="default", job_id="unused",
+):
+    from novelvideo.api.routes import freezone
+
+    return await freezone._enqueue_claimed_workflow_media(
+        ctx=s.ctx, project_dir=s.scope["project_dir"], task_type=task_type,
+        queue_kind="default", job_id=job_id,
+        payload={"canvas_id": canvas_id, "node_id": node_id, "prompt": "A ship"},
+    )
+
+
+async def test_server_media_enqueue_replay_and_stale_recovery(server_media, monkeypatch):
+    from novelvideo.freezone import workflow_runs as store
+
+    s = server_media
+    clock = [1000.0]
+    monkeypatch.setattr(store.time, "time", lambda: clock[0])
+    with store.server_workflow_media_link(s.link):
+        first = await _submit_server_media(s)
+        again = await _submit_server_media(s)
+    assert again["data"]["job_id"] == first["data"]["job_id"]
+    assert [e["task_type"] for e in s.enqueued] == ["freezone_gen"]
+    claimed_job = first["data"]["job_id"]
+    # Simulate a claim persisted before enqueue: no task row, lease old enough to recover.
+    s.tasks.clear()
+    s.enqueued.clear()
+    clock[0] += 20
+    with store.server_workflow_media_link(s.link):
+        recovered = await _submit_server_media(s)
+        replayed = await _submit_server_media(s)
+    assert recovered["data"]["job_id"] == claimed_job
+    assert replayed["data"]["job_id"] == claimed_job
+    assert [(e["task_type"], e["scope"]) for e in s.enqueued] == [("freezone_gen", claimed_job)]
+    run = store.read_workflow_run(**s.scope)
+    assert run["actions"][0]["job_id"] == claimed_job
+
+
+@pytest.mark.parametrize("node_id,task_type", [("other", "freezone_gen"), ("n", "unknown")])
+async def test_server_media_enqueue_refuses_unclaimable(server_media, node_id, task_type):
+    from novelvideo.freezone import workflow_runs as store
+
+    with store.server_workflow_media_link(server_media.link):
+        with pytest.raises(HTTPException) as caught:
+            await _submit_server_media(server_media, node_id=node_id, task_type=task_type)
+    assert caught.value.status_code == 409
+    if node_id == "other":
+        assert caught.value.detail == "server workflow media link does not match the submitted node"
+    assert server_media.enqueued == []
+
+
+async def test_media_enqueue_without_link_stays_unclaimed(server_media):
+    await _submit_server_media(server_media, job_id="first")
+    await _submit_server_media(server_media, job_id="second")
+    assert [e["scope"] for e in server_media.enqueued] == ["first", "second"]
+
+
+async def test_server_media_recorded_retry_reclaims_failed_task(server_media):
+    from novelvideo.freezone import workflow_runs as store
+
+    s = server_media
+    with store.server_workflow_media_link(s.link):
+        first = await _submit_server_media(s)
+        old_job = first["data"]["job_id"]
+        s.tasks[old_job].status = "failed"
+        assert (await _submit_server_media(s))["data"]["job_id"] == old_job
+        store.update_workflow_run(
+            **s.scope, owner_kind="server", action_updates=[{
+                "node_id": "n", "action": "generate_image", "status": "running", "retry_count": 1,
+            }],
+        )
+        fresh = await _submit_server_media(s)
+        assert fresh["data"]["job_id"] != old_job
+        assert (await _submit_server_media(s))["data"]["job_id"] == fresh["data"]["job_id"]
+    assert [e["scope"] for e in s.enqueued] == [old_job, fresh["data"]["job_id"]]
+
+
+async def test_server_media_binding_leaves_other_action_on_same_node_unbound(server_media):
+    from novelvideo.freezone import workflow_runs as store
+
+    s = server_media
+    run = store.create_workflow_run(
+        project_dir=s.scope["project_dir"], project_id="project", canvas_id="another",
+        owner_kind="server", actions=[
+            {"node_id": "n", "action": "generate_image", "generation_attempt_id": "image-attempt"},
+            {"node_id": "n", "action": "generate_text", "generation_attempt_id": "text-attempt"},
+        ],
+    )
+    claim = store.claim_workflow_media_action(**{
+        **s.claim, "canvas_id": "another", "run_id": run["run_id"], "attempt_id": "image-attempt",
+    })
+    store.bind_workflow_media_task(
+        project_dir=s.scope["project_dir"], run_id=run["run_id"], node_id="n", operation_id="",
+        job_id=claim["job_id"], task_type="freezone_gen",
+        task_key="task:freezone_gen:project:project:0:" + claim["job_id"],
+    )
+    saved = store.read_workflow_run(
+        project_dir=s.scope["project_dir"], canvas_id="another", run_id=run["run_id"],
+    )
+    assert saved["actions"][1]["task_key"] is None
+    assert saved["actions"][1]["job_id"] is None
+
+
+@pytest.mark.parametrize("canvas_id", ["other", "", "invalid/canvas"])
+async def test_server_media_enqueue_refuses_wrong_canvas(server_media, canvas_id):
+    from novelvideo.freezone import workflow_runs as store
+
+    with store.server_workflow_media_link(server_media.link):
+        with pytest.raises(HTTPException) as caught:
+            await _submit_server_media(server_media, canvas_id=canvas_id)
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "server workflow media link does not match the submitted node"
+    assert server_media.enqueued == []
+
+
+@pytest.mark.parametrize("action", ["translate_text", "generate_audio"])
+def test_translate_media_claim_only_matches_translate_action(tmp_path, monkeypatch, action):
+    from novelvideo.freezone import workflow_runs as store
+
+    monkeypatch.setattr(store.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(store.uuid, "uuid4", lambda: SimpleNamespace(hex="3" * 32))
+    run = store.create_workflow_run(
+        project_dir=tmp_path, project_id="project", canvas_id="default", owner_kind="server",
+        actions=[{"node_id": "n", "action": action, "generation_attempt_id": "attempt-1"}],
+    )
+    claim = dict(project_dir=tmp_path, project_id="project", canvas_id="default",
+                 run_id=run["run_id"], node_id="n", operation_id="", attempt_id="attempt-1",
+                 task_type="freezone_text_translate", fingerprint="a" * 64)
+    if action == "generate_audio":
+        with pytest.raises(ValueError):
+            store.claim_workflow_media_action(**claim)
+        return
+    assert store.claim_workflow_media_action(**claim) == {
+        "job_id": "3" * 16, "claimed_at": 1000.0, "created": True, "run_id": run["run_id"],
+    }
+    row = store.read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"],
+    )["actions"][0]
+    assert row["task_type"] == "freezone_text_translate"
+    assert row["job_id"] == "3" * 16
+
+
+@pytest.fixture
+def video_media(server_media, monkeypatch):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import workflow_runs as store
+    from novelvideo.ports import get_usage_meter
+
+    s = server_media
+    root = s.scope["project_dir"]
+    run = store.create_workflow_run(
+        project_dir=root, project_id="project", canvas_id="video", owner_kind="server",
+        actions=[{"node_id": "n", "action": "generate_video",
+                  "generation_attempt_id": "attempt-1"}],
+    )
+    s.scope = dict(project_dir=root, canvas_id="video", run_id=run["run_id"])
+    s.link = {**s.link, "run_id": run["run_id"]}
+    s.ctx.requester_user_id = "requester-id"
+    backend = freezone.get_task_backend()
+
+    async def enqueue(ctx, **kwargs):
+        await get_usage_meter().reserve_feature_start_credits(
+            user_id=ctx.requester_user_id, feature_key="video", product_surface="freezone",
+            project_id=ctx.project_id, task_type=kwargs["task_type"], task_id="media-task",
+        )
+        response = await backend.enqueue_project_task(ctx, **kwargs)
+        s.enqueued[-1]["queue_kind"] = kwargs["queue_kind"]
+        return response
+
+    async def resolve(project, user):
+        return s.ctx, "", project, root, str(root)
+
+    async def prepare(**kwargs):
+        return root / "source.mp4", {"duration": 5}, {}, {"feature_key": "video"}
+
+    async def catalog(*args, **kwargs):
+        return {"catalog_id": "video-model", "supportedModes": ["video_extend"],
+                "referenceVideoMax": 1}
+
+    async def backend_model(*args, **kwargs):
+        return "newapi_video-model"
+
+    async def request_schema(*args, **kwargs):
+        return {}, {}, await catalog()
+
+    async def validate(*args, **kwargs):
+        return []
+
+    async def duration(*args, **kwargs):
+        return 5.0
+
+    monkeypatch.setattr(freezone, "get_task_backend", lambda: SimpleNamespace(
+        enqueue_project_task=enqueue,
+    ))
+    monkeypatch.setattr(freezone, "_resolve_freezone_project", resolve)
+    monkeypatch.setattr(freezone, "_prepare_video_upscale", prepare)
+    monkeypatch.setattr(freezone, "_resolve_catalog_video_backend", backend_model)
+    monkeypatch.setattr(freezone, "_resolve_catalog_request", request_schema)
+    monkeypatch.setattr(freezone, "_require_scoped_media_model", catalog)
+    monkeypatch.setattr(freezone, "_resolve_url_list", lambda root, urls: ["source.mp4"])
+    monkeypatch.setattr(freezone, "probe_total_video_duration_seconds", duration)
+    monkeypatch.setattr("novelvideo.freezone.reference_validation.validate_reference_media",
+                        lambda *args: [])
+    return s
+
+
+@pytest.mark.parametrize("kind", ["upscale", "extend"])
+@pytest.mark.parametrize("recipe", [False, True])
+async def test_video_routes_claim_and_reserve_once(video_media, kind, recipe):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone import agent_product_operations as products
+    from novelvideo.freezone import workflow_runs as store
+    from tests.recording_usage_meter import RecordingUsageMeter
+
+    s = video_media
+    link = {"canvas_id": "video", "node_id": "n"}
+    if recipe:
+        operation = products.create_agent_product_operation(
+            project_dir=s.scope["project_dir"], project_id="project", product_kind="recipe_result",
+            idempotency_key="video-recipe", generation_session_id=s.scope["run_id"],
+            canvas_id="video", artifact_id="n", metadata={"workflow_run_id": s.scope["run_id"],
+                                                        "node_id": "n",
+                                                        "generation_attempt_id": "attempt-1"},
+        )
+        operation_id = operation["operation_id"]
+        store.bind_workflow_action_product_operation(
+            **s.scope, node_id="n", action="generate_video", operation_id=operation_id,
+        )
+        products.bind_agent_product_model_execution(
+            project_dir=s.scope["project_dir"], operation_id=operation_id,
+            model_call_id="compile-1", executed_at=1.0,
+            source="server_recipe_compiler", compile_mode="model",
+        )
+        link.update(product_operation_id=operation_id, generation_attempt_id="attempt-1")
+    if kind == "upscale":
+        body = freezone.FreezoneVideoUpscaleRequest(source_url="/static/source.mp4", **link)
+        submit = freezone.freezone_video_upscale
+    else:
+        body = freezone.FreezoneVideoExtendRequest(
+            video_url="/static/source.mp4", prompt="Continue", model="video-model", **link,
+        )
+        submit = freezone.freezone_video_extend
+    with RecordingUsageMeter().registered() as meter:
+        with store.server_workflow_media_link(None if recipe else s.link):
+            first = await submit("project", body, {})
+            again = await submit("project", body, {})
+        assert again["data"]["job_id"] == first["data"]["job_id"]
+        reservations = [args for method, args in meter.calls
+                        if method == "reserve_feature_start_credits"]
+        assert [(r["user_id"], r["feature_key"]) for r in reservations] == [
+            ("requester-id", "video"),
+        ]
+    task_type = "freezone_video_upscale" if kind == "upscale" else "freezone_video_gen"
+    assert [(e["task_type"], e["queue_kind"]) for e in s.enqueued] == [
+        (task_type, "ffmpeg" if kind == "upscale" else "video"),
+    ]
+    assert s.enqueued[0]["payload"]["canvas_id"] == "video"
+    assert s.enqueued[0]["payload"]["node_id"] == "n"
+    row = store.read_workflow_run(**s.scope)["actions"][0]
+    assert (row["task_type"], row["job_id"]) == (task_type, first["data"]["job_id"])
+
+
+@pytest.mark.parametrize("kind", ["upscale", "extend"])
+async def test_video_routes_reject_mismatched_recipe_link(video_media, kind):
+    from novelvideo.api.routes import freezone
+
+    link = dict(canvas_id="video", node_id="n", product_operation_id="agent_product_missing",
+                generation_attempt_id="attempt-1")
+    if kind == "upscale":
+        body = freezone.FreezoneVideoUpscaleRequest(source_url="/static/source.mp4", **link)
+        submit = freezone.freezone_video_upscale
+    else:
+        body = freezone.FreezoneVideoExtendRequest(
+            video_url="/static/source.mp4", prompt="Continue", **link,
+        )
+        submit = freezone.freezone_video_extend
+    with pytest.raises(HTTPException) as caught:
+        await submit("project", body, {})
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "workflow media link does not match admitted Recipe attempt"
+    assert video_media.enqueued == []
+
+
+async def test_browser_upscale_plain_enqueue(video_media):
+    from novelvideo.api.routes import freezone
+
+    result = await freezone.freezone_video_upscale(
+        "project", freezone.FreezoneVideoUpscaleRequest(source_url="/static/source.mp4"), {},
+    )
+    assert [(e["task_type"], e["queue_kind"], e["scope"]) for e in video_media.enqueued] == [
+        ("freezone_video_upscale", "ffmpeg", result["data"]["job_id"]),
+    ]
+    assert video_media.enqueued[0]["payload"]["canvas_id"] == ""
+    assert video_media.enqueued[0]["payload"]["node_id"] == ""

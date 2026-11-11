@@ -27,3 +27,15 @@ it.each([
 ])('rejects malformed or non-run payloads %#', async payload => {
   await expect(servePlanWorkflow(payload)).rejects.toBeInstanceOf(InvalidRequest);
 });
+
+it.each([
+  [{ preset_managed: true, autoCommitOnGenerate: true }, true],
+  [{ preset_managed: true, user_spawned: true, autoCommitOnGenerate: true }, false],
+  [{ preset_managed: true }, false],
+])('marks only system-managed auto-committing images: %j', async (data, expected) => {
+  const result = await servePlanWorkflow({ canvas: { nodes: [{ ...canvas.nodes[1], data: { prompt: 'A scene', ...data } }], edges: [] }, commands: [{ type: 'run_node_action', node_id: 'image', action: 'generate_image' }] });
+  expect(result.ok).toBe(true);
+  if (!('actions' in result)) throw new Error(result.message);
+  expect(result.actions[0]).toEqual(expect.objectContaining(expected ? { auto_commit: true } : { action: 'generate_image' }));
+  if (!expected) expect(result.actions[0]).not.toHaveProperty('auto_commit');
+});

@@ -120,7 +120,7 @@ python3 /path/to/dramaclaw-agent-kit/scripts/launch_mcp.py tools
 | `DRAMACLAW_AGENT_PROFILE` | 默认 `freezone:main` |
 | `DRAMACLAW_AGENT_TOKEN_FILE` | 可选短期 Token 文件，优先于免 Token 模式 |
 
-在 API 服务端设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server`（默认 `browser`），Agent 的结构修改和上下文读取会由服务端画布执行器处理；运行节点、工作流等 host 命令仍需打开对应画布。`server` 要求同时启用 `DRAMACLAW_CANVAS_PATCH_PUSH=1`。
+在 API 服务端同时设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server` 和 `DRAMACLAW_CANVAS_PATCH_PUSH=1`（默认执行器为 `browser`），服务端可处理结构修改、上下文读取，并在无需打开画布的情况下运行受支持的节点动作和工作流，包括图片、文本、音频、视频生成及部分图片工具，3D 世界生成通过 `run_node_action` 启动。部分动作或参数组合仍会被拒绝，需要用户打开对应画布运行。支持列表、拒绝原因及恢复限制见[本机 Agent MCP 指南的“服务端执行器”](../docs/zh/guides/local-agent-mcp.md#服务端执行器)。
 
 ## 发布前
 

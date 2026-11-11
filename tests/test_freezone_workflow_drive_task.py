@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI, HTTPException
 
+from task_context_helper import task_context
 from novelvideo.freezone import workflow_runs as store
 from novelvideo.task_backend.runners import freezone
 
@@ -32,6 +33,10 @@ async def test_drive_task_factory_and_result(tmp_path, monkeypatch):
     class Runner:
         def supports(self, action):
             return True
+
+        async def lane_capacity(self, lane):
+            assert lane == 'default'
+            return None
 
         async def run_action(self, **kwargs):
             return {'status': 'completed', 'output': {}}
@@ -87,9 +92,7 @@ async def test_sweep_generations_and_terminal_cleanup(indexed, monkeypatch):
     from novelvideo import project_context
 
     index, now, entry = indexed
-    ctx = SimpleNamespace(project_id='project', state_dir=Path(entry['state_dir']),
-                          output_dir=Path(entry['state_dir']), requester_user_id='requester',
-                          requester_username='requester')
+    ctx = task_context(Path(entry['state_dir']))
     resolved = []
 
     async def resolve(**kwargs):
@@ -116,7 +119,7 @@ async def test_sweep_generations_and_terminal_cleanup(indexed, monkeypatch):
     assert queued == [{
         'task_type': 'freezone_workflow_drive', 'product_surface': 'freezone_assistant',
         'queue_kind': 'default', 'scope': f'{run_id}:d{n}',
-        'payload': {'canvas_id': 'default', 'run_id': run_id},
+        'payload': {'canvas_id': 'default', 'run_id': run_id, 'drive_attempt': n},
     } for n in (1, 2)]
     assert resolved[0] == {
         'user': {'id': 'requester', 'username': 'requester'},
@@ -190,7 +193,7 @@ async def test_sweep_enqueue_error_is_retried_in_next_window(indexed, monkeypatc
     index, now, entry = indexed
 
     async def resolve(**kwargs):
-        return SimpleNamespace(project_id='project')
+        return task_context(Path(entry['state_dir']))
 
     async def full(context, **kwargs):
         raise RuntimeError('lane is full')
@@ -200,6 +203,11 @@ async def test_sweep_enqueue_error_is_retried_in_next_window(indexed, monkeypatc
         {'run_id': entry['run_id'], 'action': 'skipped'},
     ]
     assert index.list_server_workflow_runs() == [entry]
+    scope = dict(project_dir=Path(entry['state_dir']), canvas_id='default', run_id=entry['run_id'])
+    metadata = store.read_workflow_run(**scope)['metadata']
+    assert metadata.get('drive_generation', 0) == 0
+    assert metadata['drive_enqueue_failures'] == 1
+    assert metadata['drive_last_enqueue_error'] == 'RuntimeError'
     queued = []
 
     async def enqueue(context, **kwargs):
@@ -211,6 +219,7 @@ async def test_sweep_enqueue_error_is_retried_in_next_window(indexed, monkeypatc
         now=now + timedelta(seconds=180), enqueue=enqueue,
     )
     assert queued == [f"{entry['run_id']}:d2"]
+    assert store.read_workflow_run(**scope)['metadata']['drive_generation'] == 1
 
 
 @pytest.mark.asyncio
@@ -230,7 +239,7 @@ async def test_terminal_sweep_cleans_after_driver_lease(
     scope = dict(project_dir=Path(entry['state_dir']), canvas_id='default', run_id=entry['run_id'])
     store.acquire_server_workflow_run(**scope, runner_id='driver', now=now)
     store.update_workflow_run(**scope, status='cancelled', now=now)
-    ctx = SimpleNamespace(state_dir=Path(entry['state_dir']))
+    ctx = task_context(Path(entry['state_dir']))
     cleared, resolved = [], []
 
     async def resolve(**kwargs):
@@ -262,7 +271,7 @@ async def test_sweeper_uses_shared_enqueue_helper(indexed, monkeypatch):
     from novelvideo import project_context
 
     index, now, entry = indexed
-    ctx = SimpleNamespace(project_id='project')
+    ctx = task_context(Path(entry['state_dir']))
     queued = []
 
     async def resolve(**kwargs):
@@ -281,7 +290,112 @@ async def test_sweeper_uses_shared_enqueue_helper(indexed, monkeypatch):
     assert await index.sweep_server_workflow_runs(now=now) == [
         {'run_id': entry['run_id'], 'action': 'enqueued'}]
     assert queued == [(ctx, {
-        'canvas_id': 'default', 'run_id': entry['run_id'], 'generation': 1, 'enqueue': None})]
+        'canvas_id': 'default', 'run_id': entry['run_id'], 'attempt': 1, 'enqueue': None})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('include_attempt', [True, False])
+async def test_drive_task_acknowledges_own_attempt(indexed, monkeypatch, include_attempt):
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    _, now, entry = indexed
+    scope = dict(project_dir=Path(entry['state_dir']), canvas_id='default', run_id=entry['run_id'])
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=now) == 1
+    calls = []
+
+    async def drive(**kwargs):
+        # The acknowledgement must already be durable when execution starts.
+        assert store.read_workflow_run(**scope)['metadata'].get('drive_generation', 0) == (
+            1 if include_attempt else 0
+        )
+        calls.append(kwargs['runner_id'])
+        return {'status': 'running'}
+
+    monkeypatch.setattr(driver, 'drive_server_workflow_run', drive)
+    payload = {'canvas_id': 'default', 'run_id': entry['run_id']}
+    if include_attempt:
+        payload['drive_attempt'] = 1
+    assert await freezone._run_freezone_workflow_drive_async(
+        {'__run_task_id': 'task-1', 'payload': payload},
+        SimpleNamespace(state_dir=scope['project_dir']),
+    ) == {'status': 'running'}
+    assert calls == ['drive:task-1']
+    if include_attempt:
+        assert store.acknowledge_server_workflow_drive(**scope, attempt=1) is None
+        assert store.read_workflow_run(**scope)['metadata']['drive_generation'] == 1
+    else:
+        metadata = store.read_workflow_run(**scope)['metadata']
+        assert metadata.get('drive_generation', 0) == 0
+        assert 'drive_acknowledged_attempt' not in metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('attempt', [True, False, None, '1', 1.0, 0, -1])
+async def test_drive_task_rejects_invalid_attempt(tmp_path, monkeypatch, attempt):
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    async def unexpected_drive(**kwargs):
+        pytest.fail('invalid attempt must be rejected before execution')
+
+    monkeypatch.setattr(driver, 'drive_server_workflow_run', unexpected_drive)
+    with pytest.raises(ValueError, match='drive_attempt'):
+        await freezone._run_freezone_workflow_drive_async({
+            '__run_task_id': 'task-1',
+            'payload': {'canvas_id': 'default', 'run_id': 'run_example', 'drive_attempt': attempt},
+        }, SimpleNamespace(state_dir=tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_drive_continues_when_acknowledgement_fails(indexed, monkeypatch, caplog):
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    _, _, entry = indexed
+
+    def broken(**kwargs):
+        raise RuntimeError('private diagnostic must not be logged')
+
+    async def drive(**kwargs):
+        return {'status': 'running'}
+
+    monkeypatch.setattr(store, 'acknowledge_server_workflow_drive', broken, raising=False)
+    monkeypatch.setattr(driver, 'drive_server_workflow_run', drive)
+    assert await freezone._run_freezone_workflow_drive_async({
+        '__run_task_id': 'task-1',
+        'payload': {'canvas_id': 'default', 'run_id': entry['run_id'], 'drive_attempt': 1},
+    }, SimpleNamespace(state_dir=Path(entry['state_dir']))) == {'status': 'running'}
+    assert f"run_id={entry['run_id']}" in caplog.text
+    assert 'private diagnostic' not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enqueue_fails', [False, True])
+async def test_sweep_survives_drive_accounting_failure(
+    indexed, monkeypatch, caplog, enqueue_fails,
+):
+    from novelvideo import project_context
+
+    index, now, entry = indexed
+
+    async def resolve(**kwargs):
+        return task_context(Path(entry['state_dir']))
+
+    async def enqueue(*args, **kwargs):
+        if enqueue_fails:
+            raise RuntimeError('private enqueue diagnostic')
+
+    def broken(**kwargs):
+        raise RuntimeError('private accounting diagnostic')
+
+    monkeypatch.setattr(project_context, 'resolve_project_context', resolve)
+    helper = ('record_server_workflow_drive_enqueue_failed' if enqueue_fails else
+              'acknowledge_server_workflow_drive')
+    monkeypatch.setattr(store, helper, broken, raising=False)
+    assert await index.sweep_server_workflow_runs(now=now, enqueue=enqueue) == [{
+        'run_id': entry['run_id'], 'action': 'skipped' if enqueue_fails else 'enqueued',
+    }]
+    assert f"run_id={entry['run_id']}" in caplog.text
+    assert 'private accounting diagnostic' not in caplog.text
+    assert 'private enqueue diagnostic' not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -328,3 +442,37 @@ async def test_drive_confirmation_terminal_notice_once(tmp_path, monkeypatch, st
     await freezone._run_freezone_workflow_drive_async(envelope, SimpleNamespace(state_dir=tmp_path))
     assert notices == [({'id': 'requester-id', 'username': 'requester'}, record['id'],
                         f'run_{status}', f"{run['run_id']}: 1 completed, 0 failed")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,acquired,broken,expected", [
+    ("completed", True, False, True), ("failed", True, False, True),
+    ("cancelled", True, False, True), ("running", True, False, False),
+    ("completed", False, False, False), ("completed", True, True, True),
+])
+async def test_drive_delivers_terminal_result(
+    tmp_path, monkeypatch, status, acquired, broken, expected,
+):
+    from novelvideo.api.routes import freezone as routes
+    from novelvideo.freezone import server_workflow_driver as driver
+
+    ctx = task_context(tmp_path)
+    result = {"status": status, "acquired": acquired, "run_id": "run_delivery"}
+    delivered = []
+
+    async def drive(**kwargs):
+        return result
+
+    async def maintain(context, canvas_id):
+        delivered.append((context, canvas_id))
+        if broken:
+            raise RuntimeError("delivery unavailable")
+
+    monkeypatch.setattr(driver, "drive_server_workflow_run", drive)
+    monkeypatch.setattr(routes, "maintain_server_workflow_canvas", maintain, raising=False)
+    returned = await freezone._run_freezone_workflow_drive_async({
+        "__run_task_id": "delivery-task",
+        "payload": {"canvas_id": "default", "run_id": "run_delivery"},
+    }, ctx)
+    assert returned == {"status": status, "acquired": acquired, "run_id": "run_delivery"}
+    assert delivered == ([(ctx, "default")] if expected else [])

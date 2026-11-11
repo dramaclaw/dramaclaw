@@ -21,8 +21,9 @@ DRAMACLAW_USER = "local"
 # DRAMACLAW_PROJECT_ID = "your-project-id"
 # DRAMACLAW_CANVAS_ID = "your-canvas-id"
 
-# On the API server, DRAMACLAW_AGENT_CANVAS_EXECUTOR=server handles structural
-# writes and context reads; host commands still need an open canvas.
+# On the API server, DRAMACLAW_AGENT_CANVAS_EXECUTOR=server also runs supported
+# node actions and workflows without an open canvas. Unsupported actions still
+# need an open canvas; see docs/zh/guides/local-agent-mcp.md.
 # Server execution requires DRAMACLAW_CANVAS_PATCH_PUSH=1 on the API server.
 
 [mcp_servers.dramaclaw_workflows]

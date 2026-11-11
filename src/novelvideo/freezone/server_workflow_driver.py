@@ -11,6 +11,7 @@ from typing import Protocol
 
 from novelvideo.freezone import workflow_runs as store
 from novelvideo.freezone.agent_canvas_metrics import count, observe
+from novelvideo.freezone.server_workflow_actions import ActionLeaseLost
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ WORKFLOW_CAPACITY_POLL_SECONDS = 2.0
 # canvasChatCommands.ts: DEFAULT_NODE_ACTION_TIMEOUT_MS (capacity wait and action timeout).
 WORKFLOW_ACTION_TIMEOUT_SECONDS = 30 * 60
 WORKFLOW_CAPACITY_TIMEOUT_SECONDS = 30 * 60
+TEXT_INTERRUPTED_ERROR = "文本生成在接管前已发出，结果未知；为避免重复调用已停止，请重新发起"
 
 
 class ServerWorkflowLeaseLost(RuntimeError):
@@ -30,9 +32,15 @@ class ServerWorkflowLeaseLost(RuntimeError):
 
 
 class ServerActionRunner(Protocol):
+    async def finalize_run(self, actions: list[dict]) -> list[str]: ...
+
     def supports(self, action: str) -> bool: ...
 
     async def lane_capacity(self, lane: str) -> int | None: ...
+
+    async def interrupt_action(
+        self, *, node_id: str, action: str, product_operation_id: str | None,
+    ) -> None: ...
 
     async def run_action(
         self,
@@ -40,6 +48,8 @@ class ServerActionRunner(Protocol):
         node_id: str,
         action: str,
         existing_task: dict | None,
+        product_operation_id: str | None,
+        generation_attempt_id: str | None,
         on_accepted: Callable[[dict], Awaitable[None]],
         on_phase: Callable[[str], Awaitable[None]],
         should_stop: Callable[[], bool],
@@ -132,6 +142,19 @@ async def drive_server_workflow_run(
     if acquired is None:
         return result("missing")
     run = acquired["run"]
+    metadata = run["metadata"]
+    raw_dependencies = metadata.get("dependencies")
+    dependencies = {
+        node_id: upstream for node_id, upstream in raw_dependencies.items()
+        if isinstance(node_id, str) and isinstance(upstream, list)
+        and all(isinstance(value, str) for value in upstream)
+    } if isinstance(raw_dependencies, dict) else {}
+    raw_manifest = metadata.get("action_manifest")
+    manifest = {
+        (item["node_id"], item["action"]): item for item in raw_manifest
+        if isinstance(item, dict) and isinstance(item.get("node_id"), str)
+        and isinstance(item.get("action"), str)
+    } if isinstance(raw_manifest, list) else {}
     if not acquired["acquired"]:
         return result(run["status"], acquired=False)
     acquired_run = True
@@ -218,7 +241,7 @@ async def drive_server_workflow_run(
 
     async def action(item: dict) -> None:
         node_id, name = item["node_id"], item["action"]
-        if item["status"] in {"completed", "skipped", "failed"}:
+        if item["status"] in {"completed", "skipped", "failed", "blocked"}:
             return
 
         async def update(**kwargs) -> dict:
@@ -226,8 +249,25 @@ async def drive_server_workflow_run(
                 "node_id": node_id, "action": name, "status": "running", **kwargs,
             }])
 
-        if not runner.supports(name):
+        for upstream in dependencies.get(node_id, []):
+            if any(row["node_id"] == upstream and row["status"] in {"failed", "blocked"}
+                   for row in run["actions"]):
+                await update(status="blocked",
+                             error=f"跳过 {name}：上游节点 {upstream} 未成功完成。")
+                return
+        if "refusal" in manifest.get((node_id, name), {}) or not runner.supports(name):
             await update(status="failed", error=f"工作流动作 {name} 需要打开画布运行")
+            return
+        if (
+            name == "generate_text"
+            and item["status"] == "running"
+            and item.get("phase") == "generating"
+        ):
+            await runner.interrupt_action(
+                node_id=node_id, action=name,
+                product_operation_id=item.get("product_operation_id"),
+            )
+            await update(status="failed", error=TEXT_INTERRUPTED_ERROR)
             return
         lane = workflow_action_lane(name)
         # Acquire the lane first so queued world actions do not consume global slots.
@@ -238,7 +278,7 @@ async def drive_server_workflow_run(
             )
             retry_count = item.get("retry_count", 0)
             while not should_stop():
-                if name in store.GENERATION_ACTIONS:
+                if runner.supports(name):
                     started = now()
                     waiting = False
                     while not should_stop():
@@ -266,6 +306,8 @@ async def drive_server_workflow_run(
 
                 task = asyncio.create_task(runner.run_action(
                     node_id=node_id, action=name, existing_task=existing_task,
+                    product_operation_id=item.get("product_operation_id"),
+                    generation_attempt_id=item.get("generation_attempt_id"),
                     on_accepted=on_accepted, on_phase=on_phase, should_stop=should_stop,
                 ))
                 executing[task] = now()
@@ -285,6 +327,9 @@ async def drive_server_workflow_run(
                 if should_stop() or outcome["status"] == "stopped":
                     assert_lease()
                     return
+                if outcome["status"] == "skipped":
+                    await update(status="skipped", error=outcome.get("error"))
+                    return
                 if outcome["status"] == "completed":
                     # The store validates ``result`` as the artifact; ``output`` is the
                     # canvas-facing projection and may use different field names.
@@ -297,8 +342,12 @@ async def drive_server_workflow_run(
                     and retry_count < store.WORKFLOW_ACTION_MAX_RETRIES
                 ):
                     retry_count += 1
-                    await update(phase="retrying", retry_count=retry_count,
-                                 task_key="", task_type="", job_id="")
+                    cleared_task = ({} if (
+                        item.get("product_operation_id") or item.get("generation_attempt_id")
+                    ) else {
+                        "task_key": "", "task_type": "", "job_id": "",
+                    })
+                    await update(phase="retrying", retry_count=retry_count, **cleared_task)
                     await sleep(workflow_retry_delay_seconds(retry_count))
                     existing_task = None
                 else:
@@ -314,9 +363,24 @@ async def drive_server_workflow_run(
             if should_stop():
                 assert_lease()
                 return ended_status
-            if any(item["status"] == "failed" for item in run["actions"]):
-                return (await write(status="failed"))["status"]
-        return (await write(status="completed"))["status"]
+        failed = any(item["status"] in {"failed", "blocked"} for item in run["actions"])
+        warnings = []
+        finalize = getattr(runner, "finalize_run", None)
+        if not should_stop() and finalize is not None:
+            assert_lease()
+            try:
+                warnings = await finalize(run["actions"])
+            except (ServerWorkflowLeaseLost, store.WorkflowRunLeaseConflict):
+                raise
+            except ActionLeaseLost as exc:
+                raise ServerWorkflowLeaseLost() from exc
+            except Exception as exc:
+                logger.warning("Story attachment failed run_id=%s error_class=%s",
+                               run_id, type(exc).__name__)
+                warnings = ["story_attach_failed"]
+        return (await write(status="failed" if failed else "completed", **(
+            {"story_attach_warnings": warnings} if warnings else {}
+        )))["status"]
 
     driver_tasks: set[asyncio.Task] = set()
     try:

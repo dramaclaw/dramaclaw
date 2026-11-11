@@ -6,32 +6,53 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import contextvars
+import json
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 import uuid
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from starlette.responses import Response
 
 from novelvideo.api.schemas import (
     CanvasPayload,
+    FreezoneAudioMusicRequest,
+    FreezoneAudioSpeechRequest,
     FreezoneGenRequest,
+    FreezoneImageTo3GSRequest,
+    FreezoneStageAssetAcceptedResponse,
+    FreezoneOutpaintRequest,
+    FreezoneUpscaleRequest,
+    FreezoneTemplateEditRequest,
     FreezoneJobAcceptedResponse,
     FreezoneRecipeCompileRequest,
     FreezoneRecipeCompileResponse,
     FreezoneRecipeTextGenerateResponse,
+    FreezoneTextTranslateRequest,
+    FreezoneImageToVideoRequest,
+    FreezoneKeyframeVideoRequest,
+    FreezoneVideoGenRequest,
+    FreezoneVideoOmniGenRequest,
+    FreezoneVideoEditRequest,
+    FreezoneVideoExtendRequest,
+    FreezoneVideoUpscaleRequest,
 )
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
 from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
+from novelvideo.freezone.workflow_runs import server_workflow_media_link
 from novelvideo.freezone.server_workflow_actions import (
     ActionLeaseLost,
     CLEAR_GENERATION,
     ServerActionHttpError,
     WorkflowActionRunner,
 )
+from novelvideo.ports import get_usage_meter
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_state import get_task_manager
 
@@ -64,10 +85,38 @@ class InProcessActionHost:
         except Exception as exc:
             raise ActionLeaseLost() from exc
 
-    async def catalogs(self) -> dict:
+    async def fail_product_operation(self, operation_id: str) -> None:
+        from novelvideo.freezone.agent_product_operations import (
+            PENDING_STATUSES,
+            finish_agent_product_operation,
+            read_agent_product_operation,
+            terminalize_undelivered_agent_product_task,
+        )
+
+        operation = await asyncio.to_thread(
+            read_agent_product_operation, project_dir=Path(self.ctx.state_dir),
+            operation_id=operation_id,
+        )
+        if operation is None or operation.get("status") not in PENDING_STATUSES:
+            return
+        finished = await asyncio.to_thread(
+            finish_agent_product_operation, project_dir=Path(self.ctx.state_dir),
+            operation_id=operation_id, outcome="failed", expected_task_id=operation["task_id"],
+        )
+        await terminalize_undelivered_agent_product_task(ctx=self.ctx, operation=finished)
+
+    async def catalogs(self, *, video: bool = False) -> dict:
         from novelvideo.api.routes import freezone as routes
 
-        return {"image": await routes._freezone_image_models_data(self.ctx.requester_user_id)}
+        catalogs = {"image": await routes._freezone_image_models_data(self.ctx.requester_user_id)}
+        if video:
+            catalogs["video"] = await routes._freezone_video_models_data(self.ctx.requester_user_id)
+            catalogs["camera_templates"] = [{
+                "id": template["id"], "label": template.get("name") or template["id"],
+                "promptFragment": template.get("prompt") or template.get("name") or template["id"],
+                "videoUrl": None,
+            } for template in routes.get_video_camera_templates()]
+        return catalogs
 
     async def read_canvas(self) -> dict:
         canvas = await asyncio.to_thread(
@@ -76,6 +125,38 @@ class InProcessActionHost:
         return canvas or {"nodes": [], "edges": []}
 
     async def patch_node(self, node_id: str, patch: dict) -> None:
+        def update(canvas):
+            node = next((node for node in canvas["nodes"] if node.get("id") == node_id), None)
+            if node is None:
+                return False
+            data = node.get("data") or {}
+            merged = {**data, **patch}
+            if merged == data:
+                return False
+            node["data"] = merged
+            return True
+
+        await self._update_canvas(update)
+
+    async def add_nodes(self, nodes: list[dict], edges: list[dict]) -> None:
+        def update(canvas):
+            def append_new(existing, additions):
+                ids = {item["id"] for item in existing}
+                appended = []
+                for item in additions:
+                    if item["id"] not in ids:
+                        ids.add(item["id"])
+                        appended.append(deepcopy(item))
+                existing.extend(appended)
+                return bool(appended)
+
+            added_nodes = append_new(canvas["nodes"], nodes)
+            added_edges = append_new(canvas["edges"], edges)
+            return added_nodes or added_edges
+
+        await self._update_canvas(update)
+
+    async def _update_canvas(self, update: Callable[[dict], bool]) -> None:
         from novelvideo.api.routes import freezone as routes
 
         self._assert_write_lease()
@@ -89,20 +170,13 @@ class InProcessActionHost:
         )
         async with self._patch_lock:
             for attempt in range(3):
-                canvas = await self.read_canvas()
-                nodes = deepcopy(canvas["nodes"])
-                node = next((node for node in nodes if node.get("id") == node_id), None)
-                if node is None:
+                canvas = deepcopy(await self.read_canvas())
+                if not update(canvas):
                     return
-                data = node.get("data") or {}
-                merged = {**data, **patch}
-                if merged == data:
-                    return
-                node["data"] = merged
                 fields = {key: value for key, value in canvas.items()
                           if key in CanvasPayload.model_fields}
                 fields.update(
-                    nodes=nodes, base_revision=canvas.get("revision"),
+                    base_revision=canvas.get("revision"),
                     save_source="workflow_result", client_save_id=str(uuid.uuid4()),
                 )
                 body = CanvasPayload(**fields)
@@ -124,38 +198,103 @@ class InProcessActionHost:
                 await after_save(body, saved)
                 return
 
-    async def request(self, method: str, path: str, body: dict) -> dict:
+    async def request(
+        self, method: str, path: str, body: dict, *, media_link: dict[str, str] | None = None,
+    ) -> dict:
         from novelvideo.api.routes import freezone as routes
 
-        gen_path = f"projects/{quote(self.ctx.project_id, safe='')}/freezone/gen"
-        if method != "POST":
+        prefix = f"projects/{quote(self.ctx.project_id, safe='')}/freezone/"
+        dispatch = {
+            "image-to-3gs": (FreezoneImageTo3GSRequest, FreezoneStageAssetAcceptedResponse,
+                             partial(routes.freezone_image_to_3gs, self.ctx.project_id)),
+            "outpaint": (FreezoneOutpaintRequest, FreezoneJobAcceptedResponse,
+                         partial(routes.freezone_outpaint, self.ctx.project_id)),
+            "upscale": (FreezoneUpscaleRequest, FreezoneJobAcceptedResponse,
+                        partial(routes.freezone_upscale, self.ctx.project_id)),
+            "template-edit": (FreezoneTemplateEditRequest, FreezoneJobAcceptedResponse,
+                              partial(routes.freezone_template_edit, self.ctx.project_id)),
+            "gen": (FreezoneGenRequest, FreezoneJobAcceptedResponse,
+                    partial(routes.freezone_gen, self.ctx.project_id)),
+            "video/gen": (FreezoneVideoGenRequest, FreezoneJobAcceptedResponse,
+                          partial(routes.freezone_video_gen, self.ctx.project_id)),
+            "video/i2v": (FreezoneImageToVideoRequest, FreezoneJobAcceptedResponse,
+                          partial(routes.freezone_video_i2v, self.ctx.project_id)),
+            "video/keyframes": (FreezoneKeyframeVideoRequest, FreezoneJobAcceptedResponse,
+                                partial(routes.freezone_video_keyframes, self.ctx.project_id)),
+            "video/omni-gen": (FreezoneVideoOmniGenRequest, FreezoneJobAcceptedResponse,
+                               partial(routes.freezone_video_omni_gen, self.ctx.project_id)),
+            "video/video-edit": (FreezoneVideoEditRequest, FreezoneJobAcceptedResponse,
+                                 partial(routes.freezone_video_edit, self.ctx.project_id)),
+            "video/video-extend": (FreezoneVideoExtendRequest, FreezoneJobAcceptedResponse,
+                                   partial(routes.freezone_video_extend, self.ctx.project_id)),
+            "video/upscale": (FreezoneVideoUpscaleRequest, FreezoneJobAcceptedResponse,
+                              partial(routes.freezone_video_upscale, self.ctx.project_id)),
+            "audio/speech": (FreezoneAudioSpeechRequest, FreezoneJobAcceptedResponse,
+                             partial(routes.freezone_audio_speech, self.ctx.project_id)),
+            "audio/eleven-music": (
+                FreezoneAudioMusicRequest, FreezoneJobAcceptedResponse,
+                partial(routes.freezone_audio_eleven_music, self.ctx.project_id),
+            ),
+            "text/translate": (FreezoneTextTranslateRequest, FreezoneJobAcceptedResponse,
+                               partial(routes.freezone_text_translate, self.ctx.project_id)),
+            "freezone/recipes/compile": (
+                FreezoneRecipeCompileRequest, FreezoneRecipeCompileResponse,
+                routes.compile_freezone_recipe,
+            ),
+            "freezone/recipes/generate-text": (
+                FreezoneRecipeCompileRequest, FreezoneRecipeTextGenerateResponse,
+                routes.generate_freezone_recipe_text,
+            ),
+        }
+        key = path[len(prefix):] if path.startswith(prefix) else path
+        if method != "POST" or key not in dispatch or not path.startswith((
+            prefix, "freezone/recipes/",
+        )):
             raise ServerActionHttpError(f"Unsupported action request: {method} {path}")
-        if path == gen_path:
-            request_model = FreezoneGenRequest
-            response_model = FreezoneJobAcceptedResponse
-            handler = partial(routes.freezone_gen, self.ctx.project_id)
-        elif path == "freezone/recipes/compile":
-            request_model = FreezoneRecipeCompileRequest
-            response_model = FreezoneRecipeCompileResponse
-            handler = routes.compile_freezone_recipe
-        elif path == "freezone/recipes/generate-text":
-            request_model = FreezoneRecipeCompileRequest
-            response_model = FreezoneRecipeTextGenerateResponse
-            handler = routes.generate_freezone_recipe_text
-        else:
-            raise ServerActionHttpError(f"Unsupported action request: {method} {path}")
+        request_model, response_model, handler = dispatch[key]
         try:
             parsed = request_model(**body)
         except ValidationError as exc:
-            raise ServerActionHttpError(f"HTTP 422: {exc}") from exc
+            raise ServerActionHttpError(f"HTTP 422: {exc}", status_code=422) from exc
+
+        async def request_in_usage_context():
+            get_usage_meter().clear_llm_usage_context()
+            with server_workflow_media_link(media_link):
+                return await handler(parsed, self.user)
+
         try:
-            response = await handler(parsed, self.user)
+            response = await asyncio.create_task(
+                request_in_usage_context(), context=contextvars.copy_context(),
+            )
         except HTTPException as exc:
             detail = exc.detail
             if isinstance(detail, dict):
                 detail = detail.get("message") or detail.get("code") or str(detail)
-            raise ServerActionHttpError(f"HTTP {exc.status_code}: {detail}") from exc
+            raise ServerActionHttpError(
+                f"HTTP {exc.status_code}: {detail}", status_code=exc.status_code,
+                info=self._error_info(exc.status_code, exc.detail),
+            ) from exc
+        if isinstance(response, Response):
+            status = response.status_code
+            response = json.loads(response.body)
+            if status >= 400:
+                message = response.get("error") or response.get("message") or response.get("code")
+                raise ServerActionHttpError(
+                    f"HTTP {status}: {message}", status_code=status,
+                    info=self._error_info(status, response),
+                )
         return response_model.model_validate(response).model_dump()["data"]
+
+    @staticmethod
+    def _error_info(status: int, detail) -> dict:
+        body = detail if isinstance(detail, dict) else {"message": str(detail)}
+        message = body.get("error") or body.get("message") or body.get("code") or str(detail)
+        return {
+            "name": "HttpError", "message": message, "status": status,
+            "display": message, "details": body.get("details"),
+            "requestId": body.get("request_id"),
+            "referenceIssues": body.get("reference_issues") or [],
+        }
 
     async def task_status(self, task: dict) -> dict | None:
         state = await asyncio.to_thread(
@@ -166,7 +305,7 @@ class InProcessActionHost:
             return None
         return {"status": state.status, "result": state.result, "error": state.error}
 
-    async def job_result_url(self, task: dict) -> str | None:
+    async def job_result(self, task: dict) -> dict | None:
         from novelvideo.api.routes import freezone as routes
 
         try:
@@ -175,7 +314,11 @@ class InProcessActionHost:
             )
         except HTTPException:
             return None
-        return result.get("url")
+        return result.get("data")
+
+    async def job_result_url(self, task: dict) -> str | None:
+        result = await self.job_result(task)
+        return result.get("url") if result else None
 
     async def lane_capacity(self, lane: str) -> int | None:
         from novelvideo.api.routes.tasks import get_project_task_limits
@@ -190,8 +333,8 @@ class InProcessActionHost:
 def build_server_action_runner(
     *, ctx: ProjectContext, run: dict, runner_id: str, assert_lease: Callable[[], None],
 ) -> WorkflowActionRunner:
-    async def core_call(op: str, payload: dict) -> dict:
-        return await asyncio.to_thread(get_canvas_core_pool().call, op, payload)
+    async def core_call(op: str, payload: dict) -> Any:
+        return await asyncio.to_thread(get_canvas_core_pool().call_value, op, payload)
 
     return WorkflowActionRunner(
         host=InProcessActionHost(ctx=ctx, canvas_id=run["canvas_id"], assert_lease=assert_lease),

@@ -5953,17 +5953,26 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
             "confirmation_id": confirmation_id,
         })
     if data["status"] == "running":
+        refusal_instruction = ""
+        if data.get("refused"):
+            labels = ", ".join(item.get("label") or item["action"] for item in data["refused"])
+            refusal_instruction = (
+                " These actions were not run because they need the open canvas: "
+                f"{labels}. They are recorded as failed in this run. "
+                "Tell the user; do not retry them on your own."
+            )
         return tool_result({
             "ok": True, "status": "running", "tool_call_status": "completed",
             "canvas_apply_status": "running", "applied": False, **scope,
             "run_id": data["run_id"], "actions": data["actions"],
+            **({"refused": data["refused"]} if data.get("refused") else {}),
             "agent_instruction": (
                 f"The confirmed workflow is running on the server as {data['run_id']}. "
                 "Do not call the run tool again. To report progress or results, call "
                 "freezone_observe_workflow_run with this run_id (wait_seconds up to 20; pass "
                 "the previous observation_token as after). Report outcomes only from a "
                 "terminal observation. Call freezone_cancel_workflow_run only if the user "
-                "asks to stop it."
+                "asks to stop it." + refusal_instruction
             ),
         })
     if data["status"] == "already_completed":
