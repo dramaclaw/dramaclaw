@@ -4,8 +4,6 @@
 
 import asyncio
 from copy import deepcopy
-from pathlib import Path
-import shutil
 import subprocess
 import uuid
 
@@ -19,11 +17,10 @@ from novelvideo.freezone.server_workflow_actions import (
 )
 from novelvideo.freezone.workflow_runs import create_workflow_run, update_workflow_run
 
-BUNDLE = Path(__file__).resolve().parents[1] / "frontend/dist-canvas-server/canvas-core-worker.mjs"
-pytestmark = pytest.mark.skipif(
-    not BUNDLE.is_file() or shutil.which("node") is None,
-    reason="Build frontend with pnpm run build:canvas-server and put Node 22 on PATH",
-)
+from tests.canvas_core_requirements import CANVAS_CORE_BUNDLE as BUNDLE
+from tests.canvas_core_requirements import requires_canvas_core_bundle
+
+pytestmark = requires_canvas_core_bundle
 TASK = {"task_key": "freezone_gen:project:j1", "task_type": "freezone_gen", "job_id": "j1"}
 URL = "/api/projects/project/static/fz/a.png"
 CLEAR = {

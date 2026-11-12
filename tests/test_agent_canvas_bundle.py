@@ -2,8 +2,6 @@
 
 from copy import deepcopy
 from functools import partial
-from pathlib import Path
-import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -12,11 +10,10 @@ from novelvideo.api.routes import freezone as routes
 from novelvideo.freezone import agent_canvas, canvas_store
 from novelvideo.freezone.canvas_core_pool import CanvasCorePool
 
-BUNDLE = Path(__file__).resolve().parents[1] / "frontend/dist-canvas-server/canvas-core-worker.mjs"
-pytestmark = pytest.mark.skipif(
-    not BUNDLE.is_file() or shutil.which("node") is None,
-    reason="Build frontend with pnpm run build:canvas-server and put Node 22 on PATH",
-)
+from tests.canvas_core_requirements import CANVAS_CORE_BUNDLE as BUNDLE
+from tests.canvas_core_requirements import requires_canvas_core_bundle
+
+pytestmark = requires_canvas_core_bundle
 
 
 class RecordingPool(CanvasCorePool):

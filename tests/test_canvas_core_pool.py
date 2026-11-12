@@ -11,9 +11,11 @@ import pytest
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError, CanvasCorePool
 from novelvideo.task_backend.subprocesses import RestrictedSubprocessPolicy, _has_network_argument
 
+from tests.canvas_core_requirements import requires_node
+
 WORKER = Path(__file__).parent / "fixtures/canvas_core_fake_worker.mjs"
 LOGGER = "novelvideo.freezone.canvas_core_pool"
-pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node unavailable")
+pytestmark = requires_node
 
 
 @pytest.fixture

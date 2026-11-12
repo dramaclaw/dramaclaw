@@ -19,6 +19,7 @@ from novelvideo.api.schemas import FreezoneGenRequest, FreezoneRecipeCompileRequ
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.paths import freezone_root
 from novelvideo.freezone.server_workflow_actions import ActionLeaseLost, ServerActionHttpError
+from tests.canvas_core_requirements import CANVAS_CORE_BUNDLE, requires_canvas_core_bundle
 
 TASK = {"task_key": "freezone_gen:project:j1", "task_type": "freezone_gen", "job_id": "j1"}
 
@@ -333,6 +334,7 @@ async def test_media_link_clears_after_handler_error(host, monkeypatch):
 
 
 @pytest.mark.parametrize("audio", [False, True])
+@requires_canvas_core_bundle
 async def test_real_media_route_takeover_never_reserves_again(context, monkeypatch, audio):
     from novelvideo.api import freezone_server_workflow_host as host_module
     from novelvideo.freezone import workflow_runs as store
@@ -340,7 +342,6 @@ async def test_real_media_route_takeover_never_reserves_again(context, monkeypat
     from novelvideo.freezone.server_workflow_actions import WorkflowActionRunner
     from novelvideo.ports import get_usage_meter
     from tests.recording_usage_meter import RecordingUsageMeter
-    from tests.test_server_workflow_actions import BUNDLE
 
     canvas = canvas_store.ensure_default_canvas(context.state_dir, project_id="project").payload
     canvas["nodes"] = [{"id": "n", "type": "imageGenNode", "position": {"x": 0, "y": 0},
@@ -413,7 +414,7 @@ async def test_real_media_route_takeover_never_reserves_again(context, monkeypat
         monkeypatch.setattr(routes, "_task_projection_payload", projection)
         monkeypatch.setattr(routes, "freezone_job_result", job_result)
     host = InProcessActionHost(ctx=context, canvas_id=canvas_id, assert_lease=lambda: None)
-    pool = CanvasCorePool(BUNDLE, size=1)
+    pool = CanvasCorePool(CANVAS_CORE_BUNDLE, size=1)
 
     async def core(op, payload):
         return await asyncio.to_thread(pool.call_value, op, payload)
@@ -984,10 +985,10 @@ async def test_world_route_claim_and_browser_payload(context, monkeypatch, linke
     }
 
 
+@requires_canvas_core_bundle
 async def test_story_attach_real_worker_round_trip(host, context, monkeypatch):
     from novelvideo.api import freezone_server_workflow_host as host_module
     from novelvideo.freezone.canvas_core_pool import CanvasCorePool
-    from tests.test_server_workflow_actions import BUNDLE
 
     canvas = canvas_store.ensure_default_canvas(context.state_dir, project_id='project').payload
     canvas['nodes'] = [
@@ -1001,7 +1002,7 @@ async def test_story_attach_real_worker_round_trip(host, context, monkeypatch):
              'storyId': 'story', 'segmentId': 'segment', 'videoNodeId': 'video'}}},
     ]
     canvas_store.atomic_write_json(canvas_store.canvas_path(context.state_dir, 'default'), canvas)
-    pool = CanvasCorePool(BUNDLE, size=1)
+    pool = CanvasCorePool(CANVAS_CORE_BUNDLE, size=1)
     monkeypatch.setattr(host_module, 'get_canvas_core_pool', lambda: pool)
     runner = build_server_action_runner(ctx=context, run={'canvas_id': 'default', 'run_id': 'run'},
                                        runner_id='driver', assert_lease=lambda: None)

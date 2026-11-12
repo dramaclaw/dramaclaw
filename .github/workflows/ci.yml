@@ -46,8 +46,29 @@ jobs:
       # 加载、不再联网下载。这里先校验文件并真实加载一次，升级 ladybug 而没换文件会在此失败。
       - name: Verify the bundled Ladybug JSON extension
         run: uv run python -m novelvideo.ladybug_json_extension
+      # canvas core 是 Node 子进程，产品镜像跑在 Node 22（见 Dockerfile node-runtime）；
+      # runner 自带的 Node 更新，会拒绝它的启动参数。这里固定 Node 22 并构建
+      # frontend/dist-canvas-server，环境变量让本 job 的 canvas core 测试缺条件时失败而非跳过。
+      - name: Install pnpm (reads packageManager from frontend/package.json)
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - name: Setup Node 22 (canvas core runtime)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Build the canvas core worker bundle
+        working-directory: frontend
+        run: |
+          node --version
+          pnpm install --frozen-lockfile
+          pnpm run build:canvas-server
       # 单元测试：pytest 默认 addopts 已排除 ee/e2e；-n auto 走 xdist 并行。
       - name: Run tests
+        env:
+          DRAMACLAW_TEST_REQUIRE_CANVAS_CORE: "1"
         run: uv run pytest -n auto
 
   # i18n 棘轮：后端面向前端的进度/日志/toast 文案不许再新增硬编码中文。
