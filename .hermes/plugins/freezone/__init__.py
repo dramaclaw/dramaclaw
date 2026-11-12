@@ -9454,6 +9454,7 @@ _CANVAS_RESULT_FIELDS = (
 
 _WORKFLOW_RESULT_FIELDS = (
     *_CANVAS_RESULT_FIELDS,
+    "example",
     "draft_id",
     "current_revision",
     "preview",
@@ -9621,6 +9622,8 @@ _RESULT_STRING_FIELDS = frozenset(
 
 
 def _result_field_schema(field: str) -> dict[str, Any]:
+    if field == "example":
+        return {"type": "object"}
     if field == "kinds":
         return {"type": "array", "items": {"type": "string"}}
     if field == "targets":
@@ -9749,8 +9752,10 @@ _STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     **_STORY_RESULT_FIELDS,
-    "freezone_cancel_workflow_run": ("run_id", "run_status"),
+    "freezone_cancel_workflow_run": ("run_id", "run_status", "errors", "example"),
     "freezone_observe_workflow_run": (
+        "errors",
+        "example",
         "run_id",
         "run_status",
         "terminal",
@@ -9791,6 +9796,8 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_validate_canvas_commands": ("payload", "commands", "errors", "warnings"),
     "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
     "freezone_request_user_clarification": (
+        "errors",
+        "example",
         "clarification_id",
         "clarification_status",
         "questions",
