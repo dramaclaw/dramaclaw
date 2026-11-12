@@ -548,6 +548,8 @@ def run_compose_episode(
                         "128k",
                         "-pix_fmt",
                         "yuv420p",
+                        "-af",
+                        "apad",
                         "-shortest",
                     ]
                 )
@@ -582,6 +584,8 @@ def run_compose_episode(
                         "128k",
                         "-pix_fmt",
                         "yuv420p",
+                        "-af",
+                        "apad",
                         "-shortest",
                     ]
                 )

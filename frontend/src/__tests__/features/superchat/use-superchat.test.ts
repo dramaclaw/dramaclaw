@@ -7610,3 +7610,209 @@ describe("story approval continuity translations", () => {
     }
   });
 });
+
+it("does not write replayed history but saves live edits after reconnect", async () => {
+  apiPostMock.mockClear();
+  const sockets: TestSocket[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send() {}
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(({ canvas }) => useSuperChat({
+    project: "origin-test", surface: "freezone", freezoneCanvasId: canvas,
+    freezoneAgentId: "main", displayName: "Tester",
+  }), { initialProps: { canvas: "first" } });
+  await waitFor(() => expect(sockets.length).toBe(1));
+  const scope = (canvas: string) => ({ kind: "project", id: "origin-test", surface: "freezone", canvasId: canvas, agentId: "main" });
+  const history = [{ id: "assistant-origin", role: "assistant", turn_id: "origin-turn", content: "saved", parts: [
+    { id: "thought-origin", type: "agent_thought", event: { type: "agent.thought", text: "historical thought" } },
+  ] }];
+  const replay = async (canvas: string) => {
+    await act(async () => {
+      sockets[0].onopen?.();
+      sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope: scope(canvas), history, busy: false }) } as MessageEvent);
+    });
+  };
+  const writes = () => (apiPostMock.mock.calls as unknown[][]).filter(call => call[0] === "api/v1/chat/ui-events");
+  await replay("first");
+  await replay("first");
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 550)); });
+  expect(writes()).toHaveLength(0);
+  await act(async () => {
+    hook.result.current.upsertAssistantMessagePart({ turnId: "origin-turn" }, {
+      id: "thought-origin", type: "agent_thought", event: { type: "agent.thought", text: "live after reconnect" },
+    });
+  });
+  await waitFor(() => expect(writes()).toHaveLength(1));
+  expect(writes()[0]).toEqual(["api/v1/chat/ui-events", expect.objectContaining({
+    json: expect.objectContaining({ scope: scope("first"), turn_id: "origin-turn" }),
+  })]);
+  await replay("first");
+  hook.rerender({ canvas: "second" });
+  await replay("second");
+  hook.rerender({ canvas: "first" });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 550)); });
+  expect(writes()).toHaveLength(1);
+  hook.unmount();
+  vi.unstubAllGlobals();
+});
+
+it("tags snapshots from callbacks memoized before a scope switch with the current scope", async () => {
+  apiPostMock.mockClear();
+  const sockets: TestSocket[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send() {}
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(({ canvas }) => useSuperChat({
+    project: "scope-switch-test", surface: "freezone", freezoneCanvasId: canvas,
+    freezoneAgentId: "main", displayName: "Tester",
+  }), { initialProps: { canvas: "first" } });
+  await waitFor(() => expect(sockets.length).toBe(1));
+  const scope = (canvas: string) => ({ kind: "project", id: "scope-switch-test", surface: "freezone", canvasId: canvas, agentId: "main" });
+  const history = [{ id: "assistant-switch", role: "assistant", turn_id: "switch-turn", content: "saved", parts: [
+    { id: "thought-switch", type: "agent_thought", event: { type: "agent.thought", text: "before" } },
+  ] }];
+  const replay = async (canvas: string) => {
+    await act(async () => {
+      sockets[0].onopen?.();
+      sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope: scope(canvas), history, busy: false }) } as MessageEvent);
+    });
+  };
+  const writes = () => (apiPostMock.mock.calls as unknown[][]).filter(call => call[0] === "api/v1/chat/ui-events");
+  await replay("first");
+  hook.rerender({ canvas: "second" });
+  await replay("second");
+  await act(async () => {
+    hook.result.current.updateUiEvent(
+      "switch-turn",
+      event => (event as { type?: string } | undefined)?.type === "agent.thought",
+      event => ({ ...(event as object), text: "after switch" }),
+    );
+  });
+  await waitFor(() => expect(writes()).toHaveLength(1));
+  expect(writes()[0]).toEqual(["api/v1/chat/ui-events", expect.objectContaining({
+    json: expect.objectContaining({ scope: scope("second"), turn_id: "switch-turn" }),
+  })]);
+  hook.unmount();
+  vi.unstubAllGlobals();
+});
+
+it("rechecks busy recovery until the old connection has finished cancelling", async () => {
+  const sockets: TestSocket[] = [];
+  const sent: string[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(frame); }
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(() => useSuperChat({ project: "recovery-race", displayName: "Tester" }));
+  try {
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const scope = { kind: "project", id: "recovery-race", surface: "director" };
+    const sync = async (busy: boolean) => {
+      await act(async () => {
+        sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope, history: [], busy }) } as MessageEvent);
+      });
+    };
+    await act(async () => { sockets[0].onopen?.(); });
+    await sync(false);
+    act(() => { hook.result.current.send("test recovery"); });
+    await sync(true);
+    expect(hook.result.current.busy).toBe(true);
+    const before = sent.length;
+    await waitFor(() => expect(sent.length).toBeGreaterThan(before), { timeout: 3500 });
+    expect(JSON.parse(sent[sent.length - 1]).type).toBe("scope.set");
+    await sync(false);
+    expect(hook.result.current.busy).toBe(false);
+    const after = sent.length;
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
+    expect(sent).toHaveLength(after);
+  } finally {
+    hook.unmount();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps a turn that is still streaming on this connection busy across recovery syncs", async () => {
+  const sockets: TestSocket[] = [];
+  const sent: string[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(frame); }
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(({ canvas }) => useSuperChat({
+    project: "recovery-live", surface: "freezone", freezoneCanvasId: canvas,
+    freezoneAgentId: "main", displayName: "Tester",
+  }), { initialProps: { canvas: "first" } });
+  try {
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const scope = (canvas: string) => ({ kind: "project", id: "recovery-live", surface: "freezone", canvasId: canvas, agentId: "main" });
+    const frame = async (payload: Record<string, unknown>) => {
+      await act(async () => { sockets[0].onmessage?.({ data: JSON.stringify(payload) } as MessageEvent); });
+    };
+    const sync = (canvas: string, busy: boolean, history: unknown[] = []) =>
+      frame({ type: "scope.changed", scope: scope(canvas), history, busy });
+    await act(async () => { sockets[0].onopen?.(); });
+    await sync("first", false);
+    act(() => { hook.result.current.send("keep running"); });
+    const turnId = hook.result.current.activeTurnId;
+    expect(turnId).toBeTruthy();
+    hook.rerender({ canvas: "second" });
+    await sync("second", false);
+    hook.rerender({ canvas: "first" });
+    const history = [{ id: "user-live", role: "user", turn_id: turnId, content: "keep running",
+      created_at: new Date().toISOString() }];
+    await sync("first", true, history);
+    await frame({ type: "assistant.delta", scope: scope("first"), turn_id: turnId, text: "partial reply" });
+    await frame({ type: "assistant.clarification.event", scope: scope("first"), turn_id: turnId,
+      bridge_key: "live-clarify", event: { type: "assistant.clarification.request",
+        bridge_key: "live-clarify", clarification_id: "live", questions: [] } });
+    expect(hook.result.current.busy).toBe(true);
+    // Live frames on this connection stop recovery polling.
+    const before = sent.length;
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
+    expect(sent.slice(before).map(raw => JSON.parse(raw).type)).not.toContain("scope.set");
+    // A busy=true sync already in flight must not end the live turn.
+    await sync("first", true, history);
+    expect(hook.result.current.busy).toBe(true);
+    expect(hook.result.current.activeTurnId).toBe(turnId);
+    // The server stays authoritative once it reports idle.
+    await sync("first", false, history);
+    expect(hook.result.current.busy).toBe(false);
+  } finally {
+    hook.unmount();
+    vi.unstubAllGlobals();
+  }
+});

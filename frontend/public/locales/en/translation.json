@@ -1,4 +1,8 @@
 {
+  "chatSnapshot": {
+    "saveFailed": "Chat history could not be saved. Please try again later; the current message is still available locally.",
+    "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history."
+  },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirm workflow creation",
     "title": "Workflow plan awaiting confirmation",
@@ -6834,6 +6838,7 @@
       "placeholder": "Write a story, scene, or character idea. For example: in an old station on a rainy night, a late letter changes everyone's choice.",
       "generatePlaceholder": "Describe the story, scene, character, dialogue, or creative prompt you want to generate…",
       "generateText": "Generate text with AI",
+      "generationInputTooLong": "The instruction and upstream text exceed {{limit}} characters. Shorten the input and try again.",
       "modelPickerHint": "Pick a model",
       "submit": "Submit",
       "translate": "Translate (zh ↔ en)",
@@ -6871,7 +6876,10 @@
         "noHigherResolution": "The source is already 4K; no higher resolution is available",
         "noConfiguredResolution": "The available model does not support a higher resolution; ask an administrator to check its settings",
         "probeError": "Unable to inspect source video: {{error}}",
-        "submit": "Generate HD video"
+        "submit": "Generate HD video",
+        "model": "Model",
+        "standardModel": "Standard video enhancement",
+        "modelUnavailable": "The saved enhancement model is unavailable. Select an available model to continue."
       }
     },
     "videoNode": {

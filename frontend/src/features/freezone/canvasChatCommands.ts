@@ -3734,7 +3734,14 @@ async function executeQueuedNodeActions(
               ...workflowTaskReference(actionResult.output),
             }]);
             await requestAnimationFrameOrTimeout();
-            const hasRequiredOutput = actionResult.status === "error"
+            const actionOpenedUserUi =
+              isRecord(actionResult.output) &&
+              (actionResult.output.openedUiAction === true ||
+                actionResult.output.requires_user_action === true);
+            const actionWasSkipped =
+              isRecord(actionResult.output) && actionResult.output.skipped === true;
+            const hasRequiredOutput =
+              actionResult.status === "error" || actionOpenedUserUi || actionWasSkipped
               ? false
               : await waitForGeneratedResultField(
                 action.nodeId,
@@ -3750,12 +3757,6 @@ async function executeQueuedNodeActions(
               )
               : null;
 
-            const actionOpenedUserUi =
-              isRecord(actionResult.output) &&
-              (actionResult.output.openedUiAction === true ||
-                actionResult.output.requires_user_action === true);
-            const actionWasSkipped =
-              isRecord(actionResult.output) && actionResult.output.skipped === true;
             const rawFailed = actionResult.status === "error"
               ? actionResult.error || "节点动作执行失败"
               : outputIssue

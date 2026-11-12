@@ -1,4 +1,8 @@
 {
+  "chatSnapshot": {
+    "saveFailed": "聊天记录保存失败，请稍后重试；当前消息仍保留在本地。",
+    "historyIncomplete": "此对话的部分历史内容过大，已限制加载；正文仍可查看，请联系管理员整理历史记录。"
+  },
   "workflowDraftContinuation": {
     "ariaLabel": "工作流创建确认",
     "title": "待确认的工作流方案",
@@ -6834,6 +6838,7 @@
       "placeholder": "写下故事、场景或角色灵感。例如：雨夜旧车站里，一封迟到的信改变了所有人的选择。",
       "generatePlaceholder": "描述你想生成的故事、场景、角色设定、对白或创作提示词…",
       "generateText": "AI 生成文本",
+      "generationInputTooLong": "创作要求与上游正文合计超过 {{limit}} 字，请缩短内容后重试。",
       "modelPickerHint": "选择模型",
       "submit": "提交",
       "translate": "翻译（中英文互译）",
@@ -6871,7 +6876,10 @@
         "noHigherResolution": "源视频已达到 4K，暂无更高可选分辨率",
         "noConfiguredResolution": "当前可用模型不支持更高的目标分辨率，请联系管理员检查模型配置",
         "probeError": "无法读取源视频参数：{{error}}",
-        "submit": "生成高清视频"
+        "submit": "生成高清视频",
+        "model": "模型",
+        "standardModel": "标准视频增强",
+        "modelUnavailable": "已保存的增强模型当前不可用，请选择可用模型后继续。"
       }
     },
     "videoNode": {

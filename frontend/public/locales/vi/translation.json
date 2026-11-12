@@ -1,4 +1,8 @@
 {
+  "chatSnapshot": {
+    "saveFailed": "Không thể lưu lịch sử trò chuyện. Vui lòng thử lại sau; tin nhắn hiện tại vẫn được giữ trên máy.",
+    "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử."
+  },
   "referenceValidation": {
     "firstFrame": "Khung hình đầu",
     "lastFrame": "Khung hình cuối",
@@ -6708,6 +6712,7 @@
       "placeholder": "Viết một câu chuyện, một cảnh hoặc ý tưởng nhân vật. Ví dụ: trong một nhà ga cũ giữa đêm mưa, một lá thư đến muộn làm thay đổi lựa chọn của tất cả mọi người.",
       "generatePlaceholder": "Mô tả câu chuyện, bối cảnh, nhân vật, lời thoại hoặc ý tưởng bạn muốn tạo…",
       "generateText": "Tạo văn bản bằng AI",
+      "generationInputTooLong": "Yêu cầu và văn bản đầu vào vượt quá {{limit}} ký tự. Hãy rút ngắn nội dung rồi thử lại.",
       "modelPickerHint": "Chọn một model",
       "submit": "Gửi",
       "translate": "Dịch (zh ↔ en)",
@@ -6745,7 +6750,10 @@
         "noHigherResolution": "Video nguồn đã là 4K; không có độ phân giải cao hơn",
         "noConfiguredResolution": "Mô hình hiện có không hỗ trợ độ phân giải cao hơn; hãy liên hệ quản trị viên để kiểm tra cấu hình",
         "probeError": "Không thể đọc thông số video nguồn: {{error}}",
-        "submit": "Tạo video HD"
+        "submit": "Tạo video HD",
+        "model": "Model",
+        "standardModel": "Standard video enhancement",
+        "modelUnavailable": "Mô hình tăng cường đã lưu hiện không khả dụng. Hãy chọn mô hình khả dụng để tiếp tục."
       }
     },
     "videoNode": {

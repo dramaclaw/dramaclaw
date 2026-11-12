@@ -1,4 +1,8 @@
 {
+  "chatSnapshot": {
+    "saveFailed": "Não foi possível salvar o histórico do chat. Tente novamente mais tarde; a mensagem atual continua disponível localmente.",
+    "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico."
+  },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirmar criação do fluxo de trabalho",
     "title": "Plano do fluxo de trabalho a aguardar confirmação",
@@ -6974,6 +6978,7 @@
       "placeholder": "Escreva uma ideia para uma história, cena ou personagem. Por exemplo: numa estação antiga, numa noite chuvosa, uma carta que chega tarde muda a decisão de todos.",
       "generatePlaceholder": "Descreva a história, cena, personagem, diálogo ou instrução criativa que pretende gerar…",
       "generateText": "Gerar texto com IA",
+      "generationInputTooLong": "A instrução e o texto de entrada excedem {{limit}} caracteres. Reduza o conteúdo e tente novamente.",
       "modelPickerHint": "Escolha um modelo",
       "submit": "Enviar",
       "translate": "Traduzir (zh ↔ en)",
@@ -7011,7 +7016,10 @@
         "noHigherResolution": "A origem já está em 4K; não está disponível uma resolução superior",
         "noConfiguredResolution": "O modelo disponível não suporta uma resolução superior; peça ao administrador que verifique as respetivas definições",
         "probeError": "Não foi possível inspecionar o vídeo de origem: {{error}}",
-        "submit": "Gerar vídeo em HD"
+        "submit": "Gerar vídeo em HD",
+        "model": "Model",
+        "standardModel": "Standard video enhancement",
+        "modelUnavailable": "O modelo de aprimoramento salvo está indisponível. Selecione um modelo disponível para continuar."
       }
     },
     "videoNode": {
