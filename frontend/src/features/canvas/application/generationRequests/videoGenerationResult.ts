@@ -9,6 +9,11 @@ import { describeGenerationError, type GenerationErrorInfo } from './generationS
 import type { VideoGenerationRequestResult } from './videoGenerationRequest';
 import { resolveOutputUrl } from './videoOutputUrl';
 
+export const VIDEO_TIMEOUT_ACTION_ERROR =
+  '视频生成超时'; // i18n-exempt -- same action error as the server executor
+export const VIDEO_UPSCALE_FAILED_ACTION_ERROR =
+  '视频增强失败'; // i18n-exempt -- same action error as the server executor
+
 type Translate = CanvasEnvironment['translate'];
 type Patch = Record<string, unknown>;
 export interface VideoGenerationTaskRef { task_key: string; task_type: string; job_id: string }
@@ -241,16 +246,15 @@ export type VideoGenerationActionResult =
   | { status: 'success'; output: Record<string, unknown> }
   | { status: 'error'; error: string };
 /**
- * After handleSubmit resolves, publish current node error
- * or URL. Single mode still waits for all runs, then adds submitted:true. Silent
- * refusals/timeouts may publish the previous URL (unless a previous error remains).
- * Missing/removed node data behaves as an empty object. No task fields are cleared.
+ * Publish node errors first, then submission refusals as errors, matching the server executor.
+ * Otherwise publish the current URL, adding submitted:true in single mode.
  */
 export function videoGenerationActionResult(finalNodeData: Record<string, unknown> | null | undefined,
-  executionMode: string | undefined): VideoGenerationActionResult {
+  executionMode: string | undefined, refusal?: string | null): VideoGenerationActionResult {
   if (typeof finalNodeData?.generationError === 'string' && finalNodeData.generationError) {
     return { status: 'error', error: finalNodeData.generationError };
   }
+  if (refusal) return { status: 'error', error: refusal };
   return videoSuccessResult(finalNodeData, executionMode);
 }
 function videoSuccessResult(data: Record<string, unknown> | null | undefined, executionMode: string | undefined): VideoGenerationActionResult {
@@ -268,6 +272,9 @@ export type VideoUpscaleOutcome =
   | { kind: 'completed'; result: Record<string, unknown> | null; fallbackUrl: string }
   | { kind: 'failed'; message: string }
   | { kind: 'poll_timeout' };
+export type VideoUpscaleSubmitOutcome =
+  | VideoUpscaleOutcome
+  | { kind: 'refused'; message: string };
 /**
  * Only output_url is read; otherwise use the job-result
  * fallback, including an empty URL. Caller owns fallback fetch; a failed fetch is
@@ -283,15 +290,29 @@ export function videoUpscaleOutcomePatch(outcome: VideoUpscaleOutcome): Patch | 
   return { videoUrl: url, ...resetLoading, generationError: null };
 }
 /**
- * Source absence publishes an error before submit. Otherwise
- * the resolved upscale helper ALWAYS publishes success, even with a node error.
- * No project returns silently, so the old URL is published.
- * Caller must retain the admission source value if node data changes while waiting.
+ * Publish missing sources, refusals and upscales without a URL as errors, like the server executor.
+ * Without an outcome, keep legacy success behavior; retain the admission source while waiting.
  */
 export function videoUpscaleActionResult(finalNodeData: Record<string, unknown> | null | undefined,
-  executionMode: string | undefined): VideoGenerationActionResult {
+  executionMode: string | undefined,
+  outcome?: VideoUpscaleSubmitOutcome): VideoGenerationActionResult {
   if (typeof finalNodeData?.upscaleSourceUrl !== 'string' || !finalNodeData.upscaleSourceUrl) {
     return { status: 'error', error: '缺少高清视频源' }; // i18n-exempt -- exact subscriber action error
+  }
+  if (outcome?.kind === 'refused') return { status: 'error', error: outcome.message };
+  if (outcome) {
+    const url = outcome.kind === 'completed'
+      ? (typeof outcome.result?.output_url === 'string' ? outcome.result.output_url : '')
+        || outcome.fallbackUrl
+      : '';
+    if (!url) {
+      const nodeError = finalNodeData.generationError;
+      const error = typeof nodeError === 'string' && nodeError
+        ? nodeError
+        : outcome.kind === 'poll_timeout'
+          ? VIDEO_TIMEOUT_ACTION_ERROR : VIDEO_UPSCALE_FAILED_ACTION_ERROR;
+      return { status: 'error', error };
+    }
   }
   return videoSuccessResult(finalNodeData, executionMode);
 }

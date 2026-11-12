@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from 'vitest';
+import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
+import {
+  buildVideoGenerationRequest, videoPromptCompileInput,
+  videoAdmissionRefusalMessage, type VideoGenerationRequestContext,
+} from '@/features/canvas/application/generationRequests/videoGenerationRequest';
+import {
+  videoUpscaleActionResult, type VideoUpscaleOutcome,
+} from '@/features/canvas/application/generationRequests/videoGenerationResult';
 import type { ModelOption } from '@/features/canvas/domain/modelOptions';
 import { videoGenerationStartedRefusalOutcome, videoGenerationRefusalOutcome, videoGenerationActionResult, videoGenerationRunOutcome, videoGenerationSettleOutcome } from '@/features/canvas/application/generationRequests/videoGenerationResult';
 import { describeGenerationError } from '@/features/canvas/application/generationRequests/generationSubmitError';
@@ -50,7 +58,7 @@ const capturedFixtures: VideoFixture[] = [
   { name: 'face blocked model without review', videoModels: [{ ...catalog[0], humanReview: false }], runs: [failed(face)] },
   { name: 'reference invalid first error', runs: [referenceFailure, failed('second failure')] },
   { name: 'reference invalid later error ordinary dialog', runs: [failed('first failure'), referenceFailure] },
-  { name: 'all runs poll timeout previous URL published', runs: [timeout, timeout] },
+  { name: 'all runs poll timeout publishes timeout error', runs: [timeout, timeout] },
   { name: 'poll timeout then failure', runs: [timeout, failed('failure')] },
   { name: 'failure then poll timeout', runs: [failed('failure'), timeout] },
   { name: 'timeout after success partial toast', runs: [done({ url: '/a' }), timeout] },
@@ -96,7 +104,7 @@ const capturedFixtures: VideoFixture[] = [
     { name: 'upscale fallback ignores video_url', runs: [done({ video_url: '/ignored' }, '/fallback-hd.mp4')] },
     { name: 'upscale fallback empty URL', runs: [done({})] },
     { name: 'upscale submit insufficient credits raw message', runs: [submitFailure(402, { error: 'Raw balance message' })] },
-    { name: 'upscale failure publishes success', runs: [failed('raw upscale failure')] },
+    { name: 'upscale failure publishes error', runs: [failed('raw upscale failure')] },
     { name: 'upscale fallback throws', runs: [done({}, 'throws')] },
     { name: 'upscale poll timeout', runs: [timeout] },
     { name: 'upscale no source', refusal: 'missing_upscale_source' as const, forwardRefusal: { code: 'missing_upscale_source', phase: 'guard' } },
@@ -185,4 +193,129 @@ describe('refusals after the start write', () => {
     });
   });
 
+});
+
+
+describe('action results report refusals and failed upscales', () => {
+  const ctx: VideoGenerationRequestContext = {
+    nodeId: 'vid-1', nodes: [{
+      id: 'vid-1', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 },
+      data: {
+        prompt: 'A cat jumps', model: 'video-model', genMode: 'textToVideo',
+        aspectRatio: '16:9', quality: '720p', durationSec: 5, count: 1,
+        generateAudio: false, isGenerating: false,
+      },
+    }],
+    edges: [], projectId: 'p', canvasId: 'c', videoModels: catalog,
+    cameraTemplates: null, executionSource: 'workflow', productOperation: null,
+    inlineMedia: 'forward', translate: t,
+  };
+
+  it('generation node error wins over refusal', () => {
+    expect(videoGenerationActionResult({ generationError: 'node error' }, 'workflow', 'Refused'))
+      .toStrictEqual({ status: 'error', error: 'node error' });
+  });
+  it('generation refusal wins over the old URL', () => {
+    expect(videoGenerationActionResult(
+      { videoUrl: '/old.mp4' }, 'workflow', 'No video model is available.',
+    )).toStrictEqual({ status: 'error', error: 'No video model is available.' });
+  });
+  it.each([null, ''])('generation empty refusal %s keeps success', refusal => {
+    expect(videoGenerationActionResult({ videoUrl: '/old.mp4' }, 'workflow', refusal))
+      .toStrictEqual({ status: 'success', output: { videoUrl: '/old.mp4' } });
+  });
+
+  it.each([
+    { name: 'upscale failure uses node error',
+      outcome: { kind: 'failed', message: 'raw upscale failure' },
+      generationError: 'raw upscale failure', error: 'raw upscale failure' },
+    { name: 'upscale failure without node error',
+      outcome: { kind: 'failed', message: 'raw upscale failure' }, error: '视频增强失败' },
+    { name: 'upscale poll timeout', outcome: { kind: 'poll_timeout' }, error: '视频生成超时' },
+    { name: 'upscale completed with empty URL',
+      outcome: { kind: 'completed', result: { output_url: '' }, fallbackUrl: '' },
+      error: '视频增强失败' },
+    { name: 'upscale refused without project',
+      outcome: { kind: 'refused', message: 'A project is required.' },
+      error: 'A project is required.' },
+  ] satisfies Array<{
+    name: string;
+    outcome: VideoUpscaleOutcome | { kind: 'refused'; message: string };
+    generationError?: string;
+    error: string;
+  }>)('$name', ({ outcome, generationError, error }) => {
+    expect(videoUpscaleActionResult(
+      { upscaleSourceUrl: '/s.mp4', generationError }, 'workflow', outcome,
+    )).toStrictEqual({ status: 'error', error });
+  });
+
+  it.each(['workflow', 'single'])('upscale completed URL succeeds in %s', mode => {
+    expect(videoUpscaleActionResult(
+      { upscaleSourceUrl: '/s.mp4', videoUrl: '/hd.mp4' }, mode,
+      { kind: 'completed', result: { output_url: '/hd.mp4' }, fallbackUrl: '' },
+    )).toStrictEqual({ status: 'success', output: {
+      videoUrl: '/hd.mp4', ...(mode === 'single' ? { submitted: true } : {}),
+    } });
+  });
+  it('upscale completed fallback URL succeeds', () => {
+    expect(videoUpscaleActionResult(
+      { upscaleSourceUrl: '/s.mp4', videoUrl: '/fb.mp4' }, 'workflow',
+      { kind: 'completed', result: {}, fallbackUrl: '/fb.mp4' },
+    )).toStrictEqual({ status: 'success', output: { videoUrl: '/fb.mp4' } });
+  });
+  it('upscale missing source wins over refusal', () => {
+    expect(videoUpscaleActionResult({}, 'workflow', { kind: 'refused', message: 'x' }))
+      .toStrictEqual({ status: 'error', error: '缺少高清视频源' });
+  });
+  it('upscale without outcome keeps legacy success', () => {
+    expect(videoUpscaleActionResult({
+      upscaleSourceUrl: '/s.mp4', generationError: 'e', videoUrl: '/old.mp4',
+    }, 'workflow')).toStrictEqual({ status: 'success', output: { videoUrl: '/old.mp4' } });
+  });
+
+  it('admission refuses an empty model catalog', () => {
+    expect(videoAdmissionRefusalMessage({ ...ctx, videoModels: [] }, []))
+      .toBe('No video model is available.');
+  });
+  it('admission builder prompt refusal wins over browser reasons', () => {
+    const nodes = ctx.nodes.map(node => ({ ...node, data: { ...node.data, prompt: '' } }));
+    expect(videoAdmissionRefusalMessage({ ...ctx, nodes }, ['Billing rule missing']))
+      .toBe('A video prompt or upstream text is required.');
+  });
+  it('admission uses the first non-empty browser reason', () => {
+    expect(videoAdmissionRefusalMessage(ctx, [null, '', 'Billing rule missing', 'other']))
+      .toBe('Billing rule missing');
+  });
+  it('admission uses the default refusal without browser reasons', () => {
+    expect(videoAdmissionRefusalMessage(ctx, [])).toBe('Video generation could not start.');
+  });
+
+  const lastSlotCtx: VideoGenerationRequestContext = {
+    ...ctx,
+    nodes: [
+      ...ctx.nodes.map(node => ({ ...node, data: { ...node.data, genMode: 'firstFrame' } })),
+      {
+        id: 'a', type: CANVAS_NODE_TYPES.upload, position: { x: 0, y: 0 },
+        data: { imageUrl: 'https://media.example.test/a.png?version=1' },
+      },
+    ],
+    edges: [{ id: 'last', source: 'a', target: 'vid-1', data: { keyframeSlot: 'last' } }],
+  };
+
+  it('admission prefers a browser reason over a later-phase builder refusal', () => {
+    const built = buildVideoGenerationRequest({
+      ...lastSlotCtx, prompt: videoPromptCompileInput(lastSlotCtx).fallbackPrompt,
+    });
+    expect(built).toMatchObject({ ok: false, code: 'missing_media', phase: 'keyframes' });
+    expect(videoAdmissionRefusalMessage(lastSlotCtx, ['Billing rule missing']))
+      .toBe('Billing rule missing');
+  });
+
+  it('admission falls back to a later-phase builder refusal without browser reasons', () => {
+    const built = buildVideoGenerationRequest({
+      ...lastSlotCtx, prompt: videoPromptCompileInput(lastSlotCtx).fallbackPrompt,
+    });
+    expect(built).toMatchObject({ ok: false, code: 'missing_media', phase: 'keyframes' });
+    expect(videoAdmissionRefusalMessage(lastSlotCtx, [])).toBe('A source keyframe is required.');
+  });
 });

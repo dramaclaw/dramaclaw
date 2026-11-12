@@ -16,6 +16,7 @@ import {
   videoGenerationRefusalOutcome, videoGenerationStartedRefusalOutcome, videoGenerationFailurePatch, videoGenerationRunOutcome,
   videoGenerationSettleOutcome, videoGenerationActionResult, videoUpscaleStartPatch,
   videoUpscaleAcceptedPatch, videoUpscaleOutcomePatch, videoUpscaleActionResult,
+  VIDEO_TIMEOUT_ACTION_ERROR, type VideoUpscaleSubmitOutcome,
   type VideoGenerationRunError, type VideoGenerationNotice,
 } from '@/features/canvas/application/generationRequests/videoGenerationResult';
 import {
@@ -101,6 +102,7 @@ export function checkCapture(group: Group, fixture: VideoFixture, catalog: Model
   const trims: unknown[] = [];
   const probed: string[] = [];
   let notice: VideoGenerationNotice = null;
+  let upscaleOutcome: VideoUpscaleSubmitOutcome | undefined;
   let finalRefusal: Extract<VideoGenerationRequestResult, { ok: false }> | undefined;
   if (fixture.forwardRefusal?.phase === 'guard') {
     // Admission guards return before the component writes start or compiles a prompt.
@@ -167,6 +169,7 @@ export function checkCapture(group: Group, fixture: VideoFixture, catalog: Model
                 : { kind: 'completed' as const, result: run.result, fallbackUrl: run.fallback ?? '' }
               : run.kind === 'poll_timeout' ? run
                 : { kind: 'failed' as const, message: errorFor(run, index).message };
+            upscaleOutcome = outcome;
             const patch = videoUpscaleOutcomePatch(outcome);
             if (patch) writes.push(patch);
             if (run.kind === 'poll_timeout') notice = { kind: 'still_running' };
@@ -209,8 +212,14 @@ export function checkCapture(group: Group, fixture: VideoFixture, catalog: Model
   exact(requests, E.requests);
   expect(recorded(writes)).toStrictEqual(E.writes);
   const finalData = Object.assign({}, target.data, ...writes);
+  const mode = fixture.executionMode ?? 'workflow';
+  const actionResult = upscale
+    ? videoUpscaleActionResult(finalData, mode, finalRefusal
+      ? { kind: 'refused', message: finalRefusal.message } : upscaleOutcome)
+    : videoGenerationActionResult(finalData, mode, finalRefusal?.message
+      ?? (notice?.kind === 'still_running' ? VIDEO_TIMEOUT_ACTION_ERROR : null));
   expect({ requestId: fixture.name, nodeId: 'vid-1', action: 'generate_video',
-    ...(upscale ? videoUpscaleActionResult : videoGenerationActionResult)(finalData, fixture.executionMode ?? 'workflow'),
+    ...actionResult,
   }).toStrictEqual(E.result);
   if (group === 'media') {
     expect(probed).toStrictEqual(E.probeUrls?.filter(url => !url.startsWith('/static/task-')));

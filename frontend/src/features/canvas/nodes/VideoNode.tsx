@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import {
   buildVideoGenerationRequest, videoPromptCompileInput, videoContinuityCompileInput,
+  videoAdmissionRefusalMessage, VIDEO_NO_PROJECT_MESSAGE, VIDEO_GENERATION_IN_PROGRESS_MESSAGE,
   videoPromptCompileMetadataPatch, videoEditImageOverflow, videoExtendTrimRequirement,
   videoReferenceDurationProbe, videoUpscaleInput, type VideoGenerationRequestContext,
 } from "../application/generationRequests/videoGenerationRequest";
@@ -9,7 +10,7 @@ import {
   videoGenerationStartPatch, videoGenerationSubmitPatch, videoGenerationAcceptedPatch,
   videoGenerationRunOutcome, videoGenerationSettleOutcome, videoGenerationStartedRefusalOutcome,
   videoGenerationFailurePatch, videoGenerationActionResult, videoUpscaleActionResult,
-  type VideoGenerationRunError, type VideoGenerationRunOutcome,
+  VIDEO_TIMEOUT_ACTION_ERROR, type VideoGenerationRunError, type VideoGenerationRunOutcome,
 } from "../application/generationRequests/videoGenerationResult";
 import { describeGenerationError } from "../application/generationRequests/generationSubmitError";
 import { workflowProductOperation } from "../application/workflowExecutionActivity";
@@ -2344,9 +2345,22 @@ export const VideoNode = memo(
 
     const handleSubmit = useCallback(async (
       options: { executionSource?: VideoExecutionSource } = {},
-    ) => {
+    ): Promise<string | null> => {
       const executionSource = options.executionSource ?? 'manual';
-      if (submitDisabled) return;
+      if (submitDisabled) {
+        const state = useCanvasStore.getState();
+        return videoAdmissionRefusalMessage({
+          nodeId: id,
+          nodes: state.nodes.map((node) => node.id === id ? { ...node, data } : node),
+          edges: state.edges, videoModels: availableVideoModels, cameraTemplates,
+          translate: t, executionSource, projectId: readUrl().project ?? '',
+          canvasId: readUrl().canvas ?? 'default', productOperation: null, inlineMedia: 'forward',
+        }, [
+          videoBillingRuleMissing ? t('common.billingRuleNotConfigured') : null,
+          modelTaskAccess.blocked ? modelTaskAccess.message : null,
+          selectedModelReferenceError, mediaRejectionReason,
+        ]);
+      }
       const location = readUrl();
       if (location.project) {
         const admittedRun = runManualVideoRecipe({
@@ -2365,13 +2379,13 @@ export const VideoNode = memo(
               generationError: backendErrorToastMessage(error, t),
             });
           }
-          return;
+          return null;
         }
       }
       // 在途守卫（与 ImageGenNode 一致）：第 1 条完成就会清 isGenerating，
       // submitDisabled 拦不住「旧批次 N-1 个任务还在跑时重新提交」——旧闭包
       // 会用过期的 completedUrls 覆写新批次的 generationBatch。
-      if (submittingRef.current) return;
+      if (submittingRef.current) return VIDEO_GENERATION_IN_PROGRESS_MESSAGE;
       submittingRef.current = true;
       setReferenceErrors([]);
       setReferenceErrorsOpen(false);
@@ -2379,7 +2393,7 @@ export const VideoNode = memo(
       const projectId = readUrl().project;
       if (!projectId) {
         console.error("[video-node] no project in URL");
-        return;
+        return VIDEO_NO_PROJECT_MESSAGE;
       }
       const startedAtMs = Date.now();
       // Clear any prior failure so the banner reflects only this attempt.
@@ -2458,7 +2472,7 @@ export const VideoNode = memo(
             setReferenceErrorsOpen(true);
           }
           for (const patch of patches) updateNodeData(id, patch);
-          return;
+          return built.message;
         }
         const referenceState = useCanvasStore.getState();
         const referenceSnapshot = sortUpstreamByReferenceOrder(
@@ -2537,13 +2551,13 @@ export const VideoNode = memo(
           }));
           setReferenceErrorsOpen(true);
           if (settled.patch) updateNodeData(id, settled.patch);
-          return;
+          return null;
         }
         if (settled.patch) updateNodeData(id, settled.patch);
         if (notice?.kind === 'still_running') {
           notifyTaskStillRunning(t);
           void refreshHistory();
-          return;
+          return VIDEO_TIMEOUT_ACTION_ERROR;
         }
         if (notice?.kind === 'error_dialog') {
           void showErrorDialog(notice.message, notice.title, notice.details ?? undefined);
@@ -2563,10 +2577,13 @@ export const VideoNode = memo(
       } finally {
         submittingRef.current = false;
       }
+      return null;
     }, [
       availableVideoModels, cameraTemplates, data, genMode, humanReview, id, isHappyHorseModel,
       refreshHistory, selectedVideoModel, submitDisabled, supportsHumanReview, t,
-      updateNodeData, upstreamNodes, usesFmvContinuity,
+      updateNodeData, upstreamNodes, usesFmvContinuity, videoBillingRuleMissing,
+      modelTaskAccess.blocked, modelTaskAccess.message, selectedModelReferenceError,
+      mediaRejectionReason,
     ]);
 
     useEffect(() => {
@@ -2583,10 +2600,10 @@ export const VideoNode = memo(
             return;
           }
           void submitVideoUpscale(id, { sourceUrl, resolution })
-            .then(() => {
+            .then((outcome) => {
               const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
               const result = videoUpscaleActionResult({ ...(isVideoNode(finished) ? finished.data : {}),
-                upscaleSourceUrl: sourceUrl }, executionMode);
+                upscaleSourceUrl: sourceUrl }, executionMode, outcome);
               if (result.status === 'success') publishNodeActionSuccess(requestId, id, action, result.output);
               else publishNodeActionError(requestId, id, action, new Error(result.error));
             })
@@ -2594,9 +2611,11 @@ export const VideoNode = memo(
           return;
         }
         void handleSubmit({ executionSource: 'workflow' })
-          .then(() => {
+          .then((refusal) => {
             const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
-            const result = videoGenerationActionResult(isVideoNode(finished) ? finished.data : undefined, executionMode);
+            const result = videoGenerationActionResult(
+              isVideoNode(finished) ? finished.data : undefined, executionMode, refusal,
+            );
             if (result.status === 'error') publishNodeActionError(requestId, id, action, new Error(result.error));
             else publishNodeActionSuccess(requestId, id, action, result.output);
           })
@@ -3528,7 +3547,7 @@ export const VideoNode = memo(
             mediaRejectionReason={mediaRejectionReason}
             expanded={panelExpanded}
             onExpandedChange={setPanelExpanded}
-            onSubmit={handleSubmit}
+            onSubmit={async () => { await handleSubmit(); }}
             historyPanel={hasCompletedHistoryRecords(historyRecords) ? (
               <NodeHistoryRail
                 records={historyRecords}

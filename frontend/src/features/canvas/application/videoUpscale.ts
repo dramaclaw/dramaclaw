@@ -12,8 +12,13 @@ import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 
-import { videoUpscaleInput, videoUpscaleWireRequest } from './generationRequests/videoGenerationRequest';
-import { videoUpscaleStartPatch, videoUpscaleAcceptedPatch, videoUpscaleOutcomePatch } from './generationRequests/videoGenerationResult';
+import {
+  VIDEO_NO_PROJECT_MESSAGE, videoUpscaleInput, videoUpscaleWireRequest,
+} from './generationRequests/videoGenerationRequest';
+import {
+  videoUpscaleStartPatch, videoUpscaleAcceptedPatch, videoUpscaleOutcomePatch,
+  type VideoUpscaleSubmitOutcome, type VideoUpscaleOutcome,
+} from './generationRequests/videoGenerationResult';
 import { workflowProductOperation } from './workflowExecutionActivity';
 import { notifyTaskStillRunning } from './errorDialog';
 
@@ -68,6 +73,7 @@ export function createVideoUpscaleResultNode(
  * 对 isUpscaleNode 结果节点置 isGenerating → 提交 /freezone/video/upscale →
  * 等任务完成（output_url 缺失时回退 job result）→ 把产物 videoUrl 回填到该节点；
  * 失败把错误写到该节点。project/canvasId 取自当前 URL。
+ * Returns the submission outcome for the workflow subscriber.
  */
 export async function submitVideoUpscale(
   nodeId: string,
@@ -75,11 +81,11 @@ export async function submitVideoUpscale(
     sourceUrl: string;
     resolution: FreezoneVideoUpscaleResolution;
   },
-): Promise<void> {
+): Promise<VideoUpscaleSubmitOutcome> {
   const project = readUrl().project;
   if (!project) {
     console.error('[video-upscale] no project in URL — cannot submit');
-    return;
+    return { kind: 'refused', message: VIDEO_NO_PROJECT_MESSAGE };
   }
   const canvasId = readUrl().canvas ?? 'default';
 
@@ -101,15 +107,23 @@ export async function submitVideoUpscale(
       const fallback = await fetchFreezoneJobResult(project, ref.task_type, ref.job_id);
       fallbackUrl = fallback.url;
     }
-    const patch = videoUpscaleOutcomePatch({ kind: 'completed', result: completed.result ?? null, fallbackUrl });
+    const outcome: VideoUpscaleOutcome = {
+      kind: 'completed', result: completed.result ?? null, fallbackUrl,
+    };
+    const patch = videoUpscaleOutcomePatch(outcome);
     if (patch) useCanvasStore.getState().updateNodeData(nodeId, patch);
+    return outcome;
   } catch (err) {
     if (isTaskPollTimeoutError(err)) {
       notifyTaskStillRunning();
-      return;
+      return { kind: 'poll_timeout' };
     }
     console.error('[video-upscale] generation failed', err);
-    const patch = videoUpscaleOutcomePatch({ kind: 'failed', message: err instanceof Error ? err.message : String(err) });
+    const outcome: VideoUpscaleOutcome = {
+      kind: 'failed', message: err instanceof Error ? err.message : String(err),
+    };
+    const patch = videoUpscaleOutcomePatch(outcome);
     if (patch) useCanvasStore.getState().updateNodeData(nodeId, patch);
+    return outcome;
   }
 }

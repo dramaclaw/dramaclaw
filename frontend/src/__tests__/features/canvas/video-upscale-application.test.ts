@@ -2,14 +2,21 @@
 // Copyright (c) 2026 ClaymoreLab
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TaskPollTimeoutError } from '@/api/tasks';
+
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 const apiCall = vi.hoisted(() => vi.fn());
 const fetchFreezoneJobResult = vi.hoisted(() => vi.fn());
 const awaitTaskCompletion = vi.hoisted(() => vi.fn());
+const notifyTaskStillRunning = vi.hoisted(() => vi.fn());
 const readUrl = vi.hoisted(() => vi.fn());
 
+vi.mock('@/features/canvas/application/errorDialog', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  notifyTaskStillRunning,
+}));
 vi.mock('@/api/client', async (importOriginal) => ({
   ...(await importOriginal<object>()), apiCall,
 }));
@@ -49,6 +56,7 @@ function seedVideoNode() {
 describe('videoUpscale application（高清结果节点 + 提交编排）', () => {
   beforeEach(() => {
     readUrl.mockReturnValue({ project: 'proj-1', canvas: 'canvas-1' });
+    notifyTaskStillRunning.mockReset();
     apiCall.mockReset();
     fetchFreezoneJobResult.mockReset();
     awaitTaskCompletion.mockReset();
@@ -139,5 +147,68 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       isGenerating: false,
       generationError: 'backend down',
     });
+  });
+});
+
+
+describe('submitVideoUpscale reports its outcome', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    readUrl.mockReturnValue({ project: 'proj-1', canvas: 'canvas-1' });
+    apiCall.mockReset().mockResolvedValue(JOB_REF);
+    awaitTaskCompletion.mockReset().mockResolvedValue({ result: {} });
+    fetchFreezoneJobResult.mockReset().mockResolvedValue({ url: '/static/v-hd.mp4' });
+    seedVideoNode();
+  });
+
+  function createUpscale() {
+    const id = createVideoUpscaleResultNode('vid-1', {
+      sourceUrl: '/static/v.mp4', displayName: '高清（1080P）', resolution: '1080p',
+    });
+    if (!id) throw new Error('Expected upscale node');
+    return id;
+  }
+  const options = { sourceUrl: '/static/v.mp4?sig=abc', resolution: '1080p' } as const;
+
+  it('returns completed with the fallback URL', async () => {
+    await expect(submitVideoUpscale(createUpscale(), options)).resolves.toStrictEqual({
+      kind: 'completed', result: {}, fallbackUrl: '/static/v-hd.mp4',
+    });
+  });
+
+  it('returns failed and preserves the raw node error', async () => {
+    const id = createUpscale();
+    awaitTaskCompletion.mockRejectedValue(new Error('raw upscale failure'));
+    const outcome = await submitVideoUpscale(id, options);
+    expect(useCanvasStore.getState().nodes.find(node => node.id === id)?.data)
+      .toMatchObject({ generationError: 'raw upscale failure' });
+    expect(outcome).toStrictEqual({ kind: 'failed', message: 'raw upscale failure' });
+  });
+
+  it('returns poll_timeout and leaves the node running', async () => {
+    const id = createUpscale();
+    awaitTaskCompletion.mockRejectedValue(new TaskPollTimeoutError('tk-up', 1000));
+    const outcome = await submitVideoUpscale(id, options);
+    expect(notifyTaskStillRunning).toHaveBeenCalledTimes(1);
+    expect(useCanvasStore.getState().nodes.find(node => node.id === id)?.data)
+      .toMatchObject({ isGenerating: true, generationError: null });
+    expect(outcome).toStrictEqual({ kind: 'poll_timeout' });
+  });
+
+  it('returns failed when the fallback fetch fails', async () => {
+    fetchFreezoneJobResult.mockRejectedValue(new Error('fallback failed'));
+    await expect(submitVideoUpscale(createUpscale(), options)).resolves.toStrictEqual({
+      kind: 'failed', message: 'fallback failed',
+    });
+  });
+
+  it('refuses without a project and leaves node data unchanged', async () => {
+    const id = createUpscale();
+    const before = structuredClone(useCanvasStore.getState().nodes);
+    readUrl.mockReturnValue({ project: '', canvas: 'canvas-1' });
+    const outcome = await submitVideoUpscale(id, options);
+    expect(apiCall).not.toHaveBeenCalled();
+    expect(useCanvasStore.getState().nodes).toStrictEqual(before);
+    expect(outcome).toStrictEqual({ kind: 'refused', message: 'A project is required.' });
   });
 });

@@ -82,15 +82,17 @@ export type VideoGenerationRequestResult = { ok: true; requests: VideoGeneration
 
 /**
  * Browser outcomes: busy/model/capability/cap/prompt/media/project guards and
- * missing source/references return silently (subscriber publishes SUCCESS).
- * Unsupported omni's branch shows a dialog and returns SUCCESS without a node
- * error; normal mounting can normalize the mode before that branch is reachable.
+ * missing source/references publish the refusal message as a subscriber error.
+ * Unsupported omni's branch also shows a dialog; normal mounting can normalize
+ * the mode before that branch is reachable.
  * Duration rejection writes referenceValidation.title as a node error, which the
  * subscriber publishes as an error. Missing upscale source is a published error.
  * Wrong-node is a pure boundary check. Inline URLs and missing
  * prepared clips are caller preparation refusals: the browser can forward inline
  * media/files, blocks inline links as invalid, and performs its own trim/upload.
  */
+export const VIDEO_NO_PROJECT_MESSAGE = 'A project is required.';
+export const VIDEO_GENERATION_IN_PROGRESS_MESSAGE = 'Video generation is already running.';
 const NOT_VIDEO_NODE = 'The target node must be a video node.';
 function refuse(code: Exclude<VideoGenerationRefusalCode, 'reference_duration_invalid'>, message: string,
   phase: 'guard' | 'keyframes' | 'images' | 'references' = 'guard'): VideoGenerationRequestResult {
@@ -301,8 +303,8 @@ function buildUpscale(ctx: VideoGenerationRequestContext, data: VideoNodeData): 
   const input = videoUpscaleInput(data);
   // Published directly by the subscriber, before checking project/model/busy state.
   if (!input.sourceUrl) return refuse('missing_upscale_source', '缺少高清视频源'); // i18n-exempt -- exact wire or subscriber contract
-  // A missing project silently returns; the subscriber then publishes success.
-  if (!ctx.projectId) return refuse('no_project', 'A project is required.');
+  // A missing project returns a refusal, which the subscriber publishes as an error.
+  if (!ctx.projectId) return refuse('no_project', VIDEO_NO_PROJECT_MESSAGE);
   if (ctx.inlineMedia !== 'forward' && input.sourceUrl.startsWith('data:')) return refuse('inline_media_reference', 'Upload inline media before building a video request.');
   return { ok: true, requests: [videoUpscaleWireRequest({ ...ctx, ...input })] };
 }
@@ -483,7 +485,9 @@ export function buildVideoGenerationRequest(
   if (data.isUpscaleNode === true) return buildUpscale(ctx, data);
   const model = selectVideoModel(ctx.videoModels, data.model);
   if (!model) return refuse('no_model', 'No video model is available.');
-  if (ctx.isGenerating ?? data.isGenerating) return refuse('generation_in_progress', 'Video generation is already running.');
+  if (ctx.isGenerating ?? data.isGenerating) {
+    return refuse('generation_in_progress', VIDEO_GENERATION_IN_PROGRESS_MESSAGE);
+  }
   const nodes = upstream(ctx);
   const counts = { images: 0, videos: 0, audios: 0 };
   for (const node of nodes) {
@@ -525,7 +529,7 @@ export function buildVideoGenerationRequest(
       return refuse('missing_references', 'At least one reference is required.');
     }
   }
-  if (!ctx.projectId) return refuse('no_project', 'A project is required.');
+  if (!ctx.projectId) return refuse('no_project', VIDEO_NO_PROJECT_MESSAGE);
 
   const aspectRatio = submitAspectRatio(data, model);
   const quality = normalizeVideoQuality(data.quality, videoQualityOptionsForModel(model));
@@ -576,4 +580,17 @@ export function buildVideoGenerationRequest(
   }
   const { prompt, camera_template_id, ...rest } = body;
   return requestResult(ctx, 'gen', { prompt, camera_template_id, character_ids: [], ...rest, ...context }, count);
+}
+
+export function videoAdmissionRefusalMessage(
+  ctx: VideoGenerationRequestContext,
+  browserReasons: ReadonlyArray<string | null | undefined>,
+): string {
+  const built = buildVideoGenerationRequest({
+    ...ctx, prompt: videoPromptCompileInput(ctx).fallbackPrompt,
+  });
+  if (!built.ok && built.phase === 'guard') return built.message;
+  // Later-phase refusals are post-admission preparation, not why the submit button is disabled.
+  return browserReasons.find(reason => reason)
+    || (!built.ok ? built.message : 'Video generation could not start.');
 }

@@ -683,7 +683,7 @@ class _ActionExecution:
         if built["trim_requirement"] is not None:
             return {"status": "failed", "error": "工作流动作 generate_video 需要打开画布运行"}
         request = built["request"]
-        # Browser guards can silently finish; the server must report absence of a submission.
+        # Guard refusals are failed actions, as in the browser subscriber.
         if not request["ok"] and request["code"] != "no_effective_prompt":
             return {"status": "failed", "error": request["message"]}
         if request["ok"] and len(request["requests"]) != 1:
@@ -848,7 +848,7 @@ class _ActionExecution:
         if url:
             return {"status": "completed", "output": {"videoUrl": url},
                     "artifact": {"output_url": url}}
-        # Unlike the browser subscriber, a failed upscale is a failed server action.
+        # An upscale without a URL is a failed action, as in the browser subscriber.
         return {"status": "failed", "error": (await self.node_data()).get("generationError") or (
             "视频生成超时" if outcome["kind"] == "poll_timeout" else "视频增强失败"
         )}

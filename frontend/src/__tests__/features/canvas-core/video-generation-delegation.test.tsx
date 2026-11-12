@@ -5,7 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactFlowProvider } from '@xyflow/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiCall } from '@/api/client';
-import { type FreezoneRecipeCompileMetadata } from '@/api/ops';
+import { awaitTaskCompletion, TaskPollTimeoutError } from '@/api/tasks';
+import { fetchFreezoneJobResult, type FreezoneRecipeCompileMetadata } from '@/api/ops';
 import {
   buildVideoGenerationRequest, videoPromptCompileInput, videoUpscaleWireRequest, videoEditImageOverflow,
   type VideoGenerationRequestContext,
@@ -58,6 +59,9 @@ vi.mock('@/api/ops', async (original) => ({
   fetchFreezoneVideoModels: vi.fn(async () => scope.catalog),
   fetchFreezoneVideoCameraTemplates: vi.fn(async () => scope.templates),
   fetchNodeGenerationHistory: vi.fn(async () => []),
+  fetchFreezoneJobResult: vi.fn(async () => {
+    throw new Error('Unexpected fetchFreezoneJobResult');
+  }),
 }));
 vi.mock('@/api/tasks', async (original) => ({
   ...(await original<typeof import('@/api/tasks')>()),
@@ -141,74 +145,144 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); clearWorkflowProductOperation('vid-1'); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+async function renderDispatchCollect(ctx: Fixture) {
+  scope.project = ctx.projectId; scope.canvas = ctx.canvasId; scope.catalog = ctx.videoModels;
+  scope.templates = [];
+  getFreezoneVideoModelsSnapshot(ctx.projectId);
+  prefetchFreezoneVideoCameraTemplates(ctx.projectId);
+  await waitFor(() => expect(getFreezoneVideoModelsSnapshot(ctx.projectId).isLoading).toBe(false));
+  vi.spyOn(HTMLMediaElement.prototype, 'src', 'set').mockImplementation(
+    function (this: HTMLMediaElement, url: string) {
+      const ms = ctx.mediaDurationsMs?.[url];
+      Object.defineProperty(this, 'duration', {
+        configurable: true, value: typeof ms === 'number' ? ms / 1000 : NaN,
+      });
+      queueMicrotask(() => this.dispatchEvent(
+        new Event(typeof ms === 'number' ? 'loadedmetadata' : 'error'),
+      ));
+    },
+  );
+  useCanvasStore.getState().setCanvasData(structuredClone(ctx.nodes), structuredClone(ctx.edges));
+  const writes: Record<string, unknown>[] = [];
+  const update = useCanvasStore.getState().updateNodeData;
+  useCanvasStore.setState({ updateNodeData: (id, patch) => {
+    if (id === 'vid-1') writes.push(patch);
+    update(id, patch);
+  } });
+  if (ctx.productOperation) bindWorkflowProductOperation(ctx.nodeId, ctx.productOperation);
+  if (ctx.compiled) vi.mocked(compileWorkflowNodePrompt).mockImplementation(async input => {
+    input.onCompileMetadata?.(metadata); return metadata.prompt;
+  });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let outcome: unknown;
+  const unsubscribe = canvasEventBus.subscribe('freezone/node-action-result', event => {
+    if (event.requestId === ctx.name) outcome = event;
+  });
+  try {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReactFlowProvider><TargetNode /></ReactFlowProvider>
+      </QueryClientProvider>,
+    );
+    const state = useCanvasStore.getState();
+    const settled = {
+      ...ctx, nodes: structuredClone(state.nodes), edges: structuredClone(state.edges),
+    };
+    writes.length = 0;
+    act(() => {
+      dispatchNodeAction({
+        nodeId: 'vid-1', action: 'generate_video', executionMode: 'workflow', requestId: ctx.name,
+      });
+    });
+    await waitFor(() => expect(outcome).toBeDefined());
+    const requests = vi.mocked(apiCall).mock.calls.map(([path, options]) => ({
+      method: options?.method, path, body: JSON.parse(JSON.stringify(options?.json)),
+    }));
+    const finalData = useCanvasStore.getState().nodes.find(node => node.id === 'vid-1')?.data;
+    return { outcome, requests, writes, settled, finalData };
+  } finally {
+    unsubscribe(); cleanup(); queryClient.clear();
+    useCanvasStore.setState({ updateNodeData: update });
+  }
+}
+
 describe('VideoNode delegates generation requests and outcomes', () => {
   it.each(fixtures)('$name', async ctx => {
-    scope.project = ctx.projectId; scope.canvas = ctx.canvasId; scope.catalog = ctx.videoModels;
-    scope.templates = [];
-    getFreezoneVideoModelsSnapshot(ctx.projectId); prefetchFreezoneVideoCameraTemplates(ctx.projectId);
-    await waitFor(() => expect(getFreezoneVideoModelsSnapshot(ctx.projectId).isLoading).toBe(false));
-    vi.spyOn(HTMLMediaElement.prototype, 'src', 'set').mockImplementation(function (this: HTMLMediaElement, url: string) {
-      const ms = ctx.mediaDurationsMs?.[url];
-      Object.defineProperty(this, 'duration', { configurable: true, value: typeof ms === 'number' ? ms / 1000 : NaN });
-      queueMicrotask(() => this.dispatchEvent(new Event(typeof ms === 'number' ? 'loadedmetadata' : 'error')));
+    const { outcome, requests, writes, settled, finalData } = await renderDispatchCollect(ctx);
+    const prompt = ctx.compiled ? metadata.prompt : videoPromptCompileInput(settled).fallbackPrompt;
+    const built = buildVideoGenerationRequest({ ...settled, prompt });
+    expect(requests).toStrictEqual(built.ok ? built.requests : []);
+    expect(JSON.stringify(requests)).toBe(JSON.stringify(built.ok ? built.requests : []));
+    expect(outcome).toStrictEqual({ requestId: ctx.name, nodeId: 'vid-1', action: 'generate_video',
+      ...(ctx.name === 'upscale' ? videoUpscaleActionResult : videoGenerationActionResult)(
+        finalData, 'workflow',
+      ),
     });
-    useCanvasStore.getState().setCanvasData(structuredClone(ctx.nodes), structuredClone(ctx.edges));
-    const writes: Record<string, unknown>[] = [];
-    const update = useCanvasStore.getState().updateNodeData;
-    useCanvasStore.setState({ updateNodeData: (id, patch) => {
-      if (id === 'vid-1') writes.push(patch);
-      update(id, patch);
-    } });
-    if (ctx.productOperation) bindWorkflowProductOperation(ctx.nodeId, ctx.productOperation);
-    if (ctx.compiled) vi.mocked(compileWorkflowNodePrompt).mockImplementation(async input => {
-      input.onCompileMetadata?.(metadata); return metadata.prompt;
+    if (ctx.name === 'text recipe') expect(finalData).toMatchObject({
+      workflowRecipeCompileMode: 'model', workflowRecipeCompiledPrompt: 'Recipe compiled video',
+      prompt: 'Recipe compiled video', workflowRecipeIds: ['recipe-1'],
     });
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    let outcome: unknown;
-    const unsubscribe = canvasEventBus.subscribe('freezone/node-action-result', event => {
-      if (event.requestId === ctx.name) outcome = event;
-    });
-    try {
-      render(<QueryClientProvider client={queryClient}><ReactFlowProvider><TargetNode /></ReactFlowProvider></QueryClientProvider>);
-      const state = useCanvasStore.getState();
-      const settled = { ...ctx, nodes: structuredClone(state.nodes), edges: structuredClone(state.edges) };
-      const prompt = ctx.compiled ? metadata.prompt : videoPromptCompileInput(settled).fallbackPrompt;
-      const built = buildVideoGenerationRequest({ ...settled, prompt });
-      writes.length = 0;
-      act(() => { dispatchNodeAction({ nodeId: 'vid-1', action: 'generate_video', executionMode: 'workflow', requestId: ctx.name }); });
-      await waitFor(() => expect(outcome).toBeDefined());
-      const requests = vi.mocked(apiCall).mock.calls.map(([path, options]) => ({ method: options?.method,
-        path, body: JSON.parse(JSON.stringify(options?.json)) }));
-      expect(requests).toStrictEqual(built.ok ? built.requests : []);
-      expect(JSON.stringify(requests)).toBe(JSON.stringify(built.ok ? built.requests : []));
-      const finalData = useCanvasStore.getState().nodes.find(node => node.id === 'vid-1')?.data;
-      expect(outcome).toStrictEqual({ requestId: ctx.name, nodeId: 'vid-1', action: 'generate_video',
-        ...(ctx.name === 'upscale' ? videoUpscaleActionResult : videoGenerationActionResult)(finalData, 'workflow') });
-      if (ctx.name === 'text recipe') expect(finalData).toMatchObject({ workflowRecipeCompileMode: 'model',
-        workflowRecipeCompiledPrompt: 'Recipe compiled video', prompt: 'Recipe compiled video', workflowRecipeIds: ['recipe-1'] });
-      if (ctx.name === 'edit overflow') {
-        expect(settled.nodes.find(node => node.id === 'vid-1')?.data.genMode).toBe('videoEdit');
-        expect(videoEditImageOverflow(settled)).toStrictEqual({ limit: 5, ignored: 1 });
-        expect(vi.mocked(toast.warning).mock.calls).toStrictEqual([
+    if (ctx.name === 'edit overflow') {
+      expect(settled.nodes.find(node => node.id === 'vid-1')?.data.genMode).toBe('videoEdit');
+      expect(videoEditImageOverflow(settled)).toStrictEqual({ limit: 5, ignored: 1 });
+      expect(vi.mocked(toast.warning).mock.calls).toStrictEqual([
         [t('node.videoNode.videoEdit.imageLimit', videoEditImageOverflow(settled) ?? {})],
       ]);
-      }
-      if (ctx.name === 'extension trim and probe') expect(vi.mocked(trimAndUploadExtendClip).mock.calls).toStrictEqual([
-        [{ projectId: ctx.projectId, videoUrl: '/static/source.mp4', range: { startMs: 2000, endMs: 7000 } }],
-      ]);
-      if (ctx.name === 'refusal after start') {
-        expect(built.ok).toBe(false);
-        if (built.ok) throw new Error('Expected refusal');
-        expect(writes).toStrictEqual([videoGenerationStartPatch(1234567890000),
-          ...videoGenerationStartedRefusalOutcome(built, { genMode: 'firstFrame', startedAtMs: 1234567890000,
-            isHappyHorseModel: false }, t).patches]);
-      }
-      if (ctx.name === 'upscale') expect(requests).toStrictEqual([videoUpscaleWireRequest({
-        projectId: ctx.projectId, canvasId: 'canvas-7', nodeId: 'vid-1', productOperation: null,
-        sourceUrl: '/static/source.mp4?version=1', resolution: '2k',
-      })]);
-    } finally {
-      unsubscribe(); cleanup(); queryClient.clear(); useCanvasStore.setState({ updateNodeData: update });
     }
+    if (ctx.name === 'extension trim and probe') {
+      expect(vi.mocked(trimAndUploadExtendClip).mock.calls).toStrictEqual([
+        [{ projectId: ctx.projectId, videoUrl: '/static/source.mp4',
+          range: { startMs: 2000, endMs: 7000 } }],
+      ]);
+    }
+    if (ctx.name === 'refusal after start') {
+      expect(built.ok).toBe(false);
+      if (built.ok) throw new Error('Expected refusal');
+      expect(writes).toStrictEqual([videoGenerationStartPatch(1234567890000),
+        ...videoGenerationStartedRefusalOutcome(built, {
+          genMode: 'firstFrame', startedAtMs: 1234567890000, isHappyHorseModel: false,
+        }, t).patches]);
+    }
+    if (ctx.name === 'upscale') expect(requests).toStrictEqual([videoUpscaleWireRequest({
+      projectId: ctx.projectId, canvasId: 'canvas-7', nodeId: 'vid-1', productOperation: null,
+      sourceUrl: '/static/source.mp4?version=1', resolution: '2k',
+    })]);
+  });
+});
+
+const upscaleData = {
+  isUpscaleNode: true, upscaleSourceUrl: '/static/source.mp4?version=1', upscaleResolution: '2k',
+};
+describe('VideoNode reports refusals and failed upscales to the subscriber', () => {
+  it.each([
+    { ctx: fixture('no model refusal', {}, { videoModels: [] }),
+      error: 'No video model is available.', noRequest: true, noWrite: true },
+    { ctx: fixture('no prompt refusal', { prompt: '' }),
+      error: 'A video prompt or upstream text is required.', noRequest: true, noWrite: true },
+    { ctx: fixture('poll timeout'), error: '视频生成超时',
+      reject: () => new TaskPollTimeoutError('task-1', 1000) },
+    { ctx: fixture('upscale failure', upscaleData), error: 'raw upscale failure',
+      reject: () => new Error('raw upscale failure') },
+    { ctx: fixture('upscale poll timeout', upscaleData), error: '视频生成超时',
+      reject: () => new TaskPollTimeoutError('task-1', 1000) },
+    { ctx: fixture('upscale empty url', upscaleData), error: '视频增强失败', emptyUrl: true },
+    { ctx: fixture('upscale no project', upscaleData, { projectId: '' }),
+      error: 'A project is required.', noRequest: true },
+  ])('$ctx.name', async ({ ctx, error, noRequest, noWrite, reject, emptyUrl }) => {
+    if (reject) vi.mocked(awaitTaskCompletion).mockRejectedValueOnce(reject());
+    if (emptyUrl) {
+      vi.mocked(awaitTaskCompletion).mockResolvedValueOnce(
+        { result: {} } as Awaited<ReturnType<typeof awaitTaskCompletion>>,
+      );
+      vi.mocked(fetchFreezoneJobResult).mockResolvedValueOnce(
+        { url: '' } as Awaited<ReturnType<typeof fetchFreezoneJobResult>>,
+      );
+    }
+    const { outcome, requests, writes } = await renderDispatchCollect(ctx);
+    if (noRequest) expect(requests).toStrictEqual([]);
+    if (noWrite) expect(writes).toStrictEqual([]);
+    expect(outcome).toStrictEqual({
+      requestId: ctx.name, nodeId: 'vid-1', action: 'generate_video', status: 'error', error,
+    });
   });
 });
