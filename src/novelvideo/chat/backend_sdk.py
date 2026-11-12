@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import threading
 import time
 import tomllib
@@ -55,6 +56,17 @@ def _positive_timeout_from_env(name: str, default: float) -> float:
 CODEX_STREAM_FIRST_PROGRESS_TIMEOUT = _positive_timeout_from_env(
     "DRAMACLAW_CODEX_FIRST_PROGRESS_TIMEOUT_SECONDS", 300.0
 )
+# Stop busy turns without answer text, plans, tool starts/results, or completed
+# non-reasoning items when no tool is in flight. Reasoning, usage, and warnings
+# keep the idle deadline alive, but do not reset this deadline.
+# The longest observed legitimate model response took about 172 s; reasoning-only
+# runaways took 281 s and 673 s. A 240 s default leaves about 40% headroom.
+CODEX_STREAM_NO_OUTPUT_TIMEOUT = _positive_timeout_from_env(
+    "DRAMACLAW_CODEX_NO_OUTPUT_TIMEOUT_SECONDS", 240.0
+)
+CODEX_NO_OUTPUT_TIMEOUT_MESSAGE = (
+    "模型长时间只在思考、没有产出内容，已自动停止本轮。请重试，或把需求拆小一些。"
+)
 CODEX_STREAM_IDLE_TIMEOUT = 300.0
 CODEX_INTERRUPT_GRACE_TIMEOUT = 5.0
 
@@ -72,6 +84,14 @@ _CODEX_USER_INPUT_TOOL_NAMES = {
     "freezone_request_user_clarification",
     "freezone_finish_agent_catalog_draft",
 }
+
+
+def _codex_event_is_effective_output(event: ChatBackendEvent) -> bool:
+    return event.type in {"assistant_delta", "plan_update", "tool_started", "tool_updated"} or (
+        event.type == "item_completed"
+        and isinstance(event.item, dict)
+        and event.item.get("type") != "reasoning"
+    )
 
 
 def _codex_tool_waits_for_user_input(name: str | None) -> bool:
@@ -1217,6 +1237,39 @@ class CodexThreadBusyError(RuntimeError):
     """The persisted thread still has a turn in flight on the App Server."""
 
 
+CODEX_MALFORMED_TOOL_CALL_MESSAGE = "模型生成的工具调用参数不完整，本轮已停止。请重新发送刚才的需求。"
+
+
+class CodexMalformedToolCallError(RuntimeError):
+    """The model sent invalid JSON tool arguments and the upstream rejected the turn."""
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__(CODEX_MALFORMED_TOOL_CALL_MESSAGE)
+
+
+_CODEX_MALFORMED_TOOL_CALL_RE = re.compile(
+    r"malformed_json|tool call.{0,200}arguments must be valid json", re.IGNORECASE
+)
+
+
+def _is_malformed_tool_call_error(text: str) -> bool:
+    return _CODEX_MALFORMED_TOOL_CALL_RE.search(text) is not None
+
+
+def _codex_malformed_tool_call_error() -> dict[str, str]:
+    return {"message": CODEX_MALFORMED_TOOL_CALL_MESSAGE, "kind": "malformed-tool-call"}
+
+
+def _codex_error_text(error: Any) -> str:
+    if error is None:
+        return ""
+    if isinstance(error, str):
+        return error
+    if isinstance(error, (dict, list)):
+        return json.dumps(error, ensure_ascii=False, default=str)
+    return str(error)
+
+
 class CodexThreadHistoryModeError(RuntimeError):
     """The started thread cannot support chat history clearing."""
 
@@ -1299,6 +1352,58 @@ def revert_codex_thread_history(
     if remaining.data:
         raise RuntimeError(f"Codex thread {thread_id} still has turns after clearing history")
     return "reverted"
+
+
+def _revert_malformed_tool_call_turns(
+    client: Any, thread_id: str, failed_turn_id: str
+) -> str | None:
+    """A rejected tool call stays in history and makes every later request fail.
+    Revert the turn storing it and the failed turns after it, keeping the thread id
+    and the earlier conversation.
+    """
+    from novelvideo.chat.codex_history import HISTORY_CACHE
+    from novelvideo.chat.codex_protocol import (
+        THREAD_ITEMS_LIST,
+        THREAD_REVERT,
+        THREAD_TURNS_LIST,
+        ThreadItemsPage,
+        ThreadRevertResponse,
+        ThreadTurnsPage,
+        newest_turns_params,
+        thread_revert_params,
+        turn_items_params,
+    )
+
+    turns = client.request(
+        THREAD_TURNS_LIST, newest_turns_params(thread_id, limit=20),
+        response_model=ThreadTurnsPage,
+    ).data
+    if not turns or turns[0].id != failed_turn_id:
+        return None
+    run_length = 0
+    for turn in turns:
+        if turn.status != "failed" or not _is_malformed_tool_call_error(
+            _codex_error_text(turn.error)
+        ):
+            break
+        run_length += 1
+    if not run_length:
+        return None
+    target_id = turns[run_length - 1].id
+    items = client.request(
+        THREAD_ITEMS_LIST, turn_items_params(thread_id, target_id, limit=50),
+        response_model=ThreadItemsPage,
+    ).data
+    if run_length < len(turns) and all(
+        record.item.get("type") == "userMessage" for record in items
+    ):
+        target_id = turns[run_length].id
+    client.request(
+        THREAD_REVERT, thread_revert_params(thread_id, target_id),
+        response_model=ThreadRevertResponse,
+    )
+    HISTORY_CACHE.invalidate(thread_id)
+    return target_id
 
 
 def read_codex_thread_history(
@@ -1948,6 +2053,12 @@ class _CodexNotificationMapper:
             extra = str(
                 getattr(payload.error, "additional_details", "") or ""
             ).strip()
+            if _is_malformed_tool_call_error(f"{message}\n{extra}"):
+                message = CODEX_MALFORMED_TOOL_CALL_MESSAGE
+                extra = ""
+                error = _codex_malformed_tool_call_error()
+            else:
+                error = _codex_jsonable(payload.error)
             retry = " retrying" if payload.will_retry else ""
             text = f"\x1b[91m[error{retry}]\x1b[0m {message}".rstrip()
             if extra:
@@ -1958,7 +2069,7 @@ class _CodexNotificationMapper:
                     thread_id=self.thread_id,
                     turn_id=self.turn_id,
                     text=text + "\n",
-                    error=_codex_jsonable(payload.error),
+                    error=error,
                     status=(
                         "retrying" if payload.will_retry else "failed"
                     ),
@@ -2018,6 +2129,8 @@ class _CodexNotificationMapper:
 def _codex_turn_completed_event(
     thread_id: str, turn_id: str, status: str, error: Any = None, raw: Any = None,
 ) -> ChatBackendEvent:
+    if _is_malformed_tool_call_error(_codex_error_text(error)):
+        error = _codex_malformed_tool_call_error()
     return ChatBackendEvent(
         type="turn_completed", thread_id=thread_id, turn_id=turn_id,
         status=status, error=error, raw=raw,
@@ -2259,6 +2372,18 @@ class CodexThread:
                         and payload.turn.id == turn.id
                     ):
                         if payload.turn.status == TurnStatus.failed:
+                            if _is_malformed_tool_call_error(_codex_error_text(payload.turn.error)):
+                                try:
+                                    _revert_malformed_tool_call_turns(
+                                        codex._client, self.id, turn.id
+                                    )
+                                except Exception:
+                                    _log.warning(
+                                        "could not repair Codex thread %s after a malformed "
+                                        "tool call",
+                                        self.id, exc_info=True,
+                                    )
+                                raise CodexMalformedToolCallError()
                             message = None
                             if payload.turn.error is not None:
                                 message = payload.turn.error.message
@@ -2334,9 +2459,13 @@ class CodexThread:
         first_progress_deadline = started_at + CODEX_STREAM_FIRST_PROGRESS_TIMEOUT
         idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
         saw_runtime_progress = False
+        last_output_at = started_at
+        busy_without_output = False
+        active_tool_calls: set[str] = set()
         user_input_calls: set[str] = set()
         canvas_tool_deadlines: dict[str, float] = {}
         timed_out = False
+        timeout_kind = "first-progress"
 
         try:
             while True:
@@ -2348,6 +2477,12 @@ class CodexThread:
                             idle_deadline if saw_runtime_progress else first_progress_deadline
                         )
                         deadline = max((deadline, *canvas_tool_deadlines.values()))
+                        timeout_kind = "idle" if saw_runtime_progress else "first-progress"
+                        if busy_without_output and not active_tool_calls:
+                            output_deadline = last_output_at + CODEX_STREAM_NO_OUTPUT_TIMEOUT
+                            if output_deadline < deadline:
+                                deadline = output_deadline
+                                timeout_kind = "no-output"
                         remaining = deadline - loop.time()
                         if remaining <= 0:
                             raise asyncio.TimeoutError
@@ -2355,10 +2490,6 @@ class CodexThread:
                 except asyncio.TimeoutError:
                     timed_out = True
                     now = loop.time()
-                    if saw_runtime_progress:
-                        timeout_kind = "idle"
-                    else:
-                        timeout_kind = "first-progress"
                     _log.warning(
                         "Codex App Server stream timed out: kind=%s thread=%s turn=%s",
                         timeout_kind,
@@ -2383,7 +2514,11 @@ class CodexThread:
                                 exc_info=True,
                             )
 
-                    timeout_message = "Codex App Server 响应超时，请重试。"
+                    timeout_message = (
+                        CODEX_NO_OUTPUT_TIMEOUT_MESSAGE
+                        if timeout_kind == "no-output"
+                        else "Codex App Server 响应超时，请重试。"
+                    )
                     timeout_error = {
                         "message": timeout_message,
                         "kind": timeout_kind,
@@ -2414,15 +2549,23 @@ class CodexThread:
                     )
                     break
                 if kind == "error":
-                    if isinstance(payload, CodexThreadBusyError):
+                    if isinstance(payload, (CodexThreadBusyError, CodexMalformedToolCallError)):
                         raise payload
                     raise RuntimeError(str(payload))
                 event = payload
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
                     saw_runtime_progress = True
                     idle_deadline = loop.time() + CODEX_STREAM_IDLE_TIMEOUT
+                    if _codex_event_is_effective_output(event):
+                        last_output_at = loop.time()
+                        busy_without_output = False
+                    else:
+                        busy_without_output = True
                 call_key = event.call_id or str(event.name)
                 if event.type == "tool_started":
+                    status = str(event.status or "").strip().lower()
+                    if status in {"inprogress", "pending", "running"}:
+                        active_tool_calls.add(call_key)
                     if _codex_tool_waits_for_user_input(event.name):
                         user_input_calls.add(call_key)
                     elif _is_freezone_canvas_write_tool(event.name):
@@ -2433,6 +2576,7 @@ class CodexThread:
                 elif event.type == "tool_updated":
                     status = str(event.status or "").strip().lower()
                     if status not in {"inprogress", "pending", "running"}:
+                        active_tool_calls.discard(call_key)
                         user_input_calls.discard(call_key)
                         canvas_tool_deadlines.pop(call_key, None)
                 yield event

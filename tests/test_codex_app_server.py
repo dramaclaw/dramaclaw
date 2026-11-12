@@ -815,6 +815,59 @@ def _recording_responses_gateway(responses: list[bytes]):
         worker.join(timeout=5)
 
 
+@contextmanager
+def _strict_responses_gateway(responses: list[bytes]):
+    requests: list[dict] = []
+    response_queue = iter(responses)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - stdlib handler callback
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if self.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            body = json.loads(raw)
+            rejected = False
+            for item in body.get("input", []):
+                if item.get("type") == "function_call":
+                    try:
+                        json.loads(item.get("arguments", ""))
+                    except (ValueError, TypeError):
+                        rejected = True
+            requests.append({
+                "path": self.path, "headers": dict(self.headers),
+                "body": body, "rejected": rejected,
+            })
+            if rejected:
+                response = _MALFORMED_TOOL_CALL_BODY.encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+            else:
+                try:
+                    response = next(response_queue)
+                except StopIteration:
+                    self.send_error(500, "unexpected extra Responses request")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, _format, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}/v1", requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
+
 @pytest.mark.asyncio
 async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     monkeypatch, tmp_path
@@ -2385,3 +2438,573 @@ async def test_codex_stream_tool_wait_deadlines(
         assert events[-3].error["kind"] == "idle"
         assert events[-3].error["elapsed_ms"] >= 250
         assert interrupt_calls == ["turn-confirm"]
+
+
+async def _run_codex_no_output_watchdog(monkeypatch, tmp_path, steps, *, expires=False):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 10_000.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 10_000.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_NO_OUTPUT_TIMEOUT", 240.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
+    clock = SimpleNamespace(now=10_000.0)
+    started_at = clock.now
+    real_loop = asyncio.get_running_loop()
+    adapter_asyncio = SimpleNamespace(**vars(asyncio))
+    adapter_asyncio.get_running_loop = lambda: SimpleNamespace(
+        time=lambda: clock.now, call_soon_threadsafe=real_loop.call_soon_threadsafe
+    )
+    monkeypatch.setattr(backend_sdk, "asyncio", adapter_asyncio)
+    consumed = threading.Event()
+    released = threading.Event()
+    interrupt_calls = []
+    awaiting = SimpleNamespace(event_type=None)
+
+    def notification(kind, value):
+        common = {"threadId": "thread-watchdog", "turnId": "turn-watchdog"}
+        if kind in {"started", "completed"}:
+            model = (
+                v2.TurnStartedNotification if kind == "started" else v2.TurnCompletedNotification
+            )
+            payload = {
+                "threadId": common["threadId"],
+                "turn": {
+                    "id": common["turnId"], "items": [],
+                    "status": "inProgress" if kind == "started" else "completed",
+                },
+            }
+            method, last_event = f"turn/{kind}", f"turn_{kind}"
+        elif kind in {"reasoning", "answer"}:
+            payload = {**common, "itemId": kind, "delta": value}
+            if kind == "reasoning":
+                model = v2.ReasoningSummaryTextDeltaNotification
+                payload["summaryIndex"] = 0
+                method, last_event = "item/reasoning/summaryTextDelta", "thought_delta"
+            else:
+                model = v2.AgentMessageDeltaNotification
+                method, last_event = "item/agentMessage/delta", "assistant_delta"
+        else:
+            is_start = kind == "tool_start"
+            item = {
+                "type": "mcpToolCall", "id": "call-watchdog", "server": "tools",
+                "tool": value, "arguments": {},
+                "status": "inProgress" if is_start else "completed",
+            }
+            if not is_start:
+                item["result"] = {"content": [{"type": "text", "text": "done"}]}
+            payload = {
+                **common, "item": item,
+                "startedAtMs" if is_start else "completedAtMs": int(clock.now * 1000),
+            }
+            model = v2.ItemStartedNotification if is_start else v2.ItemCompletedNotification
+            method = "item/started" if is_start else "item/completed"
+            last_event = "tool_started" if is_start else "tool_updated"
+        return Notification(method=method, payload=model.model_validate(payload)), last_event
+
+    class FakeTurn:
+        id = "turn-watchdog"
+
+        def stream(self):
+            timeline = [(0, "started", None), *steps]
+            for index, (elapsed, kind, value) in enumerate(timeline):
+                # Advance only after the consumer has processed the previous notification.
+                consumed.clear()
+                clock.now = started_at + elapsed
+                event, awaiting.event_type = notification(kind, value)
+                yield event
+                if expires and index == len(timeline) - 1:
+                    assert released.wait(timeout=2), "watchdog must interrupt the turn"
+                elif not consumed.wait(timeout=0.5):
+                    assert released.is_set(), "consumer must process each notification"
+                    return
+                if released.is_set():
+                    return
+
+        def interrupt(self):
+            interrupt_calls.append(self.id)
+            released.set()
+            consumed.set()
+
+    class FakeThread:
+        id = "thread-watchdog"
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield object()
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk, "_start_or_resume_codex_thread", lambda *args, **kwargs: FakeThread()
+    )
+    monkeypatch.setattr(backend_sdk, "_start_codex_turn", lambda *args, **kwargs: FakeTurn())
+    thread = CodexThread(
+        codex_bin=None, cwd=tmp_path, env={}, model="fake-model", model_provider="fake-provider",
+        developer_instructions="", config_overrides=(), thread_config={}, turn_metadata={},
+        thread_id=None,
+    )
+
+    async def collect():
+        events = []
+        async for event in thread.stream("Explain the result"):
+            events.append(event)
+            if event.type == awaiting.event_type:
+                consumed.set()
+        return events
+
+    try:
+        events = await asyncio.wait_for(collect(), timeout=1.5)
+    finally:
+        released.set()
+        consumed.set()
+    return events, interrupt_calls
+
+
+def _assert_codex_no_output_timeout(events, interrupt_calls):
+    message = "模型长时间只在思考、没有产出内容，已自动停止本轮。请重试，或把需求拆小一些。"
+    assert interrupt_calls == ["turn-watchdog"]
+    assert [event.type for event in events[-3:]] == [
+        "turn_completed", "egress_disposition", "complete",
+    ]
+    assert all(event.disposition == "timeout" for event in events[-3:])
+    turn_completed, _, complete = events[-3:]
+    assert turn_completed.status == "timeout"
+    assert complete.text == message
+    assert complete.error == turn_completed.error
+    assert complete.error == {
+        "message": message, "kind": "no-output", "elapsed_ms": complete.error["elapsed_ms"],
+    }
+    assert isinstance(complete.error["elapsed_ms"], int)
+    assert complete.error["elapsed_ms"] >= 240_000
+    assert not any(event.type == "assistant_delta" for event in events)
+    key = ("thread-watchdog", "turn-watchdog")
+    assert key not in backend_sdk._LIVE_CODEX_TURNS
+    assert key not in backend_sdk._INTERRUPTED_CODEX_TURNS
+
+
+def _watchdog_read_only_tool():
+    name = "read_document"
+    assert name not in backend_sdk._CODEX_USER_INPUT_TOOL_NAMES
+    assert not backend_sdk._is_freezone_canvas_write_tool(name)
+    return name
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_watchdog_stops_reasoning_only(monkeypatch, tmp_path):
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "reasoning", "Thinking"), (120, "reasoning", "Thinking"),
+         (250, "reasoning", "Thinking")],
+        expires=True,
+    )
+    _assert_codex_no_output_timeout(events, interrupts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effective_output", ["assistant", "tool"])
+async def test_codex_no_output_watchdog_effective_output_resets_deadline(
+    monkeypatch, tmp_path, effective_output
+):
+    if effective_output == "assistant":
+        output = [(230, "answer", "Working. ")]
+        final_text = "Working. Done."
+    else:
+        tool = _watchdog_read_only_tool()
+        output = [(230, "tool_start", tool), (235, "tool_end", tool)]
+        final_text = "Done."
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "reasoning", "Thinking"), *output, (460, "reasoning", "Thinking"),
+         (465, "answer", "Done."), (465, "completed", None)],
+    )
+    assert interrupts == []
+    assert events[-2].type == "egress_disposition"
+    assert events[-2].disposition == "completed"
+    assert events[-1].type == "complete"
+    assert events[-1].text == final_text
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_watchdog_suspends_for_clarification(monkeypatch, tmp_path):
+    tool = "freezone_request_user_clarification"
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "tool_start", tool), (900, "reasoning", "Waiting"),
+         (905, "tool_end", tool), (906, "answer", "Done."), (906, "completed", None)],
+    )
+    assert interrupts == []
+    assert events[-2].type == "egress_disposition"
+    assert events[-2].disposition == "completed"
+    assert events[-1].type == "complete"
+    assert events[-1].text == "Done."
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_watchdog_suspends_for_running_tool(monkeypatch, tmp_path):
+    tool = _watchdog_read_only_tool()
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "tool_start", tool), (600, "reasoning", "Waiting"),
+         (605, "tool_end", tool), (606, "answer", "Done."), (606, "completed", None)],
+    )
+    assert interrupts == []
+    assert events[-2].type == "egress_disposition"
+    assert events[-2].disposition == "completed"
+    assert events[-1].type == "complete"
+    assert events[-1].text == "Done."
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_watchdog_restarts_after_tool_result(monkeypatch, tmp_path):
+    tool = _watchdog_read_only_tool()
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "tool_start", tool), (20, "tool_end", tool),
+         (200, "reasoning", "Thinking"), (270, "reasoning", "Thinking")],
+        expires=True,
+    )
+    _assert_codex_no_output_timeout(events, interrupts)
+
+
+@pytest.mark.skipif(
+    "DRAMACLAW_CODEX_NO_OUTPUT_TIMEOUT_SECONDS" in os.environ,
+    reason="no-output timeout is configured in the process environment",
+)
+def test_codex_no_output_timeout_default():
+    assert backend_sdk.CODEX_STREAM_NO_OUTPUT_TIMEOUT == 240.0
+
+
+_MALFORMED_TOOL_CALL_BODY = json.dumps({
+    "error": {
+        "message": (
+            "Prefill server error (400 Bad Request): "
+            '{"object":"error","message":"Assistant tool call ***.arguments must be valid '
+            'JSON.","type":"BadRequest","param":null,"code":400}'
+        ),
+        "type": "invalid_request_error",
+        "param": "",
+        "code": "malformed_json",
+    }
+})
+_SAFE_TOOL_CALL_MESSAGE = "模型生成的工具调用参数不完整，本轮已停止。请重新发送刚才的需求。"
+_UPSTREAM_MARKERS = (
+    "malformed_json", "Prefill", "Bad Request", "invalid_request_error", "must be valid JSON",
+)
+_UNRELATED_TOOL_ERROR_BODY = json.dumps({
+    "error": {"code": "context_length_exceeded", "message": "input is too long"}
+})
+
+
+@pytest.mark.parametrize("text, expected", [
+    (_MALFORMED_TOOL_CALL_BODY, True),
+    ("Assistant tool call foo.arguments must be valid JSON.", True),
+    ("MALFORMED_JSON", True),
+    (_UNRELATED_TOOL_ERROR_BODY, False),
+    ("rate limit exceeded", False),
+    ("", False),
+])
+def test_malformed_tool_call_error_classification(text, expected):
+    assert backend_sdk._is_malformed_tool_call_error(text) is expected
+
+
+class _RepairAppServerClient:
+    def __init__(self, turns, item_types):
+        self.turns = turns
+        self.item_types = item_types
+        self.calls = []
+
+    def request(self, method, params, *, response_model):
+        from novelvideo.chat import codex_protocol as protocol
+
+        self.calls.append((method, params, response_model))
+        if method == protocol.THREAD_TURNS_LIST:
+            assert response_model is protocol.ThreadTurnsPage
+            assert params == protocol.newest_turns_params("thread-repair", limit=20)
+            wire = {"data": self.turns, "nextCursor": None}
+        elif method == protocol.THREAD_ITEMS_LIST:
+            assert response_model is protocol.ThreadItemsPage
+            turn_id = params["turnId"]
+            assert params == protocol.turn_items_params("thread-repair", turn_id, limit=50)
+            wire = {
+                "data": [
+                    {"turnId": turn_id, "item": {"id": f"item-{index}", "type": kind}}
+                    for index, kind in enumerate(self.item_types[turn_id])
+                ],
+                "nextCursor": None,
+            }
+        elif method == protocol.THREAD_REVERT:
+            assert response_model is protocol.ThreadRevertResponse
+            wire = {
+                "thread": {
+                    "id": params["threadId"], "status": {"type": "idle"},
+                    "historyMode": "paginated",
+                },
+                "turnsBackwardsCursor": None,
+            }
+        else:
+            pytest.fail(f"Unexpected repair request: {method}")
+        return response_model.model_validate(wire)
+
+
+def _repair_turn(turn_id, status, message=None):
+    return {
+        "id": turn_id, "status": status,
+        "error": {"message": message} if message else None,
+        "items": [], "itemsView": "notLoaded",
+    }
+
+
+@pytest.mark.parametrize("turn_specs, item_types, failed_id, expected", [
+    ([('t2', 'failed'), ('t1', 'failed'), ('t0', 'completed')],
+     {'t2': ['userMessage'], 't1': ['userMessage', 'reasoning', 'mcpToolCall']}, 't2', 't1'),
+    ([('t2', 'failed'), ('t1', 'interrupted')],
+     {'t2': ['userMessage'], 't1': ['userMessage', 'reasoning', 'mcpToolCall']}, 't2', 't1'),
+    ([('t1', 'failed'), ('t0', 'completed')],
+     {'t1': ['userMessage', 'reasoning', 'mcpToolCall']}, 't1', 't1'),
+    ([('t1', 'failed')], {'t1': ['userMessage']}, 't1', 't1'),
+])
+def test_repair_malformed_tool_call_turns(
+    monkeypatch, turn_specs, item_types, failed_id, expected
+):
+    from novelvideo.chat import codex_history, codex_protocol as protocol
+
+    turns = [
+        _repair_turn(turn_id, status, _MALFORMED_TOOL_CALL_BODY if status == "failed" else None)
+        for turn_id, status in turn_specs
+    ]
+    client = _RepairAppServerClient(turns, item_types)
+    invalidations = []
+    monkeypatch.setattr(codex_history.HISTORY_CACHE, "invalidate", invalidations.append)
+    assert backend_sdk._revert_malformed_tool_call_turns(
+        client, "thread-repair", failed_id
+    ) == expected
+    reverts = [(method, params) for method, params, _ in client.calls
+               if method == protocol.THREAD_REVERT]
+    assert reverts == [(protocol.THREAD_REVERT, {
+        "threadId": "thread-repair", "beforeTurnId": expected,
+    })]
+    assert invalidations == ["thread-repair"]
+
+
+@pytest.mark.parametrize("newest_id, message", [
+    ("newer-turn", _MALFORMED_TOOL_CALL_BODY),
+    ("failed-turn", _UNRELATED_TOOL_ERROR_BODY),
+])
+def test_repair_malformed_tool_call_turns_does_nothing(monkeypatch, newest_id, message):
+    from novelvideo.chat import codex_history, codex_protocol as protocol
+
+    client = _RepairAppServerClient([_repair_turn(newest_id, "failed", message)], {})
+    invalidations = []
+    monkeypatch.setattr(codex_history.HISTORY_CACHE, "invalidate", invalidations.append)
+    assert backend_sdk._revert_malformed_tool_call_turns(
+        client, "thread-repair", "failed-turn"
+    ) is None
+    assert [method for method, _, _ in client.calls] == [protocol.THREAD_TURNS_LIST]
+    assert invalidations == []
+
+
+def _failed_codex_stream(monkeypatch, tmp_path, message):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    notifications = [
+        Notification(method="turn/started", payload=v2.TurnStartedNotification.model_validate({
+            "threadId": "thread-failed",
+            "turn": {"id": "turn-failed", "items": [], "status": "inProgress"},
+        })),
+        Notification(
+            method="item/reasoning/summaryTextDelta",
+            payload=v2.ReasoningSummaryTextDeltaNotification.model_validate({
+                "threadId": "thread-failed", "turnId": "turn-failed",
+                "itemId": "reasoning-1", "summaryIndex": 0, "delta": "Thinking",
+            }),
+        ),
+        Notification(method="turn/completed", payload=v2.TurnCompletedNotification.model_validate({
+            "threadId": "thread-failed",
+            "turn": {"id": "turn-failed", "items": [], "status": "failed",
+                     "error": {"message": message}},
+        })),
+    ]
+
+    class FakeTurn:
+        id = "turn-failed"
+
+        def stream(self):
+            return iter(notifications)
+
+        def interrupt(self):
+            return None
+
+    class FakeThread:
+        id = "thread-failed"
+
+    client = object()
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield SimpleNamespace(_client=client)
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(backend_sdk, "_start_or_resume_codex_thread", lambda *a, **k: FakeThread())
+    monkeypatch.setattr(backend_sdk, "_start_codex_turn", lambda *a, **k: FakeTurn())
+    thread = CodexThread(
+        codex_bin=None, cwd=tmp_path, env={}, model="test-model", model_provider="test-provider",
+        developer_instructions="", config_overrides=(), thread_config={}, turn_metadata={},
+        thread_id=None,
+    )
+    return thread, client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair_fails", [False, True], ids=["repaired", "repair-failed"])
+async def test_codex_stream_malformed_tool_call_failure(monkeypatch, tmp_path, repair_fails):
+    thread, client = _failed_codex_stream(monkeypatch, tmp_path, _MALFORMED_TOOL_CALL_BODY)
+    repairs = []
+
+    def repair(*args):
+        repairs.append(args)
+        if repair_fails:
+            raise RuntimeError("revert failed")
+        return "turn-failed"
+
+    monkeypatch.setattr(backend_sdk, "_revert_malformed_tool_call_turns", repair)
+    events = []
+    with pytest.raises(RuntimeError) as caught:
+        async for event in thread.stream("Read chapter one"):
+            events.append(event)
+    assert all(marker not in str(caught.value) for marker in _UPSTREAM_MARKERS)
+    assert type(caught.value) is backend_sdk.CodexMalformedToolCallError
+    assert str(caught.value) == _SAFE_TOOL_CALL_MESSAGE
+    completed = next(event for event in events if event.type == "turn_completed")
+    assert completed.error == {
+        "message": _SAFE_TOOL_CALL_MESSAGE, "kind": "malformed-tool-call",
+    }
+    assert all("malformed_json" not in str(value)
+               for event in events for value in (event.error, event.text))
+    assert repairs == [(client, "thread-failed", "turn-failed")]
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_unrelated_failure_does_not_repair(monkeypatch, tmp_path):
+    thread, _ = _failed_codex_stream(monkeypatch, tmp_path, _UNRELATED_TOOL_ERROR_BODY)
+    repairs = []
+    monkeypatch.setattr(
+        backend_sdk, "_revert_malformed_tool_call_turns", lambda *args: repairs.append(args)
+    )
+    events = []
+    with pytest.raises(RuntimeError) as caught:
+        async for event in thread.stream("Read chapter one"):
+            events.append(event)
+    assert type(caught.value) is RuntimeError
+    assert str(caught.value) == _UNRELATED_TOOL_ERROR_BODY
+    completed = next(event for event in events if event.type == "turn_completed")
+    assert completed.error == {
+        "message": _UNRELATED_TOOL_ERROR_BODY, "additionalDetails": None, "codexErrorInfo": None,
+    }
+    assert repairs == []
+
+
+@pytest.mark.parametrize("body, will_retry", [
+    (_MALFORMED_TOOL_CALL_BODY, False),
+    (_UNRELATED_TOOL_ERROR_BODY, False),
+    (_MALFORMED_TOOL_CALL_BODY, True),
+], ids=["malformed-failed", "unrelated-failed", "malformed-retrying"])
+def test_codex_error_notification(body, will_retry):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    notification = Notification(
+        method="error",
+        payload=v2.ErrorNotification.model_validate({
+            "threadId": "thread-1", "turnId": "turn-1", "willRetry": will_retry,
+            "error": {"message": body},
+        }),
+    )
+    events = backend_sdk._CodexNotificationMapper("thread-1", "turn-1").map(notification)
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.type == "tool_update"
+    assert event.status == ("retrying" if will_retry else "failed")
+    assert event.thread_id == "thread-1"
+    assert event.turn_id == "turn-1"
+    assert event.raw == backend_sdk._codex_raw_notification(notification)
+    if body == _MALFORMED_TOOL_CALL_BODY:
+        message = backend_sdk.CODEX_MALFORMED_TOOL_CALL_MESSAGE
+        expected_error = {"message": message, "kind": "malformed-tool-call"}
+    else:
+        message = body
+        expected_error = {"message": body, "additionalDetails": None, "codexErrorInfo": None}
+    tag = "error retrying" if will_retry else "error"
+    assert event.text == f"\x1b[91m[{tag}]\x1b[0m {message}\n"
+    assert event.error == expected_error
+    if body == _MALFORMED_TOOL_CALL_BODY:
+        assert all(marker not in event.text for marker in _UPSTREAM_MARKERS)
+        assert all(marker not in str(event.error) for marker in _UPSTREAM_MARKERS)
+
+
+@pytest.mark.asyncio
+async def test_app_server_malformed_tool_call_recovery(monkeypatch, tmp_path):
+    bundled_codex = _contract_codex_bin()
+    assert bundled_codex.is_file(), "the pinned App Server binary is required"
+    responses = [
+        _responses_sse(
+            _response_created("response-truncated"),
+            {"type": "response.output_item.done", "item": {
+                "type": "function_call", "call_id": "call-truncated", "name": "update_plan",
+                "arguments": '{"plan": [{"step": "读第一章',
+            }},
+            _response_completed("response-truncated"),
+        ),
+        _responses_sse(
+            _response_created("response-recovered"),
+            {"type": "response.output_item.done", "item": {
+                "type": "message", "role": "assistant", "id": "message-recovered",
+                "content": [{"type": "output_text", "text": "好的，继续。"}],
+            }},
+            _response_completed("response-recovered"),
+        ),
+    ]
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _strict_responses_gateway(responses) as (gateway_url, requests):
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        client = backend_sdk.CodexClient(
+            codex_bin=bundled_codex, cwd=tmp_path, env=env,
+            model="DC-codex-agent-LLM", model_provider="dramaclaw_gateway",
+            developer_instructions="", config_overrides=service._codex_gateway_config_overrides(
+                gateway_url
+            ),
+            thread_config_overrides=(),
+            turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
+        )
+        try:
+            thread = client.thread_start()
+            events = []
+            with pytest.raises(RuntimeError) as caught:
+                async for event in thread.stream("先读第一章"):
+                    events.append(event)
+            assert all(marker not in str(caught.value) for marker in _UPSTREAM_MARKERS)
+            assert all("malformed_json" not in str(event.error) for event in events)
+            thread_id = thread.id
+            assert thread_id
+            resumed = client.thread_resume(thread_id)
+            recovered = [event async for event in resumed.stream("继续")]
+            assert recovered[-1].type == "complete"
+            assert recovered[-1].text == "好的，继续。"
+            assert resumed.id == thread_id
+            assert recovered[-1].thread_id == thread_id
+            assert any(request["rejected"] and any(
+                item.get("call_id") == "call-truncated" for item in request["body"]["input"]
+            ) for request in requests)
+            last_input = requests[-1]["body"]["input"]
+            assert any(item.get("role") == "user" and any(
+                part.get("text") == "继续" for part in item.get("content", [])
+            ) for item in last_input)
+            assert all(item.get("call_id") != "call-truncated" for item in last_input)
+        finally:
+            codex_app_server.stop_shared_codex_runtime()

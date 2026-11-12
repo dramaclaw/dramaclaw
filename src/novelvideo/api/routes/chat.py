@@ -45,7 +45,12 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.chat import service as chat_service
-from novelvideo.chat.backend_sdk import CodexThreadBusyError
+from novelvideo.chat.backend_sdk import (
+    CODEX_MALFORMED_TOOL_CALL_MESSAGE,
+    CodexMalformedToolCallError,
+    CodexThreadBusyError,
+    _is_malformed_tool_call_error,
+)
 from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.hermes_egress import EgressBoundaryError
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
@@ -152,6 +157,8 @@ def _user_facing_chat_error(exc: BaseException) -> str:
         return "本地助手运行时不可用：请重启应用；若仍失败，请更新应用并导出诊断日志。"
 
     raw = safe_exception_message(exc).strip()
+    if isinstance(exc, CodexMalformedToolCallError) or _is_malformed_tool_call_error(raw):
+        return CODEX_MALFORMED_TOOL_CALL_MESSAGE
     lowered = raw.lower()
     if "reasoning is mandatory" in lowered and "cannot be disabled" in lowered:
         return _REASONING_REQUIRED_ERROR_MESSAGE
