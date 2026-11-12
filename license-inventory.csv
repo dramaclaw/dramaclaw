@@ -4063,6 +4063,7 @@ src/novelvideo/video_request_usage.py,Elastic-2.0,2026 SuperTale contributors,RE
 src/novelvideo/workflows/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/workflows/literal_script_writing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/workflows/script_writing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/canvas_core_requirements.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/codex_history_stub.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/compliance/test_generate_p0b_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/conftest.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
