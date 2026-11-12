@@ -213,35 +213,33 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
     )
 
 
+def canonical_plan():
+    return {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": "video-tutorial", "version": 1},
+        "nodes": [
+            {
+                "id": "input",
+                "node_type": "textAnnotationNode",
+                "stage": "input",
+                "data": {"text": "用户提供的固定文案"},
+            },
+            {
+                "id": "image",
+                "node_type": "imageGenNode",
+                "data": {
+                    "prompt": "未来城市雨夜",
+                    "workflowCatalog": {"recipeId": "general-image"},
+                },
+            },
+        ],
+        "edges": [{"source": "input", "target": "image", "link_type": "prompt_for"}],
+    }
+
+
 @pytest.mark.asyncio
 async def test_graph_compile_accepts_canonical_plan_fields():
-    arguments = {
-        "plan": {
-            "schema_version": "freezone_workflow_plan.v1",
-            "skill": {"id": "video-tutorial", "version": 1},
-            "nodes": [
-                    {
-                        "id": "input",
-                        "node_type": "textAnnotationNode",
-                        "stage": "input",
-                        "data": {
-                            "text": "用户提供的固定文案",
-                        },
-                },
-                {
-                    "id": "image",
-                    "node_type": "imageGenNode",
-                    "data": {
-                        "prompt": "未来城市雨夜",
-                        "workflowCatalog": {"recipeId": "general-image"},
-                    },
-                },
-            ],
-            "edges": [
-                {"source": "input", "target": "image", "link_type": "prompt_for"}
-            ],
-        }
-    }
+    arguments = {"plan": canonical_plan()}
     graph_tool = next(
         tool
         for tool in await workflow_mcp.list_tools()
@@ -883,3 +881,56 @@ async def test_workflow_intent_schema_explains_compose_field_location():
     intent["planner"]["include_compose"] = intent.pop("include_compose")
     with pytest.raises(ValidationError):
         Draft202012Validator(schema).validate(intent)
+
+
+@pytest.mark.asyncio
+async def test_graph_compile_states_nothing_created_or_run_and_names_next_tool():
+    result = await workflow_mcp.call_tool(
+        "workflow_graph_compile", {"plan": canonical_plan(), "run_after_create": True},
+    )
+    payload = _result_payload(result)
+    assert payload["ok"] is True
+    assert payload["status"] == "workflow_graph_commands_created"
+    assert payload["run_after_create"] is True
+    assert {"schema_version", "workflow_instance_id", "commands", "skipped_edges", "warnings"} <= (
+        payload.keys()
+    )
+    assert payload["canvas_changed"] is False
+    assert payload["draft_created"] is False
+    assert payload["run_started"] is False
+    assert payload["next_tool"] == "freezone_prepare_workflow"
+    assert isinstance(payload["next_action"], str)
+    assert "freezone_prepare_workflow" in payload["next_action"]
+    assert isinstance(payload["agent_instruction"], str)
+    for phrase in (
+        "freezone_prepare_workflow", "operation_id", "run_after_create",
+        "freezone_confirm_workflow_draft", "未创建", "未运行",
+    ):
+        assert phrase in payload["agent_instruction"]
+    assert result.structuredContent == payload
+    tool = next(
+        tool for tool in await workflow_mcp.list_tools() if tool.name == "workflow_graph_compile"
+    )
+    Draft202012Validator(tool.outputSchema).validate(result.structuredContent)
+    success = next(
+        branch for branch in tool.outputSchema["oneOf"]
+        if branch["properties"]["ok"] == {"const": True}
+    )
+    assert {
+        "canvas_changed", "draft_created", "run_started", "next_tool", "next_action",
+        "agent_instruction",
+    } <= set(success["required"])
+    assert "freezone_prepare_workflow" in tool.description
+    assert "creates no canvas nodes or drafts and runs nothing" in tool.description
+
+
+@pytest.mark.asyncio
+async def test_failed_graph_compile_omits_success_next_step_fields():
+    plan = canonical_plan()
+    plan["edges"][0]["target"] = "unknown-node"
+    result = await workflow_mcp.call_tool(
+        "workflow_graph_compile", {"plan": plan, "run_after_create": True},
+    )
+    payload = _result_payload(result)
+    assert payload["ok"] is False
+    assert {"next_tool", "canvas_changed", "draft_created", "run_started"}.isdisjoint(payload)

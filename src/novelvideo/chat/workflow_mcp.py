@@ -160,8 +160,18 @@ _WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             "run_after_create": {"type": "boolean"},
             "skipped_edges": {"type": "array"},
             "warnings": {"type": "array"},
+            "canvas_changed": {"const": False},
+            "draft_created": {"const": False},
+            "run_started": {"const": False},
+            "next_tool": {"const": "freezone_prepare_workflow"},
+            "next_action": {"type": "string", "minLength": 1},
+            "agent_instruction": {"type": "string", "minLength": 1},
         },
-        ["schema_version", "workflow_instance_id", "commands"],
+        [
+            "schema_version", "workflow_instance_id", "commands",
+            "canvas_changed", "draft_created", "run_started",
+            "next_tool", "next_action", "agent_instruction",
+        ],
     ),
 }
 
@@ -438,7 +448,10 @@ async def list_tools() -> list[types.Tool]:
             name="workflow_graph_compile",
             description=(
                 "Validate one freezone_workflow_plan.v1 and deterministically compile a single "
-                "canvas batch containing nodes, edges, grouping, layout, and selection. Read-only. "
+                "canvas batch containing nodes, edges, grouping, layout, and selection. "
+                "This read-only check creates no canvas nodes or drafts and runs nothing. "
+                "A successful compile must be followed by freezone_prepare_workflow "
+                "with the same plan. "
                 "For recovery, compile the same complete user workflow; never construct reduced "
                 "probe nodes or pass an empty edges array for a multi-node plan. Node ids belong "
                 "only in plan.nodes[].id and edge source/target values; do not add a top-level "
@@ -558,6 +571,26 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             validation.setdefault("agent_instruction", instruction)
             return _result(name, validation)
         result = build_workflow_graph_commands(args)
+        if result.get("ok") is True:
+            result.update(
+                canvas_changed=False,
+                draft_created=False,
+                run_started=False,
+                next_tool="freezone_prepare_workflow",
+                next_action=(
+                    "Call freezone_prepare_workflow with the same operation_id, this exact plan "
+                    "and run_after_create; then ask the user to confirm the draft and call "
+                    "freezone_confirm_workflow_draft."
+                ),
+                agent_instruction=(
+                    "本次仅完成只读编译检查：未创建画布节点或工作流草稿，未运行任何生成，"
+                    "不能告诉用户工作流已搭建或已开始运行。"
+                    "下一步必须立即调用 freezone_prepare_workflow，使用相同的 operation_id、"
+                    "本次编译的完整原样 plan 和预期的 run_after_create；"
+                    "用户确认返回的预览后，使用其 draft_id 和 revision 调用 "
+                    "freezone_confirm_workflow_draft。"
+                ),
+            )
         logger.info(
             "workflow_graph_compile.end elapsed_ms=%d ok=%s status=%s command_count=%s",
             int((time.monotonic() - started) * 1000),
