@@ -255,7 +255,8 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         "and generation choices are complete, call freezone_confirm_workflow_draft exactly once "
         "now with the named draft_id and revision, without asking for another confirmation. A "
         "parameter clarification card is not canvas creation; otherwise wait for confirmation. "
-        "Never prepare a replacement draft or claim success before the actual canvas write receipt. "
+        "Never prepare a replacement draft or claim success before the actual canvas "
+        "write receipt. "
     )
     instruction += (
         "Only after a later user message explicitly requests a change, call "
@@ -381,10 +382,7 @@ def _structured_tool_result(
 
 
 def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
-    if tool_name not in {
-        "freezone_prepare_workflow_plan_draft",
-        "workflow_graph_compile",
-    }:
+    if tool_name != "freezone_prepare_workflow_plan_draft":
         return None
     return (
         "WorkflowPlan 校验失败。先按 message/path 指出的字段逐项修正，不要逐个猜删其它字段。"
@@ -591,6 +589,8 @@ def _repair_tool_arguments(
 
 
 _WORKFLOW_DRAFT_TOOLS = frozenset({
+    "freezone_prepare_workflow",
+    "freezone_prepare_workflow_plan_draft",
     "freezone_request_user_clarification",
     "freezone_prepare_workflow_draft",
     "freezone_revise_workflow",
@@ -604,27 +604,13 @@ _WORKFLOW_DRAFT_TOOLS = frozenset({
 
 
 def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, Any]:
-    from novelvideo.freezone.workflow_schema import workflow_plan_schema_diagnostics
-
     payload = mcp_runtime.validation_error_payload(name, arguments, schema, exc, errors)
-    diagnostics = workflow_plan_schema_diagnostics(arguments, schema)
-    if diagnostics:
-        payload.update(
-            message="; ".join(
-                f"{issue['path']}: {issue['message']}" for issue in diagnostics
-            ),
-            path=diagnostics[0]["path"],
-            errors=diagnostics,
-        )
-    elif name in _WORKFLOW_DRAFT_TOOLS and isinstance(exc, ValidationError):
+    if name in _WORKFLOW_DRAFT_TOOLS and isinstance(exc, ValidationError):
         payload.update(workflow_argument_refusal(name, arguments, schema, exc))
-    if name in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}:
-        payload.update(
-            status="workflow_validation_failed", phase="graph_compile", retryable=True
-        )
-    recovery = _workflow_schema_recovery_instruction(name)
-    if recovery:
-        payload["agent_instruction"] = recovery
+        if name == "freezone_prepare_workflow_plan_draft":
+            payload.update(status="workflow_validation_failed", phase="graph_compile")
+            recovery = _workflow_schema_recovery_instruction(name)
+            payload["agent_instruction"] += f" {recovery}"
     return payload
 
 
@@ -680,7 +666,8 @@ async def call_tool(
         payload = result.structuredContent or {}
         if payload.get("error") == "tool_arguments_invalid":
             logger.warning(
-                "freezone_prepare_workflow_plan_draft.validation_failed elapsed_ms=%d message=%s path=%s summary=%s",
+                "freezone_prepare_workflow_plan_draft.validation_failed "
+                "elapsed_ms=%d message=%s path=%s summary=%s",
                 int((time.monotonic() - workflow_started) * 1000),
                 payload.get("message"),
                 payload.get("path"),

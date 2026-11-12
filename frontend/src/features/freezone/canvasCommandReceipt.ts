@@ -180,7 +180,7 @@ export function buildCanvasCommandToolResultPayload({
         ? userMessage ?? workflowResultSyncPendingMessage(translate)
       : canvasApplyStatus === "failed"
         ? userMessage ?? "画布操作没有完成，我会换一种方式再试。"
-        : "Frontend executor reported the canvas command result.",
+        : "Canvas command finished; see canvas_apply_status for the outcome.",
     ...(userMessage ? { user_message: userMessage } : {}),
     ...(agentHint ? { agent_hint: agentHint } : {}),
   };

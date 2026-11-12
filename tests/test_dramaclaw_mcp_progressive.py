@@ -116,7 +116,7 @@ def _confirmed_canvas_receipt():
         "canvas_id": "canvas-a", "bridge_key": "bridge-a",
         "tool_call_status": "completed", "canvas_apply_status": "applied",
         "applied": True, "cancelled": False, "errors": [],
-        "message": "Frontend executor reported the canvas command result.",
+        "message": "Canvas command finished; see canvas_apply_status for the outcome.",
     }
 
 

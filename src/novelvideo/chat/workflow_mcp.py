@@ -19,7 +19,9 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import best_match
 
+from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 from novelvideo.freezone.agent_workflows.catalog import (
     compile_workflow_intent,
     get_workflow_skill,
@@ -34,7 +36,6 @@ from novelvideo.freezone.workflow_schema import (
     normalize_workflow_tool_arguments,
     workflow_intent_json_schema,
     workflow_plan_json_schema,
-    workflow_plan_schema_diagnostics,
 )
 
 SERVER = Server("dramaclaw-workflows", version="1.0.0")
@@ -78,6 +79,9 @@ def _output_schema(
         "next_action": {"type": ["string", "null"]},
         "agent_instruction": {"type": ["string", "null"]},
         "errors": {"type": "array"},
+        "path": {"type": "string"},
+        "retryable": {"type": "boolean"},
+        "example": {"type": "object"},
         "available_skill_ids": {"type": "array", "items": {"type": "string"}},
         "skill_id": {"type": "string"},
         "reference": {"type": "string"},
@@ -413,7 +417,8 @@ async def list_tools() -> list[types.Tool]:
             name="workflow_skill_reference_get",
             description=(
                 "Read one allow-listed reference document for a selected Workflow Skill. "
-                "Pass only a logical filename such as custom-topology.md; never pass a filesystem path."
+                "Pass only a logical filename such as custom-topology.md; "
+                "never pass a filesystem path."
             ),
             inputSchema=_object_schema(
                 {
@@ -478,17 +483,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         raise ValueError(f"unknown workflow tool: {name}")
     errors = list(Draft202012Validator(tool.inputSchema).iter_errors(args))
     if errors:
-        diagnostics = workflow_plan_schema_diagnostics(args, tool.inputSchema)
+        payload = workflow_argument_refusal(name, args, tool.inputSchema, best_match(errors))
         return _result(name, {
             "ok": False,
             "status": "tool_arguments_invalid",
-            "error": "; ".join(
-                f"{issue['path']}: {issue['message']}" for issue in diagnostics
-            ) if diagnostics else "; ".join(
-                f"{'.'.join(map(str, error.absolute_path)) or 'arguments'}: {error.message}"
-                for error in errors
-            ),
-            **({"errors": diagnostics} if diagnostics else {}),
+            **payload,
+            "error": payload["message"],
         })
     if name == "workflow_catalog_search":
         kind = str(args.get("kind") or "")
