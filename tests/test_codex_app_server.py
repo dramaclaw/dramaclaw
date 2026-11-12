@@ -815,6 +815,59 @@ def _recording_responses_gateway(responses: list[bytes]):
         worker.join(timeout=5)
 
 
+@contextmanager
+def _strict_responses_gateway(responses: list[bytes]):
+    requests: list[dict] = []
+    response_queue = iter(responses)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - stdlib handler callback
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if self.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            body = json.loads(raw)
+            rejected = False
+            for item in body.get("input", []):
+                if item.get("type") == "function_call":
+                    try:
+                        json.loads(item.get("arguments", ""))
+                    except (ValueError, TypeError):
+                        rejected = True
+            requests.append({
+                "path": self.path, "headers": dict(self.headers),
+                "body": body, "rejected": rejected,
+            })
+            if rejected:
+                response = _MALFORMED_TOOL_CALL_BODY.encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+            else:
+                try:
+                    response = next(response_queue)
+                except StopIteration:
+                    self.send_error(500, "unexpected extra Responses request")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, _format, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}/v1", requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
+
 @pytest.mark.asyncio
 async def test_app_server_native_tool_search_preserves_gateway_event_chain(
     monkeypatch, tmp_path
@@ -2619,3 +2672,339 @@ async def test_codex_no_output_watchdog_restarts_after_tool_result(monkeypatch, 
 )
 def test_codex_no_output_timeout_default():
     assert backend_sdk.CODEX_STREAM_NO_OUTPUT_TIMEOUT == 240.0
+
+
+_MALFORMED_TOOL_CALL_BODY = json.dumps({
+    "error": {
+        "message": (
+            "Prefill server error (400 Bad Request): "
+            '{"object":"error","message":"Assistant tool call ***.arguments must be valid '
+            'JSON.","type":"BadRequest","param":null,"code":400}'
+        ),
+        "type": "invalid_request_error",
+        "param": "",
+        "code": "malformed_json",
+    }
+})
+_SAFE_TOOL_CALL_MESSAGE = "模型生成的工具调用参数不完整，本轮已停止。请重新发送刚才的需求。"
+_UPSTREAM_MARKERS = (
+    "malformed_json", "Prefill", "Bad Request", "invalid_request_error", "must be valid JSON",
+)
+_UNRELATED_TOOL_ERROR_BODY = json.dumps({
+    "error": {"code": "context_length_exceeded", "message": "input is too long"}
+})
+
+
+@pytest.mark.parametrize("text, expected", [
+    (_MALFORMED_TOOL_CALL_BODY, True),
+    ("Assistant tool call foo.arguments must be valid JSON.", True),
+    ("MALFORMED_JSON", True),
+    (_UNRELATED_TOOL_ERROR_BODY, False),
+    ("rate limit exceeded", False),
+    ("", False),
+])
+def test_malformed_tool_call_error_classification(text, expected):
+    assert backend_sdk._is_malformed_tool_call_error(text) is expected
+
+
+class _RepairAppServerClient:
+    def __init__(self, turns, item_types):
+        self.turns = turns
+        self.item_types = item_types
+        self.calls = []
+
+    def request(self, method, params, *, response_model):
+        from novelvideo.chat import codex_protocol as protocol
+
+        self.calls.append((method, params, response_model))
+        if method == protocol.THREAD_TURNS_LIST:
+            assert response_model is protocol.ThreadTurnsPage
+            assert params == protocol.newest_turns_params("thread-repair", limit=20)
+            wire = {"data": self.turns, "nextCursor": None}
+        elif method == protocol.THREAD_ITEMS_LIST:
+            assert response_model is protocol.ThreadItemsPage
+            turn_id = params["turnId"]
+            assert params == protocol.turn_items_params("thread-repair", turn_id, limit=50)
+            wire = {
+                "data": [
+                    {"turnId": turn_id, "item": {"id": f"item-{index}", "type": kind}}
+                    for index, kind in enumerate(self.item_types[turn_id])
+                ],
+                "nextCursor": None,
+            }
+        elif method == protocol.THREAD_REVERT:
+            assert response_model is protocol.ThreadRevertResponse
+            wire = {
+                "thread": {
+                    "id": params["threadId"], "status": {"type": "idle"},
+                    "historyMode": "paginated",
+                },
+                "turnsBackwardsCursor": None,
+            }
+        else:
+            pytest.fail(f"Unexpected repair request: {method}")
+        return response_model.model_validate(wire)
+
+
+def _repair_turn(turn_id, status, message=None):
+    return {
+        "id": turn_id, "status": status,
+        "error": {"message": message} if message else None,
+        "items": [], "itemsView": "notLoaded",
+    }
+
+
+@pytest.mark.parametrize("turn_specs, item_types, failed_id, expected", [
+    ([('t2', 'failed'), ('t1', 'failed'), ('t0', 'completed')],
+     {'t2': ['userMessage'], 't1': ['userMessage', 'reasoning', 'mcpToolCall']}, 't2', 't1'),
+    ([('t2', 'failed'), ('t1', 'interrupted')],
+     {'t2': ['userMessage'], 't1': ['userMessage', 'reasoning', 'mcpToolCall']}, 't2', 't1'),
+    ([('t1', 'failed'), ('t0', 'completed')],
+     {'t1': ['userMessage', 'reasoning', 'mcpToolCall']}, 't1', 't1'),
+    ([('t1', 'failed')], {'t1': ['userMessage']}, 't1', 't1'),
+])
+def test_repair_malformed_tool_call_turns(
+    monkeypatch, turn_specs, item_types, failed_id, expected
+):
+    from novelvideo.chat import codex_history, codex_protocol as protocol
+
+    turns = [
+        _repair_turn(turn_id, status, _MALFORMED_TOOL_CALL_BODY if status == "failed" else None)
+        for turn_id, status in turn_specs
+    ]
+    client = _RepairAppServerClient(turns, item_types)
+    invalidations = []
+    monkeypatch.setattr(codex_history.HISTORY_CACHE, "invalidate", invalidations.append)
+    assert backend_sdk._revert_malformed_tool_call_turns(
+        client, "thread-repair", failed_id
+    ) == expected
+    reverts = [(method, params) for method, params, _ in client.calls
+               if method == protocol.THREAD_REVERT]
+    assert reverts == [(protocol.THREAD_REVERT, {
+        "threadId": "thread-repair", "beforeTurnId": expected,
+    })]
+    assert invalidations == ["thread-repair"]
+
+
+@pytest.mark.parametrize("newest_id, message", [
+    ("newer-turn", _MALFORMED_TOOL_CALL_BODY),
+    ("failed-turn", _UNRELATED_TOOL_ERROR_BODY),
+])
+def test_repair_malformed_tool_call_turns_does_nothing(monkeypatch, newest_id, message):
+    from novelvideo.chat import codex_history, codex_protocol as protocol
+
+    client = _RepairAppServerClient([_repair_turn(newest_id, "failed", message)], {})
+    invalidations = []
+    monkeypatch.setattr(codex_history.HISTORY_CACHE, "invalidate", invalidations.append)
+    assert backend_sdk._revert_malformed_tool_call_turns(
+        client, "thread-repair", "failed-turn"
+    ) is None
+    assert [method for method, _, _ in client.calls] == [protocol.THREAD_TURNS_LIST]
+    assert invalidations == []
+
+
+def _failed_codex_stream(monkeypatch, tmp_path, message):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    notifications = [
+        Notification(method="turn/started", payload=v2.TurnStartedNotification.model_validate({
+            "threadId": "thread-failed",
+            "turn": {"id": "turn-failed", "items": [], "status": "inProgress"},
+        })),
+        Notification(
+            method="item/reasoning/summaryTextDelta",
+            payload=v2.ReasoningSummaryTextDeltaNotification.model_validate({
+                "threadId": "thread-failed", "turnId": "turn-failed",
+                "itemId": "reasoning-1", "summaryIndex": 0, "delta": "Thinking",
+            }),
+        ),
+        Notification(method="turn/completed", payload=v2.TurnCompletedNotification.model_validate({
+            "threadId": "thread-failed",
+            "turn": {"id": "turn-failed", "items": [], "status": "failed",
+                     "error": {"message": message}},
+        })),
+    ]
+
+    class FakeTurn:
+        id = "turn-failed"
+
+        def stream(self):
+            return iter(notifications)
+
+        def interrupt(self):
+            return None
+
+    class FakeThread:
+        id = "thread-failed"
+
+    client = object()
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield SimpleNamespace(_client=client)
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(backend_sdk, "_start_or_resume_codex_thread", lambda *a, **k: FakeThread())
+    monkeypatch.setattr(backend_sdk, "_start_codex_turn", lambda *a, **k: FakeTurn())
+    thread = CodexThread(
+        codex_bin=None, cwd=tmp_path, env={}, model="test-model", model_provider="test-provider",
+        developer_instructions="", config_overrides=(), thread_config={}, turn_metadata={},
+        thread_id=None,
+    )
+    return thread, client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair_fails", [False, True], ids=["repaired", "repair-failed"])
+async def test_codex_stream_malformed_tool_call_failure(monkeypatch, tmp_path, repair_fails):
+    thread, client = _failed_codex_stream(monkeypatch, tmp_path, _MALFORMED_TOOL_CALL_BODY)
+    repairs = []
+
+    def repair(*args):
+        repairs.append(args)
+        if repair_fails:
+            raise RuntimeError("revert failed")
+        return "turn-failed"
+
+    monkeypatch.setattr(backend_sdk, "_revert_malformed_tool_call_turns", repair)
+    events = []
+    with pytest.raises(RuntimeError) as caught:
+        async for event in thread.stream("Read chapter one"):
+            events.append(event)
+    assert all(marker not in str(caught.value) for marker in _UPSTREAM_MARKERS)
+    assert type(caught.value) is backend_sdk.CodexMalformedToolCallError
+    assert str(caught.value) == _SAFE_TOOL_CALL_MESSAGE
+    completed = next(event for event in events if event.type == "turn_completed")
+    assert completed.error == {
+        "message": _SAFE_TOOL_CALL_MESSAGE, "kind": "malformed-tool-call",
+    }
+    assert all("malformed_json" not in str(value)
+               for event in events for value in (event.error, event.text))
+    assert repairs == [(client, "thread-failed", "turn-failed")]
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_unrelated_failure_does_not_repair(monkeypatch, tmp_path):
+    thread, _ = _failed_codex_stream(monkeypatch, tmp_path, _UNRELATED_TOOL_ERROR_BODY)
+    repairs = []
+    monkeypatch.setattr(
+        backend_sdk, "_revert_malformed_tool_call_turns", lambda *args: repairs.append(args)
+    )
+    events = []
+    with pytest.raises(RuntimeError) as caught:
+        async for event in thread.stream("Read chapter one"):
+            events.append(event)
+    assert type(caught.value) is RuntimeError
+    assert str(caught.value) == _UNRELATED_TOOL_ERROR_BODY
+    completed = next(event for event in events if event.type == "turn_completed")
+    assert completed.error == {
+        "message": _UNRELATED_TOOL_ERROR_BODY, "additionalDetails": None, "codexErrorInfo": None,
+    }
+    assert repairs == []
+
+
+@pytest.mark.parametrize("body, will_retry", [
+    (_MALFORMED_TOOL_CALL_BODY, False),
+    (_UNRELATED_TOOL_ERROR_BODY, False),
+    (_MALFORMED_TOOL_CALL_BODY, True),
+], ids=["malformed-failed", "unrelated-failed", "malformed-retrying"])
+def test_codex_error_notification(body, will_retry):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    notification = Notification(
+        method="error",
+        payload=v2.ErrorNotification.model_validate({
+            "threadId": "thread-1", "turnId": "turn-1", "willRetry": will_retry,
+            "error": {"message": body},
+        }),
+    )
+    events = backend_sdk._CodexNotificationMapper("thread-1", "turn-1").map(notification)
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.type == "tool_update"
+    assert event.status == ("retrying" if will_retry else "failed")
+    assert event.thread_id == "thread-1"
+    assert event.turn_id == "turn-1"
+    assert event.raw == backend_sdk._codex_raw_notification(notification)
+    if body == _MALFORMED_TOOL_CALL_BODY:
+        message = backend_sdk.CODEX_MALFORMED_TOOL_CALL_MESSAGE
+        expected_error = {"message": message, "kind": "malformed-tool-call"}
+    else:
+        message = body
+        expected_error = {"message": body, "additionalDetails": None, "codexErrorInfo": None}
+    tag = "error retrying" if will_retry else "error"
+    assert event.text == f"\x1b[91m[{tag}]\x1b[0m {message}\n"
+    assert event.error == expected_error
+    if body == _MALFORMED_TOOL_CALL_BODY:
+        assert all(marker not in event.text for marker in _UPSTREAM_MARKERS)
+        assert all(marker not in str(event.error) for marker in _UPSTREAM_MARKERS)
+
+
+@pytest.mark.asyncio
+async def test_app_server_malformed_tool_call_recovery(monkeypatch, tmp_path):
+    bundled_codex = _contract_codex_bin()
+    assert bundled_codex.is_file(), "the pinned App Server binary is required"
+    responses = [
+        _responses_sse(
+            _response_created("response-truncated"),
+            {"type": "response.output_item.done", "item": {
+                "type": "function_call", "call_id": "call-truncated", "name": "update_plan",
+                "arguments": '{"plan": [{"step": "读第一章',
+            }},
+            _response_completed("response-truncated"),
+        ),
+        _responses_sse(
+            _response_created("response-recovered"),
+            {"type": "response.output_item.done", "item": {
+                "type": "message", "role": "assistant", "id": "message-recovered",
+                "content": [{"type": "output_text", "text": "好的，继续。"}],
+            }},
+            _response_completed("response-recovered"),
+        ),
+    ]
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _strict_responses_gateway(responses) as (gateway_url, requests):
+        env = {
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        client = backend_sdk.CodexClient(
+            codex_bin=bundled_codex, cwd=tmp_path, env=env,
+            model="DC-codex-agent-LLM", model_provider="dramaclaw_gateway",
+            developer_instructions="", config_overrides=service._codex_gateway_config_overrides(
+                gateway_url
+            ),
+            thread_config_overrides=(),
+            turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
+        )
+        try:
+            thread = client.thread_start()
+            events = []
+            with pytest.raises(RuntimeError) as caught:
+                async for event in thread.stream("先读第一章"):
+                    events.append(event)
+            assert all(marker not in str(caught.value) for marker in _UPSTREAM_MARKERS)
+            assert all("malformed_json" not in str(event.error) for event in events)
+            thread_id = thread.id
+            assert thread_id
+            resumed = client.thread_resume(thread_id)
+            recovered = [event async for event in resumed.stream("继续")]
+            assert recovered[-1].type == "complete"
+            assert recovered[-1].text == "好的，继续。"
+            assert resumed.id == thread_id
+            assert recovered[-1].thread_id == thread_id
+            assert any(request["rejected"] and any(
+                item.get("call_id") == "call-truncated" for item in request["body"]["input"]
+            ) for request in requests)
+            last_input = requests[-1]["body"]["input"]
+            assert any(item.get("role") == "user" and any(
+                part.get("text") == "继续" for part in item.get("content", [])
+            ) for item in last_input)
+            assert all(item.get("call_id") != "call-truncated" for item in last_input)
+        finally:
+            codex_app_server.stop_shared_codex_runtime()
