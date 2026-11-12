@@ -18,6 +18,7 @@ describe('server applyCommands', () => {
     expect(result.status).toBe('applied');
     expect(result.changes.created_node_ids).toEqual(['parity-1', 'parity-2', 'parity-3']);
     expect(result.receipt.canvas_apply_status).toBe('applied');
+    expect(result.receipt.message).toBe('Canvas command finished; see canvas_apply_status for the outcome.');
     expect(result.receipt.applied_count).toBe(6);
     expect(result.receipt).not.toHaveProperty('turn_id');
     expect(result.receipt).not.toHaveProperty('bridge_key');

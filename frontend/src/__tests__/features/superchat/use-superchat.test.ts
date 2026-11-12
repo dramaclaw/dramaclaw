@@ -2515,6 +2515,7 @@ describe("Skill Studio question response", () => {
     expect(payload).toMatchObject({
       tool_call_status: "completed",
       canvas_apply_status: "partially_applied",
+      message: "Canvas command finished; see canvas_apply_status for the outcome.",
       applied: true,
       applied_count: 1,
     });

@@ -84,6 +84,9 @@ async def test_real_bundle_saves_structural_batch_and_reads_host_context(executo
     ])
     assert result["status"] == "applied", result
     assert result["receipt"]["canvas_apply_status"] == "applied"
+    assert result["receipt"]["message"] == (
+        "Canvas command finished; see canvas_apply_status for the outcome."
+    )
     assert result["receipt"]["applied_count"] == 5
     assert result["revision"] == 2
     assert len(saved_bodies) == 1 and saved_bodies[0].save_source == "agent_patch"
