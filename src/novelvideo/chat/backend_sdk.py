@@ -55,6 +55,17 @@ def _positive_timeout_from_env(name: str, default: float) -> float:
 CODEX_STREAM_FIRST_PROGRESS_TIMEOUT = _positive_timeout_from_env(
     "DRAMACLAW_CODEX_FIRST_PROGRESS_TIMEOUT_SECONDS", 300.0
 )
+# Stop busy turns without answer text, plans, tool starts/results, or completed
+# non-reasoning items when no tool is in flight. Reasoning, usage, and warnings
+# keep the idle deadline alive, but do not reset this deadline.
+# The longest observed legitimate model response took about 172 s; reasoning-only
+# runaways took 281 s and 673 s. A 240 s default leaves about 40% headroom.
+CODEX_STREAM_NO_OUTPUT_TIMEOUT = _positive_timeout_from_env(
+    "DRAMACLAW_CODEX_NO_OUTPUT_TIMEOUT_SECONDS", 240.0
+)
+CODEX_NO_OUTPUT_TIMEOUT_MESSAGE = (
+    "模型长时间只在思考、没有产出内容，已自动停止本轮。请重试，或把需求拆小一些。"
+)
 CODEX_STREAM_IDLE_TIMEOUT = 300.0
 CODEX_INTERRUPT_GRACE_TIMEOUT = 5.0
 
@@ -72,6 +83,14 @@ _CODEX_USER_INPUT_TOOL_NAMES = {
     "freezone_request_user_clarification",
     "freezone_finish_agent_catalog_draft",
 }
+
+
+def _codex_event_is_effective_output(event: ChatBackendEvent) -> bool:
+    return event.type in {"assistant_delta", "plan_update", "tool_started", "tool_updated"} or (
+        event.type == "item_completed"
+        and isinstance(event.item, dict)
+        and event.item.get("type") != "reasoning"
+    )
 
 
 def _codex_tool_waits_for_user_input(name: str | None) -> bool:
@@ -2334,9 +2353,13 @@ class CodexThread:
         first_progress_deadline = started_at + CODEX_STREAM_FIRST_PROGRESS_TIMEOUT
         idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
         saw_runtime_progress = False
+        last_output_at = started_at
+        busy_without_output = False
+        active_tool_calls: set[str] = set()
         user_input_calls: set[str] = set()
         canvas_tool_deadlines: dict[str, float] = {}
         timed_out = False
+        timeout_kind = "first-progress"
 
         try:
             while True:
@@ -2348,6 +2371,12 @@ class CodexThread:
                             idle_deadline if saw_runtime_progress else first_progress_deadline
                         )
                         deadline = max((deadline, *canvas_tool_deadlines.values()))
+                        timeout_kind = "idle" if saw_runtime_progress else "first-progress"
+                        if busy_without_output and not active_tool_calls:
+                            output_deadline = last_output_at + CODEX_STREAM_NO_OUTPUT_TIMEOUT
+                            if output_deadline < deadline:
+                                deadline = output_deadline
+                                timeout_kind = "no-output"
                         remaining = deadline - loop.time()
                         if remaining <= 0:
                             raise asyncio.TimeoutError
@@ -2355,10 +2384,6 @@ class CodexThread:
                 except asyncio.TimeoutError:
                     timed_out = True
                     now = loop.time()
-                    if saw_runtime_progress:
-                        timeout_kind = "idle"
-                    else:
-                        timeout_kind = "first-progress"
                     _log.warning(
                         "Codex App Server stream timed out: kind=%s thread=%s turn=%s",
                         timeout_kind,
@@ -2383,7 +2408,11 @@ class CodexThread:
                                 exc_info=True,
                             )
 
-                    timeout_message = "Codex App Server 响应超时，请重试。"
+                    timeout_message = (
+                        CODEX_NO_OUTPUT_TIMEOUT_MESSAGE
+                        if timeout_kind == "no-output"
+                        else "Codex App Server 响应超时，请重试。"
+                    )
                     timeout_error = {
                         "message": timeout_message,
                         "kind": timeout_kind,
@@ -2421,8 +2450,16 @@ class CodexThread:
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
                     saw_runtime_progress = True
                     idle_deadline = loop.time() + CODEX_STREAM_IDLE_TIMEOUT
+                    if _codex_event_is_effective_output(event):
+                        last_output_at = loop.time()
+                        busy_without_output = False
+                    else:
+                        busy_without_output = True
                 call_key = event.call_id or str(event.name)
                 if event.type == "tool_started":
+                    status = str(event.status or "").strip().lower()
+                    if status in {"inprogress", "pending", "running"}:
+                        active_tool_calls.add(call_key)
                     if _codex_tool_waits_for_user_input(event.name):
                         user_input_calls.add(call_key)
                     elif _is_freezone_canvas_write_tool(event.name):
@@ -2433,6 +2470,7 @@ class CodexThread:
                 elif event.type == "tool_updated":
                     status = str(event.status or "").strip().lower()
                     if status not in {"inprogress", "pending", "running"}:
+                        active_tool_calls.discard(call_key)
                         user_input_calls.discard(call_key)
                         canvas_tool_deadlines.pop(call_key, None)
                 yield event

@@ -2385,3 +2385,237 @@ async def test_codex_stream_tool_wait_deadlines(
         assert events[-3].error["kind"] == "idle"
         assert events[-3].error["elapsed_ms"] >= 250
         assert interrupt_calls == ["turn-confirm"]
+
+
+async def _run_codex_no_output_watchdog(monkeypatch, tmp_path, steps, *, expires=False):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 10_000.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 10_000.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_NO_OUTPUT_TIMEOUT", 240.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
+    clock = SimpleNamespace(now=10_000.0)
+    started_at = clock.now
+    real_loop = asyncio.get_running_loop()
+    adapter_asyncio = SimpleNamespace(**vars(asyncio))
+    adapter_asyncio.get_running_loop = lambda: SimpleNamespace(
+        time=lambda: clock.now, call_soon_threadsafe=real_loop.call_soon_threadsafe
+    )
+    monkeypatch.setattr(backend_sdk, "asyncio", adapter_asyncio)
+    consumed = threading.Event()
+    released = threading.Event()
+    interrupt_calls = []
+    awaiting = SimpleNamespace(event_type=None)
+
+    def notification(kind, value):
+        common = {"threadId": "thread-watchdog", "turnId": "turn-watchdog"}
+        if kind in {"started", "completed"}:
+            model = (
+                v2.TurnStartedNotification if kind == "started" else v2.TurnCompletedNotification
+            )
+            payload = {
+                "threadId": common["threadId"],
+                "turn": {
+                    "id": common["turnId"], "items": [],
+                    "status": "inProgress" if kind == "started" else "completed",
+                },
+            }
+            method, last_event = f"turn/{kind}", f"turn_{kind}"
+        elif kind in {"reasoning", "answer"}:
+            payload = {**common, "itemId": kind, "delta": value}
+            if kind == "reasoning":
+                model = v2.ReasoningSummaryTextDeltaNotification
+                payload["summaryIndex"] = 0
+                method, last_event = "item/reasoning/summaryTextDelta", "thought_delta"
+            else:
+                model = v2.AgentMessageDeltaNotification
+                method, last_event = "item/agentMessage/delta", "assistant_delta"
+        else:
+            is_start = kind == "tool_start"
+            item = {
+                "type": "mcpToolCall", "id": "call-watchdog", "server": "tools",
+                "tool": value, "arguments": {},
+                "status": "inProgress" if is_start else "completed",
+            }
+            if not is_start:
+                item["result"] = {"content": [{"type": "text", "text": "done"}]}
+            payload = {
+                **common, "item": item,
+                "startedAtMs" if is_start else "completedAtMs": int(clock.now * 1000),
+            }
+            model = v2.ItemStartedNotification if is_start else v2.ItemCompletedNotification
+            method = "item/started" if is_start else "item/completed"
+            last_event = "tool_started" if is_start else "tool_updated"
+        return Notification(method=method, payload=model.model_validate(payload)), last_event
+
+    class FakeTurn:
+        id = "turn-watchdog"
+
+        def stream(self):
+            timeline = [(0, "started", None), *steps]
+            for index, (elapsed, kind, value) in enumerate(timeline):
+                # Advance only after the consumer has processed the previous notification.
+                consumed.clear()
+                clock.now = started_at + elapsed
+                event, awaiting.event_type = notification(kind, value)
+                yield event
+                if expires and index == len(timeline) - 1:
+                    assert released.wait(timeout=2), "watchdog must interrupt the turn"
+                elif not consumed.wait(timeout=0.5):
+                    assert released.is_set(), "consumer must process each notification"
+                    return
+                if released.is_set():
+                    return
+
+        def interrupt(self):
+            interrupt_calls.append(self.id)
+            released.set()
+            consumed.set()
+
+    class FakeThread:
+        id = "thread-watchdog"
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield object()
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk, "_start_or_resume_codex_thread", lambda *args, **kwargs: FakeThread()
+    )
+    monkeypatch.setattr(backend_sdk, "_start_codex_turn", lambda *args, **kwargs: FakeTurn())
+    thread = CodexThread(
+        codex_bin=None, cwd=tmp_path, env={}, model="fake-model", model_provider="fake-provider",
+        developer_instructions="", config_overrides=(), thread_config={}, turn_metadata={},
+        thread_id=None,
+    )
+
+    async def collect():
+        events = []
+        async for event in thread.stream("Explain the result"):
+            events.append(event)
+            if event.type == awaiting.event_type:
+                consumed.set()
+        return events
+
+    try:
+        events = await asyncio.wait_for(collect(), timeout=1.5)
+    finally:
+        released.set()
+        consumed.set()
+    return events, interrupt_calls
+
+
+def _assert_codex_no_output_timeout(events, interrupt_calls):
+    message = "模型长时间只在思考、没有产出内容，已自动停止本轮。请重试，或把需求拆小一些。"
+    assert interrupt_calls == ["turn-watchdog"]
+    assert [event.type for event in events[-3:]] == [
+        "turn_completed", "egress_disposition", "complete",
+    ]
+    assert all(event.disposition == "timeout" for event in events[-3:])
+    turn_completed, _, complete = events[-3:]
+    assert turn_completed.status == "timeout"
+    assert complete.text == message
+    assert complete.error == turn_completed.error
+    assert complete.error == {
+        "message": message, "kind": "no-output", "elapsed_ms": complete.error["elapsed_ms"],
+    }
+    assert isinstance(complete.error["elapsed_ms"], int)
+    assert complete.error["elapsed_ms"] >= 240_000
+    assert not any(event.type == "assistant_delta" for event in events)
+    key = ("thread-watchdog", "turn-watchdog")
+    assert key not in backend_sdk._LIVE_CODEX_TURNS
+    assert key not in backend_sdk._INTERRUPTED_CODEX_TURNS
+
+
+def _watchdog_read_only_tool():
+    name = "read_document"
+    assert name not in backend_sdk._CODEX_USER_INPUT_TOOL_NAMES
+    assert not backend_sdk._is_freezone_canvas_write_tool(name)
+    return name
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_watchdog_stops_reasoning_only(monkeypatch, tmp_path):
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "reasoning", "Thinking"), (120, "reasoning", "Thinking"),
+         (250, "reasoning", "Thinking")],
+        expires=True,
+    )
+    _assert_codex_no_output_timeout(events, interrupts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effective_output", ["assistant", "tool"])
+async def test_codex_no_output_watchdog_effective_output_resets_deadline(
+    monkeypatch, tmp_path, effective_output
+):
+    if effective_output == "assistant":
+        output = [(230, "answer", "Working. ")]
+        final_text = "Working. Done."
+    else:
+        tool = _watchdog_read_only_tool()
+        output = [(230, "tool_start", tool), (235, "tool_end", tool)]
+        final_text = "Done."
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "reasoning", "Thinking"), *output, (460, "reasoning", "Thinking"),
+         (465, "answer", "Done."), (465, "completed", None)],
+    )
+    assert interrupts == []
+    assert events[-2].type == "egress_disposition"
+    assert events[-2].disposition == "completed"
+    assert events[-1].type == "complete"
+    assert events[-1].text == final_text
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_watchdog_suspends_for_clarification(monkeypatch, tmp_path):
+    tool = "freezone_request_user_clarification"
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "tool_start", tool), (900, "reasoning", "Waiting"),
+         (905, "tool_end", tool), (906, "answer", "Done."), (906, "completed", None)],
+    )
+    assert interrupts == []
+    assert events[-2].type == "egress_disposition"
+    assert events[-2].disposition == "completed"
+    assert events[-1].type == "complete"
+    assert events[-1].text == "Done."
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_watchdog_suspends_for_running_tool(monkeypatch, tmp_path):
+    tool = _watchdog_read_only_tool()
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "tool_start", tool), (600, "reasoning", "Waiting"),
+         (605, "tool_end", tool), (606, "answer", "Done."), (606, "completed", None)],
+    )
+    assert interrupts == []
+    assert events[-2].type == "egress_disposition"
+    assert events[-2].disposition == "completed"
+    assert events[-1].type == "complete"
+    assert events[-1].text == "Done."
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_watchdog_restarts_after_tool_result(monkeypatch, tmp_path):
+    tool = _watchdog_read_only_tool()
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(10, "tool_start", tool), (20, "tool_end", tool),
+         (200, "reasoning", "Thinking"), (270, "reasoning", "Thinking")],
+        expires=True,
+    )
+    _assert_codex_no_output_timeout(events, interrupts)
+
+
+@pytest.mark.skipif(
+    "DRAMACLAW_CODEX_NO_OUTPUT_TIMEOUT_SECONDS" in os.environ,
+    reason="no-output timeout is configured in the process environment",
+)
+def test_codex_no_output_timeout_default():
+    assert backend_sdk.CODEX_STREAM_NO_OUTPUT_TIMEOUT == 240.0
