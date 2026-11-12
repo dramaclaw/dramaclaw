@@ -157,7 +157,7 @@ Authorization: Bearer xxx
 | 原因码 | 拒绝条件 |
 |---|---|
 | `action_not_on_server` | 动作不在支持列表中，或节点类型不受支持。例如 `auto_compose_video`、`run_audio_separate`、`run_video_analyze_story`、`start_video_breakdown`、`generate_html`、`run_skill`、`generate_text_video`、`run_scene360_tool`、`run_matting_tool`。 |
-| `mixed_commands` | 一次调用混合运行命令与其它命令，整次调用不能在服务端运行。 |
+| `mixed_commands` | 一次调用同时包含运行命令和需要打开画布的命令（`html_artifact`、`open_mainline_projection`、`open_*` 节点动作），整次调用不能在服务端运行。 |
 | `world_recipe` | 3D 世界节点设置了 `workflowCatalog.recipeId`。 |
 | `video_count` | 视频节点的 `count` 大于 1。 |
 | `video_story_continuity` | 视频节点带 `storySegmentId`、`storyRole=start` 或连接 `storyChoiceEdge`，且 `continuityMode` 为 `auto` 或 `independent`。 |
@@ -165,6 +165,8 @@ Authorization: Bearer xxx
 | `mainline_auto_commit` | 系统管理的图片节点开启了生成后自动提交主线（`autoCommitOnGenerate`），服务端没有提交主线的路径。 |
 
 全部动作被拒绝时，工具返回 `canvas_open_required` 和拒绝列表，用户需打开画布运行。仅部分动作被拒绝时，其余可运行动作继续执行，拒绝项及原因列在运行记录中；依赖失败动作的下游会被阻断。
+
+一次调用同时包含画布修改（建节点、连线、分组、布局、选择等）和运行命令时，确认后服务端先应用修改，再按修改后的画布规划并启动运行；运行命令可以引用同一次调用新建节点的 `client_id`。修改失败时不启动运行。修改已应用但运行因上表原因或其它原因未启动时，修改保留，确认结果的 `run.status` 为 `not_started`，`run.code` 给出原因码。
 
 最后一层执行完后，`finalize_run` 会像浏览器一样将已完成的分镜图片挂回原故事段落，挂接警告记录在 `story_attach_warnings`。
 

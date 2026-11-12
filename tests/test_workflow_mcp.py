@@ -26,6 +26,23 @@ def _result_payload(result):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("uri", [
+    "file:///tmp/workspace/.agents/skills/dramaclaw-workflows/SKILL.md",
+    "dramaclaw-workflow://unknown/x",
+])
+async def test_unsupported_resource_uri_names_valid_uris_and_is_not_retryable(uri):
+    with pytest.raises(ValueError) as exc:
+        await workflow_mcp.read_resource(uri)
+    assert str(exc.value) == (
+        "unsupported workflow resource URI; not retryable on this server. This server reads only "
+        "dramaclaw-workflow://skills/{skill_id}, dramaclaw-workflow://recipes/{recipe_id} and "
+        "dramaclaw-workflow://skills/{skill_id}/references/{reference}. Read file:// Agent Skill "
+        "files with the server and uri from the Skill locator (dramaclaw in the DramaClaw Codex "
+        "runtime)."
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("username", ["alice", "bob"])
 async def test_workflow_resources_real_stdio_protocol_and_private_isolation(
     tmp_path, username
@@ -93,6 +110,18 @@ async def test_workflow_resources_real_stdio_protocol_and_private_isolation(
             assert (
                 json.loads(reference.contents[0].text)["status"]
                 == "workflow_reference_ready"
+            )
+            with pytest.raises(McpError) as exc:
+                await session.read_resource(
+                    "file:///tmp/workspace/.agents/skills/dramaclaw-workflows/SKILL.md"
+                )
+            assert exc.value.error.message == (
+                "unsupported workflow resource URI; not retryable on this server. "
+                "This server reads only dramaclaw-workflow://skills/{skill_id}, "
+                "dramaclaw-workflow://recipes/{recipe_id} and "
+                "dramaclaw-workflow://skills/{skill_id}/references/{reference}. "
+                "Read file:// Agent Skill files with the server and uri from the Skill locator "
+                "(dramaclaw in the DramaClaw Codex runtime)."
             )
 
 
@@ -175,6 +204,13 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
     assert intent_schema["properties"]["schema_version"]["enum"] == [
         "freezone_workflow_intent.v1"
     ]
+    assert next(
+        template.description for template in templates
+        if template.uriTemplate == "dramaclaw-workflow://skills/{skill_id}"
+    ) == (
+        "One Workflow catalog Skill selected by workflow_catalog_search; "
+        "not the dramaclaw-workflows Agent Skill file"
+    )
 
 
 @pytest.mark.asyncio

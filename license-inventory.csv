@@ -3560,6 +3560,7 @@ src/novelvideo/chat/story_mcp_policy.py,Elastic-2.0,2026 SuperTale contributors,
 src/novelvideo/chat/story_tools.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/story_validation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/stream_delta.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/studio_tool_validation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/tool_policy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/turn_images.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/workflow_contract.generated.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

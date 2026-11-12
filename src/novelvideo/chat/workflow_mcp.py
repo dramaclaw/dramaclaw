@@ -40,6 +40,14 @@ from novelvideo.freezone.workflow_schema import (
 SERVER = Server("dramaclaw-workflows", version="1.0.0")
 logger = logging.getLogger("novelvideo.chat.workflow_mcp")
 
+UNSUPPORTED_RESOURCE_MESSAGE = (
+    "unsupported workflow resource URI; not retryable on this server. This server reads only "
+    "dramaclaw-workflow://skills/{skill_id}, dramaclaw-workflow://recipes/{recipe_id} and "
+    "dramaclaw-workflow://skills/{skill_id}/references/{reference}. Read file:// Agent Skill "
+    "files with the server and uri from the Skill locator (dramaclaw in the DramaClaw Codex "
+    "runtime)."
+)
+
 # References are shared host guidance, not catalog IDs.  Keep the resolver
 # inside the repository and never expose/accept arbitrary filesystem paths.
 _REFERENCE_ROOT = (
@@ -285,7 +293,10 @@ async def list_resource_templates() -> list[types.ResourceTemplate]:
         types.ResourceTemplate(
             name="DramaClaw Workflow Skill",
             uriTemplate="dramaclaw-workflow://skills/{skill_id}",
-            description="One portable Workflow Skill planning package",
+            description=(
+                "One Workflow catalog Skill selected by workflow_catalog_search; "
+                "not the dramaclaw-workflows Agent Skill file"
+            ),
             mimeType="application/json",
         ),
         types.ResourceTemplate(
@@ -309,7 +320,7 @@ async def read_resource(uri: Any) -> str:
 
     parsed = urlsplit(str(uri))
     if parsed.scheme != "dramaclaw-workflow":
-        raise ValueError("unsupported workflow resource URI")
+        raise ValueError(UNSUPPORTED_RESOURCE_MESSAGE)
     kind = parsed.netloc
     item_id = unquote(parsed.path.lstrip("/"))
     if kind == "skills":
@@ -332,7 +343,7 @@ async def read_resource(uri: Any) -> str:
             raise ValueError("workflow recipe resource not found")
         payload = {"ok": True, "recipe": item}
     else:
-        raise ValueError("unsupported workflow resource kind")
+        raise ValueError(UNSUPPORTED_RESOURCE_MESSAGE)
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 

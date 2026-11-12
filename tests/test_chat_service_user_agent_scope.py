@@ -1764,6 +1764,20 @@ def test_codex_scope_thread_reset_is_removed():
     assert not hasattr(session_registry, "reset_codex_scope_thread")
 
 
+def test_codex_skill_locator_says_workflow_server_cannot_read_skill_files(tmp_path):
+    workspace = tmp_path / "workspace"
+    skill = workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# Workflow skill\n", encoding="utf-8")
+
+    instructions = chat_service._codex_agent_skill_locator_instructions(workspace)
+
+    assert instructions.endswith(
+        "workflow_catalog_server is only for Workflow Catalog discovery and compilation. "
+        "It reads only dramaclaw-workflow:// URIs and cannot read file:// Agent Skill files. "
+    )
+
+
 def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
     monkeypatch,
     tmp_path,

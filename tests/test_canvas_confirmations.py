@@ -425,3 +425,46 @@ def test_concurrent_claims_only_one_succeeds(tmp_path, create):
         results = list(pool.map(compete, ["confirmed", "refused"]))
     assert sorted(results) in [["already_handled", "confirmed"], ["already_handled", "refused"]]
     assert read_confirmation(directory, record["id"])["status"] in ("confirmed", "refused")
+
+
+def test_targets_include_nodes_created_in_the_same_batch(canvas):
+    commands = [
+        {"type": "create_node", "client_id": "c1", "node_type": "imageGenNode",
+         "data": {"label": "新海报"}},
+        {"type": "add_next_node", "client_id": "c2", "source_node_id": "n1",
+         "data": {"title": " 续图 "}},
+        {"type": "html_artifact", "action": "prepare", "client_id": "c3",
+         "workflow_data": {"label": "页面"}},
+        {"type": "run_workflow", "scope": "selection", "node_ids": ["c1", "c2", "c3", "n1"]},
+    ]
+    assert confirmation_targets(canvas, commands) == [
+        {"node_id": "c1", "title": "新海报", "node_type": "imageGenNode",
+         "action": "run_workflow"},
+        {"node_id": "c2", "title": "续图", "node_type": "", "action": "run_workflow"},
+        {"node_id": "c3", "title": "页面", "node_type": "htmlArtifactNode",
+         "action": "run_workflow"},
+        {"node_id": "n1", "title": "海报", "node_type": "imageGenNode",
+         "action": "run_workflow"},
+    ]
+    assert confirmation_targets(canvas, [commands[0], {
+        "type": "run_node_action", "node_id": "c1", "action": "generate_image",
+    }]) == [{"node_id": "c1", "title": "新海报", "node_type": "imageGenNode",
+             "action": "generate_image"}]
+    with pytest.raises(CanvasConfirmationError) as error:
+        confirmation_targets(canvas, [commands[0], {
+            "type": "run_workflow", "node_ids": ["c1", "n9"],
+        }])
+    assert error.value.code == "targets_missing"
+    assert "n9" in str(error.value)
+    assert "c1" not in str(error.value)
+
+
+def test_changed_targets_ignores_nodes_created_in_the_same_batch(canvas, create):
+    record = create(commands=[
+        {"type": "create_node", "client_id": "c1", "node_type": "imageGenNode",
+         "data": {"label": "新海报"}},
+        {"type": "run_workflow", "scope": "selection", "node_ids": ["c1", "n1"]},
+    ])
+    assert changed_targets(canvas, record) == []
+    canvas["nodes"] = [node for node in canvas["nodes"] if node["id"] != "n1"]
+    assert changed_targets(canvas, record) == ["n1"]

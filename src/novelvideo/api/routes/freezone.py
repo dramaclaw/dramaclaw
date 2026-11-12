@@ -18225,6 +18225,9 @@ async def decide_canvas_confirmation(
     from novelvideo.api.freezone_server_workflow_start import (
         canvas_open_required_detail,
         check_server_workflow,
+        created_node_mapping,
+        is_run_command,
+        rewrite_run_commands,
         start_server_workflow_run,
     )
     from novelvideo.api.routes.chat import append_canvas_confirmation_notice
@@ -18337,71 +18340,36 @@ async def decide_canvas_confirmation(
         if body.via == "card":
             await append_canvas_confirmation_notice(user, record, "voided", ",".join(changed))
         raise reject(409, "targets_changed", node_ids=changed)
-    if check["status"] == "runnable" and not needs_browser:
-        plan = check["plan"]
-        if not plan["actions"]:
-            await asyncio.to_thread(
-                canvas_confirmations.finish_confirmation, directory, confirmation_id,
-                outcome={"status": "already_completed"}, now=now,
-            )
-            if body.via == "card":
-                await append_canvas_confirmation_notice(user, record, "already_completed")
-            return {"ok": True, "data": {
-                "confirmation_id": confirmation_id, "status": "already_completed",
-            }}
-        try:
-            run = await start_server_workflow_run(
-                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, plan=plan,
-                confirmation=record, actor_id=_canvas_actor_id(user), now=current,
-                refused=check["refused"],
-            )
-        except WorkflowRunLeaseConflict as exc:
-            await asyncio.to_thread(
-                canvas_confirmations.void_confirmation, directory, confirmation_id,
-                reason="workflow_already_running", now=now,
-            )
-            active = await asyncio.to_thread(
-                active_workflow_run, project_dir=state_dir, canvas_id=canvas_id, now=current,
-            )
-            raise reject(409, "workflow_already_running",
-                         **({"run_id": active["run_id"]} if active else {}),
-                         message="画布上已有工作流在运行，未执行。") from exc
-        except Exception as exc:
-            runs = await asyncio.to_thread(
-                list_workflow_runs, project_dir=state_dir, canvas_id=canvas_id,
-            )
-            if not any(
-                run["status"] == "failed"
-                and run["metadata"].get("confirmation", {}).get("id") == confirmation_id
-                for run in runs
-            ):
-                raise
-            await asyncio.to_thread(
-                canvas_confirmations.void_confirmation, directory, confirmation_id,
-                reason="admission_failed", now=now,
-            )
-            raise reject(409, "admission_failed", message=str(exc)) from exc
-        run_id = run["run_id"]
+    edit_commands = [command for command in record["commands"] if not is_run_command(command)]
+    mixed = check["status"] == "runnable" and not needs_browser and bool(edit_commands)
+    data = None
+
+    async def finish_edits(run_detail: dict | None = None) -> dict:
+        outcome = {"status": data["status"], "revision": data["revision"]}
+        response = {"confirmation_id": confirmation_id, "status": "executed", "result": data}
+        detail = data["status"]
+        if run_detail is not None:
+            outcome["run"] = run_detail
+            response["run"] = run_detail
+            detail = f"{data['status']}; workflow run not started ({run_detail['code']})"
         await asyncio.to_thread(
             canvas_confirmations.finish_confirmation, directory, confirmation_id,
-            outcome={"status": "running", "run_id": run_id}, now=now,
+            outcome=outcome, now=now,
         )
+        _log_canvas_confirmation_decision(record, "executed", body.via, now)
         if body.via == "card":
-            await append_canvas_confirmation_notice(user, record, "running", run_id)
-        _log_canvas_confirmation_decision(record, "server_run", body.via, now)
-        return {"ok": True, "data": {
-            "confirmation_id": confirmation_id, "status": "running", "run_id": run_id,
-            "actions": [{key: action[key] for key in ("node_id", "action", "label")}
-                        for action in plan["actions"]],
-            "refused": [{**item, "code": "canvas_open_required"} for item in check["refused"]],
-        }}
+            await append_canvas_confirmation_notice(user, record, "executed", detail)
+        return {"ok": True, "data": response}
+
     envelope = {
         "schema_version": "canvas_chat_commands.v1", "project_id": project,
         "canvas_id": canvas_id, "commands": record["commands"], "agent_id": record["agent_id"],
     }
     if record["turn_id"] is not None:
         envelope["turn_id"] = record["turn_id"]
-    if not needs_browser:
+    if mixed:
+        envelope["commands"] = edit_commands
+    if not needs_browser and (mixed or check["status"] != "runnable"):
         try:
             data = await execute_agent_canvas_envelopes(
                 project=project, canvas_id=canvas_id, user=user, ctx=ctx,
@@ -18423,15 +18391,101 @@ async def decide_canvas_confirmation(
             if body.via == "card":
                 await append_canvas_confirmation_notice(user, record, "failed", code)
             raise
+        if not mixed or data["status"] != "applied":
+            return await finish_edits()
+        commands = rewrite_run_commands(
+            [command for command in record["commands"] if is_run_command(command)],
+            created_node_mapping(data["receipt"]),
+        )
+        try:
+            check = await check_server_workflow(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands,
+            )
+        except CanvasCoreError as exc:
+            return await finish_edits({
+                "status": "not_started",
+                "code": "workflow_plan_invalid" if exc.code == "invalid_request" else exc.code,
+                "message": str(exc),
+            })
+        if check["status"] == "invalid":
+            return await finish_edits({
+                "status": "not_started", "code": "workflow_plan_invalid",
+                "message": check["message"],
+            })
+        if check["status"] == "blocked":
+            return await finish_edits({"status": "not_started", **canvas_open_required_detail(check)})
+    if check["status"] == "runnable" and not needs_browser:
+        plan = check["plan"]
+        if not plan["actions"]:
+            if mixed:
+                return await finish_edits({
+                    "status": "not_started", "code": "already_completed",
+                    "message": "Every target already has a current result.",
+                })
+            await asyncio.to_thread(
+                canvas_confirmations.finish_confirmation, directory, confirmation_id,
+                outcome={"status": "already_completed"}, now=now,
+            )
+            if body.via == "card":
+                await append_canvas_confirmation_notice(user, record, "already_completed")
+            return {"ok": True, "data": {
+                "confirmation_id": confirmation_id, "status": "already_completed",
+            }}
+        try:
+            run = await start_server_workflow_run(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, plan=plan,
+                confirmation=record, actor_id=_canvas_actor_id(user), now=current,
+                refused=check["refused"],
+            )
+        except WorkflowRunLeaseConflict as exc:
+            if mixed:
+                return await finish_edits({
+                    "status": "not_started", "code": "workflow_already_running",
+                    "message": "Another workflow is already running on this canvas.",
+                })
+            await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="workflow_already_running", now=now,
+            )
+            active = await asyncio.to_thread(
+                active_workflow_run, project_dir=state_dir, canvas_id=canvas_id, now=current,
+            )
+            raise reject(409, "workflow_already_running",
+                         **({"run_id": active["run_id"]} if active else {}),
+                         message="画布上已有工作流在运行，未执行。") from exc
+        except Exception as exc:
+            runs = await asyncio.to_thread(
+                list_workflow_runs, project_dir=state_dir, canvas_id=canvas_id,
+            )
+            if not any(
+                run["status"] == "failed"
+                and run["metadata"].get("confirmation", {}).get("id") == confirmation_id
+                for run in runs
+            ):
+                raise
+            if mixed:
+                return await finish_edits({
+                    "status": "not_started", "code": "admission_failed", "message": str(exc),
+                })
+            await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="admission_failed", now=now,
+            )
+            raise reject(409, "admission_failed", message=str(exc)) from exc
+        run_id = run["run_id"]
         await asyncio.to_thread(
             canvas_confirmations.finish_confirmation, directory, confirmation_id,
-            outcome={"status": data["status"], "revision": data["revision"]}, now=now,
+            outcome={"status": "running", "run_id": run_id}, now=now,
         )
-        _log_canvas_confirmation_decision(record, "executed", body.via, now)
         if body.via == "card":
-            await append_canvas_confirmation_notice(user, record, "executed", data["status"])
+            await append_canvas_confirmation_notice(user, record, "running", run_id)
+        _log_canvas_confirmation_decision(record, "server_run", body.via, now)
         return {"ok": True, "data": {
-            "confirmation_id": confirmation_id, "status": "executed", "result": data,
+            "confirmation_id": confirmation_id, "status": "running", "run_id": run_id,
+            **({"result": data} if mixed else {}),
+            "actions": [{key: action[key] for key in ("node_id", "action", "label")}
+                        for action in plan["actions"]],
+            "refused": [{**item, "code": "canvas_open_required"} for item in check["refused"]],
         }}
     key = canvas_command_idempotency_key(
         project_id=project, canvas_id=canvas_id,

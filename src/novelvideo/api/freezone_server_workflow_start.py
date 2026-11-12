@@ -13,7 +13,8 @@ from fastapi import HTTPException
 
 from novelvideo.api.freezone_server_workflow_host import InProcessActionHost
 from novelvideo.freezone import canvas_store
-from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
+from novelvideo.freezone.agent_canvas import core_canvas_input
+from novelvideo.freezone.canvas_core_pool import CanvasCoreError, get_canvas_core_pool
 from novelvideo.freezone.canvas_ui_locale import recorded_ui_locale
 from novelvideo.freezone.server_workflow_actions import (
     IMAGE_TOOL_SERVER_ACTIONS,
@@ -68,6 +69,26 @@ def _server_run_actions(canvas: dict, plan: dict, idempotency_key: str) -> list[
     return actions
 
 
+def created_node_mapping(receipt: dict) -> dict[str, str]:
+    return {
+        result["nodeId"]: result["createdNodeId"]
+        for result in receipt.get("command_results", [])
+        if result.get("nodeId") and result.get("createdNodeId")
+    }
+
+
+def rewrite_run_commands(commands: list[dict], mapping: dict[str, str]) -> list[dict]:
+    rewritten = []
+    for command in commands:
+        item = dict(command)
+        if "node_ids" in item:
+            item["node_ids"] = [mapping.get(node_id, node_id) for node_id in item["node_ids"]]
+        if "node_id" in item:
+            item["node_id"] = mapping.get(item["node_id"], item["node_id"])
+        rewritten.append(item)
+    return rewritten
+
+
 async def check_server_workflow(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
     commands: list[dict], locale: str | None = None,
@@ -76,20 +97,44 @@ async def check_server_workflow(
     if not run_commands:
         return {"status": "none"}
     other_commands = [command for command in commands if not is_run_command(command)]
-    if other_commands:
+    browser_commands = [command for command in other_commands if (
+        command["type"] in {"html_artifact", "open_mainline_projection"}
+        or (command["type"] == "run_node_action"
+            and command.get("action", "").startswith("open_"))
+    )]
+    if browser_commands:
         return {"status": "blocked", "plan": None, "blocked": [{
-            "node_id": command.get("node_id"), "action": command["type"],
+            "node_id": command.get("node_id") or command.get("client_id"),
+            "action": command["type"],
             "label": command["type"], "reason": "mixed_commands",
-        } for command in other_commands]}
+        } for command in browser_commands]}
 
     from novelvideo.api.routes import freezone as routes
 
-    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id) or {
+        "nodes": [], "edges": []
+    }
     locale = locale or await asyncio.to_thread(recorded_ui_locale, state_dir) or "zh"
     image, video = await asyncio.gather(
         routes._freezone_image_models_data(ctx.requester_user_id),
         routes._freezone_video_models_data(ctx.requester_user_id),
     )
+    client_ids = {}
+    if other_commands:
+        preview = await asyncio.to_thread(get_canvas_core_pool().call, "apply_commands", {
+            "canvas": core_canvas_input(canvas),
+            "envelopes": [{
+                "schema_version": "canvas_chat_commands.v1", "project_id": ctx.project_id,
+                "canvas_id": canvas_id, "commands": other_commands,
+            }],
+            "env": {"locale": locale, "catalogs": {"image": image, "video": video}},
+        })
+        if preview["status"] != "applied":
+            raise CanvasCoreError("invalid_request", "; ".join(preview["receipt"]["errors"]))
+        mapping = created_node_mapping(preview["receipt"])
+        client_ids = {node_id: client_id for client_id, node_id in mapping.items()}
+        run_commands = rewrite_run_commands(run_commands, mapping)
+        canvas = preview["canvas"]
     plan = await asyncio.to_thread(get_canvas_core_pool().call, "plan_workflow", {
         "canvas": canvas, "commands": run_commands,
         "env": {"locale": locale, "catalogs": {"image": image, "video": video},
@@ -121,7 +166,8 @@ async def check_server_workflow(
             except HTTPException:
                 reason = "recipe_required"
         if reason:
-            refused.append({"node_id": action["node_id"], "action": action["action"],
+            refused.append({"node_id": client_ids.get(action["node_id"], action["node_id"]),
+                            "action": action["action"],
                             "label": action["label"], "reason": reason})
     if plan["actions"] and len(refused) == len(plan["actions"]):
         return {"status": "blocked", "blocked": refused, "plan": plan}
