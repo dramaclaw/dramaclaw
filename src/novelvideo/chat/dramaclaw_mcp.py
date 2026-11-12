@@ -620,10 +620,15 @@ def _tool_call_hooks(name: str) -> mcp_runtime.ToolCallHooks:
             adapt_result=_adapt_external_agent_tool_result,
             normalize_result=_normalize_structured_result,
         )
+    validation_error = _tool_validation_error
+    if name.startswith("freezone_studio_"):
+        from novelvideo.chat.studio_tool_validation import studio_validation_error
+
+        validation_error = studio_validation_error
     return mcp_runtime.ToolCallHooks(
         normalize_arguments=_normalize_tool_arguments,
         repair_arguments=_repair_tool_arguments,
-        validation_error=_tool_validation_error,
+        validation_error=validation_error,
         collect_all_errors=lambda name: False,
         adapt_result=_adapt_external_agent_tool_result,
         normalize_result=_normalize_structured_result,
