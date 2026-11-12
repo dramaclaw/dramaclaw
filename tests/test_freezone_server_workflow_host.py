@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 import pytest
 
+from canvas_core_requirements import CANVAS_CORE_BUNDLE, requires_canvas_core_bundle
 from novelvideo.api.freezone_server_workflow_host import (
     InProcessActionHost,
     build_server_action_runner,
@@ -19,7 +20,6 @@ from novelvideo.api.schemas import FreezoneGenRequest, FreezoneRecipeCompileRequ
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.paths import freezone_root
 from novelvideo.freezone.server_workflow_actions import ActionLeaseLost, ServerActionHttpError
-from tests.canvas_core_requirements import CANVAS_CORE_BUNDLE, requires_canvas_core_bundle
 
 TASK = {"task_key": "freezone_gen:project:j1", "task_type": "freezone_gen", "job_id": "j1"}
 

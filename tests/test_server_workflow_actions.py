@@ -9,6 +9,8 @@ import uuid
 
 import pytest
 
+from canvas_core_requirements import CANVAS_CORE_BUNDLE as BUNDLE
+from canvas_core_requirements import requires_canvas_core_bundle
 from novelvideo.freezone.canvas_core_pool import CanvasCorePool
 from novelvideo.freezone.server_workflow_actions import (
     ActionLeaseLost,
@@ -16,9 +18,6 @@ from novelvideo.freezone.server_workflow_actions import (
     WorkflowActionRunner,
 )
 from novelvideo.freezone.workflow_runs import create_workflow_run, update_workflow_run
-
-from tests.canvas_core_requirements import CANVAS_CORE_BUNDLE as BUNDLE
-from tests.canvas_core_requirements import requires_canvas_core_bundle
 
 pytestmark = requires_canvas_core_bundle
 TASK = {"task_key": "freezone_gen:project:j1", "task_type": "freezone_gen", "job_id": "j1"}

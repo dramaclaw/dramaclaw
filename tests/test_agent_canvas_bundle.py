@@ -6,12 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from canvas_core_requirements import CANVAS_CORE_BUNDLE as BUNDLE
+from canvas_core_requirements import requires_canvas_core_bundle
 from novelvideo.api.routes import freezone as routes
 from novelvideo.freezone import agent_canvas, canvas_store
 from novelvideo.freezone.canvas_core_pool import CanvasCorePool
-
-from tests.canvas_core_requirements import CANVAS_CORE_BUNDLE as BUNDLE
-from tests.canvas_core_requirements import requires_canvas_core_bundle
 
 pytestmark = requires_canvas_core_bundle
 

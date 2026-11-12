@@ -8,10 +8,9 @@ import time
 
 import pytest
 
+from canvas_core_requirements import requires_node
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError, CanvasCorePool
 from novelvideo.task_backend.subprocesses import RestrictedSubprocessPolicy, _has_network_argument
-
-from tests.canvas_core_requirements import requires_node
 
 WORKER = Path(__file__).parent / "fixtures/canvas_core_fake_worker.mjs"
 LOGGER = "novelvideo.freezone.canvas_core_pool"
