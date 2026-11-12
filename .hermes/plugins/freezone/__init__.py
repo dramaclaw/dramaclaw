@@ -9661,6 +9661,8 @@ _STORY_SUCCESS_REQUIRED = (
 
 _RESULT_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
     "freezone_studio_import_media": {
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "example": {"type": "object"},
         "source": {
             "type": "object",
             "properties": {
@@ -9671,6 +9673,19 @@ _RESULT_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
             "required": ["source_url", "node_id", "label"],
             "additionalProperties": False,
         },
+    },
+    "freezone_studio_get_film": {
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "example": {"type": "object"},
+    },
+    "freezone_studio_edit_film": {
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "example": {"type": "object"},
+        "valid_ops": {"type": "array", "items": {"type": "string"}},
+    },
+    "freezone_studio_export_film": {
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "example": {"type": "object"},
     },
 }
 
@@ -11661,35 +11676,149 @@ _STORY_CANVAS_TOOLS = (
 # never touched.
 # ---------------------------------------------------------------------------
 
+_STUDIO_CLIP_ID = {
+    "type": "string", "minLength": 1,
+    "description": "Clip id from freezone_studio_get_film.",
+}
+_STUDIO_SECONDS = {"type": "number", "minimum": 0}
+_STUDIO_SOURCE_RANGE = {
+    "type": "array", "items": _STUDIO_SECONDS, "minItems": 1, "maxItems": 2,
+    "description": "[in, out] source seconds; [in] runs to the source end.",
+}
+_STUDIO_PAIR = {
+    "type": "array", "items": _STUDIO_SECONDS, "minItems": 2, "maxItems": 2,
+    "description": "Exactly two non-negative seconds values.",
+}
+_STUDIO_TRACK_INDEX = {"type": "integer", "minimum": 0}
+_STUDIO_SPEED = {
+    "type": "number", "minimum": 0.1, "maximum": 100,
+    "description": "Playback speed, 0.1-100, 1 = normal.",
+}
+_STUDIO_VOLUME = {
+    "type": "number", "minimum": 0,
+    "description": "Non-negative volume; 1 = original level.",
+}
+_STUDIO_BOX = {
+    "type": "object",
+    "properties": {
+        "x": {"type": "number"}, "y": {"type": "number"},
+        "w": {"type": "number", "exclusiveMinimum": 0},
+        "h": {"type": "number", "exclusiveMinimum": 0},
+        "r": {"type": "number"},
+    },
+    "required": ["x", "y"],
+    "additionalProperties": False,
+    "description": "Stage pixels; w and h must be positive; r is rotation degrees.",
+}
+
+
+def _studio_op_schema(
+    op: str, properties: dict[str, Any], required: list[str], description: str,
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {"op": {"type": "string", "const": op}, **properties},
+        "required": ["op", *required],
+        "additionalProperties": False,
+        "description": description,
+    }
+
+
 _STUDIO_OPS_SCHEMA = {
     "type": "array",
     "minItems": 1,
     "maxItems": 200,
     "description": (
-        "OpenFilm Studio operations, applied in order, each naming a clip by the id "
-        "returned by freezone_studio_get_film. Times are film seconds. Shapes: "
-        "{op:'set', clip, field, value} (field: at | time:[in,out] source seconds | "
-        "speed 0.25-4 | volume | box {x,y,w,h} | overrides; value null removes); "
-        "{op:'move', clip, at, track?}; "
-        "{op:'insert', clip:{src:'assets/<file>', at, time?:[in,out], volume?, speed?}, "
-        "track? | newTrack?, after?}; "
-        "{op:'remove', clip}; "
-        "{op:'split', clip, at, time:[in,cut], restTime:[cut,out]}; "
-        "{op:'props', edits:[{clip, prop:'fade', value:[in,out]}]}; "
-        "{op:'track', track, field:'locked'|'hidden'|'muted', value}; "
-        "{op:'reorder', from, to}; {op:'stage', w, h}."
+        "Studio operations, applied in order. Each item is one of the shapes "
+        "below, picked by op (and by field for set). Clip ids come from "
+        "freezone_studio_get_film; at is film seconds, time is [in, out] source seconds."
     ),
-    "items": {
-        "type": "object",
-        "properties": {"op": {"type": "string", "minLength": 1}},
-        "required": ["op"],
-        "additionalProperties": True,
-    },
+    "items": {"anyOf": [
+        *[
+            _studio_op_schema(
+                "set",
+                {"clip": _STUDIO_CLIP_ID, "field": {"type": "string", "const": field},
+                 "value": value},
+                ["clip", "field", "value"], description,
+            )
+            for field, value, description in (
+                ("at", _STUDIO_SECONDS, "Set the clip start in non-negative film seconds."),
+                ("time", {"anyOf": [_STUDIO_SOURCE_RANGE, {"type": "null"}]},
+                 "Set [in, out] source seconds, [in] to source end, or null for whole source."),
+                ("speed", {"anyOf": [_STUDIO_SPEED, {"type": "null"}]},
+                 "Set speed 0.1-100, 1 = normal; null resets it."),
+                ("volume", {"anyOf": [_STUDIO_VOLUME, {"type": "null"}]},
+                 "Set non-negative volume, 1 = original level; null resets it."),
+                ("box", {"anyOf": [_STUDIO_BOX, {"type": "null"}]},
+                 "Set placement in stage pixels; r is rotation degrees; null = full stage."),
+                ("overrides", {"anyOf": [
+                    {"type": "array", "maxItems": 200, "items": {"type": "object"}},
+                    {"type": "null"},
+                ]}, "Set up to 200 editor per-clip overrides; null clears them."),
+            )
+        ],
+        _studio_op_schema("move", {
+            "clip": _STUDIO_CLIP_ID, "at": _STUDIO_SECONDS,
+            "track": _STUDIO_TRACK_INDEX, "newTrack": _STUDIO_TRACK_INDEX,
+        }, ["clip", "at"], "Move a clip to non-negative film seconds and optionally a track."),
+        _studio_op_schema("insert", {
+            "clip": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string", "minLength": 1,
+                            "description": (
+                                "asset_path from freezone_studio_import_media, "
+                                "e.g. assets/<file>"
+                            )},
+                    "at": _STUDIO_SECONDS, "time": _STUDIO_SOURCE_RANGE,
+                    "volume": _STUDIO_VOLUME, "speed": _STUDIO_SPEED, "box": _STUDIO_BOX,
+                },
+                "required": ["src"], "additionalProperties": False,
+            },
+            "after": {
+                **_STUDIO_CLIP_ID, "description": "Insert right after this clip on its track.",
+            },
+            "track": _STUDIO_TRACK_INDEX, "newTrack": _STUDIO_TRACK_INDEX,
+        }, ["clip"], "Insert an imported asset, optionally after a clip or onto a track."),
+        _studio_op_schema("remove", {"clip": _STUDIO_CLIP_ID},
+                          ["clip"], "Remove a clip from the film."),
+        _studio_op_schema("split", {
+            "clip": _STUDIO_CLIP_ID, "at": {"type": "number", "exclusiveMinimum": 0},
+            "time": {**_STUDIO_PAIR, "description": "Left half [in, out] source seconds."},
+            "restTime": {**_STUDIO_PAIR, "description": "Right half [in, out] source seconds."},
+        }, ["clip", "at", "time", "restTime"], "Split a clip at a positive film second."),
+        _studio_op_schema("props", {
+            "edits": {
+                "type": "array", "minItems": 1, "maxItems": 200,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "clip": _STUDIO_CLIP_ID, "prop": {"type": "string", "const": "fade"},
+                        "value": {"anyOf": [_STUDIO_PAIR, {"type": "null"}]},
+                    },
+                    "required": ["clip", "prop", "value"], "additionalProperties": False,
+                },
+            },
+        }, ["edits"], "Apply 1-200 fades: [in, out] fade seconds; null removes a fade."),
+        _studio_op_schema("track", {
+            "track": _STUDIO_TRACK_INDEX,
+            "field": {"type": "string", "enum": ["locked", "hidden", "muted"]},
+            "value": {"type": "boolean"},
+        }, ["track", "field", "value"], "Set a track flag by non-negative track index."),
+        _studio_op_schema("reorder", {
+            "from": _STUDIO_TRACK_INDEX, "to": _STUDIO_TRACK_INDEX,
+        }, ["from", "to"], "Reorder tracks by non-negative indexes."),
+        _studio_op_schema("stage", {
+            "w": {"type": "integer", "minimum": 1, "maximum": 8192},
+            "h": {"type": "integer", "minimum": 1, "maximum": 8192},
+        }, ["w", "h"], "Set stage width and height in pixels, each 1-8192."),
+    ]},
 }
 
 _STUDIO_NODE_PROP = {
     "node_id": {
         "type": "string",
+        "minLength": 1,
         "description": (
             "The videoComposeNode id, exactly as compose_node_id in the "
             "[FREEZONE_COMPOSE_WORKSPACE] context block."
@@ -11858,13 +11987,15 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
         "freezone_studio_edit_film",
         _schema(
             "freezone_studio_edit_film",
-            "Compose workspace only: cut the open videoComposeNode's film through Studio with "
-            "clip-id operations (trim, move, reorder, split, remove, insert, fade, volume, "
-            "speed, track flags). Pass base_rev from the latest freezone_studio_get_film. The "
-            "person sees the change in the editor at once and can undo it. On "
-            "studio_edit_conflict re-read the film and rebuild the operations from the new "
-            "clip ids; on studio_edit_invalid fix the operations. Never use canvas commands "
-            "or draftTimeline to change the cut.",
+            "Compose workspace only: change the open videoComposeNode's film "
+            "through Studio with clip-id operations (trim, move, split, remove, insert, "
+            "fade, volume, speed, track flags, track order, stage size). Pass the rev "
+            "from the latest freezone_studio_get_film as "
+            "base_rev. The person sees the change in the editor at once and can undo it. On "
+            "studio_edit_conflict re-read the film and rebuild the operations from the "
+            "new clip ids; on studio_edit_invalid or tool_arguments_invalid fix the "
+            "operations as the result says instead of "
+            "sending the same call again. Never use canvas commands or draftTimeline to change the cut.",
             {
                 **_SCOPE_PROPS,
                 **_STUDIO_NODE_PROP,
@@ -11921,7 +12052,10 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
             {
                 **_SCOPE_PROPS,
                 **_STUDIO_NODE_PROP,
-                "fps": {"type": "integer", "minimum": 1, "maximum": 60},
+                "fps": {
+                    "type": "integer", "minimum": 1, "maximum": 60,
+                    "description": "Frames per second, 1-60. Defaults to the film's own.",
+                },
                 "title": {"type": "string", "description": "Optional title for the export."},
             },
             ["node_id"],

@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.routes import freezone
@@ -115,7 +116,15 @@ def studio_agent(monkeypatch, tmp_path):
             assert result.structuredContent is not None
             return result
 
-        yield SimpleNamespace(call=call, project_dir=project_dir, enqueued=enqueued)
+        yield SimpleNamespace(
+            call=call,
+            project_dir=project_dir,
+            enqueued=enqueued,
+            fake=fake,
+            schemas={
+                tool.name: tool.inputSchema for tool in dramaclaw_mcp.build_mcp_tools(tool_index)
+            },
+        )
 
 
 def test_get_film_returns_the_current_revision(studio_agent):
@@ -258,3 +267,232 @@ def test_edit_without_a_film_asks_to_open_the_compose_workspace(studio_agent):
     assert result["code"] == "studio_film_missing"
     assert "compose workspace" in result["agent_instruction"]
     assert response.isError is True
+
+
+VALID_OPS = ["set", "move", "insert", "remove", "split", "props", "track", "reorder", "stage"]
+MINIMAL_OPS = [
+    {"op": "set", "clip": "clip-1", "field": "at", "value": 5},
+    {"op": "set", "clip": "clip-1", "field": "time", "value": [0.5, 2.5]},
+    {"op": "set", "clip": "clip-1", "field": "speed", "value": 1.5},
+    {"op": "set", "clip": "clip-1", "field": "volume", "value": 0.8},
+    {"op": "set", "clip": "clip-1", "field": "box", "value": {"x": 0, "y": 0, "w": 960, "h": 540}},
+    {"op": "set", "clip": "clip-1", "field": "overrides", "value": None},
+    {"op": "move", "clip": "clip-1", "at": 3},
+    {"op": "insert", "clip": {"src": "assets/import-a.mp4", "at": 6}},
+    {"op": "remove", "clip": "clip-0"},
+    {"op": "split", "clip": "clip-0", "at": 2, "time": [0, 2], "restTime": [2, 4]},
+    {"op": "props", "edits": [{"clip": "clip-1", "prop": "fade", "value": [0.5, 0.5]}]},
+    {"op": "track", "track": 1, "field": "muted", "value": False},
+    {"op": "reorder", "from": 1, "to": 0},
+    {"op": "stage", "w": 1080, "h": 1920},
+]
+
+
+def _assert_refusal(studio_agent, response, tool, pairs, example):
+    result = response.structuredContent
+    assert response.isError is True
+    assert not any(
+        method == "POST" and path == "/api/projects/pid-1/edit"
+        for method, path, _ in studio_agent.fake.calls
+    )
+    assert result["ok"] is False
+    assert result["error"] == "tool_arguments_invalid"
+    assert result["status"] == "tool_arguments_invalid"
+    assert result["retryable"] is False
+    errors = result["errors"]
+    assert isinstance(errors, list)
+    assert [(error["path"], error["problem"]) for error in errors] == pairs
+    for error in errors:
+        assert {"path", "problem", "message"} <= error.keys()
+        assert error.keys() <= {"path", "problem", "message", "suggestion"}
+        assert all(isinstance(value, str) for value in error.values())
+        assert error["problem"] in {
+            "missing_field", "unknown_field", "unknown_op", "invalid_value"
+        }
+        assert error["path"] in error["message"]
+    assert result["message"] == "; ".join(error["message"] for error in errors)
+    assert result["path"] == pairs[0][0]
+    assert "Sending the same arguments again fails the same way." in result["agent_instruction"]
+    assert result["example"] == example
+    Draft202012Validator(studio_agent.schemas[tool]).validate(result["example"])
+    if tool == "freezone_studio_edit_film":
+        assert result["valid_ops"] == VALID_OPS
+    else:
+        assert "valid_ops" not in result
+
+
+def _edit_example(node="node-1", rev="rev-1"):
+    return {
+        "node_id": node,
+        "base_rev": rev,
+        "ops": [{
+            "op": "set", "clip": "<clip id from freezone_studio_get_film>",
+            "field": "at", "value": 2,
+        }],
+    }
+
+
+def test_recorded_edit_refusal_lists_all_problems_and_is_repeatable(studio_agent):
+    args = {
+        "canvas_id": "user_i1user_151c5ks", "node_id": "dCompose",
+        "ops": [{"clipId": "clip-0", "rev": "c47514c9a6e35b08",
+                 "type": "set_clip_at", "value": 0.2}],
+    }
+    tool = "freezone_studio_edit_film"
+    response = studio_agent.call(tool, **args)
+    repeated = studio_agent.call(tool, **args)
+    assert repeated.structuredContent == response.structuredContent
+    _assert_refusal(studio_agent, response, tool, [
+        ("base_rev", "missing_field"), ("ops[0].op", "missing_field"),
+        ("ops[0].clipId", "unknown_field"), ("ops[0].rev", "unknown_field"),
+        ("ops[0].type", "unknown_field"),
+    ], _edit_example("dCompose", "<rev from freezone_studio_get_film>"))
+    assert {
+        error["path"]: error["suggestion"]
+        for error in response.structuredContent["errors"] if "suggestion" in error
+    } == {"ops[0].clipId": "clip", "ops[0].rev": "base_rev", "ops[0].type": "op"}
+    assert {
+        error["path"]: error["message"]
+        for error in response.structuredContent["errors"]
+        if error["path"] in {"ops[0].rev", "ops[0].clipId"}
+    } == {
+        "ops[0].rev": (
+            "ops[0].rev is not a known field. Did you mean the top-level base_rev argument?"
+        ),
+        "ops[0].clipId": "ops[0].clipId is not a known field. Did you mean clip?",
+    }
+
+
+@pytest.mark.parametrize(("ops", "pairs"), [
+    ([{"op": "set_clip_at", "clip": "clip-0", "value": 0.2}],
+     [("ops[0].op", "unknown_op")]),
+    ([{"op": "move", "clip": "clip-1"}], [("ops[0].at", "missing_field")]),
+    ([{"op": "set", "clip": "clip-1", "value": 1}], [("ops[0].field", "missing_field")]),
+    ([{"op": "set", "clip": "clip-1", "field": "colour", "value": 1}],
+     [("ops[0].field", "invalid_value")]),
+    ([{"op": "set", "clip": "clip-1", "field": "at", "value": [1, 2]}],
+     [("ops[0].value", "invalid_value")]),
+    ([{"op": "insert", "clip": {"src": "assets/a.mp4", "kind": "video", "duration": 2}}],
+     [("ops[0].clip.kind", "unknown_field"), ("ops[0].clip.duration", "unknown_field")]),
+    ([{"op": "remove", "clip": "clip-0"},
+      {"op": "props", "edits": [{"clip": "clip-1", "prop": "fade"}]}],
+     [("ops[1].edits[0].value", "missing_field")]),
+    ([], [("ops", "invalid_value")]),
+], ids=["unknown-op", "move-at", "set-field", "set-colour", "set-value", "insert-clip",
+        "props-value", "empty-ops"])
+def test_edit_refusal_reports_exact_argument_problems(studio_agent, ops, pairs):
+    tool = "freezone_studio_edit_film"
+    response = studio_agent.call(tool, node_id="node-1", base_rev="rev-1", ops=ops)
+    _assert_refusal(studio_agent, response, tool, pairs, _edit_example())
+
+
+@pytest.mark.parametrize(("tool", "args", "pairs", "example"), [
+    ("freezone_studio_get_film", {"node_id": "node-1", "clip": "clip-1"},
+     [("clip", "unknown_field")], {"node_id": "node-1"}),
+    ("freezone_studio_get_film", {}, [("node_id", "missing_field")],
+     {"node_id": "<compose_node_id>"}),
+    ("freezone_studio_export_film", {"node_id": "node-1", "fps": 500},
+     [("fps", "invalid_value")], {"node_id": "node-1"}),
+    ("freezone_studio_import_media", {"node_id": "node-1", "source": "video-a"},
+     [("source", "unknown_field")],
+     {"node_id": "node-1", "source_node_id": "<canvas node id with finished media>"}),
+], ids=["get-unknown", "get-missing", "export-fps", "import-source"])
+def test_other_studio_refusals_include_tool_specific_examples(studio_agent, tool, args,
+                                                             pairs, example):
+    response = studio_agent.call(tool, **args)
+    _assert_refusal(studio_agent, response, tool, pairs, example)
+
+
+@pytest.mark.parametrize("op", MINIMAL_OPS, ids=[
+    "set-at", "set-time", "set-speed", "set-volume", "set-box", "set-overrides",
+    "move", "insert", "remove", "split", "props", "track", "reorder", "stage",
+])
+def test_documented_op_validates_and_reaches_studio_unchanged(studio_agent, op):
+    tool = "freezone_studio_edit_film"
+    args = {"node_id": "node-1", "base_rev": "rev-1", "ops": [op]}
+    Draft202012Validator(studio_agent.schemas[tool]).validate(args)
+    response = studio_agent.call(tool, **args)
+    assert response.structuredContent["ok"] is True
+    assert response.structuredContent["status"] == "studio_film_edited"
+    edits = [body for method, path, body in studio_agent.fake.calls
+             if method == "POST" and path == "/api/projects/pid-1/edit"]
+    assert edits[-1]["ops"] == [op]
+
+
+def test_documented_ops_cover_all_variants_and_set_fields():
+    assert {op["op"] for op in MINIMAL_OPS} == set(VALID_OPS)
+    assert {op["field"] for op in MINIMAL_OPS if op["op"] == "set"} == {
+        "at", "time", "speed", "volume", "box", "overrides"
+    }
+
+
+def _assert_typed_schema(schema, path, *, property_schema=False):
+    if property_schema and "anyOf" in schema:
+        assert all("type" in branch for branch in schema["anyOf"]), path
+    else:
+        assert "type" in schema, path
+
+
+def _walk_schema(schema, path):
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        assert not {"array", "object"}.intersection(schema_type), path
+    for name, child in schema.get("properties", {}).items():
+        child_path = f"{path}.properties.{name}"
+        _assert_typed_schema(child, child_path, property_schema=True)
+        _walk_schema(child, child_path)
+    if "items" in schema:
+        _assert_typed_schema(schema["items"], f"{path}.items", property_schema=True)
+        _walk_schema(schema["items"], f"{path}.items")
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        for index, child in enumerate(schema.get(keyword, [])):
+            child_path = f"{path}.{keyword}[{index}]"
+            if keyword == "anyOf":
+                _assert_typed_schema(child, child_path)
+            _walk_schema(child, child_path)
+    for name, child in schema.get("$defs", {}).items():
+        _walk_schema(child, f"{path}.$defs.{name}")
+    additional = schema.get("additionalProperties")
+    if isinstance(additional, dict):
+        _walk_schema(additional, f"{path}.additionalProperties")
+
+
+@pytest.mark.parametrize("tool", [
+    "freezone_studio_get_film", "freezone_studio_edit_film",
+    "freezone_studio_import_media", "freezone_studio_export_film",
+])
+def test_studio_schema_preserves_types_in_codex(studio_agent, tool):
+    schema = studio_agent.schemas[tool]
+    assert not {"anyOf", "oneOf", "allOf"}.intersection(schema)
+    _walk_schema(schema, tool)
+
+
+def test_edit_schema_lists_closed_typed_op_variants(studio_agent):
+    items = studio_agent.schemas["freezone_studio_edit_film"]["properties"]["ops"]["items"]
+    variants = items["anyOf"]
+    names = []
+    for variant in variants:
+        assert variant["type"] == "object"
+        assert variant["additionalProperties"] is False
+        op = variant["properties"]["op"]
+        assert op["type"] == "string"
+        names.append(op["const"])
+    assert list(dict.fromkeys(names)) == VALID_OPS
+
+
+@pytest.mark.parametrize(("args", "pairs", "example"), [
+    ({}, [("node_id", "missing_field"), ("base_rev", "missing_field"),
+          ("ops", "missing_field")],
+     _edit_example("<compose_node_id>", "<rev from freezone_studio_get_film>")),
+    ({"project_id": "demo", "canvas_id": "canvas-1", "node_id": "node-1",
+      "base_rev": "rev-1", "ops": [{"op": "move", "clip_id": "clip-1", "at": 3}]},
+     [("ops[0].clip", "missing_field"), ("ops[0].clip_id", "unknown_field")],
+     _edit_example()),
+], ids=["missing-arguments", "clip-id-suggestion"])
+def test_edit_refusal_examples_preserve_only_node_and_revision(studio_agent, args, pairs,
+                                                             example):
+    tool = "freezone_studio_edit_film"
+    response = studio_agent.call(tool, **args)
+    _assert_refusal(studio_agent, response, tool, pairs, example)
+    if args:
+        assert response.structuredContent["errors"][1]["suggestion"] == "clip"
