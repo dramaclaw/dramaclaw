@@ -180,8 +180,8 @@ def setup(monkeypatch, tmp_path):
                               pool=pool, queued=queued, ctx=ctx)
 
 
-def create(setup, *, commands=DELETE, turn_id="t1", agent_id="main"):
-    response = setup.client.post(BASE + "/confirmations", json={
+def create(setup, *, commands=DELETE, turn_id="t1", agent_id="main", canvas="default"):
+    response = setup.client.post(BASE.replace("default", canvas) + "/confirmations", json={
         "commands": commands, "turn_id": turn_id, "agent_id": agent_id,
     })
     assert response.status_code == 200, response.text
@@ -196,21 +196,22 @@ def record(setup, created):
     return confirmations.read_confirmation(directory(setup), created["confirmation_id"])
 
 
-def decide(setup, created, **overrides):
+def decide(setup, created, *, canvas="default", **overrides):
     stored = record(setup, created)
     body = {"decision": "confirmed", "via": "card", "turn_id": "t1",
             "command_hash": stored["command_hash"], **overrides}
     return setup.client.post(
-        BASE + f"/confirmations/{created['confirmation_id']}/decision", json=body,
+        BASE.replace("default", canvas) + f"/confirmations/{created['confirmation_id']}/decision",
+        json=body,
     )
 
 
-def nodes(setup):
-    return [node["id"] for node in canvas_store.read_canvas(setup.root, "default")["nodes"]]
+def nodes(setup, *, canvas="default"):
+    return [node["id"] for node in canvas_store.read_canvas(setup.root, canvas)["nodes"]]
 
 
-def notices(setup, agent_id="main"):
-    scope = ChatScope(kind="project", id="demo", surface="freezone", canvas_id="default",
+def notices(setup, agent_id="main", *, canvas="default"):
+    scope = ChatScope(kind="project", id="demo", surface="freezone", canvas_id=canvas,
                       agent_id=agent_id, state_dir=str(setup.root))
     with setup.store.connect("owner", scope) as conn:
         return [dict(row) for row in conn.execute(
@@ -270,7 +271,8 @@ def test_create_confirmation_and_request_errors(setup):
     assert setup.client.post(BASE + "/confirmations", json={"commands": []}).status_code == 422
     response = setup.client.post(BASE.replace("default", "missing") + "/confirmations",
                                  json={"commands": DELETE})
-    assert response.status_code == 404
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "targets_missing"
 
 
 def test_list_exact_fields_filters_turnless_and_expires_once(setup):
@@ -572,8 +574,8 @@ def test_invalid_canvas_id_is_400(setup, method, suffix, body):
     assert response.status_code == 400, response.text
 
 
-def runs(setup):
-    return workflow_runs.list_workflow_runs(project_dir=setup.root, canvas_id="default")
+def runs(setup, *, canvas="default"):
+    return workflow_runs.list_workflow_runs(project_dir=setup.root, canvas_id=canvas)
 
 
 def test_server_paid_confirmation_starts_without_browser_once(setup, monkeypatch):
@@ -1086,7 +1088,7 @@ def test_mixed_preview_failure_rejects_creation(setup):
     assert setup.pool.plan_inputs == []
 
 
-def test_mixed_request_on_missing_canvas_reports_canvas_not_found(setup):
+def test_mixed_request_on_never_saved_canvas_creates_confirmation(setup):
     setup.pool.plan = mixed_plan()
     response = setup.client.post(
         "/projects/proj/freezone/canvases/fresh/confirmations",
@@ -1096,9 +1098,10 @@ def test_mixed_request_on_missing_canvas_reports_canvas_not_found(setup):
             {"type": "run_workflow", "node_ids": ["c1"], "scope": "selection"},
         ]},
     )
-    assert response.status_code == 404, response.text
-    assert response.json()["detail"] == {"code": "canvas_not_found"}
-    assert list(directory(setup).glob("cc_*.json")) == []
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["kinds"] == ["paid_generation"]
+    assert len(list(directory(setup).glob("cc_*.json"))) == 1
+    assert canvas_store.read_canvas(setup.root, "fresh") is None
 
 
 def test_mixed_direct_commands_still_require_confirmation(setup):
@@ -1211,3 +1214,117 @@ def test_mixed_run_not_started_after_edits_reports_reason(setup, monkeypatch, re
     assert stored["status"] == "executed"
     assert stored["outcome"] == {"status": "applied", "revision": 2, "run": run}
     assert any("workflow run not started" in notice["content"] for notice in notices(setup))
+
+
+FRESH = "user_owner_fresh"
+FRESH_PLAN = [
+    {"type": "create_node", "client_id": "c0", "node_type": "textAnnotationNode",
+     "position": {"x": 0, "y": 0}, "data": {"label": "短诗"}},
+    {"type": "create_node", "client_id": "c1", "node_type": "imageGenNode",
+     "position": {"x": 300, "y": 0}, "data": {"label": "新海报"}},
+    {"type": "create_edge", "source": "c0", "target": "c1", "link_type": "prompt_for"},
+    {"type": "select_nodes", "node_ids": ["c1"], "focus": True},
+    {"type": "run_workflow", "node_ids": ["c1"], "scope": "selection"},
+]
+
+
+def test_create_and_run_on_never_saved_canvas_applies_edits_then_starts_server_run(
+    setup, monkeypatch,
+):
+    setup.pool.plan = mixed_plan()
+    assert canvas_store.read_canvas(setup.root, FRESH) is None
+    confirmation = create(setup, commands=FRESH_PLAN, canvas=FRESH)
+    assert confirmation["kinds"] == ["paid_generation"]
+    assert confirmation["targets"] == [
+        {"node_id": "c1", "title": "新海报", "node_type": "imageGenNode",
+         "action": "run_workflow"},
+    ]
+    assert canvas_store.read_canvas(setup.root, FRESH) is None
+
+    def presence_forbidden(*args, **kwargs):
+        raise AssertionError("runnable decision must not consult browser presence")
+
+    monkeypatch.setattr(routes, "canvas_browser_open", presence_forbidden)
+    response = decide(setup, confirmation, canvas=FRESH)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "running"
+    run_id = data["run_id"]
+    assert run_id
+    assert data["result"]["status"] == "applied"
+    canvas = canvas_store.read_canvas(setup.root, FRESH)
+    assert canvas is not None
+    assert len(canvas["nodes"]) == 2
+    text_node, = [node for node in canvas["nodes"] if node["type"] == "textAnnotationNode"]
+    image_node, = [node for node in canvas["nodes"] if node["type"] == "imageGenNode"]
+    assert text_node["data"] == {"label": "短诗"}
+    assert image_node["data"] == {"label": "新海报"}
+    assert [(edge["source"], edge["target"]) for edge in canvas["edges"]] == [
+        (text_node["id"], image_node["id"]),
+    ]
+    assert data["result"]["revision"] == canvas["revision"]
+    assert data["actions"] == [
+        {"node_id": image_node["id"], "action": "generate_image", "label": "新海报"},
+    ]
+    run, = runs(setup, canvas=FRESH)
+    assert run["run_id"] == run_id
+    assert run["owner_kind"] == "server"
+    assert [(a["node_id"], a["action"], a["status"]) for a in run["actions"]] == [
+        (image_node["id"], "generate_image", "pending"),
+    ]
+    assert [task["task_type"] for task in setup.queued] == ["freezone_workflow_drive"]
+    assert record(setup, confirmation)["outcome"] == {"status": "running", "run_id": run_id}
+    assert nodes(setup) == ["n1", "n2", "n3"]
+
+
+def test_never_saved_canvas_retry_applies_nothing_twice(setup):
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=FRESH_PLAN, canvas=FRESH)
+    response = decide(setup, confirmation, canvas=FRESH)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "running"
+    before = (len(setup.pool.apply_calls), nodes(setup, canvas=FRESH),
+              len(runs(setup, canvas=FRESH)), deepcopy(setup.queued))
+    response = decide(setup, confirmation, canvas=FRESH)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "already_handled"
+    assert (len(setup.pool.apply_calls), nodes(setup, canvas=FRESH),
+            len(runs(setup, canvas=FRESH)), setup.queued) == before
+
+
+@pytest.mark.parametrize("commands", [DELETE, PAID], ids=["delete", "paid"])
+def test_never_saved_canvas_still_rejects_missing_targets(setup, commands):
+    response = setup.client.post(
+        BASE.replace("default", FRESH) + "/confirmations", json={"commands": commands},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "targets_missing"
+    assert list(directory(setup).glob("cc_*.json")) == []
+    assert canvas_store.read_canvas(setup.root, FRESH) is None
+
+
+def test_never_saved_canvas_in_inaccessible_project_is_refused(setup, monkeypatch):
+    async def inaccessible(*args, **kwargs):
+        raise HTTPException(404, "project not found")
+
+    monkeypatch.setattr(routes, "_resolve_freezone_project", inaccessible)
+    response = setup.client.post(
+        "/projects/other/freezone/canvases/user_owner_fresh/confirmations",
+        json={"commands": FRESH_PLAN},
+    )
+    assert response.status_code == 404, response.text
+    assert list(directory(setup).glob("cc_*.json")) == []
+    assert canvas_store.read_canvas(setup.root, FRESH) is None
+
+
+def test_existing_canvas_confirmations_are_unchanged(setup):
+    deletion = create(setup)
+    assert deletion["kinds"] == ["delete_nodes"]
+    assert deletion["targets"] == TARGETS
+    paid = create(setup, commands=PAID)
+    assert paid["kinds"] == ["paid_generation"]
+    assert [target["node_id"] for target in paid["targets"]] == ["n1"]
+    clearing = create(setup, commands=[{"type": "clear_canvas"}])
+    assert clearing["kinds"] == ["clear_canvas"]
+    assert [target["node_id"] for target in clearing["targets"]] == ["n1", "n2", "n3"]
+    assert nodes(setup) == ["n1", "n2", "n3"]

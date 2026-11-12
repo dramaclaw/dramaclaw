@@ -18146,8 +18146,6 @@ async def create_canvas_confirmation(
     except canvas_confirmations.CanvasConfirmationError as exc:
         if exc.code == "not_needed":
             raise HTTPException(422, {"code": "canvas_confirmation_not_needed"}) from exc
-        if exc.code == "canvas_not_found":
-            raise HTTPException(404, {"code": "canvas_not_found"}) from exc
         raise HTTPException(409, {"code": exc.code, "message": str(exc)}) from exc
     count_canvas_metric("canvas_confirmation.created")
     logger.info(
