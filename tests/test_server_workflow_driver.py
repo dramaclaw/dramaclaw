@@ -724,6 +724,98 @@ async def test_finalize_run_failure_does_not_fail_run(tmp_path, caplog):
     assert 'ValueError' in caplog.text
 
 
+async def test_finalize_run_after_cancel_attaches_completed_images(tmp_path):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, levels=[[0], [1, 2]])
+    runner = FakeRunner(scope, capacity=[2])
+    release = asyncio.Event()
+    run_action = runner.run_action
+    calls = []
+
+    async def blocking_action(**kwargs):
+        outcome = await run_action(**kwargs)
+        if kwargs['node_id'] != 'one':
+            await release.wait()
+        return outcome
+
+    async def finalize(actions):
+        calls.append(actions)
+        return []
+
+    runner.run_action = blocking_action
+    runner.finalize_run = finalize
+    task = asyncio.create_task(drive(scope, clock, runner))
+    try:
+        assert await asyncio.wait_for(runner.started.get(), 2) == 'one'
+        started = {await asyncio.wait_for(runner.started.get(), 2) for _ in range(2)}
+        assert started == {'two', 'three'}
+        store.update_workflow_run(**scope, status='cancelled', now=clock.now())
+        before = store.read_workflow_run(**scope)
+        await clock.ticks.put(True)
+        result = await asyncio.wait_for(task, 2)
+        assert result['status'] == 'cancelled'
+        assert store.read_workflow_run(**scope) == before
+        assert len(calls) == 1
+        assert calls[0] == before['actions']
+        assert any(a['node_id'] == 'one' and a['status'] == 'completed' for a in calls[0])
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_finalize_run_after_cancel_failure_is_logged(tmp_path, caplog):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock, levels=[[0], [1, 2]])
+    runner = FakeRunner(scope, capacity=[2])
+    release = asyncio.Event()
+    run_action = runner.run_action
+
+    async def blocking_action(**kwargs):
+        outcome = await run_action(**kwargs)
+        if kwargs['node_id'] != 'one':
+            await release.wait()
+        return outcome
+
+    async def finalize(actions):
+        raise ValueError('private canvas content')
+
+    runner.run_action = blocking_action
+    runner.finalize_run = finalize
+    task = asyncio.create_task(drive(scope, clock, runner))
+    try:
+        assert await asyncio.wait_for(runner.started.get(), 2) == 'one'
+        started = {await asyncio.wait_for(runner.started.get(), 2) for _ in range(2)}
+        assert started == {'two', 'three'}
+        store.update_workflow_run(**scope, status='cancelled', now=clock.now())
+        before = store.read_workflow_run(**scope)
+        await clock.ticks.put(True)
+        result = await asyncio.wait_for(task, 2)
+        assert result['status'] == 'cancelled'
+        assert store.read_workflow_run(**scope) == before
+        assert 'private canvas content' not in caplog.text
+        assert 'ValueError' in caplog.text
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_finalize_run_not_repeated_when_cancelled_during_finalize(tmp_path):
+    clock = Clock()
+    scope = setup_run(tmp_path, clock)
+    runner = FakeRunner(scope)
+    calls = []
+
+    async def finalize(actions):
+        calls.append(actions)
+        assert [a['status'] for a in actions] == ['completed'] * 3
+        store.update_workflow_run(**scope, status='cancelled', now=clock.now())
+        return []
+
+    runner.finalize_run = finalize
+    assert (await drive(scope, clock, runner))['status'] == 'cancelled'
+    assert len(calls) == 1
+
+
 async def test_finalize_run_lease_loss_propagates(tmp_path):
     from novelvideo.freezone.server_workflow_driver import ServerWorkflowLeaseLost
     clock = Clock()

@@ -172,6 +172,7 @@ async def drive_server_workflow_run(
     action_tasks: set[asyncio.Task] = set()
     executing: dict[asyncio.Task, datetime] = {}
     timed_out: set[asyncio.Task] = set()
+    finalize_finished = False
 
     def assert_lease() -> None:
         if lease_lost or now() >= expiry:
@@ -355,6 +356,7 @@ async def drive_server_workflow_run(
                     return
 
     async def work() -> str:
+        nonlocal finalize_finished
         for level in _levels(run):
             tasks = [asyncio.create_task(action(run["actions"][index])) for index in level]
             action_tasks.update(tasks)
@@ -378,9 +380,31 @@ async def drive_server_workflow_run(
                 logger.warning("Story attachment failed run_id=%s error_class=%s",
                                run_id, type(exc).__name__)
                 warnings = ["story_attach_failed"]
+            finalize_finished = True
         return (await write(status="failed" if failed else "completed", **(
             {"story_attach_warnings": warnings} if warnings else {}
         )))["status"]
+
+    async def finalize_after_cancel() -> None:
+        # Mirrors the browser executor: connect frames for images completed before a cancel.
+        finalize = getattr(runner, "finalize_run", None)
+        if finalize is None or finalize_finished:
+            return
+        current = await asyncio.to_thread(store.read_workflow_run, **scope)
+        if (
+            current is None or current["status"] != "cancelled"
+            or not any(item["status"] == "completed" for item in current["actions"])
+        ):
+            return
+        try:
+            assert_lease()
+            warnings = await finalize(current["actions"])
+        except Exception as exc:
+            logger.warning("Story attachment failed run_id=%s error_class=%s",
+                           run_id, type(exc).__name__)
+        else:
+            if warnings:
+                logger.info("Story attachment warnings run_id=%s warnings=%s", run_id, warnings)
 
     driver_tasks: set[asyncio.Task] = set()
     try:
@@ -395,13 +419,14 @@ async def drive_server_workflow_run(
         done, _ = await asyncio.wait({monitor_task, work_task}, return_when=asyncio.FIRST_COMPLETED)
         if monitor_task in done:
             await monitor_task
-            return result("lease_lost" if lease_lost else ended_status)
-        return result(await work_task)
+            status = "lease_lost" if lease_lost else ended_status
+        else:
+            status = await work_task
     except (ServerWorkflowLeaseLost, store.WorkflowRunLeaseConflict):
         lease_lost = True
-        return result("lease_lost")
+        status = "lease_lost"
     except _RunEnded:
-        return result(ended_status)
+        status = ended_status
     finally:
         stopped.set()
         pending = driver_tasks | action_tasks | executing.keys()
@@ -409,3 +434,6 @@ async def drive_server_workflow_run(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
+    if status == "cancelled" and not lease_lost:
+        await finalize_after_cancel()
+    return result(status)
