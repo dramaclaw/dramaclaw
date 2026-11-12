@@ -449,7 +449,10 @@ export type FreezoneVideoTargetFps = "auto" | number;
 export type FreezoneVideoSlowdown = "auto" | "2x" | "3x" | "4x" | "5x";
 export type FreezoneVideoScene = "realistic" | "anime";
 
+export type VideoEnhancementModel = "standard" | "topaz";
+
 export interface FreezoneVideoProbe {
+  enhancement_models?: VideoEnhancementModel[];
   width: number;
   height: number;
   fps: number;
@@ -459,6 +462,7 @@ export interface FreezoneVideoProbe {
 }
 
 export interface FreezoneVideoUpscalePayload extends FreezoneNodeContext {
+  enhancementModel?: VideoEnhancementModel;
   /** Static URL of the source video to upscale. */
   sourceUrl: string;
   resolution?: FreezoneVideoUpscaleResolution;
@@ -479,6 +483,7 @@ export async function submitFreezoneVideoUpscale(
       method: "POST",
       json: {
         source_url: payload.sourceUrl,
+        enhancement_model: payload.enhancementModel ?? "standard",
         resolution: payload.resolution ?? "1080p",
         target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
         slowdown: payload.slowdown ?? "auto",
@@ -501,6 +506,7 @@ export async function quoteFreezoneVideoUpscale(
       method: "POST",
       json: {
         source_url: payload.sourceUrl,
+        enhancement_model: payload.enhancementModel ?? "standard",
         resolution: payload.resolution ?? "1080p",
         target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
         slowdown: payload.slowdown ?? "auto",
@@ -515,9 +521,10 @@ export async function quoteFreezoneVideoUpscale(
 export async function probeFreezoneVideoUpscale(
   project: string,
   sourceUrl: string,
+  enhancementModel: VideoEnhancementModel = "standard",
 ): Promise<FreezoneVideoProbe> {
   return await apiCall<FreezoneVideoProbe>(
-    `projects/${encodeURIComponent(project)}/freezone/video/upscale/probe?source_url=${encodeURIComponent(sourceUrl)}`,
+    `projects/${encodeURIComponent(project)}/freezone/video/upscale/probe?source_url=${encodeURIComponent(sourceUrl)}&enhancement_model=${enhancementModel}`,
   );
 }
 

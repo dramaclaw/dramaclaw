@@ -31,12 +31,6 @@ def test_filter_excludes_all_sqlite_and_litestream_state():
         "- *.snapshot.tmp",
         "- *.tmp",
         "- **/freezone/canvases/_locks/**",
-        "- .hermes/.env",
-        "- .hermes/*_cache/**",
-        "- .hermes/logs/**",
-        "- .hermes/tmp/**",
-        "- .hermes/.cache/**",
-        "- .hermes/.local/**",
         "+ **",
     ):
         assert required in lines
@@ -51,6 +45,24 @@ def test_filters_exclude_canvas_change_logs():
 def test_filters_exclude_canvas_presence_heartbeats():
     for filter_text in (RCLONE_FILTER, LIVE_SYNC_FILTER, HOT_SNAPSHOT_FILTER):
         assert "- **/freezone/canvas_presence/**" in filter_text.splitlines()
+
+
+@pytest.mark.parametrize(
+    "hermes_home",
+    # .hermes* covers both state/{user}/.hermes and state/{user}/.hermes-freezone.
+    [".hermes*", "agents/hermes/*"],
+)
+def test_filter_excludes_runtime_state_of_every_hermes_home(hermes_home):
+    lines = [line.strip() for line in RCLONE_FILTER.strip().splitlines()]
+    for runtime_path in (
+        ".env",
+        "*_cache/**",
+        "logs/**",
+        "tmp/**",
+        ".cache/**",
+        ".local/**",
+    ):
+        assert f"- {hermes_home}/{runtime_path}" in lines
 
 
 def test_live_and_hot_filters_partition_high_churn_state():
@@ -266,6 +278,38 @@ def test_snapshot_rejects_symlinked_hot_root(tmp_path):
 
     with pytest.raises(files_sync_module.HotSnapshotError, match="is a symlink"):
         snapshot_hot_state(state_dir, tmp_path / "snapshot")
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks are unavailable")
+def test_snapshot_ignores_hermes_homes_named_freezone(tmp_path):
+    """Hermes homes link freezone plugins/skills into the image by design."""
+    state_dir = tmp_path / "state"
+    image_hermes = tmp_path / "image-hermes"
+    for kind in ("plugins", "skills"):
+        (image_hermes / kind / "freezone").mkdir(parents=True)
+    user_home = state_dir / "user" / ".hermes-freezone"
+    project_home = state_dir / "user" / "project" / "agents" / "hermes" / "freezone"
+    for home in (user_home, project_home):
+        for kind in ("plugins", "skills"):
+            (home / kind).mkdir(parents=True)
+            (home / kind / "freezone").symlink_to(
+                image_hermes / kind / "freezone", target_is_directory=True
+            )
+        (home / "stale_marks.json").write_text("{}", encoding="utf-8")
+    current = state_dir / "user" / "project" / "freezone" / "canvases" / "canvas.json"
+    current.parent.mkdir(parents=True)
+    current.write_text('{"ok": true}', encoding="utf-8")
+
+    assert files_sync_module._iter_freezone_dirs(state_dir) == [
+        state_dir / "user" / "project" / "freezone"
+    ]
+
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_hot_state(state_dir, snapshot_dir)
+
+    assert (snapshot_dir / current.relative_to(state_dir)).is_file()
+    for home in (user_home, project_home):
+        assert not (snapshot_dir / home.relative_to(state_dir)).exists()
 
 
 def test_snapshot_stages_in_place_freezone_json_writers(tmp_path):

@@ -296,6 +296,8 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleSourceUrl?: string;
   /** 目标清晰度档位。 */
   upscaleResolution?: '1080p' | '2k' | '4k';
+  upscaleEnhancementModel?: 'standard' | 'topaz';
+  upscaleModelPendingInitialization?: boolean;
   /** 降噪强度。 */
   upscaleDenoise?: 'none' | '1x' | '2x';
   /** 故事模式:被设为分支叙事起点的视频节点。仅 'start',未设则 undefined。 */

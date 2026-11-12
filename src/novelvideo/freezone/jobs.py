@@ -724,7 +724,15 @@ async def _run_model_video_enhancement(
     if not src.exists():
         raise FileNotFoundError(f"video source not found: {src}")
     factor = slowdown_factor(slowdown)
-    probe = await probe_video_stream(str(src), cwd=project_dir, egress_context=egress_context)
+    probe = await probe_video_stream(
+        str(src), cwd=project_dir, egress_context=egress_context
+    )
+    from novelvideo.freezone.video_slowdown import is_topaz_backend, topaz_requires_frame_rate
+
+    topaz = is_topaz_backend(upscale_backend)
+    topaz_frame_rate = topaz and topaz_requires_frame_rate(target_fps, slowdown)
+    if topaz_frame_rate and not frame_rate_backend:
+        raise RuntimeError("video frame-rate model is not configured")
     work_dir = outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}_stages"
     work_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -739,15 +747,23 @@ async def _run_model_video_enhancement(
             duration=float(probe["duration"]),
             resolution=resolution,
             processing_metadata={
-                "scene": scene,
-                "face_enhance": bool(face_enhance),
+                **(
+                    {"target_fps": int(target_fps)}
+                    if topaz and not topaz_frame_rate and target_fps is not None
+                    else {}
+                ),
+                **(
+                    {}
+                    if topaz
+                    else {"scene": scene, "face_enhance": bool(face_enhance)}
+                ),
             },
             model_params=upscale_model_params,
             request_schema=upscale_request_schema,
             egress_context=egress_context,
         )
 
-        if factor > 1:
+        if factor > 1 and not topaz:
             slowed = work_dir / "02_slowed.mp4"
             await _slow_video(
                 current,
@@ -761,7 +777,7 @@ async def _run_model_video_enhancement(
         effective_target_fps = target_fps
         if factor > 1 and effective_target_fps is None:
             effective_target_fps = max(1, round(float(probe["fps"]), 3))
-        if effective_target_fps is not None:
+        if effective_target_fps is not None and (not topaz or topaz_frame_rate):
             if not frame_rate_backend:
                 raise RuntimeError("video frame-rate model is not configured")
             framed = work_dir / "03_frame_rate.mp4"
@@ -772,11 +788,15 @@ async def _run_model_video_enhancement(
                 output_path=framed,
                 backend=frame_rate_backend,
                 mode="video_frame_rate",
-                duration=float(probe["duration"]) * factor,
+                duration=float(probe["duration"]) * (1 if topaz else factor),
                 resolution=resolution,
                 processing_metadata={
                     "target_fps": effective_target_fps,
-                    "smart_interpolation": smart_interpolation,
+                    **(
+                        {"slowdown": slowdown}
+                        if topaz
+                        else {"smart_interpolation": smart_interpolation}
+                    ),
                     "resolution_tier": {
                         "1080p": "fhd",
                         "2k": "2k",
@@ -800,13 +820,19 @@ async def _run_model_video_enhancement(
             "scene": scene,
             "face_enhance": bool(face_enhance),
             "source": probe,
-            "stages": 1 + int(factor > 1) + int(effective_target_fps is not None),
+            "stages": (
+                (1 + int(topaz_frame_rate))
+                if topaz
+                else 1 + int(factor > 1) + int(effective_target_fps is not None)
+            ),
         }
     finally:
         try:
             shutil.rmtree(work_dir)
         except OSError:
-            logger.warning("failed to remove video enhancement stages: %s", work_dir, exc_info=True)
+            logger.warning(
+                "failed to remove video enhancement stages: %s", work_dir, exc_info=True
+            )
 
 
 async def _run_cmd(

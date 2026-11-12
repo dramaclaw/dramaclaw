@@ -6888,7 +6888,10 @@
         "noHigherResolution": "源视频已达到 4K，暂无更高可选分辨率",
         "noConfiguredResolution": "当前可用模型不支持更高的目标分辨率，请联系管理员检查模型配置",
         "probeError": "无法读取源视频参数：{{error}}",
-        "submit": "生成高清视频"
+        "submit": "生成高清视频",
+        "model": "模型",
+        "standardModel": "标准视频增强",
+        "modelUnavailable": "已保存的增强模型当前不可用，请选择可用模型后继续。"
       }
     },
     "videoNode": {

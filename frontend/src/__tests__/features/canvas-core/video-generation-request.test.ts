@@ -152,11 +152,32 @@ describe('video submission helpers', () => {
   ])('normalizes upscale input %j', (data, expected) => {
     expect(videoUpscaleInput(data)).toStrictEqual(expected);
   });
+  it.each(['auto', 60] as const)('reads saved upscale settings with fps=%s', targetFps => {
+    expect(videoUpscaleInput({ upscaleEnhancementModel: 'topaz', upscaleTargetFps: targetFps,
+      upscaleSlowdown: '3x', upscaleSmartInterpolation: false, upscaleScene: 'anime', upscaleFaceEnhance: true,
+    })).toStrictEqual({ sourceUrl: '', resolution: '1080p', enhancementModel: 'topaz', targetFps,
+      slowdown: '3x', smartInterpolation: false, scene: 'anime', faceEnhance: true });
+  });
+  it.each([undefined, null, '60', 0, -1, NaN, Infinity])('drops invalid saved settings with fps=%s', targetFps => {
+    expect(videoUpscaleInput({ upscaleEnhancementModel: 'unknown', upscaleTargetFps: targetFps,
+      upscaleSlowdown: '6x', upscaleSmartInterpolation: 'false', upscaleScene: 'unknown', upscaleFaceEnhance: 1,
+    })).toStrictEqual({ sourceUrl: '', resolution: '1080p' });
+  });
+  it.each(['auto', 60] as const)('serializes saved settings in wire order with fps=%s', targetFps => {
+    const request = videoUpscaleWireRequest({ projectId: 'p', canvasId: 'c', nodeId: 'n', productOperation: null,
+      ...videoUpscaleInput({ upscaleSourceUrl: '/v.mp4?sig=abc', upscaleResolution: '4k',
+        upscaleEnhancementModel: 'topaz', upscaleTargetFps: targetFps, upscaleSlowdown: '2x',
+        upscaleSmartInterpolation: false, upscaleScene: 'anime', upscaleFaceEnhance: true }),
+    });
+    expect(JSON.stringify(request.body)).toBe(JSON.stringify({ source_url: '/v.mp4', enhancement_model: 'topaz',
+      resolution: '4k', target_fps: targetFps === 'auto' ? null : targetFps, slowdown: '2x',
+      smart_interpolation: false, scene: 'anime', face_enhance: true, canvas_id: 'c', node_id: 'n' }));
+  });
   it.each([true, false])('upscale wire preserves order with attempt=%s', attempt => {
     const request = videoUpscaleWireRequest({ projectId: 'project/a b', canvasId: 'canvas-1', nodeId: 'vid-1',
       sourceUrl: '/static/v.mp4?version=2', resolution: '1080p',
       productOperation: { projectId: 'p', operationId: 'op-1', ...(attempt ? { generationAttemptId: 'attempt-1' } : {}) } });
-    const body = { source_url: '/static/v.mp4', resolution: '1080p', slowdown: 'auto',
+    const body = { source_url: '/static/v.mp4', enhancement_model: 'standard', resolution: '1080p', slowdown: 'auto',
       smart_interpolation: true, scene: 'realistic', face_enhance: false, canvas_id: 'canvas-1', node_id: 'vid-1',
       ...(attempt ? { product_operation_id: 'op-1', generation_attempt_id: 'attempt-1' } : {}) };
     expect(request).toStrictEqual({ method: 'POST', path: 'projects/project%2Fa%20b/freezone/video/upscale', body });

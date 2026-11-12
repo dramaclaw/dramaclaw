@@ -260,7 +260,7 @@ function videoSuccessResult(data: Record<string, unknown> | null | undefined, ex
 }
 /** Unlike ordinary video, only generationError is cleared. */
 export function videoUpscaleStartPatch(startedAtMs: number): Patch {
-  return { isGenerating: true, generationStartedAt: startedAtMs, generationError: null };
+  return { isGenerating: true, upscaleModelPendingInitialization: false, generationStartedAt: startedAtMs, generationError: null };
 }
 /** Upscale persists its accepted handle. */
 export function videoUpscaleAcceptedPatch(ref: VideoGenerationTaskRef): Patch { return generationTaskDescriptor(ref); }

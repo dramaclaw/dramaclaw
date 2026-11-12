@@ -815,6 +815,7 @@ export function AssetBoardVideoDetailToolbar({
       sourceUrl: videoUrl,
       displayName,
       resolution: upscaleResolution,
+      enhancementModel: "standard",
     });
     if (!upscaleNodeId) return;
     // 配置行收起后，工具条「高清」按钮转为 spinner 直到 submit settle——

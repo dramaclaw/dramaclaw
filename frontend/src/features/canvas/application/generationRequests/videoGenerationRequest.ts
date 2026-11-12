@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { VideoEnhancementModel, FreezoneVideoTargetFps, FreezoneVideoSlowdown, FreezoneVideoScene } from '@/api/ops';
 import {
   isAudioNode, isExportImageNode, isImageEditNode, isImageGenNode, isStoryboardGenNode,
   isUploadNode, isVideoNode, type CanvasNode, type CanvasEdge, type VideoNodeData,
@@ -265,16 +266,34 @@ function requestResult(ctx: VideoGenerationRequestContext, route: string, body: 
 }
 export function videoUpscaleInput(data: VideoNodeData | Record<string, unknown>): {
   sourceUrl: string; resolution: typeof VIDEO_UPSCALE_RESOLUTIONS[number];
+  enhancementModel?: VideoEnhancementModel;
+  targetFps?: FreezoneVideoTargetFps;
+  slowdown?: FreezoneVideoSlowdown;
+  smartInterpolation?: boolean;
+  scene?: FreezoneVideoScene;
+  faceEnhance?: boolean;
 } {
+  const settings: Partial<ReturnType<typeof videoUpscaleInput>> = {};
+  if (data.upscaleEnhancementModel === 'standard' || data.upscaleEnhancementModel === 'topaz') settings.enhancementModel = data.upscaleEnhancementModel;
+  if (data.upscaleTargetFps === 'auto' || (typeof data.upscaleTargetFps === 'number'
+    && Number.isFinite(data.upscaleTargetFps) && data.upscaleTargetFps > 0)) settings.targetFps = data.upscaleTargetFps;
+  if (data.upscaleSlowdown === 'auto' || data.upscaleSlowdown === '2x' || data.upscaleSlowdown === '3x'
+    || data.upscaleSlowdown === '4x' || data.upscaleSlowdown === '5x') settings.slowdown = data.upscaleSlowdown;
+  if (typeof data.upscaleSmartInterpolation === 'boolean') settings.smartInterpolation = data.upscaleSmartInterpolation;
+  if (data.upscaleScene === 'realistic' || data.upscaleScene === 'anime') settings.scene = data.upscaleScene;
+  if (typeof data.upscaleFaceEnhance === 'boolean') settings.faceEnhance = data.upscaleFaceEnhance;
   return { sourceUrl: typeof data.upscaleSourceUrl === 'string' ? data.upscaleSourceUrl : '',
-    resolution: VIDEO_UPSCALE_RESOLUTIONS.find(value => value === data.upscaleResolution) ?? '1080p' };
+    resolution: VIDEO_UPSCALE_RESOLUTIONS.find(value => value === data.upscaleResolution) ?? '1080p', ...settings };
 }
 
 export function videoUpscaleWireRequest(input: Pick<VideoGenerationRequestContext,
   'projectId' | 'canvasId' | 'nodeId' | 'productOperation'> & ReturnType<typeof videoUpscaleInput>): VideoGenerationHttpRequest {
   return { method: 'POST', path: `projects/${encodeURIComponent(input.projectId)}/freezone/video/upscale`,
-    body: { source_url: input.sourceUrl.split('?')[0], resolution: input.resolution,
-      slowdown: 'auto', smart_interpolation: true, scene: 'realistic', face_enhance: false,
+    body: { source_url: input.sourceUrl.split('?')[0], enhancement_model: input.enhancementModel ?? 'standard',
+      resolution: input.resolution,
+      ...(input.targetFps === undefined ? {} : { target_fps: input.targetFps === 'auto' ? null : input.targetFps }),
+      slowdown: input.slowdown ?? 'auto', smart_interpolation: input.smartInterpolation ?? true,
+      scene: input.scene ?? 'realistic', face_enhance: input.faceEnhance ?? false,
       ...nodeContextWireFields(input) } };
 }
 

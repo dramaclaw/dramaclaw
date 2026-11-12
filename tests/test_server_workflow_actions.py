@@ -902,6 +902,8 @@ async def test_video_submission_fresh_result_and_owner(setup_runner, upscale, ca
 
     host, _, run, phases, accepted = setup_runner
     video_host(host, upscale=upscale)
+    if upscale:
+        host.data["upscaleEnhancementModel"] = "topaz"
     with caplog.at_level(logging.INFO):
         result = await run("generate_video", generation_attempt_id="attempt-1")
     assert result == {"status": "completed", "output": {"videoUrl": VIDEO_URL},
@@ -909,6 +911,8 @@ async def test_video_submission_fresh_result_and_owner(setup_runner, upscale, ca
     assert [r["path"] for r in host.requests] == [
         "projects/project/freezone/video/" + ("upscale" if upscale else "gen"),
     ]
+    if upscale:
+        assert host.requests[0]["body"]["enhancement_model"] == "topaz"
     assert host.requests[0]["body"]["canvas_id"] == "default"
     assert host.requests[0]["body"]["node_id"] == "n"
     assert host.media_links == [{"run_id": "run-1", "canvas_id": "default", "node_id": "n",

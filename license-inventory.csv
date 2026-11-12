@@ -1243,6 +1243,7 @@ frontend/src/__tests__/features/canvas/video-ops-application.test.ts,Elastic-2.0
 frontend/src/__tests__/features/canvas/video-reference-limits.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-subtitle-erase.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-upscale-application.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/video-upscale-overlay.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-upscale-resolutions.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/video-viewer-modal.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/viewport-bookmarks-domain.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

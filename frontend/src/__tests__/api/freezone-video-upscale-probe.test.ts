@@ -21,7 +21,7 @@ describe("probeFreezoneVideoUpscale", () => {
       probeFreezoneVideoUpscale("project-1", "/static/source.mp4"),
     ).resolves.toEqual(probe);
     expect(apiCall).toHaveBeenCalledWith(
-      "projects/project-1/freezone/video/upscale/probe?source_url=%2Fstatic%2Fsource.mp4",
+      "projects/project-1/freezone/video/upscale/probe?source_url=%2Fstatic%2Fsource.mp4&enhancement_model=standard",
     );
   });
 });
@@ -46,6 +46,7 @@ describe("quoteFreezoneVideoUpscale", () => {
         method: "POST",
         json: {
           source_url: "/static/source.mp4",
+          enhancement_model: "standard",
           resolution: "4k",
           target_fps: 60,
           slowdown: "2x",
@@ -56,4 +57,14 @@ describe("quoteFreezoneVideoUpscale", () => {
       },
     );
   });
+});
+
+
+it("preserves the selected Topaz family in probe and quote", async () => {
+  await probeFreezoneVideoUpscale("project-1", "/static/source.mp4", "topaz");
+  expect(apiCall).toHaveBeenCalledWith(expect.stringContaining("enhancement_model=topaz"));
+  await quoteFreezoneVideoUpscale("project-1", { sourceUrl: "/static/source.mp4", enhancementModel: "topaz", targetFps: 60 });
+  expect(apiCall).toHaveBeenCalledWith(expect.stringContaining("/quote"), expect.objectContaining({
+    json: expect.objectContaining({ enhancement_model: "topaz", target_fps: 60 }),
+  }));
 });

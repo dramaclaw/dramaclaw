@@ -5,13 +5,14 @@ import {
   sendGenerationWireRequest,
   type FreezoneJobRef,
   type FreezoneVideoUpscaleResolution,
+  type VideoEnhancementModel,
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 
-import { videoUpscaleWireRequest } from './generationRequests/videoGenerationRequest';
+import { videoUpscaleInput, videoUpscaleWireRequest } from './generationRequests/videoGenerationRequest';
 import { videoUpscaleStartPatch, videoUpscaleAcceptedPatch, videoUpscaleOutcomePatch } from './generationRequests/videoGenerationResult';
 import { workflowProductOperation } from './workflowExecutionActivity';
 import { notifyTaskStillRunning } from './errorDialog';
@@ -29,6 +30,7 @@ export function createVideoUpscaleResultNode(
   opts: {
     sourceUrl: string;
     displayName: string;
+    enhancementModel?: VideoEnhancementModel;
     resolution: FreezoneVideoUpscaleResolution;
   },
 ): string | null {
@@ -52,6 +54,8 @@ export function createVideoUpscaleResultNode(
       isUpscaleNode: true,
       upscaleSourceUrl: opts.sourceUrl,
       upscaleResolution: opts.resolution,
+      upscaleEnhancementModel: opts.enhancementModel ?? "topaz",
+      upscaleModelPendingInitialization: opts.enhancementModel === undefined,
       isGenerating: false,
     } as unknown as Parameters<typeof store.addNode>[2],
   );
@@ -82,8 +86,10 @@ export async function submitVideoUpscale(
   useCanvasStore.getState().updateNodeData(nodeId, videoUpscaleStartPatch(Date.now()));
 
   try {
+    const saved = useCanvasStore.getState().nodes.find((node) => node.id === nodeId)?.data;
     const ref = await sendGenerationWireRequest<FreezoneJobRef>(videoUpscaleWireRequest({
       projectId: project, canvasId, nodeId, productOperation: workflowProductOperation(nodeId) ?? null,
+      ...videoUpscaleInput(saved ?? {}),
       sourceUrl: opts.sourceUrl, resolution: opts.resolution,
     }));
     useCanvasStore.getState().updateNodeData(nodeId, videoUpscaleAcceptedPatch(ref));

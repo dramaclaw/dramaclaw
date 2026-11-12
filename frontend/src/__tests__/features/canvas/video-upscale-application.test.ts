@@ -73,6 +73,8 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       isUpscaleNode: true,
       upscaleSourceUrl: '/static/v.mp4',
       upscaleResolution: '2k',
+      upscaleEnhancementModel: 'topaz',
+      upscaleModelPendingInitialization: true,
       isGenerating: false,
     });
     expect(
@@ -95,7 +97,7 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       resolution: '1080p',
     });
 
-    const json = { source_url: '/static/v.mp4', resolution: '1080p', slowdown: 'auto',
+    const json = { source_url: '/static/v.mp4', enhancement_model: 'topaz', resolution: '1080p', slowdown: 'auto',
       smart_interpolation: true, scene: 'realistic', face_enhance: false,
       canvas_id: 'canvas-1', node_id: upscaleId };
     expect(apiCall).toHaveBeenCalledWith('projects/proj-1/freezone/video/upscale', {
@@ -115,6 +117,7 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       videoUrl: '/static/v-hd.mp4',
       isGenerating: false,
       generationError: null,
+      upscaleModelPendingInitialization: false,
     });
   });
 

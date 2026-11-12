@@ -6762,7 +6762,10 @@
         "noHigherResolution": "Video nguồn đã là 4K; không có độ phân giải cao hơn",
         "noConfiguredResolution": "Mô hình hiện có không hỗ trợ độ phân giải cao hơn; hãy liên hệ quản trị viên để kiểm tra cấu hình",
         "probeError": "Không thể đọc thông số video nguồn: {{error}}",
-        "submit": "Tạo video HD"
+        "submit": "Tạo video HD",
+        "model": "Model",
+        "standardModel": "Standard video enhancement",
+        "modelUnavailable": "Mô hình tăng cường đã lưu hiện không khả dụng. Hãy chọn mô hình khả dụng để tiếp tục."
       }
     },
     "videoNode": {
