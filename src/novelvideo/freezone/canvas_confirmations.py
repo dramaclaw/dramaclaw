@@ -344,9 +344,9 @@ def request_confirmation(
 ) -> dict:
     from novelvideo.freezone import canvas_store
 
-    canvas = canvas_store.read_canvas(Path(project_state_dir), canvas_id)
-    if canvas is None:
-        raise CanvasConfirmationError("canvas_not_found", "Canvas not found")
+    canvas = canvas_store.read_canvas(Path(project_state_dir), canvas_id) or {
+        "nodes": [], "edges": []
+    }
     if not confirmation_kinds(commands):
         raise CanvasConfirmationError("not_needed", "Canvas confirmation not needed")
     targets = confirmation_targets(canvas, commands)

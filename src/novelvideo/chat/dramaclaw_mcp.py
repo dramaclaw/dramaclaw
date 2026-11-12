@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -32,6 +33,7 @@ from novelvideo.chat.mcp_runtime import (
     _integer_string_argument_paths as _integer_string_argument_paths,
     _unexpected_argument_fields as _unexpected_argument_fields,
 )
+from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 
 logger = logging.getLogger("novelvideo.chat.dramaclaw_mcp")
 ToolIndex = mcp_runtime.ToolIndex
@@ -588,6 +590,19 @@ def _repair_tool_arguments(
     return None
 
 
+_WORKFLOW_DRAFT_TOOLS = frozenset({
+    "freezone_request_user_clarification",
+    "freezone_prepare_workflow_draft",
+    "freezone_revise_workflow",
+    "freezone_patch_workflow_draft",
+    "freezone_get_workflow",
+    "freezone_confirm_workflow_draft",
+    "freezone_run_workflow",
+    "freezone_observe_workflow_run",
+    "freezone_cancel_workflow_run",
+})
+
+
 def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, Any]:
     from novelvideo.freezone.workflow_schema import workflow_plan_schema_diagnostics
 
@@ -601,6 +616,8 @@ def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, An
             path=diagnostics[0]["path"],
             errors=diagnostics,
         )
+    elif name in _WORKFLOW_DRAFT_TOOLS and isinstance(exc, ValidationError):
+        payload.update(workflow_argument_refusal(name, arguments, schema, exc))
     if name in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}:
         payload.update(
             status="workflow_validation_failed", phase="graph_compile", retryable=True
