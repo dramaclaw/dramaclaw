@@ -39,8 +39,10 @@ function hookOutput(value: unknown): pure.AudioGenerationHookOutput {
 function outcome(value: unknown): pure.AudioGenerationOutcome {
   const input = p.record(value);
   if (input.kind === 'completed') {
-    p.fields(input, ['kind', 'url']);
-    return { kind: 'completed', url: p.string(input.url) };
+    p.fields(input, ['kind', 'url', 'durationMs']);
+    const durationMs = p.optional(input.durationMs, value => p.nullable(value, p.number));
+    return { kind: 'completed', url: p.string(input.url),
+      ...(durationMs !== undefined ? { durationMs } : {}) };
   }
   if (input.kind !== 'failed') invalidRequest('Unknown audio outcome');
   p.fields(input, ['kind', 'message', 'isError', 'voicePrerequisite']);

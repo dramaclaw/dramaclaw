@@ -23,6 +23,15 @@ it.each([null, [], {}, { phase: 'other' }])('rejects invalid payload %j', async 
   await expect(serveAudioGenerationPatch(payload)).rejects.toBeInstanceOf(InvalidRequest);
 });
 
+it('accepts durationMs in a completed audio outcome', async () => {
+  const result = await serve('audio_generation_patch', {
+    phase: 'outcome', outcome: { kind: 'completed', url: '/a.mp3', durationMs: 4321 },
+  });
+  expect(result).toMatchObject({
+    patches: [expect.objectContaining({ durationMs: 4321 })],
+  });
+});
+
 it('rejects compile metadata for a missing node', async () => {
   await expect(serveAudioGenerationPatch({ ...audioPayload(), node_id: 'missing', phase: 'compile_metadata',
     metadata: { mode: 'model', prompt: 'Music', recipeIds: [] }, compiled_at: 'caller-time' })).rejects.toBeInstanceOf(InvalidRequest);
@@ -31,6 +40,7 @@ it.each([
   { phase: 'action_result', hook_output: {}, hook_error: { message: '', isError: true, voicePrerequisite: false } },
   { phase: 'outcome', outcome: { kind: 'failed', message: '', isError: true } },
   { phase: 'outcome', outcome: { kind: 'completed', url: '', message: 'extra' } },
+  { phase: 'outcome', outcome: { kind: 'completed', url: '', durationMs: '4321' } },
   { phase: 'outcome', outcome: { kind: 'other' } },
   { phase: 'repair', node_data: {}, now_iso: 'time' },
 ])('rejects malformed audio union %j', async payload => {

@@ -131,6 +131,17 @@ describe('audio result capture', () => {
   });
 });
 describe('pure audio result boundaries', () => {
+  it('preserves durationMs from a completed outcome', () => {
+    const outcome = { kind: 'completed' as const, url: '/a.mp3', durationMs: 4321 };
+    const result = audioGenerationOutcomePatch({ outcome, translate });
+    expect(result.patches).toEqual([expect.objectContaining({ durationMs: 4321 })]);
+  });
+  it('defaults durationMs to null when a completed outcome omits it', () => {
+    const result = audioGenerationOutcomePatch({
+      outcome: { kind: 'completed', url: '/a.mp3' }, translate,
+    });
+    expect(result.patches).toEqual([expect.objectContaining({ durationMs: null })]);
+  });
   it.each([
     { name: 'unconfigured substring', message: 'prefix 声线未配置 suffix', matches: true }, // i18n-exempt -- exact matcher input
     { name: 'missing voice substring', message: '缺少默认声线', matches: true }, // i18n-exempt -- exact matcher input

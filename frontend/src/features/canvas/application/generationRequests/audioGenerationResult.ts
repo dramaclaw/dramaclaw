@@ -28,7 +28,7 @@ export function audioGenerationHookError(thrown: unknown): AudioGenerationHookEr
     isError: thrown instanceof Error, voicePrerequisite: isVoicePrerequisiteError(thrown) };
 }
 
-export type AudioGenerationOutcome = { kind: 'completed'; url: string }
+export type AudioGenerationOutcome = { kind: 'completed'; url: string; durationMs?: number | null }
   | ({ kind: 'failed' } & AudioGenerationHookError);
 export type AudioGenerationOutcomeResult = {
   patches: Partial<AudioNodeData>[];
@@ -78,7 +78,8 @@ export function audioGenerationOutcomePatch(input: {
 }): AudioGenerationOutcomeResult {
   const { outcome, translate } = input;
   if (outcome.kind === 'completed') {
-    return { patches: [{ ...clearedTaskFields, audioUrl: outcome.url, durationMs: null, generationError: null }],
+    return { patches: [{ ...clearedTaskFields, audioUrl: outcome.url,
+      durationMs: outcome.durationMs ?? null, generationError: null }],
       hookOutput: outcome.url ? { audioUrl: outcome.url } : {} };
   }
   const patches: Partial<AudioNodeData>[] = [{ ...clearedTaskFields,

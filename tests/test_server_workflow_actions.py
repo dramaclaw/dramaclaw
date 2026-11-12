@@ -579,6 +579,24 @@ async def test_audio_speech_submission_and_artifact(setup_runner, tmp_path):
     assert_durable(tmp_path, "generate_audio", result["artifact"])
 
 
+@pytest.mark.parametrize("task_result,expected", [
+    pytest.param({"url": AUDIO_URL, "duration_ms": 4321}, 4321, id="positive-int"),
+    pytest.param({"duration_ms": 1500.4}, 1500, id="positive-float"),
+    pytest.param({"duration_ms": 0}, None, id="zero"),
+    pytest.param({}, None, id="missing"),
+    pytest.param({"duration_ms": True}, None, id="boolean"),
+    pytest.param({"duration_ms": "4321"}, None, id="string"),
+    pytest.param({"duration_ms": -5}, None, id="negative"),
+])
+async def test_audio_duration_from_task_result(setup_runner, task_result, expected):
+    host, _, run, _, _ = setup_runner
+    audio_host(host)
+    host.statuses = [{"status": "completed", "result": task_result}]
+    result = await run("generate_audio")
+    assert result["status"] == "completed"
+    assert host.data["durationMs"] == expected
+
+
 async def test_audio_stop_during_submission_keeps_accepted_task(setup_runner):
     host, _, run, _, accepted = setup_runner
     audio_host(host)

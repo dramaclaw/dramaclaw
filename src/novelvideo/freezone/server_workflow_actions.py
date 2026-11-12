@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 import time
@@ -111,6 +112,14 @@ class _ActionStopped(Exception):
 
 def _nonempty_text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _positive_duration_ms(value) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return int(round(value))
 
 
 def _narration_text(data: dict) -> str:
@@ -1024,10 +1033,13 @@ class _ActionExecution:
         )
         if outcome["kind"] != "completed":
             return await self.audio_failure(outcome["message"])
+        task_result = outcome.get("result")
+        duration_ms = task_result.get("duration_ms") if isinstance(task_result, dict) else None
         result = await self.host.job_result(task)
         self.check()
         return await self.audio_outcome({
             "kind": "completed", "url": (result or {}).get("url") or "",
+            "durationMs": _positive_duration_ms(duration_ms),
         })
 
     async def audio_failure(self, message, info=None):
