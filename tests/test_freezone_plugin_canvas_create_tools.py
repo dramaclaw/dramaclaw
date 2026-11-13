@@ -665,6 +665,90 @@ def test_project_level_session_may_name_any_canvas(seams, monkeypatch, site):
     assert seams.lookups == []
 
 
+# --- how a canvas outside this chat is refused ----------------------------------
+
+# canvas_c was made in the browser, canvas_d by another chat, canvas_ghost does not exist.
+OUT_OF_SCOPE = ("canvas_c", "canvas_d", "canvas_ghost")
+STEER_TO_BOUND = (
+    "Retry the same call with exactly", "omit project_id and canvas_id", "session defaults",
+)
+
+
+def _site_refusal(seams, site, project, canvas):
+    try:
+        result = SITES[site](seams.plugin, project, canvas)
+    except Passed:
+        pytest.fail(f"{site} let {project}/{canvas} through")
+    payload = _payload(result)
+    assert payload["ok"] is False and payload["code"] == "scope_mismatch", payload
+    return payload
+
+
+def _assert_not_usable_from_this_chat(payload, canvas):
+    """Refused, not retryable, and nothing points the Agent at the bound canvas."""
+    assert payload["status"] == "scope_mismatch"
+    assert payload["retryable"] is False
+    assert payload["next_action"] == "list_canvases_or_tell_user"
+    # The bound canvas id is not handed over as a value to copy into a retry.
+    assert "canvas_id" not in payload, payload
+    assert canvas in payload["error"]
+    instruction = payload["agent_instruction"]
+    assert "freezone_list_canvases" in instruction
+    assert "created_from_this_chat" in instruction
+    assert "explicitly asks" in instruction
+    for phrase in STEER_TO_BOUND:
+        assert phrase not in instruction, instruction
+
+
+def _assert_retry_with_bound_scope(payload):
+    assert payload["status"] == "scope_mismatch"
+    assert payload["retryable"] is True
+    assert payload["next_action"] == "retry_with_bound_scope"
+    assert payload["canvas_id"] == "default"
+    assert payload["agent_instruction"].startswith("Retry the same call with exactly")
+
+
+@pytest.mark.parametrize("site", sorted(RELAXED_SITES))
+@pytest.mark.parametrize("canvas", OUT_OF_SCOPE)
+def test_canvas_outside_this_chat_is_refused_without_pointing_at_the_bound_canvas(
+    seams, site, canvas,
+):
+    _assert_not_usable_from_this_chat(_site_refusal(seams, site, "proj", canvas), canvas)
+    assert seams.lookups, "the decision comes from the real canvas list"
+
+
+@pytest.mark.parametrize("site", sorted(RELAXED_SITES))
+@pytest.mark.parametrize("failure", [
+    {"ok": False, "status": "failed", "status_code": 503, "error": "down"},
+    RuntimeError("network down"),
+])
+def test_failed_lookup_refuses_without_pointing_at_the_bound_canvas(seams, site, failure):
+    seams.failure["value"] = failure
+    _assert_not_usable_from_this_chat(_site_refusal(seams, site, "proj", "canvas_b"), "canvas_b")
+
+
+@pytest.mark.parametrize("site", sorted(SITES))
+@pytest.mark.parametrize("canvas", ["default", "canvas_b", "canvas_d"])
+def test_another_project_keeps_retry_with_bound_scope(seams, site, canvas):
+    _assert_retry_with_bound_scope(_site_refusal(seams, site, "other", canvas))
+    assert seams.lookups == []
+
+
+@pytest.mark.parametrize("site", sorted(STRICT_SITES))
+@pytest.mark.parametrize("canvas", ["canvas_b", *OUT_OF_SCOPE])
+def test_strict_sites_keep_retry_with_bound_scope(seams, site, canvas):
+    _assert_retry_with_bound_scope(_site_refusal(seams, site, "proj", canvas))
+    assert seams.lookups == []
+
+
+@pytest.mark.parametrize("site", sorted(RELAXED_SITES))
+@pytest.mark.parametrize("canvas", ["canvas_b", *OUT_OF_SCOPE])
+def test_browser_executor_keeps_retry_with_bound_scope(seams, site, canvas):
+    seams.plugin._AGENT_CANVAS_EXECUTOR_CACHE = (time.monotonic(), "browser")
+    _assert_retry_with_bound_scope(_site_refusal(seams, site, "proj", canvas))
+    assert seams.lookups == []
+
+
 # --- stage 3 acceptance through MCP ---------------------------------------------
 
 
@@ -736,3 +820,31 @@ def test_chat_works_on_the_canvas_it_created(agent, monkeypatch):
     )
     assert record["canvas_id"] == b
     assert record["status"] == "pending"
+
+
+def test_refusal_through_mcp_does_not_move_the_write_to_the_bound_canvas(agent):
+    """A write aimed at a canvas outside this chat stays refused end to end."""
+    default_before = _read(agent.root, "default")
+    _seed(agent.root, "canvas_c", name="Made in the browser")
+    _seed(agent.root, "canvas_d", name="Other chat",
+          metadata={"canvas_origin": "user_created", "display_name": "D",
+                    "creator_username": "alice",
+                    "agent_origin": {"chat_canvas_id": "other-chat", "turn_id": "t"}})
+    for canvas in OUT_OF_SCOPE:
+        refused = agent.call("freezone_create_node", {
+            "canvas_id": canvas, "node_type": "textAnnotationNode",
+            "data": {"title": "Elsewhere", "content": "meant for another canvas"},
+        })
+        assert refused["ok"] is False and refused["code"] == "scope_mismatch", refused
+        _assert_not_usable_from_this_chat(refused, canvas)
+    assert _read(agent.root, "default")["revision"] == default_before["revision"]
+    assert _node_ids(agent.root, "default") == []
+    assert _node_ids(agent.root, "canvas_c") == []
+    assert _node_ids(agent.root, "canvas_d") == []
+    assert _read(agent.root, "canvas_ghost") is None
+
+    other_project = agent.call("freezone_create_node", {
+        "project_id": "other", "canvas_id": "canvas_c", "node_type": "textAnnotationNode",
+        "data": {"title": "Elsewhere", "content": "wrong project"},
+    })
+    _assert_retry_with_bound_scope(other_project)

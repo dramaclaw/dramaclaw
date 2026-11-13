@@ -475,6 +475,8 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
     Read metadata.agent_origin.chat_canvas_id from the real canvas list so a
     mistyped or unknown id stays refused. Clarification and Skill Studio events
     stay strict because only the bound canvas has a listener.
+    Refuse canvases outside this chat without steering the Agent to the bound
+    canvas: retrying there would put content meant for another canvas on it.
     """
     mismatch = _bound_scope_mismatch(project, canvas)
     if mismatch is None:
@@ -489,12 +491,41 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
         and _agent_canvas_executor() == "server"
     ):
         return mismatch
+
+    def _canvas_not_usable_from_chat(*, lookup_failed: bool) -> dict[str, Any]:
+        error = (
+            f"Requested canvas {given_canvas!r} is neither the bound canvas "
+            f"{bound_canvas!r} nor a canvas this chat created. "
+        )
+        if lookup_failed:
+            error += (
+                "The canvas list could not be read to confirm which canvases "
+                "this chat created. "
+            )
+        return {
+            "ok": False,
+            "status": "scope_mismatch",
+            "code": "scope_mismatch",
+            "error": error + "Nothing was sent to the frontend.",
+            **({"project_id": bound_project} if bound_project else {}),
+            "retryable": False,
+            "next_action": "list_canvases_or_tell_user",
+            "agent_instruction": (
+                "Do not retry this call on another canvas. This chat can write only "
+                "to the bound canvas and to canvases it created "
+                "(created_from_this_chat=true in freezone_list_canvases). "
+                "Do not move the change to the bound canvas or any other canvas "
+                "on your own; tell the user this canvas cannot be changed from "
+                "this chat, and use a different canvas only if the user explicitly asks."
+            ),
+        }
+
     try:
         result = _request(
             "GET", f"/api/v1/projects/{quote(given_project or bound_project, safe='')}/freezone/canvases"
         )
         if not result.get("ok") or not isinstance(result.get("data"), list):
-            return mismatch
+            return _canvas_not_usable_from_chat(lookup_failed=True)
         for item in result["data"]:
             if not isinstance(item, dict) or item.get("id") != given_canvas:
                 continue
@@ -503,8 +534,8 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
             if isinstance(origin, dict) and origin.get("chat_canvas_id") == bound_canvas:
                 return None
     except Exception:
-        return mismatch
-    return mismatch
+        return _canvas_not_usable_from_chat(lookup_failed=True)
+    return _canvas_not_usable_from_chat(lookup_failed=False)
 
 
 def _surface() -> str:
