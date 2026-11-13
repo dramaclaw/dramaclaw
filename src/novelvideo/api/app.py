@@ -441,8 +441,17 @@ def create_app() -> FastAPI:
     @application.on_event("startup")
     async def startup() -> None:
         from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
-        from novelvideo.freezone.canvas_core_pool import get_canvas_core_pool
+        from novelvideo.freezone.canvas_core_pool import (
+            canvas_core_unavailable_reason,
+            get_canvas_core_pool,
+        )
 
+        reason = canvas_core_unavailable_reason()
+        if reason:
+            logger.warning(
+                "canvas_core unavailable: %s Canvas creation and server canvas commands "
+                "will fail until this is fixed.", reason,
+            )
         if agent_canvas_executor() == "server":
             pool = get_canvas_core_pool()
             application.state.canvas_core_pool = pool

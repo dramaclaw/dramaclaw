@@ -12,7 +12,7 @@ import {
 import { alertDialog, confirmDialog } from "@/components/confirm-dialog-host";
 import { CanvasOutlineList } from "./CanvasOutlineList";
 import {
-  createBlankFreezoneCanvas,
+  createFreezoneCanvas,
   deleteFreezoneCanvas,
   generateClientSaveId,
   type FreezoneCanvasSummary,
@@ -28,9 +28,10 @@ import {
   type CanvasSummaryForDisplay,
   type CanvasTranslate,
 } from "@/features/canvas/core/canvasCreation";
-import { ApiError } from "@/api/client";
+import { ApiError } from "@/features/canvas/domain/backendErrors";
 import { writeUrl } from "@/lib/url-params";
 import { useTranslation } from "react-i18next";
+import { normalize } from "@/i18n/languages";
 import { useAuthStore } from "@/stores/auth-store";
 import { personalCanvasIdForUsername } from "@/features/freezone/projections";
 import { useFreezoneCanvases } from "@/lib/queries/freezone";
@@ -65,7 +66,7 @@ export function CanvasesTab({
   reloadToken,
   collapsed = false,
 }: CanvasesTabProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const username = useAuthStore((state) => state.username);
   const displayName = useAuthStore((state) => state.displayName);
   const canvasesQuery = useFreezoneCanvases(project);
@@ -124,12 +125,11 @@ export function CanvasesTab({
     }
   };
 
-  // 我自己在这个项目里建了几张、还能不能再建。上限是产品配额，后端不拦（见
-  // lib/limits.ts），所以拦截只能落在这里。
+  // 配额和重名由服务端创建路由强制执行，本地计数仅用于请求前解释上限。
   // 只有列表真的回来了才拿它算配额：`items` 在加载中是空数组，按它判定等于把
   // 「不知道」当成「还有余量」。
   // 刷新失败也算「不知道」：refetch() 不抛，失败后 React Query 留着上一份列表，
-  // 拿它接着数，刚建成的那张就不在账上，下一张能照建。
+  // 拿它接着数会漏掉刚建成的那张，让本地预检误放行。
   const canvasQuota = canvasCreationQuota(
     canvasesQuery.data && !canvasesQuery.isError ? items : undefined,
     username,
@@ -206,20 +206,46 @@ export function CanvasesTab({
       return;
     }
     const name = newCanvasName.trim();
+    const locale = normalize(i18n?.language);
     setCreatingCanvas(true);
     setLocalError(null);
     try {
-      await createBlankFreezoneCanvas(project, plan.canvasId, plan.payload);
+      const result = await createFreezoneCanvas(project, { name, request_id: requestId, locale });
+      if (result.status === "rejected") {
+        const rejection = result.rejection;
+        switch (rejection.code) {
+          case "quota_unknown":
+            showCanvasQuotaNotice("unknown");
+            break;
+          case "quota_reached":
+            showCanvasQuotaNotice("reached");
+            break;
+          case "name_required":
+            setLocalError(t("freezone.canvases.createNameRequired"));
+            break;
+          case "duplicate_name":
+          case "id_taken":
+            setLocalError(t("freezone.canvases.createDuplicate", { name: rejection.name }));
+            break;
+          default: {
+            const exhaustive: never = rejection;
+            return exhaustive;
+          }
+        }
+        // 本地预检已通过，服务端拒绝说明缓存列表需要刷新。
+        void canvasesQuery.refetch();
+        return;
+      }
       setDeletedCanvasIds((prev) => {
-        if (!prev.has(plan.canvasId)) return prev;
+        if (!prev.has(result.canvas_id)) return prev;
         const next = new Set(prev);
-        next.delete(plan.canvasId);
+        next.delete(result.canvas_id);
         return next;
       });
       setNewCanvasName("");
       setShowCreateForm(false);
       await canvasesQuery.refetch();
-      writeUrl({ canvas: plan.canvasId });
+      writeUrl({ canvas: result.canvas_id });
     } catch (err) {
       if (isConflictError(err)) {
         setLocalError(t("freezone.canvases.createDuplicate", { name }));

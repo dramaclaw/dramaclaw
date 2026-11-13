@@ -21,6 +21,14 @@ from novelvideo.freezone.canvas_media_scope import CanvasMediaScopeError
 logger = logging.getLogger(__name__)
 
 
+class CanvasNotFoundError(RuntimeError):
+    code = "canvas_not_found"
+
+    def __init__(self, canvas_id: str):
+        super().__init__(f"Canvas not found: {canvas_id}")
+        self.canvas_id = canvas_id
+
+
 class CanvasInlineMediaError(RuntimeError):
     code = "canvas_inline_media"
 
@@ -103,6 +111,10 @@ async def dispatch_agent_canvas(
             recompute = attempt
             canvas = await asyncio.to_thread(canvas_store.read_canvas, project_dir, canvas_id)
             if canvas is None:
+                # User-created ids come only from the create route, so a missing
+                # canvas was never created or was deleted; other ids keep implicit creation.
+                if canvas_id.startswith("canvas_"):
+                    raise CanvasNotFoundError(canvas_id)
                 canvas = {"nodes": [], "edges": []}
             revision = canvas.get("revision")
             node_started = time.monotonic()

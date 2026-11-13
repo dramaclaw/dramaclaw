@@ -2,9 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it, vi } from "vitest";
 
-import type { FreezoneCanvasPayload, FreezoneCanvasSummary } from "@/api/canvas";
+import type { FreezoneCanvasSummary } from "@/api/canvas";
 import {
-  canvasCreationPutPayload,
   canvasCreationQuota,
   canvasCreationQuotaStatus,
   canvasKindFromSummary,
@@ -331,34 +330,5 @@ describe("moved canvas helpers", () => {
     expect(stableCanvasIdHash("alice:Ghost Plan")).toBe("1cebeu5");
     expect(stableCanvasIdHash("")).toBe("ztntfp");
     expect(personalCanvasIdForUsername("alice")).toBe("user_alice_11ht1wn");
-  });
-});
-
-describe("canvasCreationPutPayload", () => {
-  it("copies the payload and strips exactly the two create-only metadata keys without mutation", () => {
-    const payload: FreezoneCanvasPayload = {
-      schema_version: 2, canvas_id: "canvas-a", project_id: "project-a", base_revision: null,
-      client_save_id: "request-a", save_source: "agent_create",
-      nodes: [{ id: "node-a" }], edges: [{ id: "edge-a" }], viewport: { x: 1, y: 2, zoom: 0.5 },
-      metadata: {
-        canvas_origin: "user_created", display_name: "Plan", creator_username: "alice",
-        create_request_id: "request-a", agent_origin: { chat_canvas_id: "chat-a", turn_id: "turn-a" },
-        custom: { create_request_id: "keep-nested", agent_origin: "keep-nested" },
-      },
-    };
-    const before = structuredClone(payload);
-    const result = canvasCreationPutPayload(payload);
-    expect(result).toEqual({
-      ...before,
-      metadata: {
-        canvas_origin: "user_created", display_name: "Plan", creator_username: "alice",
-        custom: { create_request_id: "keep-nested", agent_origin: "keep-nested" },
-      },
-    });
-    expect(result).not.toBe(payload);
-    expect(result.metadata).not.toBe(payload.metadata);
-    expect(result.metadata).not.toHaveProperty("create_request_id");
-    expect(result.metadata).not.toHaveProperty("agent_origin");
-    expect(payload).toEqual(before);
   });
 });

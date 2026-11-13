@@ -27,6 +27,8 @@ const nodeTests = [
   "src/__tests__/features/canvas-core/server-apply-commands.test.ts",
   "src/__tests__/features/canvas-core/server-parity.test.ts",
   "src/__tests__/features/canvas-core/canvas-server-bundle.test.ts",
+  "src/__tests__/features/canvas-core/server-create-canvas.test.ts",
+  "src/__tests__/features/canvas-core/canvas-server-create-bundle.test.ts",
   "src/__tests__/components/credit-promotion-coverage.test.ts",
   "src/__tests__/components/login/announcement-dialog-layout-contract.test.ts",
   "src/__tests__/components/login/login-modal-layout-contract.test.ts",

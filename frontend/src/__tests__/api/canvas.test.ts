@@ -6,7 +6,7 @@ import { apiCall, apiCallEnvelope } from "@/api/client";
 import {
   buildProjectionFromPreset,
   admitFreezoneRecipeResult,
-  createBlankFreezoneCanvas,
+  createFreezoneCanvas,
   getFreezoneCanvas,
   getProjectionStatuses,
   generateClientSaveId,
@@ -165,53 +165,25 @@ describe("canvas projection api", () => {
     ]);
   });
 
-  it("creates a named blank canvas with creator metadata", async () => {
-    vi.mocked(apiCall).mockResolvedValueOnce({
-      saved: true,
-      revision: 1,
-    });
-
-    await createBlankFreezoneCanvas("project-a", "canvas_story_lab_abc123", {
-      schema_version: 2,
+  it("creates a canvas through the server create route", async () => {
+    const response = {
+      status: "created",
       canvas_id: "canvas_story_lab_abc123",
-      project_id: "project-a",
-      base_revision: null,
-      client_save_id: "req-story-lab",
-      save_source: "manual_save",
-      nodes: [],
-      edges: [],
-      viewport: null,
-      metadata: {
-        canvas_origin: "user_created",
-        display_name: "故事实验",
-        creator_username: "alice",
-        create_request_id: "req-story-lab",
-        agent_origin: { chat_canvas_id: "user_alice_x", turn_id: "turn-1" },
-      },
+      display_name: "Story lab",
+      revision: 1,
+    };
+    vi.mocked(apiCall).mockResolvedValueOnce(response);
+
+    const result = await createFreezoneCanvas("project a", {
+      name: "Story lab", request_id: "req-1", locale: "en",
     });
 
     expect(apiCall).toHaveBeenCalledTimes(1);
     expect(vi.mocked(apiCall).mock.calls[0]).toEqual([
-      "projects/project-a/freezone/canvases/canvas_story_lab_abc123",
-      {
-        method: "PUT",
-        json: expect.objectContaining({
-          schema_version: 2,
-          canvas_id: "canvas_story_lab_abc123",
-          project_id: "project-a",
-          base_revision: null,
-          save_source: "manual_save",
-          nodes: [],
-          edges: [],
-          viewport: null,
-          metadata: {
-            canvas_origin: "user_created",
-            display_name: "故事实验",
-            creator_username: "alice",
-          },
-        }),
-      },
+      "projects/project%20a/freezone/canvases:create",
+      { method: "POST", json: { name: "Story lab", request_id: "req-1", locale: "en" } },
     ]);
+    expect(result).toBe(response);
   });
 
   it("coalesces concurrent workflow-run polling for the same canvas", async () => {
