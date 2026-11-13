@@ -1,0 +1,3093 @@
+{
+  "schema": "canvas_creation_plan_fixture.v1",
+  "note": "Recorded from the browser rules before they moved into the shared core. client_save_id, save_source, metadata.create_request_id and metadata.agent_origin follow the plan input. A missing canvases key means the list is unavailable.",
+  "limit": 25,
+  "cases": [
+    {
+      "name": "ready-cjk-name",
+      "locale": "zh",
+      "covers": [
+        "success",
+        "non_ascii_name"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-cjk",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          },
+          {
+            "id": "episode_1_5d41402a",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "episode",
+            "episode": 1,
+            "revision": 2,
+            "metadata": {
+              "preset": {
+                "scope": "episode",
+                "episode": 1
+              }
+            }
+          },
+          {
+            "id": "canvas_draft_bob",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "分镜草稿",
+              "creator_username": "bob"
+            }
+          }
+        ],
+        "name": "故事实验",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_canvas_nkk7r9",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_canvas_nkk7r9",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-cjk",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "故事实验",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-cjk"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-trims-name-keeps-inner-spaces",
+      "locale": "en",
+      "covers": [
+        "success",
+        "name_whitespace"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-trim",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": "  New   Plan  ",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_new_plan_1ge4hui",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_new_plan_1ge4hui",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-trim",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "New   Plan",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-trim"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-latin-diacritics",
+      "locale": "pt",
+      "covers": [
+        "success",
+        "non_ascii_name",
+        "name_case"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-latin",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": "Été Ünïcode",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_t_n_code_1g0frwn",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_t_n_code_1g0frwn",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-latin",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "Été Ünïcode",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-latin"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-dotted-capital-i",
+      "locale": "en",
+      "covers": [
+        "success",
+        "non_ascii_name",
+        "name_case"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-dotted-i",
+        "saveSource": "manual_save",
+        "canvases": [],
+        "name": "İstanbul Plan",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_i_stanbul_plan_tpmrz",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_i_stanbul_plan_tpmrz",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-dotted-i",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "İstanbul Plan",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-dotted-i"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-mixed-vietnamese-cjk",
+      "locale": "vi",
+      "covers": [
+        "success",
+        "non_ascii_name"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-vi",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": "Kịch bản 第1集",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_k_ch_b_n_1_1a4hdmi",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_k_ch_b_n_1_1a4hdmi",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-vi",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "Kịch bản 第1集",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-vi"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-long-name-truncates-slug",
+      "locale": "en",
+      "covers": [
+        "success"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-long",
+        "saveSource": "manual_save",
+        "canvases": [],
+        "name": "A very long storyboard canvas name that keeps going past the limit",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_a_very_long_storyboard_canvas_na_knwl0b",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_a_very_long_storyboard_canvas_na_knwl0b",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-long",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "A very long storyboard canvas name that keeps going past the limit",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-long"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-other-users-do-not-count",
+      "locale": "zh",
+      "covers": [
+        "success",
+        "others_not_counted"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-others",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "canvas_bob_0_x0",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 0",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_1_x1",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 1",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_2_x2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 2",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_3_x3",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 3",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_4_x4",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 4",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_5_x5",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 5",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_6_x6",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 6",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_7_x7",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 7",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_8_x8",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 8",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_9_x9",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 9",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_10_x10",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 10",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_11_x11",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 11",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_12_x12",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 12",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_13_x13",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 13",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_14_x14",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 14",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_15_x15",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 15",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_16_x16",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 16",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_17_x17",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 17",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_18_x18",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 18",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_19_x19",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 19",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_20_x20",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 20",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_21_x21",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 21",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_22_x22",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 22",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_23_x23",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 23",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_bob_24_x24",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "bob 24",
+              "creator_username": "bob"
+            }
+          },
+          {
+            "id": "canvas_alice_0_x0",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 0",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_1_x1",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 1",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_2_x2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 2",
+              "creator_username": "alice"
+            }
+          }
+        ],
+        "name": "第四张",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_canvas_l8wni2",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_canvas_l8wni2",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-others",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "第四张",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-others"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-system-and-copies-do-not-count",
+      "locale": "zh",
+      "covers": [
+        "success",
+        "others_not_counted"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-system",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          },
+          {
+            "id": "episode_1_5d41402a",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "episode",
+            "episode": 1,
+            "revision": 2,
+            "metadata": {
+              "preset": {
+                "scope": "episode",
+                "episode": 1
+              }
+            }
+          },
+          {
+            "id": "beat_1_2_7b8b965a",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "beat",
+            "episode": 1,
+            "beat": 2,
+            "revision": 2,
+            "metadata": {
+              "preset": {
+                "scope": "beat",
+                "episode": 1,
+                "beat": 2,
+                "primary_slot": "shot_a"
+              }
+            }
+          },
+          {
+            "id": "asset_character_c4ca4238",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "asset",
+            "revision": 1,
+            "metadata": {
+              "preset": {
+                "scope": "asset",
+                "asset_kind": "character",
+                "character": "林夏"
+              }
+            }
+          },
+          {
+            "id": "workflow_beat_1_2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "free_workflow": {
+                "source_canvas_id": "beat_1_2_7b8b965a",
+                "source_preset": {
+                  "scope": "beat",
+                  "episode": 1,
+                  "beat": 2
+                }
+              }
+            }
+          },
+          {
+            "id": "user_alice_1kq3v0x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 4,
+            "metadata": {}
+          },
+          {
+            "id": "copy_173000000000_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 0",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000001_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 1",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000002_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 2",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000003_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 3",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000004_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 4",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000005_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 5",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000006_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 6",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000007_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 7",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000008_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 8",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_173000000009_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 9",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000010_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 10",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000011_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 11",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000012_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 12",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000013_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 13",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000014_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 14",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000015_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 15",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000016_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 16",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000017_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 17",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000018_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 18",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000019_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 19",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000020_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 20",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000021_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 21",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000022_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 22",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000023_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 23",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "copy_1730000000024_ab_canvas_x",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "副本 24",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_0_x0",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 0",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_1_x1",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 1",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_2_x2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 2",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_3_x3",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 3",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_4_x4",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 4",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_5_x5",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 5",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_6_x6",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 6",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_7_x7",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 7",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_8_x8",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 8",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_9_x9",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 9",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_10_x10",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 10",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_11_x11",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 11",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_12_x12",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 12",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_13_x13",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 13",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_14_x14",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 14",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_15_x15",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 15",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_16_x16",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 16",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_17_x17",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 17",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_18_x18",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 18",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_19_x19",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 19",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_20_x20",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 20",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_21_x21",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 21",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_22_x22",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 22",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_mine_23_x23",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "mine 23",
+              "creator_username": "alice"
+            }
+          }
+        ],
+        "name": "新的画布",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_canvas_1vvh26p",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_canvas_1vvh26p",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-system",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "新的画布",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-system"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-anonymous-bucket-does-not-block-user",
+      "locale": "zh",
+      "covers": [
+        "success",
+        "others_not_counted"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-anon",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "canvas_old_0_y0",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 0"
+            }
+          },
+          {
+            "id": "canvas_old_1_y1",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 1"
+            }
+          },
+          {
+            "id": "canvas_old_2_y2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 2"
+            }
+          },
+          {
+            "id": "canvas_old_3_y3",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 3"
+            }
+          },
+          {
+            "id": "canvas_old_4_y4",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 4"
+            }
+          },
+          {
+            "id": "canvas_old_5_y5",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 5"
+            }
+          },
+          {
+            "id": "canvas_old_6_y6",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 6"
+            }
+          },
+          {
+            "id": "canvas_old_7_y7",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 7"
+            }
+          },
+          {
+            "id": "canvas_old_8_y8",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 8"
+            }
+          },
+          {
+            "id": "canvas_old_9_y9",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 9"
+            }
+          },
+          {
+            "id": "canvas_old_10_y10",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 10"
+            }
+          },
+          {
+            "id": "canvas_old_11_y11",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 11"
+            }
+          },
+          {
+            "id": "canvas_old_12_y12",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 12"
+            }
+          },
+          {
+            "id": "canvas_old_13_y13",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 13"
+            }
+          },
+          {
+            "id": "canvas_old_14_y14",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 14"
+            }
+          },
+          {
+            "id": "canvas_old_15_y15",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 15"
+            }
+          },
+          {
+            "id": "canvas_old_16_y16",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 16"
+            }
+          },
+          {
+            "id": "canvas_old_17_y17",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 17"
+            }
+          },
+          {
+            "id": "canvas_old_18_y18",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 18"
+            }
+          },
+          {
+            "id": "canvas_old_19_y19",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 19"
+            }
+          },
+          {
+            "id": "canvas_old_20_y20",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 20"
+            }
+          },
+          {
+            "id": "canvas_old_21_y21",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 21"
+            }
+          },
+          {
+            "id": "canvas_old_22_y22",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 22"
+            }
+          },
+          {
+            "id": "canvas_old_23_y23",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 23"
+            }
+          },
+          {
+            "id": "canvas_old_24_y24",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "老画布 24"
+            }
+          }
+        ],
+        "name": "匿名之后",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_canvas_n8y4ty",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_canvas_n8y4ty",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-anon",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "匿名之后",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-anon"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-agent-create-with-origin",
+      "locale": "zh",
+      "covers": [
+        "success",
+        "agent_create"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-agent",
+        "saveSource": "agent_create",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": "Agent 画布",
+        "creatorUsername": "alice",
+        "origin": {
+          "chatCanvasId": "user_alice_1kq3v0x",
+          "turnId": "turn-0001"
+        }
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_agent_g9t016",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_agent_g9t016",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-agent",
+          "save_source": "agent_create",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "Agent 画布",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-agent",
+            "agent_origin": {
+              "chat_canvas_id": "user_alice_1kq3v0x",
+              "turn_id": "turn-0001"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-system-name-in-another-locale",
+      "locale": "en",
+      "covers": [
+        "success",
+        "system_name_locale"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-ready-locale",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": "默认画布",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_canvas_hl3w09",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_canvas_hl3w09",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-ready-locale",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "默认画布",
+            "creator_username": "alice",
+            "create_request_id": "req-ready-locale"
+          }
+        }
+      }
+    },
+    {
+      "name": "rejected-quota-unknown-list-unavailable",
+      "locale": "zh",
+      "covers": [
+        "quota_unknown",
+        "list_unavailable"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-unknown-list",
+        "saveSource": "manual_save",
+        "name": "故事实验",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_canvas_nkk7r9",
+        "rejection": {
+          "code": "quota_unknown"
+        }
+      }
+    },
+    {
+      "name": "rejected-quota-unknown-no-username",
+      "locale": "zh",
+      "covers": [
+        "quota_unknown"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-unknown-user",
+        "saveSource": "manual_save",
+        "canvases": [],
+        "name": "故事实验",
+        "creatorUsername": null
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_canvas_1cgwbra",
+        "rejection": {
+          "code": "quota_unknown"
+        }
+      }
+    },
+    {
+      "name": "rejected-quota-unknown-blank-username-before-name",
+      "locale": "en",
+      "covers": [
+        "quota_unknown",
+        "order"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-unknown-blank",
+        "saveSource": "manual_save",
+        "canvases": [],
+        "name": "   ",
+        "creatorUsername": "   "
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": null,
+        "rejection": {
+          "code": "quota_unknown"
+        }
+      }
+    },
+    {
+      "name": "rejected-quota-reached",
+      "locale": "zh",
+      "covers": [
+        "quota_reached"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-reached",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "canvas_alice_0_x0",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 0",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_1_x1",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 1",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_2_x2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 2",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_3_x3",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 3",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_4_x4",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 4",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_5_x5",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 5",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_6_x6",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 6",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_7_x7",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 7",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_8_x8",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 8",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_9_x9",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 9",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_10_x10",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 10",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_11_x11",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 11",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_12_x12",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 12",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_13_x13",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 13",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_14_x14",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 14",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_15_x15",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 15",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_16_x16",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 16",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_17_x17",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 17",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_18_x18",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 18",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_19_x19",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 19",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_20_x20",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 20",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_21_x21",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 21",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_22_x22",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 22",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_23_x23",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 23",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_24_x24",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 24",
+              "creator_username": "alice"
+            }
+          }
+        ],
+        "name": "第二十六张",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_canvas_fw3hkn",
+        "rejection": {
+          "code": "quota_reached",
+          "limit": 25
+        }
+      }
+    },
+    {
+      "name": "rejected-quota-reached-before-name",
+      "locale": "zh",
+      "covers": [
+        "quota_reached",
+        "order"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-reached-empty",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "canvas_alice_0_x0",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 0",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_1_x1",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 1",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_2_x2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 2",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_3_x3",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 3",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_4_x4",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 4",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_5_x5",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 5",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_6_x6",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 6",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_7_x7",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 7",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_8_x8",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 8",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_9_x9",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 9",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_10_x10",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 10",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_11_x11",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 11",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_12_x12",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 12",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_13_x13",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 13",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_14_x14",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 14",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_15_x15",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 15",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_16_x16",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 16",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_17_x17",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 17",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_18_x18",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 18",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_19_x19",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 19",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_20_x20",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 20",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_21_x21",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 21",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_22_x22",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 22",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_23_x23",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 23",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_24_x24",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 24",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_alice_25_x25",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "alice 25",
+              "creator_username": "alice"
+            }
+          }
+        ],
+        "name": "",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": null,
+        "rejection": {
+          "code": "quota_reached",
+          "limit": 25
+        }
+      }
+    },
+    {
+      "name": "rejected-name-required",
+      "locale": "zh",
+      "covers": [
+        "name_required",
+        "name_whitespace"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-name-required",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": " \t ",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": null,
+        "rejection": {
+          "code": "name_required"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-other-user-case-and-spaces",
+      "locale": "en",
+      "covers": [
+        "duplicate_name",
+        "name_whitespace",
+        "name_case"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-case",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          },
+          {
+            "id": "canvas_story_lab_bob1",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "Story Lab",
+              "creator_username": "bob"
+            }
+          }
+        ],
+        "name": "  story   LAB ",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_story_lab_73xck3",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "story   LAB",
+          "existingCanvasId": "canvas_story_lab_bob1"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-default-zh",
+      "locale": "zh",
+      "covers": [
+        "duplicate_name",
+        "system_name_locale"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-default-zh",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "episode_1_5d41402a",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "episode",
+            "episode": 1,
+            "revision": 2,
+            "metadata": {
+              "preset": {
+                "scope": "episode",
+                "episode": 1
+              }
+            }
+          },
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": "默认画布",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_canvas_hl3w09",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "默认画布",
+          "existingCanvasId": "default"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-default-en",
+      "locale": "en",
+      "covers": [
+        "duplicate_name",
+        "system_name_locale",
+        "name_case"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-default-en",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": "default CANVAS",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_default_canvas_p5s70c",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "default CANVAS",
+          "existingCanvasId": "default"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-default-vi",
+      "locale": "vi",
+      "covers": [
+        "duplicate_name",
+        "system_name_locale",
+        "non_ascii_name",
+        "name_case"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-default-vi",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "name": "canvas MẶC định",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_canvas_m_c_nh_19x1bnv",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "canvas MẶC định",
+          "existingCanvasId": "default"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-episode-zh",
+      "locale": "zh",
+      "covers": [
+        "duplicate_name",
+        "system_name_locale"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-episode",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          },
+          {
+            "id": "episode_1_5d41402a",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "episode",
+            "episode": 1,
+            "revision": 2,
+            "metadata": {
+              "preset": {
+                "scope": "episode",
+                "episode": 1
+              }
+            }
+          }
+        ],
+        "name": "EP1 画布",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_ep1_wy8hqh",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "EP1 画布",
+          "existingCanvasId": "episode_1_5d41402a"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-beat-slot-en",
+      "locale": "en",
+      "covers": [
+        "duplicate_name",
+        "system_name_locale"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-beat",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "beat_1_2_7b8b965a",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "beat",
+            "episode": 1,
+            "beat": 2,
+            "revision": 2,
+            "metadata": {
+              "preset": {
+                "scope": "beat",
+                "episode": 1,
+                "beat": 2,
+                "primary_slot": "shot_a"
+              }
+            }
+          }
+        ],
+        "name": "Beat canvas · EP1 / Beat 2 · shot_a",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_beat_canvas_ep1_beat_2_shot_a_11ej3b8",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "Beat canvas · EP1 / Beat 2 · shot_a",
+          "existingCanvasId": "beat_1_2_7b8b965a"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-asset-pt",
+      "locale": "pt",
+      "covers": [
+        "duplicate_name",
+        "system_name_locale",
+        "non_ascii_name"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-asset",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "asset_character_c4ca4238",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "asset",
+            "revision": 1,
+            "metadata": {
+              "preset": {
+                "scope": "asset",
+                "asset_kind": "character",
+                "character": "林夏"
+              }
+            }
+          }
+        ],
+        "name": "Ecrã de recurso · 林夏 / character",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_ecr_de_recurso_character_lgtof7",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "Ecrã de recurso · 林夏 / character",
+          "existingCanvasId": "asset_character_c4ca4238"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-free-workflow-zh",
+      "locale": "zh",
+      "covers": [
+        "duplicate_name",
+        "system_name_locale"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-workflow",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "workflow_beat_1_2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "free_workflow": {
+                "source_canvas_id": "beat_1_2_7b8b965a",
+                "source_preset": {
+                  "scope": "beat",
+                  "episode": 1,
+                  "beat": 2
+                }
+              }
+            }
+          }
+        ],
+        "name": "自由工作流 · EP1 / Beat 2",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_ep1_beat_2_c0b89k",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "自由工作流 · EP1 / Beat 2",
+          "existingCanvasId": "workflow_beat_1_2"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-conflict-copy-name",
+      "locale": "zh",
+      "covers": [
+        "duplicate_name",
+        "conflict_copy"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-copy-name",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          },
+          {
+            "id": "copy_1730000000000_k2_canvas_story_src",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "故事实验",
+              "creator_username": "alice"
+            }
+          }
+        ],
+        "name": "故事实验",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_canvas_nkk7r9",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "故事实验",
+          "existingCanvasId": "copy_1730000000000_k2_canvas_story_src"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-conflict-copy-label",
+      "locale": "zh",
+      "covers": [
+        "duplicate_name",
+        "conflict_copy",
+        "system_name_locale"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-copy-label",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "copy_1730000000001_k3_default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src"
+            }
+          }
+        ],
+        "name": "冲突副本",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_canvas_wt1o4p",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "冲突副本",
+          "existingCanvasId": "copy_1730000000001_k3_default"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-non-ascii-case",
+      "locale": "pt",
+      "covers": [
+        "duplicate_name",
+        "non_ascii_name",
+        "name_case"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-latin",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "canvas_caf_n_code_a1",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "Café Ünïcode",
+              "creator_username": "alice"
+            }
+          }
+        ],
+        "name": "CAFÉ ÜNÏCODE",
+        "creatorUsername": "bob"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_caf_n_code_2i2jpd",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "CAFÉ ÜNÏCODE",
+          "existingCanvasId": "canvas_caf_n_code_a1"
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-first-match-wins",
+      "locale": "zh",
+      "covers": [
+        "duplicate_name",
+        "conflict_copy"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-dup-first",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "copy_1730000000002_k4_canvas_sb",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "conflict_copy",
+              "source_canvas_id": "canvas_story_src",
+              "display_name": "分镜",
+              "creator_username": "alice"
+            }
+          },
+          {
+            "id": "canvas_sb_alice",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "分镜",
+              "creator_username": "alice"
+            }
+          }
+        ],
+        "name": "分镜",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_canvas_1cwfjr1",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "分镜",
+          "existingCanvasId": "copy_1730000000002_k4_canvas_sb"
+        }
+      }
+    },
+    {
+      "name": "rejected-id-taken",
+      "locale": "zh",
+      "covers": [
+        "id_taken"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-id-taken",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          },
+          {
+            "id": "canvas_ghost_plan_1cebeu5",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": null,
+            "metadata": null
+          }
+        ],
+        "name": "Ghost Plan",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_ghost_plan_1cebeu5",
+        "rejection": {
+          "code": "id_taken",
+          "name": "Ghost Plan",
+          "canvasId": "canvas_ghost_plan_1cebeu5"
+        }
+      }
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { canvasCreationPutPayload } from "@/features/canvas/core/canvasCreation";
 import { apiCall, apiCallEnvelope } from "./client";
 
 /** Admit one standalone Recipe use before synchronous generation. */
@@ -386,32 +387,13 @@ export async function putFreezoneCanvas(
   );
 }
 
-export interface CreateBlankFreezoneCanvasRequest {
-  canvasId: string;
-  name: string;
-  creatorUsername?: string | null;
-}
-
+/** Saves a planned blank canvas through the regular canvas PUT; keys only the create route may write are dropped. */
 export async function createBlankFreezoneCanvas(
   projectId: string,
-  payload: CreateBlankFreezoneCanvasRequest,
+  canvasId: string,
+  payload: FreezoneCanvasPayload,
 ): Promise<FreezoneCanvasSaveResult> {
-  return await putFreezoneCanvas(projectId, payload.canvasId, {
-    schema_version: 2,
-    canvas_id: payload.canvasId,
-    project_id: projectId,
-    base_revision: null,
-    client_save_id: generateClientSaveId(),
-    save_source: "manual_save",
-    nodes: [],
-    edges: [],
-    viewport: null,
-    metadata: {
-      canvas_origin: "user_created",
-      display_name: payload.name,
-      creator_username: payload.creatorUsername ?? null,
-    },
-  });
+  return await putFreezoneCanvas(projectId, canvasId, canvasCreationPutPayload(payload));
 }
 
 export async function deleteFreezoneCanvas(

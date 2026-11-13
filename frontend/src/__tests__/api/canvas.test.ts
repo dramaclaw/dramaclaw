@@ -171,10 +171,23 @@ describe("canvas projection api", () => {
       revision: 1,
     });
 
-    await createBlankFreezoneCanvas("project-a", {
-      canvasId: "canvas_story_lab_abc123",
-      name: "故事实验",
-      creatorUsername: "alice",
+    await createBlankFreezoneCanvas("project-a", "canvas_story_lab_abc123", {
+      schema_version: 2,
+      canvas_id: "canvas_story_lab_abc123",
+      project_id: "project-a",
+      base_revision: null,
+      client_save_id: "req-story-lab",
+      save_source: "manual_save",
+      nodes: [],
+      edges: [],
+      viewport: null,
+      metadata: {
+        canvas_origin: "user_created",
+        display_name: "故事实验",
+        creator_username: "alice",
+        create_request_id: "req-story-lab",
+        agent_origin: { chat_canvas_id: "user_alice_x", turn_id: "turn-1" },
+      },
     });
 
     expect(apiCall).toHaveBeenCalledTimes(1);

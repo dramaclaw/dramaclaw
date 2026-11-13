@@ -16,6 +16,9 @@ const ALLOWED_PACKAGES = ["i18next", "uuid", "zustand/vanilla"];
 /** Local folders that hold the browser app: views, network client, hooks, React stores. */
 const BROWSER_ONLY_DIRS = ["api/", "stores/", "hooks/", "components/", "routes/", "lib/"];
 
+// Plain constants a Node host may share with the browser.
+const NODE_SAFE_FILES = ["lib/limits.ts"];
+
 /** Globals that exist only in a browser (or jsdom). */
 const BROWSER_GLOBALS = new Set([
   "window",
@@ -54,7 +57,7 @@ function browserDependencies(graph: ImportGraph): string[] {
     const local = relative(file);
     if (local.endsWith(".tsx")) problems.push(`view module ${importChain(graph, file, srcRoot)}`);
     const dir = BROWSER_ONLY_DIRS.find((prefix) => local.startsWith(prefix));
-    if (dir) problems.push(`${dir} module ${importChain(graph, file, srcRoot)}`);
+    if (dir && !NODE_SAFE_FILES.includes(local)) problems.push(`${dir} module ${importChain(graph, file, srcRoot)}`);
   }
   return problems;
 }
@@ -156,6 +159,23 @@ function unguardedBrowserGlobalsIn(file: string): string[] {
 }
 
 describe("Node and server canvas entry imports", () => {
+  it.each(NODE_SAFE_FILES)("has no runtime imports in shared constants: %s", (entry) => {
+    const file = path.join(srcRoot, entry);
+    const graph = collectImportGraph([file], srcRoot);
+
+    expect([...graph.files]).toEqual([file]);
+    expect([...graph.packages.keys()]).toEqual([]);
+  });
+
+  it("lets the canvas creation rules load in Node", () => {
+    const graph = collectImportGraph([path.join(srcRoot, "features/canvas/core/canvasCreation.ts")], srcRoot);
+
+    expect(browserDependencies(graph)).toEqual([]);
+    expect([...graph.packages.keys()].filter((name) => !name.startsWith("node:"))).toEqual([]);
+    expect([...graph.files].map(relative)).toContain("lib/limits.ts");
+    expect([...graph.files].sort().flatMap(unguardedBrowserGlobalsIn)).toEqual([]);
+  });
+
   it.each(entries)("reaches no React, view, network or browser store module: %s", (entry) => {
     const graph = collectImportGraph([path.join(srcRoot, "features/canvas", entry)], srcRoot);
 
