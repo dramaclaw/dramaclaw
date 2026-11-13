@@ -175,6 +175,92 @@ def test_launcher_rejects_remote_local_trust(monkeypatch: pytest.MonkeyPatch) ->
         launcher._configure_tools_env(env, CE_ROOT)
 
 
+@pytest.fixture
+def key_launcher(monkeypatch):
+    for name in (
+        "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE",
+        "DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE",
+        "DRAMACLAW_LOCAL_AGENT_TRUST", "DRAMACLAW_CE_OWNER",
+        "DRAMACLAW_API_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    return _load_script("launch_mcp")
+
+
+def _configure_key_launcher(launcher, env):
+    failure = None
+    try:
+        launcher._configure_tools_env(env, CE_ROOT)
+    except SystemExit as exc:
+        failure = str(exc)
+    assert failure is None, f"key-authenticated URL must be accepted: {failure}"
+
+
+@pytest.mark.parametrize("source", ["DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE"])
+def test_launcher_accepts_key_https_without_default_local_trust(key_launcher, tmp_path, source):
+    key_file = tmp_path / "agent.key"
+    key_file.write_text("fake-agent-key-DO-NOT-USE-1111", encoding="utf-8")
+    env = {
+        "DRAMACLAW_API_URL": "https://agent.example.invalid",
+        source: str(key_file) if source.endswith("_FILE") else "fake-agent-key-DO-NOT-USE-1111",
+    }
+    _configure_key_launcher(key_launcher, env)
+    assert env.get("DRAMACLAW_LOCAL_AGENT_TRUST") != "1"
+    assert env["DRAMACLAW_API_URL"] == "https://agent.example.invalid"
+
+
+@pytest.mark.parametrize("source", ["DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE"])
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+def test_launcher_accepts_key_loopback_http(key_launcher, tmp_path, source, host):
+    key_file = tmp_path / "agent.key"
+    key_file.write_text("fake-agent-key-DO-NOT-USE-1111", encoding="utf-8")
+    env = {
+        "DRAMACLAW_API_URL": f"http://{host}:8780",
+        source: str(key_file) if source.endswith("_FILE") else "fake-agent-key-DO-NOT-USE-1111",
+    }
+    _configure_key_launcher(key_launcher, env)
+    assert env.get("DRAMACLAW_LOCAL_AGENT_TRUST") != "1"
+
+
+@pytest.mark.parametrize("source", ["DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE"])
+@pytest.mark.parametrize("host", ["agent.example.invalid", "10.0.0.5:8780"])
+def test_launcher_rejects_key_remote_http_with_https_guidance(key_launcher, tmp_path, source, host):
+    key = "fake-agent-key-DO-NOT-USE-1111"
+    key_file = tmp_path / "agent.key"
+    key_file.write_text(key, encoding="utf-8")
+    env = {
+        "DRAMACLAW_API_URL": f"http://{host}",
+        source: str(key_file) if source.endswith("_FILE") else key,
+    }
+    with pytest.raises(SystemExit) as exc_info:
+        key_launcher._configure_tools_env(env, CE_ROOT)
+    assert "https" in str(exc_info.value)
+    assert key not in str(exc_info.value)
+
+
+def test_launcher_rejects_explicit_remote_local_trust_even_with_key(key_launcher):
+    env = {
+        "DRAMACLAW_API_URL": "https://agent.example.invalid",
+        "DRAMACLAW_AGENT_KEY": "fake-agent-key-DO-NOT-USE-1111",
+        "DRAMACLAW_LOCAL_AGENT_TRUST": "1",
+    }
+    with pytest.raises(SystemExit, match="loopback"):
+        key_launcher._configure_tools_env(env, CE_ROOT)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+def test_launcher_without_credentials_defaults_loopback_local_trust(key_launcher, host):
+    env = {"DRAMACLAW_API_URL": f"http://{host}:8780"}
+    key_launcher._configure_tools_env(env, CE_ROOT)
+    assert env["DRAMACLAW_LOCAL_AGENT_TRUST"] == "1"
+
+
+def test_launcher_without_credentials_rejects_remote_https(key_launcher):
+    env = {"DRAMACLAW_API_URL": "https://agent.example.invalid"}
+    with pytest.raises(SystemExit, match="loopback"):
+        key_launcher._configure_tools_env(env, CE_ROOT)
+
+
 def test_launcher_defaults_keep_frontend_approval_bridge() -> None:
     launcher = _load_script("launch_mcp")
     env: dict[str, str] = {}

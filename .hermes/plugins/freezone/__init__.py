@@ -344,6 +344,13 @@ def _agent_token_configured() -> bool:
     )
 
 
+def _agent_key_configured() -> bool:
+    return bool(
+        os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+        or os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+    )
+
+
 def _current_agent_token() -> str:
     """Read a turn token lazily without depending on the CE application venv."""
 
@@ -374,7 +381,7 @@ def _skill_studio_agent_instruction(
 def _available() -> bool:
     return bool(
         os.environ.get("DRAMACLAW_API_URL")
-        and (_agent_token_configured() or _local_agent_trust_enabled())
+        and (_agent_token_configured() or _agent_key_configured() or _local_agent_trust_enabled())
     )
 
 
@@ -412,6 +419,8 @@ def _request_headers(user_agent: str) -> dict[str, str]:
     token = _current_agent_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    elif not _agent_token_configured() and _agent_key_configured():
+        return headers
     elif not _local_agent_trust_enabled():
         raise ValueError("Freezone agent token is not configured")
     return headers
@@ -599,12 +608,31 @@ def _request(
     method: str, path: str, *, query: Any = None, body: Any = None
 ) -> dict[str, Any]:
     api_path = _normalize_api_path(path)
-    url = f"{_base_url()}{api_path}{_query_string(query)}"
+    api_base = _base_url()
+    query_string = _query_string(query)
+    url = f"{api_base}{api_path}{query_string}"
     payload = None
     headers = _request_headers("freezone-plugin/0.1.0")
     if body is not None:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
+
+    if not _agent_token_configured() and _agent_key_configured():
+        if _SHARED_AGENT_KEY_SESSION is None:
+            return {
+                "ok": False, "code": "agent_key_unavailable",
+                "error": "Agent key session support is unavailable",
+            }
+        return _SHARED_AGENT_KEY_SESSION.protect(
+            lambda: _SHARED_AGENT_KEY_SESSION.request(
+                api_base=api_base, api_path=api_path, method=method,
+                query_string=query_string, payload=payload, headers=headers,
+                timeout=DEFAULT_TIMEOUT_SECONDS,
+                opener=lambda *args, **kwargs: urlopen(*args, **kwargs),
+                decode_success=_decode_response,
+                shape_http_error=_http_error_result,
+            )
+        )
 
     req = Request(url, data=payload, headers=headers, method=method.upper())
     try:
@@ -10114,6 +10142,14 @@ def _load_stdlib_tool_module(name: str, path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+try:
+    _SHARED_AGENT_KEY_SESSION = _load_stdlib_tool_module(
+        "_freezone_agent_key_session", _PLUGIN_DIR / "_agent_key_session.py"
+    )
+except Exception:
+    _SHARED_AGENT_KEY_SESSION = None
 
 
 _STORY_TOOL_MODULE_ERROR: Exception | None = None

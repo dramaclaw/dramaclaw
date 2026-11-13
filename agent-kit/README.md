@@ -124,7 +124,10 @@ python3 /path/to/dramaclaw-agent-kit/scripts/launch_mcp.py tools
 | `DRAMACLAW_PROJECT_ID` | 当前项目；画布模式必须正确设置 |
 | `DRAMACLAW_CANVAS_ID` | 当前 Freezone 画布 |
 | `DRAMACLAW_AGENT_PROFILE` | 默认 `freezone:main` |
-| `DRAMACLAW_AGENT_TOKEN_FILE` | 可选短期 Token 文件，优先于免 Token 模式 |
+| `DRAMACLAW_AGENT_TOKEN_FILE` | 可选短期 Token 文件，优先于环境变量 Token、Key 和免 Token 模式 |
+| `DRAMACLAW_AGENT_TOKEN` | 可选短期 Token，优先于 Key 和免 Token 模式 |
+| `DRAMACLAW_AGENT_KEY_FILE` | 可选 Key 文件，优先于环境变量 Key；排在 Token 之后、免 Token 模式之前 |
+| `DRAMACLAW_AGENT_KEY` | 可选 Key；MCP 通过 `POST /api/v1/agent/sessions` 换取短期会话，仅存内存。远程 API 必须使用 `https`，非 loopback 的 `http` 会被拒绝；不支持此端点的服务器（如本地社区 API）请使用默认免 Token 模式 |
 
 在 API 服务端同时设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server` 和 `DRAMACLAW_CANVAS_PATCH_PUSH=1`（默认执行器为 `browser`），服务端可处理结构修改、上下文读取，并在无需打开画布的情况下运行受支持的节点动作和工作流，包括图片、文本、音频、视频生成及部分图片工具，3D 世界生成通过 `run_node_action` 启动。部分动作或参数组合仍会被拒绝，需要用户打开对应画布运行。支持列表、拒绝原因及恢复限制见[本机 Agent MCP 指南的“服务端执行器”](../docs/zh/guides/local-agent-mcp.md#服务端执行器)。
 
