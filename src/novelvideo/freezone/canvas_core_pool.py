@@ -301,12 +301,25 @@ _pool: CanvasCorePool | None = None
 _pool_lock = threading.Lock()
 
 
+def canvas_core_bundle_path() -> Path:
+    default = Path(__file__).resolve().parents[3] / (
+        "frontend/dist-canvas-server/canvas-core-worker.mjs"
+    )
+    return Path(os.environ.get("DRAMACLAW_CANVAS_CORE_BUNDLE", str(default)))
+
+
+def canvas_core_unavailable_reason() -> str | None:
+    if shutil.which("node") is None:
+        return "Node.js was not found on PATH."
+    bundle = canvas_core_bundle_path()
+    if not bundle.is_file():
+        return f"Canvas core bundle {bundle} is missing; run `pnpm run build:canvas-server` in frontend/."
+    return None
+
+
 def get_canvas_core_pool() -> CanvasCorePool:
     global _pool
     with _pool_lock:
         if _pool is None or _pool._closed:
-            default = Path(__file__).resolve().parents[3] / (
-                "frontend/dist-canvas-server/canvas-core-worker.mjs"
-            )
-            _pool = CanvasCorePool(os.environ.get("DRAMACLAW_CANVAS_CORE_BUNDLE", str(default)))
+            _pool = CanvasCorePool(canvas_core_bundle_path())
         return _pool

@@ -73,6 +73,7 @@ from novelvideo.api.schemas import (
     FreezoneImageAnimateRequest,
     FreezoneImageVectorizeRequest,
     FreezoneImageAnimateGifRequest,
+    CanvasCreateRequest,
     CanvasPayload,
     AgentCanvasCommandsRequest,
     AgentCanvasContextRequest,
@@ -159,12 +160,14 @@ from novelvideo.generators.render_identity_guard import render_ai_detection_erro
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.agent_canvas import (
     CanvasInlineMediaError,
+    CanvasNotFoundError,
     answer_agent_canvas_context,
     dispatch_agent_canvas,
 )
 from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
+from novelvideo.freezone.canvas_creation import create_user_canvas, describe_project_canvases
 from novelvideo.freezone.canvas_presence import canvas_browser_open
 from novelvideo.freezone import canvas_confirmations
 from novelvideo.freezone.canvas_command_bridge import (
@@ -295,6 +298,7 @@ from novelvideo.freezone.paths import (
     CANVAS_ID_RE,
     canvases_dir,
     freezone_root,
+    is_writable_canvas_id,
     output_path_for_job,
     outputs_dir,
     resolve_static_url_to_path,
@@ -13547,6 +13551,12 @@ def _merge_canvas_metadata(existing: dict | None, incoming: dict) -> None:
         incoming["metadata"] = existing_meta
 
 
+SERVER_ONLY_CANVAS_METADATA_KEYS = (
+    "canvas_origin", "creator_username", "agent_origin", "create_request_id",
+)
+CREATE_ROUTE_ONLY_CANVAS_METADATA_KEYS = ("agent_origin", "create_request_id")
+
+
 def _prepare_canvas_payload_for_write(
     *,
     project_id: str,
@@ -13555,6 +13565,7 @@ def _prepare_canvas_payload_for_write(
     raw_payload: dict | None = None,
     existing: dict | None = None,
     user: dict,
+    server_metadata: dict | None = None,
 ) -> dict:
     now = canvas_store.utc_now_iso()
     actor_id = _canvas_actor_id(user)
@@ -13572,6 +13583,27 @@ def _prepare_canvas_payload_for_write(
     if "metadata" not in payload:
         payload["metadata"] = None
     _merge_canvas_metadata(existing, payload)
+    # Server keys are set by the create route and preserved on every other write.
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        metadata = metadata.copy()
+        if isinstance(existing, dict):
+            stored_metadata = existing.get("metadata")
+            if not isinstance(stored_metadata, dict):
+                stored_metadata = {}
+            for key in SERVER_ONLY_CANVAS_METADATA_KEYS:
+                if key in stored_metadata:
+                    metadata[key] = stored_metadata[key]
+                else:
+                    metadata.pop(key, None)
+        elif existing is None:
+            for key in CREATE_ROUTE_ONLY_CANVAS_METADATA_KEYS:
+                metadata.pop(key, None)
+        payload["metadata"] = metadata
+    if server_metadata is not None:
+        payload["metadata"] = {
+            **(metadata if isinstance(metadata, dict) else {}), **server_metadata,
+        }
     _sync_frame_context_reference_edges(payload)
 
     current_revision = existing.get("revision") if isinstance(existing, dict) else None
@@ -15085,7 +15117,7 @@ async def project_canvas_from_preset(
     body: ProjectionPresetCanvasRequest,
     user: dict = Depends(get_api_user),
 ):
-    if not CANVAS_ID_RE.match(canvas_id):
+    if not is_writable_canvas_id(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, username, project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(
@@ -15518,6 +15550,107 @@ async def projection_status(
             "projections": statuses,
         },
     }
+
+
+def _raise_canvas_creation_core_http(exc: CanvasCoreError) -> None:
+    if exc.code == "invalid_request":
+        raise HTTPException(422, {
+            "code": "invalid_canvas_create_request", "message": str(exc),
+        }) from exc
+    raise HTTPException(503, {
+        "code": exc.code,
+        "message": "Canvas creation requires Node.js and the server canvas bundle built "
+        "with `pnpm run build:canvas-server` in frontend/.",
+    }) from exc
+
+
+@router.post("/projects/{project}/freezone/canvases:create", tags=[TAG_FREEZONE_CANVAS])
+async def create_canvas(
+    project: str, body: CanvasCreateRequest,
+    user: dict = Depends(require_project_scope("projects:write")),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, require_home_node=False,
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    is_agent = user.get("credential_kind") in {"agent_session", "local_trusted_agent"}
+    origin = body.origin.model_dump() if is_agent and body.origin is not None else None
+    locale = body.locale or await asyncio.to_thread(recorded_ui_locale, state_dir) or "zh"
+
+    def prepare_payload(plan_payload: dict, existing: dict | None) -> dict:
+        metadata = plan_payload.get("metadata") or {}
+        return _canvas_payload_builder(
+            body=CanvasPayload.model_validate(plan_payload), project=project,
+            canvas_id=plan_payload["canvas_id"], user=user, ctx=ctx,
+            server_metadata={
+                key: metadata[key] for key in SERVER_ONLY_CANVAS_METADATA_KEYS if key in metadata
+            },
+        )(existing)
+
+    try:
+        result = await create_user_canvas(
+            state_dir, project_id=ctx.project_id, name=body.name, request_id=body.request_id,
+            creator_username=ctx.requester_username or None, locale=locale,
+            origin=origin, prepare_payload=prepare_payload,
+        )
+        if result.status == "created":
+            await _after_canvas_save(
+                CanvasPayload.model_validate(result.plan_payload), result.saved,
+                project=project, canvas_id=result.canvas_id,
+                canvas_project_dir=state_dir, user=user,
+            )
+    except CanvasCoreError as exc:
+        _raise_canvas_creation_core_http(exc)
+    except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
+        _raise_canvas_store_http(exc)
+    data = {
+        "status": result.status, "canvas_id": result.canvas_id,
+        "display_name": result.display_name, "revision": result.revision,
+    }
+    if result.status == "rejected":
+        keys = {"existingCanvasId": "existing_canvas_id", "canvasId": "canvas_id"}
+        data["rejection"] = {
+            keys.get(key, key): value for key, value in result.rejection.items()
+        }
+    return {"ok": True, "data": data}
+
+
+@router.get("/projects/{project}/freezone/canvases:agent-view", tags=[TAG_FREEZONE_CANVAS])
+async def get_canvas_agent_view(
+    project: str, chat_canvas_id: str | None = None,
+    locale: Literal["zh", "en", "vi", "pt"] | None = None,
+    user: dict = Depends(require_project_scope("projects:read")),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer", require_home_node=False,
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    locale = locale or await asyncio.to_thread(recorded_ui_locale, state_dir) or "zh"
+    try:
+        await asyncio.to_thread(
+            canvas_store.ensure_default_canvas, state_dir,
+            project_id=ctx.project_id, actor_id=_canvas_actor_id(user),
+        )
+        description = await describe_project_canvases(
+            state_dir, username=ctx.requester_username or None,
+            chat_canvas_id=chat_canvas_id, locale=locale,
+        )
+    except CanvasCoreError as exc:
+        _raise_canvas_creation_core_http(exc)
+    except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
+        _raise_canvas_store_http(exc)
+    keys = {
+        "canvasId": "canvas_id", "displayName": "display_name", "kind": "kind",
+        "creatorUsername": "creator_username", "createdByViewer": "created_by_viewer",
+        "createdFromThisChat": "created_from_this_chat", "modifiedAt": "modified_at",
+    }
+    return {"ok": True, "data": {
+        "canvases": [
+            {target: row[source] for source, target in keys.items()}
+            for row in description["canvases"]
+        ],
+        "quota": description["quota"],
+    }}
 
 
 @router.get("/projects/{project}/freezone/canvases", tags=[TAG_FREEZONE_CANVAS])
@@ -17978,6 +18111,7 @@ async def get_canvas_generation_history(
 
 def _canvas_payload_builder(
     body: CanvasPayload, *, project: str, canvas_id: str, user: dict, ctx: ProjectContext,
+    server_metadata: dict | None = None,
 ) -> Callable[[dict | None], dict]:
     def build_payload(existing: dict | None) -> dict:
         prepared = _prepare_canvas_payload_for_write(
@@ -17986,6 +18120,7 @@ def _canvas_payload_builder(
             body=body,
             existing=existing,
             user=user,
+            server_metadata=server_metadata,
         )
         _stamp_canvas_mainline_context_project_id(prepared, project)
         # 静态资源按 URL 里的项目 id 独立鉴权:画布存下别的项目的媒体地址,源项目成员
@@ -18065,7 +18200,7 @@ async def agent_canvas_commands(
     body: AgentCanvasCommandsRequest,
     user: dict = Depends(require_project_scope("projects:write")),
 ):
-    if not CANVAS_ID_RE.match(canvas_id):
+    if not is_writable_canvas_id(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user, require_home_node=False)
@@ -18124,6 +18259,8 @@ async def execute_agent_canvas_envelopes(
                 "code": "invalid_agent_canvas_request", "message": str(exc),
             }) from exc
         raise HTTPException(503, {"code": exc.code}) from exc
+    except CanvasNotFoundError as exc:
+        raise HTTPException(404, {"code": exc.code, "canvas_id": exc.canvas_id}) from exc
     except CanvasInlineMediaError as exc:
         raise HTTPException(422, {"code": exc.code, "fields": exc.fields}) from exc
     except CanvasMediaScopeError as exc:
@@ -18175,7 +18312,7 @@ async def create_canvas_confirmation(
         check_server_workflow,
     )
 
-    if not CANVAS_ID_RE.match(canvas_id):
+    if not is_writable_canvas_id(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user, require_home_node=False,
@@ -18323,7 +18460,7 @@ async def decide_canvas_confirmation(
         detail.setdefault("message", messages.get(code, "画布确认未通过，未执行。"))
         return HTTPException(status, {"code": code, **detail})
 
-    if not CANVAS_ID_RE.match(canvas_id):
+    if not is_writable_canvas_id(canvas_id):
         raise reject(400, "invalid_canvas_id")
     is_agent = user.get("credential_kind") in {"agent_session", "local_trusted_agent"}
     if body.via == "card" and is_agent:
@@ -18703,7 +18840,7 @@ async def put_canvas(
     body: CanvasPayload,
     user: dict = Depends(get_api_user),
 ):
-    if not CANVAS_ID_RE.match(canvas_id):
+    if not is_writable_canvas_id(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     if body.save_source in {"agent_confirmed", "workflow_result"}:
         raise HTTPException(422, {

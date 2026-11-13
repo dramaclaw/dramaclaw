@@ -347,10 +347,3 @@ export function describeCanvases(
     };
   });
 }
-
-export function canvasCreationPutPayload(payload: FreezoneCanvasPayload): FreezoneCanvasPayload {
-  const metadata = { ...payload.metadata };
-  delete metadata.create_request_id;
-  delete metadata.agent_origin;
-  return { ...payload, metadata };
-}

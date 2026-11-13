@@ -17,6 +17,7 @@ import { serveAudioTranslateRequest, serveAudioTranslatePatch } from './audioTra
 import { serveWorldGenerationRequest, serveWorldGenerationPatch, serveWorldGenerationUpstream } from './worldGeneration';
 import { serveGenerationErrorDescribe } from './generationError';
 import { serveStoryAttach } from './storyAttach';
+import { serveDescribeCanvases, servePlanCanvasCreation } from './createCanvas';
 import { servePlanWorkflow } from './planWorkflow';
 import { serveRecipeCompileRequest, serveRecipeCompileResult } from './recipeCompile';
 
@@ -76,7 +77,7 @@ function parseContextPayload(payload: unknown) {
   return { ...input, envelopes, environment };
 }
 
-const operations = ['recipe_compile_request', 'recipe_compile_result', 'ping', 'story_attach', 'plan_workflow', 'apply_commands', 'answer_context', 'image_generation_request', 'image_generation_patch',
+const operations = ['plan_canvas_creation', 'describe_canvases', 'recipe_compile_request', 'recipe_compile_result', 'ping', 'story_attach', 'plan_workflow', 'apply_commands', 'answer_context', 'image_generation_request', 'image_generation_patch',
   'video_generation_request', 'video_generation_patch', 'audio_generation_request', 'audio_generation_patch',
   'text_generation_request', 'text_generation_patch', 'generation_error_describe',
   'image_tool_request', 'image_tool_patch', 'image_tool_place', 'audio_translate_request', 'audio_translate_patch',
@@ -100,6 +101,10 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       result = await applyCommands(payload.canvas, payload.envelopes, payload.environment);
     } else if (parsed.op === 'story_attach') {
       result = await serveStoryAttach(parsed.payload);
+    } else if (parsed.op === 'plan_canvas_creation') {
+      result = await servePlanCanvasCreation(parsed.payload);
+    } else if (parsed.op === 'describe_canvases') {
+      result = await serveDescribeCanvases(parsed.payload);
     } else if (parsed.op === 'plan_workflow') {
       result = await servePlanWorkflow(parsed.payload);
     } else if (parsed.op === 'answer_context') {

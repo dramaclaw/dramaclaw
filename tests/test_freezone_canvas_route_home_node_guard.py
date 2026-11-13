@@ -235,6 +235,8 @@ PLACEMENT_FREE_CANVAS_ROUTES = {
     "remove_canvas_projection",
     "projection_status",
     "list_canvases",
+    "create_canvas",
+    "get_canvas_agent_view",
     "get_canvas_revision",
     "get_canvas",
     "list_canvas_history",
@@ -300,8 +302,9 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
     # OpenFilm 剪辑工作区再加 5 条非画布路由（TAG_FREEZONE_VIDEO）：打开 Studio 会话，
     # 以及 agent 的 film 读取 / 编辑 / 导入素材 / 导出；它们都走默认的 home-node 守卫。
     # 三条画布确认路由（创建、列表、决定）与 agent_canvas_commands 一样 placement-free。
-    assert router_decorators == 127
-    assert len(canvas_routes) == 37
+    # The canvas create route and the agent view route are placement-free like list_canvases.
+    assert router_decorators == 129
+    assert len(canvas_routes) == 39
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
     assert "cancel_canvas_workflow_draft" in canvas_routes

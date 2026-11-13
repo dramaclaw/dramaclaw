@@ -2214,6 +2214,18 @@ class AgentCanvasContextRequest(BaseModel):
     locale: str | None = None
 
 
+class CanvasCreateOrigin(BaseModel):
+    chat_canvas_id: str
+    turn_id: str
+
+
+class CanvasCreateRequest(BaseModel):
+    name: str = Field(max_length=100)
+    request_id: str = Field(min_length=1, max_length=128)
+    locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
+    origin: Optional[CanvasCreateOrigin] = None
+
+
 class CanvasPayload(BaseModel):
     schema_version: Optional[Literal[2]] = None
     canvas_id: Optional[str] = None

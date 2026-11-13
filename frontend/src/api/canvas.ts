@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { canvasCreationPutPayload } from "@/features/canvas/core/canvasCreation";
+import type { Supported } from "@/i18n/languages";
 import { apiCall, apiCallEnvelope } from "./client";
 
 /** Admit one standalone Recipe use before synchronous generation. */
@@ -387,13 +387,32 @@ export async function putFreezoneCanvas(
   );
 }
 
-/** Saves a planned blank canvas through the regular canvas PUT; keys only the create route may write are dropped. */
-export async function createBlankFreezoneCanvas(
+export type FreezoneCanvasCreateRejection =
+  | { code: "quota_unknown" }
+  | { code: "quota_reached"; limit: number }
+  | { code: "name_required" }
+  | { code: "duplicate_name"; name: string; existing_canvas_id: string }
+  | { code: "id_taken"; name: string; canvas_id: string };
+
+export type FreezoneCanvasCreateResult =
+  | { status: "created" | "exists"; canvas_id: string; display_name: string; revision: number; rejection?: null }
+  | { status: "rejected"; canvas_id: null; display_name: null; revision: null; rejection: FreezoneCanvasCreateRejection };
+
+export interface FreezoneCanvasCreateRequest {
+  name: string;
+  request_id: string;
+  locale?: Supported;
+}
+
+/** The server owns the id, duplicate-name and quota rules, and creator; the request carries no creator. */
+export async function createFreezoneCanvas(
   projectId: string,
-  canvasId: string,
-  payload: FreezoneCanvasPayload,
-): Promise<FreezoneCanvasSaveResult> {
-  return await putFreezoneCanvas(projectId, canvasId, canvasCreationPutPayload(payload));
+  body: FreezoneCanvasCreateRequest,
+): Promise<FreezoneCanvasCreateResult> {
+  return apiCall<FreezoneCanvasCreateResult>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases:create`,
+    { method: "POST", json: body },
+  );
 }
 
 export async function deleteFreezoneCanvas(
