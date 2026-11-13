@@ -469,6 +469,44 @@ def _bound_scope_mismatch(project: str | None, canvas: str | None) -> dict[str, 
     }
 
 
+def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict[str, Any] | None:
+    """Also allow canvases created by this chat, using server-only agent_origin.
+
+    Read metadata.agent_origin.chat_canvas_id from the real canvas list so a
+    mistyped or unknown id stays refused. Clarification and Skill Studio events
+    stay strict because only the bound canvas has a listener.
+    """
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is None:
+        return None
+    bound_project = _default_project_id()
+    bound_canvas = _default_canvas_id()
+    given_project = str(project or "").strip()
+    given_canvas = str(canvas or "").strip()
+    if not (
+        bound_canvas and given_canvas and given_canvas != bound_canvas
+        and (not given_project or given_project == bound_project)
+        and _agent_canvas_executor() == "server"
+    ):
+        return mismatch
+    try:
+        result = _request(
+            "GET", f"/api/v1/projects/{quote(given_project or bound_project, safe='')}/freezone/canvases"
+        )
+        if not result.get("ok") or not isinstance(result.get("data"), list):
+            return mismatch
+        for item in result["data"]:
+            if not isinstance(item, dict) or item.get("id") != given_canvas:
+                continue
+            metadata = item.get("metadata")
+            origin = metadata.get("agent_origin") if isinstance(metadata, dict) else None
+            if isinstance(origin, dict) and origin.get("chat_canvas_id") == bound_canvas:
+                return None
+    except Exception:
+        return mismatch
+    return mismatch
+
+
 def _surface() -> str:
     return (
         os.environ.get("DRAMACLAW_CHAT_SURFACE")
@@ -5576,7 +5614,7 @@ def _commands_include_open_node_action(commands: list[Any]) -> bool:
 def _create_canvas_confirmation(
     project: str, canvas: str, commands: list[Any],
 ) -> str:
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
     agent_id, turn_id = _canvas_agent_identity()
@@ -5694,7 +5732,7 @@ def _dispatch_mcp_approved_frontend_commands(
             "Canvas command bridge is unavailable; cannot dispatch frontend node action. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
     envelope = _canvas_command_envelope(project, canvas, commands)
@@ -5799,7 +5837,7 @@ def _dispatch_frontend_canvas_commands(
             "Canvas command bridge is unavailable; cannot wait for frontend apply result. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
     envelope = {
@@ -5917,7 +5955,7 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
     if scope_error:
         return scope_error
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
     agent_id, turn_id = _canvas_agent_identity()
@@ -6161,7 +6199,7 @@ def _canvas_executor_failure(response: dict[str, Any], *, context: bool = False)
 def _server_apply_canvas_commands(
     project: str, canvas: str, commands: list[Any], *, slim_result: bool,
 ) -> str:
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
     response = _request(
@@ -8817,6 +8855,174 @@ def _validate_dynamic_recipe_action_binding(
     return None
 
 
+def _canvas_management_preamble(project: str) -> dict[str, Any] | None:
+    if _default_project_id() and project != _default_project_id():
+        return _bound_scope_mismatch(project, None)
+    if _agent_canvas_executor() != "server":
+        return {
+            "ok": False, "status": "unsupported", "code": "canvas_server_executor_required",
+            "retryable": False,
+            "error": "Listing and creating canvases from the Agent needs the server canvas executor.",
+            "next_action": "tell_user",
+            "agent_instruction": (
+                "Do not retry. Tell the user the Agent cannot list or create canvases in this "
+                "deployment; they can create the canvas in the canvases tab and open it."
+            ),
+        }
+    return None
+
+
+def _canvas_management_failure(result: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    result = dict(result)
+    status_code = result.pop("status_code", None)
+    result.setdefault("status", "failed")
+    result["code"] = result.get("code") or "request_failed"
+    retryable = result.get("retryable")
+    result["retryable"] = retryable if isinstance(retryable, bool) else False
+    instruction = "Tell the user the canvas request failed."
+    if status_code in {403, 404}:
+        result.update(code="forbidden" if status_code == 403 else "not_found", retryable=False)
+        instruction = "Tell the user the project is unavailable or access is forbidden."
+    elif status_code == 422:
+        result.update(code="invalid_arguments", retryable=True)
+        result["example"] = (
+            {"name": args["name"].strip()[:100] or "Canvas"} if "name" in args else {}
+        )
+        instruction = "Correct the arguments using the example and retry. Keep the user's real values."
+    elif status_code == 503:
+        if result["code"] == "canvas_core_unavailable":
+            result["retryable"] = False
+            instruction = "Do not retry. Tell the user Node.js or the canvas bundle is missing on the server."
+        elif result["code"] in {"canvas_lock_busy", "canvas_core_busy", "canvas_core_timeout"}:
+            result["retryable"] = True
+            result["example"] = {key: args[key] for key in ("name", "project_id") if key in args}
+            instruction = (
+                "Retry the same call once. The same turn reuses the same request id, "
+                "so no second canvas can be created."
+            )
+    result["agent_instruction"] = instruction
+    result["next_action"] = "retry" if result["retryable"] else "tell_user"
+    allowed = set(_RESULT_COMMON_PROPERTIES) | {"example", "errors"}
+    return {key: value for key, value in result.items() if key in allowed}
+
+
+def _canvas_creation_rejection(rejection: dict[str, Any]) -> dict[str, Any]:
+    code = rejection.get("code") or "request_failed"
+    result = {
+        "ok": False, "status": "rejected", "code": code, "rejection": rejection,
+        "retryable": code == "name_required",
+        "next_action": "retry" if code == "name_required" else "tell_user",
+    }
+    instruction = "Tell the user the canvas creation was rejected."
+    if code == "duplicate_name":
+        existing = str(rejection.get("existing_canvas_id") or "")
+        if existing:
+            result["existing_canvas_id"] = existing
+        instruction = (
+            f"Canvas {existing} already exists. Do not create it again. Ask the user for a "
+            "different name. Only continue on the existing canvas if freezone_list_canvases "
+            f"shows created_from_this_chat=true for it; pass canvas_id={existing} explicitly."
+        )
+    elif code == "quota_reached":
+        instruction = (
+            f"The per-user limit of {rejection.get('limit')} canvases is reached. "
+            "Tell the user they must delete or archive a canvas first."
+        )
+    elif code == "quota_unknown":
+        instruction = "The server cannot tell who is creating the canvas. Tell the user."
+    elif code == "name_required":
+        result["example"] = {"name": "A short canvas name"}
+        instruction = "Ask the user for, or use, a real non-blank canvas name."
+    elif code == "id_taken":
+        instruction = "Tell the user to choose a different name because the canvas id is taken."
+    result.update(error=instruction, agent_instruction=instruction)
+    return result
+
+
+def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
+    try:
+        project = _project_from_args(args)
+    except ValueError as exc:
+        return tool_error(str(exc))
+    preamble = _canvas_management_preamble(project)
+    if preamble is not None:
+        return tool_result(preamble)
+    name = args.get("name")
+    if not isinstance(name, str):
+        return tool_result({
+            "ok": False, "status": "invalid_arguments", "code": "invalid_arguments",
+            "error": "name must be a string of 1 to 100 characters.", "retryable": True,
+            "next_action": "retry", "example": {"name": "A short canvas name"},
+            "agent_instruction": (
+                "Retry with the canvas name the user asked for as a string of 1 to 100 "
+                "characters. Keep the user's real values."
+            ),
+        })
+    turn = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    bound = _default_canvas_id()
+    request_id = (
+        hashlib.sha256(json.dumps(
+            [project, turn, name.strip()], ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")).hexdigest() if turn else uuid.uuid4().hex
+    )
+    body = {"name": name, "request_id": request_id}
+    if bound:
+        body["origin"] = {"chat_canvas_id": bound, "turn_id": turn}
+    result = _request(
+        "POST", f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases:create", body=body
+    )
+    if not result.get("ok"):
+        return tool_result(_canvas_management_failure(result, args))
+    data = result.get("data") or {}
+    if data.get("status") == "rejected":
+        return tool_result(_canvas_creation_rejection(data.get("rejection") or {}))
+    if data.get("status") not in {"created", "exists"}:
+        return tool_result(_canvas_management_failure({"ok": False, "error": "Unexpected canvas response"}, args))
+    canvas_id = data["canvas_id"]
+    path = f"/projects/{project}/freezone?canvas={canvas_id}"
+    return tool_result({
+        "ok": True, "status": data["status"], "project_id": project,
+        "canvas_id": canvas_id, "display_name": data["display_name"], "revision": data["revision"],
+        "canvas_path": path,
+        "agent_instruction": (
+            f"Pass canvas_id={canvas_id} explicitly on every later canvas call for this canvas. "
+            f"Calls without canvas_id still go to the bound canvas{(' ' + bound) if bound else ''}. "
+            "Paid generation on it still follows the normal confirmation rules. "
+            f"Give the user the link {path}."
+        ),
+    })
+
+
+def _handle_list_canvases(args: dict[str, Any], **_: Any) -> str:
+    try:
+        project = _project_from_args(args)
+    except ValueError as exc:
+        return tool_error(str(exc))
+    preamble = _canvas_management_preamble(project)
+    if preamble is not None:
+        return tool_result(preamble)
+    bound = _default_canvas_id()
+    result = _request(
+        "GET", f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases:agent-view",
+        query={"chat_canvas_id": bound} if bound else None,
+    )
+    if not result.get("ok"):
+        return tool_result(_canvas_management_failure(result, args))
+    data = result["data"]
+    fields = ("canvas_id", "display_name", "kind", "creator_username", "created_by_viewer",
+              "created_from_this_chat", "modified_at")
+    canvases = [{key: row[key] for key in fields} for row in data["canvases"]]
+    return tool_result({
+        "ok": True, "status": "listed", "project_id": project, "bound_canvas_id": bound or None,
+        "canvases": canvases, "quota": data["quota"], "count": len(canvases),
+        "agent_instruction": (
+            "To write to a canvas other than the bound one, pass its canvas_id explicitly. "
+            + ("Only the bound canvas and canvases with created_from_this_chat=true accept "
+               "writes from this chat." if bound else "This session has no bound canvas.")
+        ),
+    })
+
+
 def _handle_create_node(args: dict[str, Any], **_: Any) -> str:
     node_type = str(args.get("node_type") or "").strip()
     if not node_type:
@@ -9317,7 +9523,7 @@ def _request_canvas_context_from_frontend(
     canvas: str | None,
     requests: list[Any],
 ) -> str:
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
     if _agent_canvas_executor() == "server":
@@ -9705,6 +9911,20 @@ _STORY_SUCCESS_REQUIRED = (
 
 
 _RESULT_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
+    "freezone_create_canvas": {
+        "rejection": {"type": "object"},
+        "example": {"type": "object"},
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "canvas_path": {"type": "string"},
+        "existing_canvas_id": {"type": "string"},
+        "display_name": {"type": "string"},
+    },
+    "freezone_list_canvases": {
+        "canvases": {"type": "array", "items": {"type": "object"}},
+        "quota": {"type": "object"},
+        "bound_canvas_id": {"type": ["string", "null"]},
+        "count": {"type": "integer"},
+    },
     "freezone_studio_import_media": {
         "errors": {"type": "array", "items": {"type": "object"}},
         "example": {"type": "object"},
@@ -9751,6 +9971,13 @@ _STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "freezone_create_canvas": (
+        "project_id", "canvas_id", "display_name", "revision", "canvas_path",
+        "rejection", "existing_canvas_id", "example", "errors",
+    ),
+    "freezone_list_canvases": (
+        "project_id", "bound_canvas_id", "canvases", "quota", "count", "errors", "example",
+    ),
     **_STORY_RESULT_FIELDS,
     "freezone_cancel_workflow_run": ("run_id", "run_status", "errors", "example"),
     "freezone_observe_workflow_run": (
@@ -10049,6 +10276,8 @@ _STUDIO_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
 
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "freezone_create_canvas": ("canvas_id", "display_name", "revision"),
+    "freezone_list_canvases": ("canvases", "quota"),
     **_STORY_SUCCESS_REQUIRED,
     **(_STUDIO_RESULT_SUCCESS_REQUIRED if _OPENFILM_STUDIO_ENABLED else {}),
     "freezone_cancel_workflow_run": ("run_id", "run_status"),
@@ -11956,7 +12185,7 @@ def _handle_studio_tool(
             {"ok": False, "status": "invalid_arguments", "code": "invalid_arguments", "error": str(exc)},
             tool_name=tool_name,
         )
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return _structured_tool_result(mismatch, tool_name=tool_name)
     try:
@@ -12147,6 +12376,32 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
 
 
 TOOLS = (
+    (
+        "freezone_create_canvas",
+        _schema(
+            "freezone_create_canvas",
+            "Create a new empty canvas in the project for this chat. Pass its canvas_id explicitly "
+            "on later canvas tools; calls without canvas_id keep using the bound canvas. "
+            "Only available with the server canvas executor. Does not run any generation.",
+            {
+                "name": {"type": "string", "minLength": 1, "maxLength": 100,
+                         "description": "Name of the new canvas."},
+                "project_id": _SCOPE_PROPS["project_id"],
+            },
+            ["name"], reject_unknown=True,
+        ),
+        _handle_create_canvas,
+    ),
+    (
+        "freezone_list_canvases",
+        _schema(
+            "freezone_list_canvases",
+            "List the project's canvases with who created them, whether this chat created them, "
+            "and the creation quota.",
+            {"project_id": _SCOPE_PROPS["project_id"]}, [], reject_unknown=True,
+        ),
+        _handle_list_canvases,
+    ),
     *_INTERACTIVE_STORY_TOOLS,
     *_STORY_CANVAS_TOOLS,
     (

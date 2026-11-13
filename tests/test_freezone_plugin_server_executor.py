@@ -37,6 +37,9 @@ def agent(monkeypatch, tmp_path):
         if path.endswith("/presence"):
             assert method == "GET"
             return {"ok": True, "data": {"browser_open": False}}
+        if path == "/api/v1/projects/p/freezone/canvases":
+            assert method == "GET"
+            return {"ok": True, "data": [{"id": "c", "metadata": {}}]}
         assert method == "POST"
         if path.endswith("agent-context"):
             return {"ok": True, "data": context}
@@ -727,7 +730,12 @@ def test_decision_bound_scope_mismatch_without_request(agent, tool):
     plugin, calls, _, _ = agent
     result = _tool(plugin, tool, {"confirmation_id": CONFIRMATION_ID, "canvas_id": "other"})
     assert result["code"] == "scope_mismatch"
-    assert calls == []
+    # Only reads happen: the executor mode, then the canvas list that says which
+    # canvases this chat created. Nothing is decided.
+    assert calls == [
+        ("GET", "/api/v1/config", None),
+        ("GET", "/api/v1/projects/p/freezone/canvases", None),
+    ]
 
 
 @pytest.mark.parametrize("code", [

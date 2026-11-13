@@ -588,6 +588,9 @@ def _repair_tool_arguments(
     return None
 
 
+_CANVAS_CREATE_TOOLS = frozenset({"freezone_create_canvas"})
+
+
 _WORKFLOW_DRAFT_TOOLS = frozenset({
     "freezone_prepare_workflow",
     "freezone_prepare_workflow_plan_draft",
@@ -611,6 +614,9 @@ def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, An
             payload.update(status="workflow_validation_failed", phase="graph_compile")
             recovery = _workflow_schema_recovery_instruction(name)
             payload["agent_instruction"] += f" {recovery}"
+    if name in _CANVAS_CREATE_TOOLS and isinstance(exc, ValidationError):
+        payload.update(workflow_argument_refusal(name, arguments, schema, exc))
+        payload["agent_instruction"] += " The canvas name must be 1 to 100 characters."
     return payload
 
 
