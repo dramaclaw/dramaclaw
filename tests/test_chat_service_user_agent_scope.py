@@ -2000,6 +2000,21 @@ def test_codex_exact_audio_planner_has_no_canvas_tools_and_uses_plan_schema(
     assert captured.get("client_user_message_id") is None
 
 
+def test_clarification_without_interface_is_not_retried_or_moved():
+    skill = (
+        Path(chat_service.__file__).resolve().parents[1]
+        / "agent_skills"
+        / "dramaclaw-workflows"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    for instructions in (
+        chat_service._codex_developer_instructions("freezone_canvas"),
+        chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS,
+        skill,
+    ):
+        assert "clarification_ui_unavailable" in instructions
+
+
 def test_named_recipe_distinguishes_existing_output_from_external_media_input():
     for instructions in (
         chat_service._codex_developer_instructions("freezone_canvas"),

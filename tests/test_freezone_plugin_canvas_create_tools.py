@@ -31,7 +31,7 @@ from novelvideo.api.auth import get_api_user
 from novelvideo.api.routes import freezone as routes
 from novelvideo.chat import agent_api_errors, dramaclaw_mcp, tool_policy
 from novelvideo.freezone import agent_canvas, canvas_confirmations, canvas_core_pool
-from novelvideo.freezone import canvas_creation, canvas_store
+from novelvideo.freezone import canvas_command_bridge, canvas_creation, canvas_store
 from novelvideo.freezone.canvas_core_pool import CanvasCorePool
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend import client as task_client
@@ -532,7 +532,7 @@ def test_list_marks_canvases_created_by_this_chat(agent):
     assert views == [({"chat_canvas_id": "default"}, None)]
 
 
-# --- widened write scope: 7 relaxed, 4 strict -----------------------------------
+# --- widened write scope: 7 relaxed, 1 clarification, 3 strict ------------------
 
 
 class Passed(BaseException):
@@ -553,6 +553,10 @@ STRICT_SITES = {
         project, canvas, {"type": "probe"}),
     "clarification_event": lambda p, project, canvas: p._emit_clarification_event(
         project, canvas, {"type": "probe"}),
+}
+# Nobody listens on a canvas this chat created, so a clarification there is
+# answered with "no interface" instead of being sent there or to the bound canvas.
+CLARIFY_SITES = {
     "request_user_clarification": lambda p, project, canvas:
         p._handle_request_user_clarification({"project_id": project, "canvas_id": canvas}),
 }
@@ -575,7 +579,11 @@ RELAXED_SITES = {
         {"project_id": project, "canvas_id": canvas, "node_id": "n"},
         tool_name="freezone_studio_get_film", method="GET", suffix="film"),
 }
-SITES = {**STRICT_SITES, **RELAXED_SITES}
+# Sites that read the real canvas list to recognise canvases this chat created.
+LISTED_SITES = {**RELAXED_SITES, **CLARIFY_SITES}
+SITES = {**STRICT_SITES, **CLARIFY_SITES, **RELAXED_SITES}
+CLARIFY = "freezone_request_user_clarification"
+NO_UI = "clarification_ui_unavailable"
 
 
 @pytest.fixture
@@ -621,6 +629,8 @@ def _site_outcome(seams, site, project, canvas):
     except Passed:
         return "passed"
     payload = _payload(result)
+    if payload.get("code") == NO_UI:
+        return "no_ui"
     assert payload["code"] == "scope_mismatch", payload
     return "refused"
 
@@ -628,8 +638,12 @@ def _site_outcome(seams, site, project, canvas):
 @pytest.mark.parametrize("site", sorted(SITES))
 @pytest.mark.parametrize("canvas", ["default", "canvas_b", "canvas_c", "canvas_d", "canvas_ghost"])
 def test_bound_scope_allows_only_canvases_this_chat_created(seams, site, canvas):
-    allowed = canvas == "default" or (canvas == "canvas_b" and site in RELAXED_SITES)
-    assert _site_outcome(seams, site, "proj", canvas) == ("passed" if allowed else "refused")
+    expected = "refused"
+    if canvas == "default" or (canvas == "canvas_b" and site in RELAXED_SITES):
+        expected = "passed"
+    elif canvas == "canvas_b" and site in CLARIFY_SITES:
+        expected = "no_ui"
+    assert _site_outcome(seams, site, "proj", canvas) == expected
     if canvas == "default" or site in STRICT_SITES:
         assert seams.lookups == []
 
@@ -640,7 +654,7 @@ def test_another_project_is_refused_without_a_lookup(seams, site):
     assert seams.lookups == []
 
 
-@pytest.mark.parametrize("site", sorted(RELAXED_SITES))
+@pytest.mark.parametrize("site", sorted(LISTED_SITES))
 @pytest.mark.parametrize("failure", [
     {"ok": False, "status": "failed", "status_code": 503, "error": "down"},
     RuntimeError("network down"),
@@ -650,7 +664,7 @@ def test_failed_lookup_fails_closed(seams, site, failure):
     assert _site_outcome(seams, site, "proj", "canvas_b") == "refused"
 
 
-@pytest.mark.parametrize("site", sorted(RELAXED_SITES))
+@pytest.mark.parametrize("site", sorted(LISTED_SITES))
 def test_browser_executor_keeps_the_bound_canvas_only(seams, site):
     """The browser bridge only serves the bound canvas, so nothing is widened there."""
     seams.plugin._AGENT_CANVAS_EXECUTOR_CACHE = (time.monotonic(), "browser")
@@ -708,7 +722,7 @@ def _assert_retry_with_bound_scope(payload):
     assert payload["agent_instruction"].startswith("Retry the same call with exactly")
 
 
-@pytest.mark.parametrize("site", sorted(RELAXED_SITES))
+@pytest.mark.parametrize("site", sorted(LISTED_SITES))
 @pytest.mark.parametrize("canvas", OUT_OF_SCOPE)
 def test_canvas_outside_this_chat_is_refused_without_pointing_at_the_bound_canvas(
     seams, site, canvas,
@@ -717,7 +731,7 @@ def test_canvas_outside_this_chat_is_refused_without_pointing_at_the_bound_canva
     assert seams.lookups, "the decision comes from the real canvas list"
 
 
-@pytest.mark.parametrize("site", sorted(RELAXED_SITES))
+@pytest.mark.parametrize("site", sorted(LISTED_SITES))
 @pytest.mark.parametrize("failure", [
     {"ok": False, "status": "failed", "status_code": 503, "error": "down"},
     RuntimeError("network down"),
@@ -741,7 +755,7 @@ def test_strict_sites_keep_retry_with_bound_scope(seams, site, canvas):
     assert seams.lookups == []
 
 
-@pytest.mark.parametrize("site", sorted(RELAXED_SITES))
+@pytest.mark.parametrize("site", sorted(LISTED_SITES))
 @pytest.mark.parametrize("canvas", ["canvas_b", *OUT_OF_SCOPE])
 def test_browser_executor_keeps_retry_with_bound_scope(seams, site, canvas):
     seams.plugin._AGENT_CANVAS_EXECUTOR_CACHE = (time.monotonic(), "browser")
@@ -848,3 +862,202 @@ def test_refusal_through_mcp_does_not_move_the_write_to_the_bound_canvas(agent):
         "data": {"title": "Elsewhere", "content": "wrong project"},
     })
     _assert_retry_with_bound_scope(other_project)
+
+
+# --- clarification when no interface can answer it -------------------------------
+
+QUESTION = {"questions": [{"id": "tone", "title": "Which tone?", "options": [
+    {"id": "warm", "label": "Warm"}, {"id": "calm", "label": "Calm"},
+]}]}
+
+
+@pytest.fixture
+def external(agent, monkeypatch):
+    """An external MCP host: no product chat turn, so no card can be answered."""
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
+    monkeypatch.setenv("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "3")
+    return agent
+
+
+def _pending_cards(h, canvas):
+    return canvas_command_bridge.list_pending_bridge_messages(
+        project_id="proj", canvas_id=canvas, kinds={"clarification_event"},
+        bridge_dir=h.tmp / "bridge",
+    )
+
+
+def _timed(h, name, args):
+    started = time.monotonic()
+    result = h.call(name, args)
+    return result, time.monotonic() - started
+
+
+def _assert_no_ui(payload, canvas):
+    assert payload["ok"] is False, payload
+    assert payload["status"] == payload["code"] == NO_UI
+    assert payload["tool_call_status"] == "completed"
+    assert payload["clarification_status"] == "not_shown"
+    assert payload["canvas_id"] == canvas
+    assert payload["retryable"] is False
+    assert payload["next_action"] == "continue_with_stated_assumptions_or_ask_in_conversation"
+    for key in ("answers", "recommended_answers", "bridge_key", "questions"):
+        assert key not in payload, payload
+    instruction = payload["agent_instruction"]
+    for phrase in (
+        "Do not call freezone_request_user_clarification again",
+        "Do not move this request to another canvas",
+        "state the assumptions",
+        "ask the user in this conversation",
+        "Never choose generation settings",
+        "more expensive",
+        "confirmation_required",
+    ):
+        assert phrase in instruction, instruction
+    for phrase in STEER_TO_BOUND:
+        assert phrase not in instruction, instruction
+
+
+def test_external_clarification_returns_at_once_without_leaving_a_card(external):
+    result, seconds = _timed(external, CLARIFY, QUESTION)
+    assert seconds < 2
+    _assert_no_ui(result, "default")
+    assert _pending_cards(external, "default") == []
+    assert [method for method, *_ in external.requests if method != "GET"] == []
+
+
+@pytest.mark.parametrize("external_host", [False, True])
+def test_clarification_on_a_canvas_this_chat_created_stays_off_the_bound_canvas(
+    agent, monkeypatch, external_host,
+):
+    if external_host:
+        monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+        monkeypatch.delenv("DRAMACLAW_TURN_ID")
+    monkeypatch.setenv("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "3")
+    b = _created(agent)["canvas_id"]
+    result, seconds = _timed(agent, CLARIFY, {"canvas_id": b, **QUESTION})
+    assert seconds < 2
+    _assert_no_ui(result, b)
+    assert _pending_cards(agent, b) == []
+    assert _pending_cards(agent, "default") == []
+
+
+@pytest.mark.parametrize(("external_mcp", "turn_id"), [
+    (None, "turn-1"),  # in-app Hermes or Codex with a product chat turn
+    (None, None),  # in-app Hermes sessions do not always carry a turn id
+    ("1", "turn-1"),  # in-app Codex sets DRAMACLAW_EXTERNAL_MCP for its MCP server
+])
+def test_clarification_with_a_listener_still_waits_on_the_card(
+    agent, monkeypatch, external_mcp, turn_id,
+):
+    for name, value in (("DRAMACLAW_EXTERNAL_MCP", external_mcp), ("DRAMACLAW_TURN_ID", turn_id)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "1")
+    result = agent.call(CLARIFY, QUESTION)
+    assert result["status"] == "clarification_frontend_timeout", result
+    assert result["clarification_status"] == "pending_user_input"
+    assert len(_pending_cards(agent, "default")) == 1
+
+
+def test_external_agent_without_interface_builds_on_a_new_canvas(external):
+    """List, create, ask (no interface), then write a text node on the new canvas."""
+    default_before = _read(external.root, "default")
+    listed = external.call(LIST, {})
+    assert listed["ok"] is True, listed
+    b = _created(external, "Autumn poem")["canvas_id"]
+
+    asked, seconds = _timed(external, CLARIFY, {"canvas_id": b, **QUESTION})
+    assert seconds < 2
+    _assert_no_ui(asked, b)
+
+    built = external.call("freezone_emit_canvas_command", {"canvas_id": b, "commands": [{
+        "type": "create_node", "node_type": "textAnnotationNode", "client_id": "poem",
+        "data": {"displayName": "Autumn", "content": "Leaves fall"},
+    }]})
+    assert built["ok"] is True, built
+    (node,) = _read(external.root, b)["nodes"]
+    assert node["type"] == "textAnnotationNode"
+    assert node["data"]["displayName"] == "Autumn"
+    assert node["data"]["content"] == "Leaves fall"
+    assert _read(external.root, "default")["revision"] == default_before["revision"]
+    assert _pending_cards(external, "default") == []
+    assert _pending_cards(external, b) == []
+
+
+# --- text node fields: displayName or title, plus content -------------------------
+
+
+def _text_schema(h):
+    return h.plugin._TEXT_ANNOTATION_DATA_SCHEMA
+
+
+@pytest.mark.parametrize("data", [
+    {"displayName": "Plan", "content": "body"},
+    {"title": "Plan", "content": "body"},
+])
+def test_text_node_accepts_display_name_or_title(agent, data):
+    written = agent.call("freezone_create_node", {"node_type": "textAnnotationNode", "data": data})
+    assert written["ok"] is True, written
+    (node,) = _read(agent.root, "default")["nodes"]
+    assert node["data"]["displayName"] == "Plan"
+    assert node["data"]["content"] == "body"
+
+
+@pytest.mark.parametrize(("data", "paths"), [
+    ({"content": "body"}, ["data"]),
+    ({"displayName": "Plan"}, ["data.content"]),
+    ({"title": "Plan", "content": "  "}, ["data.content"]),
+    ({}, ["data.content", "data"]),
+    (None, ["data"]),
+])
+def test_text_node_refusal_names_each_missing_field(agent, data, paths):
+    args = {"node_type": "textAnnotationNode", "position": {"x": 40, "y": 60}}
+    if data is not None:
+        args["data"] = data
+    refused = agent.call("freezone_create_node", args)
+    assert refused["ok"] is False, refused
+    assert refused["status"] == "invalid_command_schema"
+    assert refused["retryable"] is True
+    assert [error["path"] for error in refused["errors"]] == paths
+    assert {error["problem"] for error in refused["errors"]} == {"missing_field"}
+    for error in refused["errors"]:
+        assert error["accepted"] and "example" in error, error
+    assert "data" in refused["error"]
+    assert refused["message"] == "; ".join(error["message"] for error in refused["errors"])
+    example = refused["example"]
+    Draft202012Validator(agent.tools["freezone_create_node"].inputSchema).validate(example)
+    Draft202012Validator(_text_schema(agent)).validate(example["data"])
+    assert {key: value for key, value in example.items() if key != "data"} == {
+        key: value for key, value in args.items() if key != "data"
+    }
+    for key, value in (data or {}).items():
+        if str(value).strip():
+            assert example["data"][key] == value
+    assert "keep the user's real values" in refused["agent_instruction"]
+    assert "displayName" in refused["agent_instruction"]
+    assert _node_ids(agent.root, "default") == []
+
+
+def test_add_next_node_text_refusal_through_a_batch(agent):
+    args = {"commands": [{
+        "type": "add_next_node", "source_node_id": "n-src", "node_type": "textAnnotationNode",
+        "client_id": "next", "data": {"content": "next step"},
+    }]}
+    refused = agent.call("freezone_emit_canvas_command", args)
+    assert refused["ok"] is False, refused
+    assert refused["status"] == "invalid_command_schema"
+    assert refused["retryable"] is True
+    assert [error["path"] for error in refused["errors"]] == ["commands[0].data"]
+    example = refused["example"]
+    Draft202012Validator(
+        agent.tools["freezone_emit_canvas_command"].inputSchema
+    ).validate(example)
+    (command,) = example["commands"]
+    Draft202012Validator(_text_schema(agent)).validate(command["data"])
+    assert command["data"]["content"] == "next step"
+    assert command["source_node_id"] == "n-src"
+    assert command["client_id"] == "next"
+    assert _node_ids(agent.root, "default") == []

@@ -396,8 +396,14 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "until the answer is returned. If the clarification tool returns "
     "clarification_frontend_timeout, tell the user the card is still waiting and will reappear "
     "on their next message; when they reply, call the tool again with the same clarification_id "
-    "to resume that card instead of building a new one. Keep a stable context_key describing "
-    "the creative step and subject, and target_node_ids when known, across retries. "
+    "to resume that card instead of building a new one. "
+    "If the tool returns clarification_ui_unavailable, no interface can answer a card. "
+    "Do not call it again or move the request to another canvas. Continue with stated "
+    "assumptions or ask the user in the conversation. Never choose generation settings "
+    "for the user or pick a more expensive option; ask for missing settings in conversation. "
+    "Paid actions still need explicit consent before freezone_confirm_canvas_action. "
+    "Keep a stable context_key describing the creative step and subject, and target_node_ids "
+    "when known, across retries. "
     "Set new_request=true when the user explicitly wants to change/reselect choices or "
     "reopen a cancelled/expired card; reopening a pending card is recovery. "
     "Reuse returned confirmed answers. "
@@ -743,6 +749,11 @@ Clarification:
   generation parameters are the exception and must follow the injected
   FREEZONE_CANVAS_EXECUTION_MODE contract. For ordinary chat, one natural follow-up, or an explicit
   request, reply normally without a card.
+- If freezone_request_user_clarification returns clarification_ui_unavailable, no interface can
+  answer a card. Do not call it again or move the request to another canvas. Continue with stated
+  assumptions or ask the user in the conversation. Never choose generation settings for the user
+  or pick a more expensive option; ask for missing settings in conversation. Paid actions still
+  need explicit consent before freezone_confirm_canvas_action.
 
 Canvas write contract:
 - Interactive short dramas, branching stories, choices and endings use the interactive-story
@@ -1856,6 +1867,11 @@ def _user_context_parts(
             "asking for another create/run confirmation. Use the MCP clarification tool, never built-in "
             "request_user_input.\n"
         )
+    generation_parameter_policy += (
+        "If the clarification tool returns clarification_ui_unavailable, do not retry it; "
+        "ask for missing image/video parameters in the conversation and never choose "
+        "more expensive settings.\n"
+    )
     compose_node_id = _freezone_compose_node_id_from_context(surface_context)
     compose_context = (
         "\n[FREEZONE_COMPOSE_WORKSPACE]\n"

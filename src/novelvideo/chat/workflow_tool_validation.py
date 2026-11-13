@@ -148,6 +148,8 @@ def workflow_argument_refusal(
             ]
         else:
             variants = _variants(candidate) if isinstance(candidate, dict) else []
+            if _required_alternatives(variants):
+                variants = []
             accepted = list(dict.fromkeys(_shape(v) for v in (variants or [candidate])))
         error = {"path": path, "problem": problem, "accepted": accepted}
         if problem == "unknown_field":
@@ -290,8 +292,17 @@ def workflow_argument_refusal(
                         "invalid_value" if key in value else "missing_field", coerce=False,
                     )
                     return
+                pinned = [
+                    variant for variant in candidates
+                    if all(
+                        Draft202012Validator(prop).is_valid(value[field])
+                        for field, prop in variant.get("properties", {}).items()
+                        if field != key and field in value
+                        and isinstance(prop, dict) and ("enum" in prop or "const" in prop)
+                    )
+                ]
                 selected = min(
-                    candidates,
+                    pinned or candidates,
                     key=lambda v: len(list(Draft202012Validator(v).iter_errors(value))),
                 )
                 walk(value, selected, parts)

@@ -4070,6 +4070,8 @@ def test_external_generation_clarification_rejects_bundled_settings(monkeypatch)
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    # In-app Codex: its MCP server is external but a product chat turn listens.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     emitted = []
     monkeypatch.setattr(
         plugin,
@@ -4108,12 +4110,68 @@ def test_external_generation_clarification_rejects_bundled_settings(monkeypatch)
     assert emitted == []
 
 
+def test_external_generation_clarification_without_interface_does_not_pick_settings(
+    monkeypatch,
+):
+    """An external host has no card to show: return at once and choose nothing."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    called = []
+    for name in (
+        "_emit_clarification_event",
+        "_request",
+        "put_pending_clarification_event",
+        "wait_clarification_result",
+        "read_clarification_turn_context",
+        "_resume_clarification",
+    ):
+        monkeypatch.setattr(
+            plugin,
+            name,
+            lambda *_args, _name=name, **_kwargs: called.append(_name),
+            raising=False,
+        )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "generation_media_types": ["image", "video"],
+            "generation_preferences": {"image_variants_per_node": 1},
+            "questions": [
+                {"id": "image_quality", "title": "图片画质", "options": [{"id": "low"}]},
+            ],
+        }
+    )
+
+    assert called == []
+    assert result["ok"] is False
+    assert result["status"] == result["code"] == "clarification_ui_unavailable"
+    assert result["clarification_status"] == "not_shown"
+    assert result["canvas_id"] == "canvas-a"
+    for key in (
+        "answers",
+        "recommended_answers",
+        "node_data",
+        "generation_choices",
+        "bridge_key",
+    ):
+        assert key not in result
+    assert "Never choose generation settings" in result["agent_instruction"]
+    assert "more expensive" in result["agent_instruction"]
+    assert "confirmation_required" in result["agent_instruction"]
+
+
 def test_external_generation_clarification_filters_server_managed_thinking_question(
     monkeypatch,
 ):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    # In-app Codex: its MCP server is external but a product chat turn listens.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     emitted = []
     monkeypatch.setattr(
         plugin,
@@ -7323,6 +7381,8 @@ def test_external_generation_clarification_accepts_separate_resolution_question(
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    # In-app Codex: its MCP server is external but a product chat turn listens.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     captured = {}
 
     def fake_emit(project, canvas, event):
@@ -9935,10 +9995,19 @@ def test_canvas_command_tools_expose_discriminated_minimal_schema():
     ]
     assert create_annotation["properties"]["data"]["required"] == ["content"]
     assert create_annotation["properties"]["data"]["anyOf"] == [
-        {"required": ["title"]},
         {"required": ["displayName"]},
+        {"required": ["title"]},
     ]
     assert "textAnnotationNode" not in create_other["properties"]["node_type"]["enum"]
+    # add_next_node may also create a text node; the write check holds it to the same
+    # displayName (title alias) + content rule, so the published data says so too.
+    add_next_data = by_type["add_next_node"][0]["properties"]["data"]
+    single_add_next_data = schemas["freezone_add_next_node"]["parameters"]["properties"]["data"]
+    for data_schema in (add_next_data, single_add_next_data):
+        assert data_schema["type"] == "object"
+        assert "textAnnotationNode needs displayName" in data_schema["description"]
+        assert "title is accepted as an alias" in data_schema["description"]
+        assert "content" in data_schema["description"]
     assert [set(item["properties"]) for item in by_type["delete_edges"]] == [
         {"type", "edge_ids"},
         {"type", "pairs"},
