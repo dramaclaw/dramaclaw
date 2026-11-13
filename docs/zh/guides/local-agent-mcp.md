@@ -31,7 +31,7 @@ DRAMACLAW_LOCAL_AGENT_TRUST=1 novelvideo api --host 127.0.0.1 --port 8780
 
 - 只建议绑定 `127.0.0.1`。
 - 不建议在监听 `0.0.0.0` 或局域网可访问时开启。
-- 画布写操作默认仍交给 Freezone 前端执行，以保持即时同步；外部 Agent 在自己的聊天中完成审批后，前端会自动执行，不再打开虾画内置聊天审批。
+- 默认 `browser` 执行器将画布写操作交给 Freezone 前端执行，需打开对应画布；无需浏览器的能力见下方“服务端执行器”。
 - 覆盖、删除、重摄入等高风险业务操作仍应保留业务确认。
 
 ## MCP Server
@@ -59,7 +59,27 @@ python agent-kit/scripts/launch_mcp.py workflows
 - `DRAMACLAW_USER=local`
 - `DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR=state/<user>/.hermes-freezone/tmp/supertale_canvas_command_bridge`
 
-其中 bridge 目录使用共享根目录，方便当前浏览器中的 Freezone 会话监听并弹出审批。只有在调试特定 Agent profile 时，才需要手动覆盖 `DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR`。
+其中 bridge 目录使用共享根目录，方便当前浏览器中的 Freezone 会话监听并执行画布命令。外部 Agent 的确认在自己的对话中完成。只有在调试特定 Agent profile 时，才需要手动覆盖 `DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR`。
+
+### 列出与创建画布
+
+`freezone_list_canvases` 和 `freezone_create_canvas` 需要服务端执行器；默认 `browser`
+执行器返回 `canvas_server_executor_required`。两者都使用当前项目或显式 `project_id`，
+不能跨越会话绑定的项目。
+
+- `freezone_list_canvases` 返回 `bound_canvas_id`、`canvases`、`count` 和 `quota`。
+  每个画布包含 `canvas_id`、`display_name`、`kind`、`creator_username`、
+  `created_by_viewer`、`created_from_this_chat` 和 `modified_at`。
+- `freezone_create_canvas` 接收 `name`（去除首尾空白后不能为空，最多 100 个字符）。
+  成功返回 `canvas_id`、`display_name`、`revision` 和 `canvas_path`；同一请求重放可返回
+  `status="exists"`。同名画布不会再创建，拒绝结果为 `duplicate_name`，并给出
+  `existing_canvas_id`。每个用户在每个项目最多创建 25 个画布；配额状态由 `quota` 返回。
+
+绑定画布的聊天在服务端执行器下只能写入绑定画布及 `created_from_this_chat=true`
+的画布；同名画布或当前用户创建的其他画布不因此自动获得写权限。写入新画布时每次显式
+传入 `canvas_id`，省略它仍指向绑定画布。新画布上的付费生成仍遵循正常确认规则。
+澄清卡只能由绑定画布的产品聊天轮次读取；向本聊天创建的其他画布请求澄清会返回
+`clarification_ui_unavailable`，不会把卡转移到绑定画布。
 
 ## Codex 配置示例
 
@@ -129,12 +149,18 @@ Authorization: Bearer xxx
 
 互动故事四个工具是例外：Create/Patch 调用 CE API，由 `InteractiveStoryService` 在后端写入完整故事投影，不写 pending canvas command。产品内 Agent 会根据成功工具帧自动刷新当前画布并保护未保存本地编辑；外部 MCP 客户端当前没有通用的浏览器刷新广播，写入后需要宿主适配刷新或手动刷新/重新打开画布。
 
-`DRAMACLAW_EXTERNAL_MCP=1` 只用于外部 Agent 入口。需要确认的操作在有当前对话轮次且画布打开时显示虾画聊天确认卡，否则在对话中请求确认。
+外部 Agent 的付费生成、删除和清空确认在 Agent 自己的对话中完成；得到用户明确同意后，
+调用 `freezone_confirm_canvas_action`。
 
 当外部 Agent 真正运行图片或视频节点时，授权 MCP 会在审批和画布写入前执行参数预检。
 如果模型、比例、分辨率/质量、时长、声音开关或数量仍有缺项，会返回
-`generation_parameters_required`。Agent 应使用 `freezone_request_user_clarification` 一次询问
-全部缺项，再以同一个工作流草稿或计划重试；不得静默采用默认值。普通空节点创建、连线、
+`generation_parameters_required`。有产品聊天监听时，Agent 应使用
+`freezone_request_user_clarification` 一次询问全部缺项，再以同一个工作流草稿或计划重试。
+外部 Agent（`DRAMACLAW_EXTERNAL_MCP=1` 且无 `DRAMACLAW_TURN_ID`）没有可回答澄清卡的界面：
+工具立即返回 `clarification_ui_unavailable`，不创建卡片。Agent 不得重试或换画布；
+可明示合理假设后继续，或在自己的对话中询问用户。缺失的图片、视频生成参数必须在对话中
+询问，不得替用户选择或升级到更贵的设置。付费操作仍需用户明确同意后调用
+`freezone_confirm_canvas_action`，不得静默采用默认值。普通空节点创建、连线、
 归组、布局、文案及独立音频设置不受该预检影响。
 
 用户在询问卡中选择“推荐模型”时，Agent 应传递标准符号值 `"recommended"`，不得自行猜测

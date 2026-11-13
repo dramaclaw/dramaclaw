@@ -115,6 +115,12 @@ fail-safe when the host omits that argument. Explicit `image_model` / `video_mod
 included in `generation_preferences`; the server accepts them only after validating the current
 project's live Catalog entry and dependent options.
 
+If the tool returns `clarification_ui_unavailable`, no interface can answer a card. Do not retry
+it or move the request to another canvas. Continue with stated assumptions or ask the user in
+the conversation. Never choose or upgrade generation settings for the user; ask for missing
+image/video settings in the conversation. Paid actions still require explicit user consent
+before `freezone_confirm_canvas_action`.
+
 For existing video nodes, read the target nodes and their real references before asking for a
 model, and pass all target node IDs as `generation_video_node_ids` to the clarification tool.
 The host uses their current generation modes to restrict model choices. In interactive stories,
@@ -128,8 +134,9 @@ Before a draft is created, `affected_node_ids` returned by WorkflowPlan prefligh
 plan-local IDs, not existing canvas node IDs. For a `compatible_video_model` question,
 pass the exact server-returned question and omit `generation_video_node_ids`; the server
 has already checked the complete plan's reference modes and durations. If clarification
-arguments are rejected before a card is shown, correct those arguments and retry the same
-question. Once a card exists, resume it with its `clarification_id` rather than creating
+arguments receive an argument refusal before a card is shown, correct those arguments and retry
+the same question. This does not apply to `clarification_ui_unavailable`. Once a card exists,
+resume it with its `clarification_id` rather than creating
 another card.
 
 When using `generation_media_types` or `generation_required_choices`, do not include agent-authored
@@ -170,7 +177,9 @@ submitting an exact Plan, including its node-data examples.
 
 Offer a recommended/default option so the user does not need to understand provider-specific
 fields. In either execution mode, do not draft, commit, approve, or run until the required
-clarification result returns. This is an explicit exception to a host's general rule not to ask about model
+clarification result returns, except after `clarification_ui_unavailable`: follow the conversation
+fallback above and collect missing generation settings before proceeding. This is an explicit
+exception to a host's general rule not to ask about model
 parameters. It applies only to image and video generation for now. It also applies with
 `run_after_create=false` when the user explicitly asks to configure image/video node parameters;
 do not ask when the user only wants empty nodes, connections, grouping, layout, or edits without
@@ -214,7 +223,10 @@ equivalent canvas or portable field for a step, and an explicit node value alway
 precedence over the shared choice (the same rule the standard planner follows), except that the
 user-confirmed `video_generate_audio` choice is authoritative and replaces conflicting
 `generateAudio` values on every video node. Only two aliases of the same setting with different
-values on one node are rejected. If a write returns
+values on one node are rejected. If the clarification tool already returned
+`clarification_ui_unavailable` in this conversation, ask the user in the conversation for any
+`required_choices` returned by a later write instead of calling the clarification tool again.
+Otherwise, if a write returns
 `code="generation_parameters_required"`, do not retry unchanged. Call
 `freezone_request_user_clarification` once for all returned missing choices, passing already
 confirmed choices (at least the model) in `answers` so the recommendation comes from the same

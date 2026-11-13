@@ -1114,3 +1114,95 @@ def test_workflow_graph_compile_refusal_names_the_node_fix():
     assert "Sending the same arguments again fails the same way." in sc["agent_instruction"]
     assert sc["example"] == example
     Draft202012Validator(tools[name].inputSchema).validate(sc["example"])
+
+
+TEXT_TITLE_ERROR = {
+    "path": "commands[0].data",
+    "problem": "missing_field",
+    "accepted": ["displayName (string)", "title (string)"],
+    "example": {"displayName": "<displayName>"},
+    "message": "commands[0].data: provide at least one of displayName, title. "
+    "Accepted: displayName (string) | title (string). "
+    'Example: {"displayName": "<displayName>"}.',
+}
+TEXT_CONTENT_ERROR = {
+    "path": "commands[0].data.content",
+    "problem": "missing_field",
+    "accepted": ["string"],
+    "example": "<content>",
+    "message": 'commands[0].data.content: field is required. Accepted: string. '
+    'Example: "<content>".',
+}
+TEXT_DATA_ERROR = {
+    "path": "commands[0].data",
+    "problem": "missing_field",
+    "accepted": ["object with displayName (string), title (string), content (string)"],
+    "example": {"content": "<content>", "displayName": "<displayName>"},
+    "message": "commands[0].data: field is required. "
+    "Accepted: object with displayName (string), title (string), content (string). "
+    'Example: {"content": "<content>", "displayName": "<displayName>"}.',
+}
+
+
+def _text_command(data):
+    command = {"type": "create_node", "node_type": "textAnnotationNode", "client_id": "poem"}
+    if data is not None:
+        command["data"] = data
+    return command
+
+
+@pytest.mark.parametrize("name", [
+    "freezone_emit_canvas_command", "freezone_validate_canvas_commands",
+])
+@pytest.mark.parametrize(("data", "errors", "repaired"), [
+    (
+        {"content": "Leaves fall"},
+        [TEXT_TITLE_ERROR],
+        {"content": "Leaves fall", "displayName": "<displayName>"},
+    ),
+    (
+        {"displayName": "Autumn"},
+        [TEXT_CONTENT_ERROR],
+        {"displayName": "Autumn", "content": "<content>"},
+    ),
+    (
+        {},
+        [TEXT_CONTENT_ERROR, TEXT_TITLE_ERROR],
+        {"content": "<content>", "displayName": "<displayName>"},
+    ),
+    (
+        None,
+        [TEXT_DATA_ERROR],
+        {"content": "<content>", "displayName": "<displayName>"},
+    ),
+])
+def test_text_node_refusal_names_each_missing_field(workflow_agent, name, data, errors, repaired):
+    args = {"canvas_id": "canvas-1", "commands": [_text_command(data)]}
+    result = workflow_agent.call(name, deepcopy(args))
+    assert_refusal(
+        workflow_agent,
+        name,
+        result,
+        errors=errors,
+        example={"canvas_id": "canvas-1", "commands": [_text_command(repaired)]},
+    )
+    sc = result.structuredContent
+    assert "node_type" not in sc["message"]
+    assert "textAnnotationNode" in sc["agent_instruction"]
+    assert "displayName" in sc["agent_instruction"]
+
+
+def test_text_node_refusal_does_not_echo_html_from_the_same_batch(workflow_agent):
+    html = "<main>private draft markup</main>"
+    args = {"commands": [
+        {"type": "html_artifact", "action": "create", "title": "Draft", "html": html},
+        {"type": "create_node", "node_type": "textAnnotationNode", "data": {"content": "x"}},
+    ]}
+    result = workflow_agent.call("freezone_emit_canvas_command", args)
+    sc = result.structuredContent
+    assert workflow_agent.requests == []
+    assert sc["retryable"] is True
+    assert [error["path"] for error in sc["errors"]] == ["commands[1].data"]
+    assert "example" not in sc
+    assert html not in json.dumps(sc, ensure_ascii=False)
+    assert html not in result.content[0].text

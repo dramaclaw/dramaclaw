@@ -13,6 +13,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 import time
 import types as py_types
@@ -589,6 +590,9 @@ def _repair_tool_arguments(
 
 
 _CANVAS_CREATE_TOOLS = frozenset({"freezone_create_canvas"})
+_CANVAS_COMMAND_TOOLS = frozenset({
+    "freezone_emit_canvas_command", "freezone_validate_canvas_commands",
+})
 
 
 _WORKFLOW_DRAFT_TOOLS = frozenset({
@@ -617,6 +621,24 @@ def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, An
     if name in _CANVAS_CREATE_TOOLS and isinstance(exc, ValidationError):
         payload.update(workflow_argument_refusal(name, arguments, schema, exc))
         payload["agent_instruction"] += " The canvas name must be 1 to 100 characters."
+    if name in _CANVAS_COMMAND_TOOLS and isinstance(exc, ValidationError):
+        refusal = workflow_argument_refusal(name, arguments, schema, exc)
+        commands = arguments.get("commands")
+        if isinstance(commands, list) and refusal["errors"] and all(
+            (match := re.match(r"^commands\[(\d+)\]\.data(\.|$)", error["path"]))
+            and int(match[1]) < len(commands)
+            and isinstance(command := commands[int(match[1])], dict)
+            and command.get("type") in {"create_node", "add_next_node"}
+            and command.get("node_type") == "textAnnotationNode"
+            for error in refusal["errors"]
+        ):
+            if any(isinstance(c, dict) and c.get("type") == "html_artifact" for c in commands):
+                refusal.pop("example", None)
+            payload.update(refusal)
+            payload["agent_instruction"] += (
+                " A textAnnotationNode needs data.displayName (the node title; title is "
+                "accepted as an alias) and data.content (the body)."
+            )
     return payload
 
 

@@ -751,6 +751,8 @@ async def test_real_clarification_results_preserve_frontend_answers_and_retry_fi
     assert timed_out.structuredContent["clarification_status"] == "pending_user_input"
     assert timed_out.structuredContent["bridge_key"] == "clarify-1"
 
+    # In-app Codex: an external MCP server inside a product chat turn.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     rejected = await dramaclaw_mcp.call_tool(
         "freezone_request_user_clarification",

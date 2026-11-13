@@ -473,8 +473,9 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
     """Also allow canvases created by this chat, using server-only agent_origin.
 
     Read metadata.agent_origin.chat_canvas_id from the real canvas list so a
-    mistyped or unknown id stays refused. Clarification and Skill Studio events
-    stay strict because only the bound canvas has a listener.
+    mistyped or unknown id stays refused. Skill Studio events stay strict because
+    only the bound canvas has a listener. Clarification requests for a canvas this
+    chat created return clarification_ui_unavailable.
     Refuse canvases outside this chat without steering the Agent to the bound
     canvas: retrying there would put content meant for another canvas on it.
     """
@@ -1007,6 +1008,8 @@ def _emit_clarification_event(
     mismatch = _bound_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
+    if not _clarification_listener_available():
+        return tool_result(_clarification_no_ui_result(project, canvas, chat_created=False))
     key = clarification_bridge_key(project_id=project, canvas_id=canvas, event=event)
     server_model_question = any(
         isinstance(question, dict) and question.get("id") in {
@@ -1338,9 +1341,14 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     request_scope = _clarification_request_scope(args)
     # The bridge directory is shared per user/profile and may hold cards from
     # other projects; never look one up outside this session's bound scope.
-    mismatch = _bound_scope_mismatch(project, canvas)
-    if mismatch is not None:
-        return tool_result(mismatch)
+    if _bound_scope_mismatch(project, canvas) is not None:
+        refused = _chat_canvas_scope_mismatch(project, canvas)
+        if refused is not None:
+            return tool_result(refused)
+        # A canvas this chat created has no clarification listener.
+        return tool_result(_clarification_no_ui_result(project, canvas, chat_created=True))
+    if not _clarification_listener_available():
+        return tool_result(_clarification_no_ui_result(project, canvas, chat_created=False))
     explicit = _resume_clarification(project, canvas, clarification_id)
     if explicit is not None and request_scope and explicit[1].get("request_scope"):
         stored_scope = explicit[1]["request_scope"]
@@ -4225,6 +4233,94 @@ def _validate_html_artifact_write(
             raise ValueError("reference_node_ids must be an array of non-empty node IDs or earlier client_id aliases")
 
 
+_TEXT_ANNOTATION_INSTRUCTION = (
+    " A textAnnotationNode needs data.displayName (the node title; title is accepted "
+    "as an alias) and data.content (the body)."
+)
+
+
+def _text_annotation_data_refusal(data: Any) -> dict[str, Any] | None:
+    """Use the published schema to describe and repair missing text node fields."""
+    from jsonschema import Draft202012Validator
+    from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
+
+    cleaned = deepcopy(data) if isinstance(data, dict) else None
+    if cleaned is not None:
+        for field in ("displayName", "title", "content"):
+            value = cleaned.get(field)
+            if not isinstance(value, str) or not value.strip():
+                cleaned.pop(field, None)
+    arguments = {"data": cleaned} if cleaned is not None else {}
+    schema = {
+        "type": "object",
+        "properties": {"data": _TEXT_ANNOTATION_DATA_SCHEMA},
+        "required": ["data"],
+    }
+    exc = next(Draft202012Validator(schema).iter_errors(arguments), None)
+    if exc is None:
+        return None
+    refusal = workflow_argument_refusal("textAnnotationNode", arguments, schema, exc)
+    refusal.update(ok=False, status="invalid_command_schema", error=refusal["message"])
+    refusal["agent_instruction"] += _TEXT_ANNOTATION_INSTRUCTION
+    return refusal
+
+
+def _text_annotation_batch_refusal(
+    project: str | None, canvas: str | None, commands: list[Any]
+) -> str | None:
+    errors = []
+    corrected_commands = deepcopy(commands)
+    refusal = None
+    for index, command in enumerate(commands):
+        if not (
+            isinstance(command, dict)
+            and command.get("type") in {"create_node", "add_next_node"}
+            and command.get("node_type") == "textAnnotationNode"
+        ):
+            continue
+        current = _text_annotation_data_refusal(command.get("data"))
+        if current is None:
+            continue
+        refusal = current
+        corrected_commands[index]["data"] = current["example"]["data"]
+        for error in current["errors"]:
+            prefix = f"commands[{index}]."
+            errors.append({
+                **error,
+                "path": prefix + error["path"],
+                "message": prefix + error["message"],
+            })
+    if refusal is None:
+        return None
+    message = "; ".join(error["message"] for error in errors)
+    refusal.update(
+        errors=errors, path=errors[0]["path"], message=message, error=message,
+        example={
+            **({"project_id": project} if project is not None else {}),
+            **({"canvas_id": canvas} if canvas is not None else {}),
+            "commands": corrected_commands,
+        },
+    )
+    if any(isinstance(c, dict) and c.get("type") == "html_artifact" for c in commands):
+        refusal.pop("example", None)
+    return tool_result({**refusal, **_scope_meta(project or "", canvas)})
+
+
+def _text_annotation_tool_refusal(args: dict[str, Any]) -> str | None:
+    if args.get("node_type") != "textAnnotationNode":
+        return None
+    refusal = _text_annotation_data_refusal(args.get("data"))
+    if refusal is None:
+        return None
+    refusal["example"] = {**deepcopy(args), "data": refusal["example"]["data"]}
+    project = str(args.get("project_id") or _default_project_id()).strip() or None
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    return tool_result({**refusal, **_scope_meta(project or "", canvas)})
+
+
 def _validate_write_commands_shape(
     project: str | None,
     canvas: str | None,
@@ -4232,6 +4328,9 @@ def _validate_write_commands_shape(
     *,
     allow_workflow_prepare: bool = False,
 ) -> str | None:
+    text_refusal = _text_annotation_batch_refusal(project, canvas, commands)
+    if text_refusal is not None:
+        return text_refusal
     for index, command in enumerate(commands):
         if not isinstance(command, dict):
             return _emit_command_error(
@@ -4377,24 +4476,6 @@ def _validate_write_commands_shape(
                         "nodes, and only use creatable node types exposed by the command catalog."
                     ),
                 )
-            if node_type == "textAnnotationNode":
-                node_data = command.get("data")
-                missing_text_fields = [
-                    field
-                    for field in ("title", "content")
-                    if not isinstance(node_data, dict)
-                    or not str(node_data.get(field) or "").strip()
-                ]
-                if missing_text_fields:
-                    return _emit_command_error(
-                        project,
-                        canvas,
-                        "invalid_command_schema",
-                        (
-                            f"commands[{index}] create_node requires textAnnotationNode "
-                            f"{', '.join(missing_text_fields)} in data"
-                        ),
-                    )
         if command.get("type") == "create_edge":
             missing = [
                 field
@@ -4428,6 +4509,53 @@ def _external_mcp_agent_enabled() -> bool:
         "true",
         "yes",
         "on",
+    }
+
+
+def _clarification_listener_available() -> bool:
+    """Only product chat turns read cards; external MCP hosts need a turn id.
+
+    An external host setting its own turn id is treated as having a listener and
+    waits as before. An in-app Codex turn with an empty id fails safe without waiting.
+    """
+    return not _external_mcp_agent_enabled() or bool(
+        os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    )
+
+
+def _clarification_no_ui_result(
+    project: str | None, canvas: str | None, *, chat_created: bool
+) -> dict[str, Any]:
+    message = (
+        f"Clarification cards are shown only on the canvas this chat is bound to; "
+        f"canvas {canvas!r} was created by this chat and has no listener. "
+        if chat_created else
+        "No DramaClaw interface in this session can show or answer a clarification card. "
+    ) + "No card was created and nothing was written."
+    return {
+        "ok": False,
+        "status": "clarification_ui_unavailable",
+        "code": "clarification_ui_unavailable",
+        "tool_call_status": "completed",
+        "clarification_status": "not_shown",
+        **({"project_id": project} if project else {}),
+        "canvas_id": canvas,
+        "error": message,
+        "message": message,
+        "retryable": False,
+        "next_action": "continue_with_stated_assumptions_or_ask_in_conversation",
+        "agent_instruction": (
+            "Do not call freezone_request_user_clarification again for this request. "
+            "Do not move this request to another canvas. Either continue with the most "
+            "reasonable reading of the user's request and state the assumptions you made "
+            "in your reply, or ask the user in this conversation and wait for the answer. "
+            "Never choose generation settings (model, quality, resolution, duration, count) "
+            "for the user and never pick a more expensive option than the user asked for; "
+            "ask the user in this conversation for missing image or video settings, also "
+            "when a later write returns generation_parameters_required. Paid actions still "
+            "return confirmation_required and need the user's explicit consent before "
+            "freezone_confirm_canvas_action."
+        ),
     }
 
 
@@ -9055,6 +9183,9 @@ def _handle_list_canvases(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_create_node(args: dict[str, Any], **_: Any) -> str:
+    refusal = _text_annotation_tool_refusal(args)
+    if refusal is not None:
+        return refusal
     node_type = str(args.get("node_type") or "").strip()
     if not node_type:
         return tool_result(
@@ -9077,6 +9208,9 @@ def _handle_create_node(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_add_next_node(args: dict[str, Any], **_: Any) -> str:
+    refusal = _text_annotation_tool_refusal(args)
+    if refusal is not None:
+        return refusal
     source_node_id = str(args.get("source_node_id") or "").strip()
     node_type = str(args.get("node_type") or "").strip()
     if not source_node_id:
@@ -10051,9 +10185,10 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_get_audio_voice_options": ("node_id", "voices", "count"),
     "freezone_get_slot_candidates": ("slot", "candidates", "count"),
     "freezone_get_mainline_projection_assets": ("assets", "count"),
-    "freezone_validate_canvas_commands": ("payload", "commands", "errors", "warnings"),
+    "freezone_validate_canvas_commands": ("payload", "commands", "errors", "warnings", "example"),
     "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
     "freezone_request_user_clarification": (
+        "code",
         "errors",
         "example",
         "clarification_id",
@@ -10247,12 +10382,13 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         *_WORKFLOW_RESULT_FIELDS,
         "schema_version",
     ),
-    "freezone_emit_canvas_command": (*_CANVAS_RESULT_FIELDS, "commands"),
+    "freezone_emit_canvas_command": (*_CANVAS_RESULT_FIELDS, "commands", "example"),
     "freezone_confirm_canvas_action": _CANVAS_RESULT_FIELDS,
     "freezone_cancel_canvas_action": _CANVAS_RESULT_FIELDS,
-    "freezone_create_node": (*_CANVAS_RESULT_FIELDS, "node_id", "node_type"),
+    "freezone_create_node": (*_CANVAS_RESULT_FIELDS, "node_id", "node_type", "example"),
     "freezone_add_next_node": (
         *_CANVAS_RESULT_FIELDS,
+        "example",
         "node_id",
         "node_type",
         "source_node_id",
@@ -11703,15 +11839,22 @@ _POSITIONS_SCHEMA = {
     "additionalProperties": _POSITION_SCHEMA,
     "minProperties": 1,
 }
+_ADD_NEXT_NODE_DATA_SCHEMA = {
+    "type": "object",
+    "description": (
+        "New node data. A textAnnotationNode needs displayName (node title; title is "
+        "accepted as an alias) and content (body)."
+    ),
+}
 _TEXT_ANNOTATION_DATA_SCHEMA = {
     "type": "object",
     "properties": {
-        "title": _NON_EMPTY_STRING,
         "displayName": _NON_EMPTY_STRING,
+        "title": _NON_EMPTY_STRING,
         "content": _NON_EMPTY_STRING,
     },
     "required": ["content"],
-    "anyOf": [{"required": ["title"]}, {"required": ["displayName"]}],
+    "anyOf": [{"required": ["displayName"]}, {"required": ["title"]}],
 }
 _OTHER_AGENT_CREATABLE_NODE_TYPE_VALUES = [
     value
@@ -11777,7 +11920,7 @@ _CANVAS_COMMAND_ITEM_SCHEMA = {
                         "type": "string",
                         "enum": _AGENT_CREATABLE_NODE_TYPE_VALUES,
                     },
-                    "data": {"type": "object"},
+                    "data": _ADD_NEXT_NODE_DATA_SCHEMA,
                     "connect": {"type": "boolean"},
                 },
                 ["source_node_id"],
@@ -13532,7 +13675,7 @@ TOOLS = (
                 "node_type": _NODE_TYPE_SCHEMA,
                 "data": {
                     "type": "object",
-                    "description": "Node data. Prefer stable fields such as prompt, title, content, text, displayName.",
+                    "description": "Node data. A textAnnotationNode needs displayName (node title; title is accepted as an alias) and content (body). Prefer stable fields such as prompt, text, displayName for other node types.",
                 },
                 "position": {
                     "type": "object",
@@ -13557,7 +13700,7 @@ TOOLS = (
                     "description": "Existing source canvas node id.",
                 },
                 "node_type": _NODE_TYPE_SCHEMA,
-                "data": {"type": "object", "description": "New node data."},
+                "data": _ADD_NEXT_NODE_DATA_SCHEMA,
                 "connect": {
                     "type": "boolean",
                     "description": "Whether to auto-connect source to the new node. Defaults to true.",
