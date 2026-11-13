@@ -62,6 +62,9 @@ class AgentAuthenticatedUser(AuthenticatedUser):
     current_scope_kind: str = "home"
     current_project_id: Optional[str] = None
     parent_session_id: Optional[str] = None
+    # Set only by the auth session port for external agent key exchanges;
+    # never taken from client input.
+    external_agent_key_id: Optional[str] = None
 
     def to_legacy_dict(self) -> Dict[str, Any]:
         data = super().to_legacy_dict()
@@ -77,6 +80,8 @@ class AgentAuthenticatedUser(AuthenticatedUser):
                 "parent_session_id": self.parent_session_id,
             }
         )
+        if isinstance(self.external_agent_key_id, str) and self.external_agent_key_id.strip():
+            data["external_agent_key_id"] = self.external_agent_key_id.strip()
         return data
 
 

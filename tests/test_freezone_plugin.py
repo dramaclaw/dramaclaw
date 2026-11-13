@@ -115,6 +115,11 @@ def test_product_admission_preserves_generic_result_routing(
 ):
     plugin = _load_plugin_module()
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1" if external_mcp else "0")
+    if external_mcp:
+        # In-app Codex sets the external MCP flag and always carries a chat turn.
+        monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
+    else:
+        monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
     monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
     requests = []
 
@@ -141,6 +146,265 @@ def test_product_admission_preserves_generic_result_routing(
     assert "required_next_tool" not in result
     assert "freezone_prepare_workflow_draft" not in result["agent_instruction"]
     assert "matching persisted result tool" in result["agent_instruction"]
+
+
+def _turnless_external_host(monkeypatch) -> None:
+    """An external MCP host (e.g. a key-exchanged Codex CLI) has no product chat turn."""
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
+
+
+_WORKFLOW_PREPARE_TOOLS = (
+    "freezone_prepare_workflow",
+    "freezone_prepare_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+)
+
+
+def test_turnless_external_host_does_not_open_workflow_result_operation(monkeypatch):
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a turnless external host must not open an Agent product operation"
+        ),
+    )
+
+    result = plugin._handle_begin_agent_product_generation({
+        "product_kind": "workflow_result",
+        "generation_session_id": "session-1",
+        "normalized_inputs": {"prompt": "example"},
+        "skill_id": "video-ad",
+        "skill_version": "1.0.0",
+    })
+
+    structured = _assert_real_mcp_output(
+        plugin, "freezone_begin_agent_product_generation", result
+    )
+    assert structured["ok"] is True
+    assert structured["status"] == "agent_product_operation_not_required"
+    assert structured["operation_id"] == ""
+    assert structured["product_kind"] == "workflow_result"
+    assert structured["generation_session_id"] == "session-1"
+    assert structured["confirmation_required"] is False
+    assert structured["next_action"] == "prepare_workflow_without_operation_id"
+    assert "operation_id" in structured["agent_instruction"]
+
+
+@pytest.mark.parametrize(
+    "product_kind", ["recipe_result", "workflow_generate", "recipe_generate"]
+)
+def test_turnless_external_host_still_admits_other_product_kinds(
+    monkeypatch, product_kind
+):
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    requests = []
+
+    def request(method, path, *, body):
+        requests.append((method, path, body))
+        return {"ok": True, "data": {
+            "operation_id": "op-1", "product_kind": product_kind, "status": "reserved",
+            "task_id": "task-1", "generation_session_id": "session-1",
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_begin_agent_product_generation({
+        "product_kind": product_kind,
+        "generation_session_id": "session-1",
+        "normalized_inputs": {"prompt": "example"},
+    })
+
+    assert len(requests) == 1
+    assert requests[0][0] == "POST"
+    assert requests[0][2]["product_kind"] == product_kind
+    assert result["status"] == "agent_product_generation_admitted"
+    assert result["operation_id"] == "op-1"
+
+
+def _record_draft_requests(monkeypatch, plugin) -> list[tuple[str, str, dict | None]]:
+    calls: list[tuple[str, str, dict | None]] = []
+    real_request = plugin._request
+
+    def recording_request(method, path, *, body=None, **kwargs):
+        calls.append((method, path, copy.deepcopy(body)))
+        if "/agent-product-operations" in path:
+            pytest.fail(
+                "a turnless external host must not read or open an Agent product operation"
+            )
+        return real_request(method, path, body=body, **kwargs)
+
+    monkeypatch.setattr(plugin, "_request", recording_request)
+    return calls
+
+
+@pytest.mark.parametrize("operation_id", [None, "agent_product_" + "0" * 32])
+def test_turnless_external_plan_draft_is_submitted_without_operation(
+    monkeypatch, tmp_path, operation_id
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    calls = _record_draft_requests(monkeypatch, plugin)
+    args = {
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "video-ad", "version": "1.0.0"},
+            "nodes": [{
+                "id": "brief",
+                "node_type": "textAnnotationNode",
+                "stage": "input",
+                "data": {"title": "广告", "content": "商品广告"},
+            }],
+            "edges": [],
+        },
+    }
+    if operation_id is not None:
+        args["operation_id"] = operation_id
+
+    result = plugin._handle_prepare_workflow_plan_draft(args)
+
+    assert result["ok"] is True, result
+    assert result["draft_id"]
+    posts = [call for call in calls if call[0] == "POST"]
+    assert len(posts) == 1
+    assert posts[0][1].endswith("/workflow-drafts")
+    assert not posts[0][2].get("operation_id")
+
+
+def test_turnless_external_intent_draft_is_submitted_without_operation(
+    monkeypatch, tmp_path
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    compiled = {"ok": True, "skill_id": "video-ad", "plan": {
+        "summary": "广告", "nodes": [{"id": "input", "node_type": "textAnnotationNode",
+                                     "stage": "input"}], "edges": [],
+    }}
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _: compiled)
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    calls = _record_draft_requests(monkeypatch, plugin)
+
+    result = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+    })
+
+    assert result["ok"] is True, result
+    assert result["draft_id"]
+    posts = [call for call in calls if call[0] == "POST"]
+    assert len(posts) == 1
+    assert not posts[0][2].get("operation_id")
+
+
+def test_turnless_external_unified_prepare_neither_reads_nor_forwards_operation(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+    captured = {}
+
+    def fake_request(method, path, *, body=None, **_kwargs):
+        if "/agent-product-operations" in path:
+            pytest.fail("a turnless external host must not read an Agent product operation")
+        assert method == "POST"
+        assert path.endswith("/workflow-drafts")
+        captured.update(body)
+        return {"ok": True, "data": {"ok": True, "status": "workflow_draft_ready"}}
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    result = plugin._handle_prepare_workflow({
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "operation_id": "agent_product_" + "0" * 32,
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "short-drama-quick", "version": "1"},
+            "nodes": [],
+            "edges": [],
+        },
+    })
+
+    assert result["status"] == "workflow_draft_ready"
+    assert "operation_id" not in captured
+    assert captured["plan"]["skill"] == {"id": "short-drama-quick", "version": "1"}
+
+
+def test_turnless_external_prepare_schemas_do_not_require_operation(monkeypatch):
+    _turnless_external_host(monkeypatch)
+    plugin = _load_plugin_module()
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+
+    for name in _WORKFLOW_PREPARE_TOOLS:
+        parameters = schemas[name]["parameters"]
+        assert "operation_id" in parameters["properties"], name
+        assert "operation_id" not in parameters["required"], name
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"DRAMACLAW_EXTERNAL_MCP": "1", "DRAMACLAW_TURN_ID": "turn-1"},
+        {"DRAMACLAW_EXTERNAL_MCP": None, "DRAMACLAW_TURN_ID": None},
+        {"DRAMACLAW_EXTERNAL_MCP": "0", "DRAMACLAW_TURN_ID": None},
+    ],
+)
+def test_in_product_prepare_schemas_still_require_operation(monkeypatch, env):
+    for name, value in env.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    plugin = _load_plugin_module()
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+
+    for name in _WORKFLOW_PREPARE_TOOLS:
+        assert "operation_id" in schemas[name]["parameters"]["required"], name
+
+
+def test_in_product_codex_turn_still_requires_workflow_result_operation(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: pytest.fail("missing operation must stop first"),
+    )
+    monkeypatch.setattr(
+        plugin, "_request", lambda *_args, **_kwargs: pytest.fail("must not call API")
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "plan": {"schema_version": "freezone_workflow_plan.v1"},
+    })
+
+    assert result["status"] == "workflow_result_admission_required"
+    assert result["next_action"] == "begin_workflow_result_generation"
 
 
 def test_workflow_result_admission_derives_versioned_skill_artifact_id(monkeypatch):
