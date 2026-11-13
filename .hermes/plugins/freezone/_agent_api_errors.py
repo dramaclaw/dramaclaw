@@ -111,7 +111,7 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
     if status_code == 503 and isinstance(data, dict) and isinstance(data.get("detail"), dict):
         detail = data["detail"]
         code = _safe_error_string(detail.get("code"), 80)
-        if re.fullmatch(r"canvas_core_[A-Za-z0-9_]+", code):
+        if re.fullmatch(r"canvas_core_[A-Za-z0-9_]+|canvas_lock_busy", code):
             result["code"] = code
             result["error"] = (
                 _safe_error_string(detail.get("message"), 300)
