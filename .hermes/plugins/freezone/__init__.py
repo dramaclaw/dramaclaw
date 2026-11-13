@@ -3751,11 +3751,61 @@ def _handle_node_action_catalog(args: dict[str, Any], **_: Any) -> str:
     request: dict[str, Any] = {"type": "node_action_catalog", "node_id": node_id}
     if action:
         request["action"] = action
-    return _request_canvas_context_from_frontend(
+    raw_result = _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
         requests=[request],
     )
+    result = json.loads(raw_result)
+    if not isinstance(result, dict):
+        return raw_result
+    for key in ("project_id", "canvas_id"):
+        if result.get(key) is None:
+            result.pop(key, None)
+    if result.get("ok") is not True:
+        return tool_result(result)
+    responses = result.get("responses")
+    response = next((
+        item for item in responses
+        if isinstance(item, dict) and item.get("type") == "node_action_catalog"
+    ), None) if isinstance(responses, list) else None
+    if response is not None and isinstance(response.get("data"), (dict, list)):
+        return tool_result(result)
+    scope = {
+        key: value for key, value in (
+            ("project_id", result.get("project_id") or project),
+            ("canvas_id", result.get("canvas_id") or canvas),
+        ) if isinstance(value, str) and value.strip()
+    }
+    if response is not None and "data" in response and response["data"] is None:
+        location = f"canvas {scope['canvas_id']}" if "canvas_id" in scope else "this canvas"
+        message = f"Node {node_id} does not exist on {location}."
+        return tool_result({
+            "ok": False, "status": "node_not_found", "code": "node_not_found",
+            "tool_call_status": "completed", "canvas_context_status": "resolved",
+            "node_id": node_id, **scope, "error": message, "message": message,
+            "retryable": False, "next_action": "summarize_canvas_or_tell_user",
+            "agent_instruction": (
+                f"Node {node_id} does not exist on this canvas. Do not call "
+                "freezone_get_node_action_catalog again with this node_id. "
+                "Do not invent or construct node ids. Call freezone_summarize_canvas "
+                "(with the same canvas_id) to see the real node ids, or use the node ids "
+                "returned by the canvas write that created the node. If the node you need "
+                "is not on the canvas, create it first or tell the user."
+            ),
+        })
+    return tool_result({
+        "ok": False, "status": "canvas_context_incomplete", "code": "canvas_context_incomplete",
+        "tool_call_status": "failed", "canvas_context_status": "failed",
+        "node_id": node_id, **scope,
+        "errors": ["The node action catalog response is missing or has invalid data."],
+        "message": f"The canvas did not return an action catalog for node {node_id}.",
+        "retryable": False, "next_action": "summarize_canvas_or_tell_user",
+        "agent_instruction": (
+            "Do not repeat this call with the same arguments. Check the node id "
+            "with freezone_summarize_canvas, or tell the user the canvas could not answer."
+        ),
+    })
 
 
 def _handle_node_create_schema(args: dict[str, Any], **_: Any) -> str:
@@ -9098,6 +9148,17 @@ def _canvas_creation_rejection(rejection: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _product_chat_session() -> bool:
+    """Only product chat renders the reply, so only it gets a ready Markdown link."""
+    return _clarification_listener_available()
+
+
+def _canvas_link_markdown(display_name: str, path: str) -> str:
+    label = display_name.replace("\r", " ").replace("\n", " ").strip() or path.rsplit("=", 1)[-1]
+    label = re.sub(r"([\\`*_\[\]<>~|])", r"\\\1", label)
+    return f"[{label}]({path})"
+
+
 def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
     try:
         project = _project_from_args(args)
@@ -9139,15 +9200,18 @@ def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
         return tool_result(_canvas_management_failure({"ok": False, "error": "Unexpected canvas response"}, args))
     canvas_id = data["canvas_id"]
     path = f"/projects/{project}/freezone?canvas={canvas_id}"
+    link = _canvas_link_markdown(data["display_name"], path) if _product_chat_session() else None
     return tool_result({
         "ok": True, "status": data["status"], "project_id": project,
         "canvas_id": canvas_id, "display_name": data["display_name"], "revision": data["revision"],
         "canvas_path": path,
+        **({"canvas_link_markdown": link} if link is not None else {}),
         "agent_instruction": (
             f"Pass canvas_id={canvas_id} explicitly on every later canvas call for this canvas. "
             f"Calls without canvas_id still go to the bound canvas{(' ' + bound) if bound else ''}. "
             "Paid generation on it still follows the normal confirmation rules. "
-            f"Give the user the link {path}."
+            + (f"Show the user this link to the new canvas exactly as given: {link}"
+               if link is not None else f"Give the user the link {path}.")
         ),
     })
 
@@ -9171,6 +9235,11 @@ def _handle_list_canvases(args: dict[str, Any], **_: Any) -> str:
     fields = ("canvas_id", "display_name", "kind", "creator_username", "created_by_viewer",
               "created_from_this_chat", "modified_at")
     canvases = [{key: row[key] for key in fields} for row in data["canvases"]]
+    if _product_chat_session():
+        for row in canvases:
+            if row["created_from_this_chat"] is True:
+                path = f"/projects/{project}/freezone?canvas={row['canvas_id']}"
+                row["canvas_link_markdown"] = _canvas_link_markdown(row["display_name"], path)
     return tool_result({
         "ok": True, "status": "listed", "project_id": project, "bound_canvas_id": bound or None,
         "canvases": canvases, "quota": data["quota"], "count": len(canvases),
@@ -9178,6 +9247,8 @@ def _handle_list_canvases(args: dict[str, Any], **_: Any) -> str:
             "To write to a canvas other than the bound one, pass its canvas_id explicitly. "
             + ("Only the bound canvas and canvases with created_from_this_chat=true accept "
                "writes from this chat." if bound else "This session has no bound canvas.")
+            + (" When you mention a canvas that has canvas_link_markdown, use that link exactly as given."
+               if any("canvas_link_markdown" in row for row in canvases) else "")
         ),
     })
 
@@ -10081,6 +10152,7 @@ _RESULT_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
         "example": {"type": "object"},
         "errors": {"type": "array", "items": {"type": "object"}},
         "canvas_path": {"type": "string"},
+        "canvas_link_markdown": {"type": "string"},
         "existing_canvas_id": {"type": "string"},
         "display_name": {"type": "string"},
     },
@@ -10138,7 +10210,7 @@ _STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_create_canvas": (
         "project_id", "canvas_id", "display_name", "revision", "canvas_path",
-        "rejection", "existing_canvas_id", "example", "errors",
+        "canvas_link_markdown", "rejection", "existing_canvas_id", "example", "errors",
     ),
     "freezone_list_canvases": (
         "project_id", "bound_canvas_id", "canvases", "quota", "count", "errors", "example",

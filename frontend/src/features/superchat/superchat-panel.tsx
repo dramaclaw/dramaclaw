@@ -143,6 +143,7 @@ import {
 import { ComposerWaitingStatus } from "@/features/superchat/composer-waiting-status";
 import { ChatTaskStatusBar } from "@/features/superchat/chat-task-status-bar";
 import { calculateTimelineContextDelta } from "@/features/superchat/timeline-scroll";
+import { ChatMarkdownLink, remarkChatCanvasPaths } from "@/features/superchat/chat-canvas-links";
 import { useEventBus } from "@/task-center/event-bus-context";
 import { useTaskCenterStore } from "@/task-center/store";
 import {
@@ -652,7 +653,7 @@ function normalizeMessageText(text: string): string {
 // 每渲染一次就新建一份的话 React 认不出是同一个类型，会把整棵 markdown 子树卸载重挂。
 // 消息列表一有重渲染（任务流 30s 看门狗、流式输出……）整列消息就会重建 DOM 闪一下，
 // 而输入框压在上面带 backdrop-blur，背景重采样会让框内跟着闪。
-const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkChatCanvasPaths];
 
 export function isGenerationSuccessSummaryText(text: string): boolean {
   return /^生成成功[，,]\s*无失败[。.]?$/.test(text.trim());
@@ -700,16 +701,7 @@ const MARKDOWN_COMPONENTS: MarkdownComponents = {
     );
   },
   em: ({ children }) => <em className="italic">{children}</em>,
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-primary underline underline-offset-2"
-    >
-      {children}
-    </a>
-  ),
+  a: ChatMarkdownLink,
   code: ({ children }) => (
     <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.92em]">{children}</code>
   ),

@@ -521,8 +521,17 @@ def test_list_marks_canvases_created_by_this_chat(agent):
     mine = rows[created["canvas_id"]]
     assert set(mine) == {
         "canvas_id", "display_name", "kind", "creator_username", "created_by_viewer",
-        "created_from_this_chat", "modified_at",
+        "created_from_this_chat", "modified_at", "canvas_link_markdown",
     }
+    # The listing labels the link with its own display name (the switcher label), and it
+    # points at the same canvas as the link the creation result handed over.
+    assert mine["canvas_link_markdown"] == _link(mine["display_name"], created["canvas_id"])
+    target = f"](/projects/proj/freezone?canvas={created['canvas_id']})"
+    assert mine["canvas_link_markdown"].endswith(target)
+    assert created["canvas_link_markdown"].endswith(target)
+    assert "canvas_link_markdown" not in rows["canvas_bob"]
+    assert "canvas_link_markdown" not in rows["default"]
+    assert "canvas_link_markdown" in result["agent_instruction"]
     assert (mine["created_by_viewer"], mine["created_from_this_chat"]) == (True, True)
     assert (rows["canvas_bob"]["created_by_viewer"],
             rows["canvas_bob"]["created_from_this_chat"]) == (False, False)
@@ -1061,3 +1070,82 @@ def test_add_next_node_text_refusal_through_a_batch(agent):
     assert command["source_node_id"] == "n-src"
     assert command["client_id"] == "next"
     assert _node_ids(agent.root, "default") == []
+
+
+# --- a ready link to the new canvas in product chat --------------------------------
+
+
+def _link(display_name, canvas_id, project="proj"):
+    label = re.sub(r"([\\`*_\[\]<>~|])", r"\\\1", display_name)
+    return f"[{label}](/projects/{project}/freezone?canvas={canvas_id})"
+
+
+def test_product_chat_gets_a_ready_markdown_link(agent):
+    result = _created(agent, "Autumn poem")
+    canvas_id = result["canvas_id"]
+    path = f"/projects/proj/freezone?canvas={canvas_id}"
+    assert result["canvas_path"] == path
+    assert result["canvas_link_markdown"] == _link(result["display_name"], canvas_id)
+    instruction = result["agent_instruction"]
+    assert result["canvas_link_markdown"] in instruction
+    assert "exactly as given" in instruction
+
+
+def test_markdown_link_escapes_the_canvas_name(agent):
+    result = _created(agent, "Plan [B] (draft) *v2*")
+    canvas_id = result["canvas_id"]
+    link = result["canvas_link_markdown"]
+    assert link == _link(result["display_name"], canvas_id)
+    assert link.endswith(f"](/projects/proj/freezone?canvas={canvas_id})")
+    assert "\\[B\\]" in link and "\\*v2\\*" in link
+    assert result["canvas_path"] == f"/projects/proj/freezone?canvas={canvas_id}"
+
+
+def test_external_agent_keeps_the_plain_canvas_path(external):
+    result = _created(external, "Autumn poem")
+    canvas_id = result["canvas_id"]
+    path = f"/projects/proj/freezone?canvas={canvas_id}"
+    assert result["canvas_path"] == path
+    assert "canvas_link_markdown" not in result
+    assert path in result["agent_instruction"]
+    assert "exactly as given" not in result["agent_instruction"]
+    listed = external.call(LIST, {})
+    assert listed["ok"] is True, listed
+    assert all("canvas_link_markdown" not in row for row in listed["canvases"])
+
+
+# --- node action catalog for a node id that is not on the canvas -------------------
+
+
+def _context_posts(h, canvas):
+    path = f"/api/v1/projects/proj/freezone/canvases/{canvas}/agent-context"
+    return [body for method, request_path, _query, body in h.requests
+            if method == "POST" and request_path == path]
+
+
+def test_invented_node_id_on_a_new_canvas_is_refused_once(agent):
+    b = _created(agent, "Autumn")["canvas_id"]
+    invented = f"{b}:new-ginkgo-image"
+    result = agent.call("freezone_get_node_action_catalog", {
+        "canvas_id": b, "node_id": invented, "action": "generate_image",
+    })
+    assert result["ok"] is False, result
+    assert result["status"] == result["code"] == "node_not_found"
+    assert result["retryable"] is False
+    assert result["node_id"] == invented
+    assert result["canvas_id"] == b
+    assert "freezone_summarize_canvas" in result["agent_instruction"]
+    assert len(_context_posts(agent, b)) == 1
+    assert _node_ids(agent.root, b) == []
+
+
+def test_real_node_still_gets_its_action_catalog(agent):
+    image = agent.call("freezone_create_node", {"node_type": "imageGenNode", "data": IMAGE})
+    (node_id,) = image["created_node_ids"]
+    result = agent.call("freezone_get_node_action_catalog", {"node_id": node_id})
+    assert result["ok"] is True, result
+    (response,) = result["responses"]
+    assert response["type"] == "node_action_catalog"
+    assert isinstance(response["data"], dict)
+    missing = agent.call("freezone_get_node_action_catalog", {"node_id": "default:nope"})
+    assert missing["code"] == "node_not_found", missing
