@@ -4603,6 +4603,36 @@ def _turnless_external_mcp_host() -> bool:
 
 _WORKFLOW_RESULT_OPERATION_REQUIRED = [] if _turnless_external_mcp_host() else ["operation_id"]
 
+# Shown only to external MCP hosts without a product chat turn.
+_TURNLESS_CREATE_CANVAS_GUIDANCE = (
+    " This session has no product chat turn, so no interface can show clarification cards. "
+    "If the request still needs generation settings (for images or video: model, aspect ratio, "
+    "resolution, quality, count; for video also duration) or other answers from the user, ask "
+    "in this conversation first and do not create the canvas yet; create it in the turn where "
+    "you will immediately prepare the workflow draft or write nodes to it. Create at most one "
+    "canvas per request and keep using it."
+)
+_TURNLESS_EMIT_GUIDANCE = (
+    " In this session (no product chat turn), when the user describes in their own words a "
+    "result that needs several generated images, videos or audio clips, or a multi-step "
+    "pipeline such as text to image to video, and does not name the exact nodes, edges and "
+    "actions to create, do not build it node by node with this tool: follow the "
+    "dramaclaw-workflows Skill (find the workflow with workflow_catalog_search, then "
+    "freezone_prepare_workflow). Keep using this tool when the user names the exact nodes, "
+    "edges or actions, for a single node, or to edit or run nodes that already exist."
+)
+_TURNLESS_NO_UI_CANVAS_GUIDANCE = (
+    " No canvas is needed to ask the user. If you ask the user and have not created a canvas "
+    "for this request yet, do not create one before they answer: create it once the settings "
+    "are complete, right before you prepare the workflow draft or write the nodes, and only "
+    "if the request needs a new canvas. If you already created one for this request, keep "
+    "using it and do not create another."
+)
+_CREATE_CANVAS_HOST_GUIDANCE = (
+    _TURNLESS_CREATE_CANVAS_GUIDANCE if _turnless_external_mcp_host() else ""
+)
+_EMIT_HOST_GUIDANCE = _TURNLESS_EMIT_GUIDANCE if _turnless_external_mcp_host() else ""
+
 
 def _clarification_listener_available() -> bool:
     """Only product chat turns read cards; external MCP hosts need a turn id.
@@ -4647,7 +4677,7 @@ def _clarification_no_ui_result(
             "when a later write returns generation_parameters_required. Paid actions still "
             "return confirmation_required and need the user's explicit consent before "
             "freezone_confirm_canvas_action."
-        ),
+        ) + (_TURNLESS_NO_UI_CANVAS_GUIDANCE if _turnless_external_mcp_host() else ""),
     }
 
 
@@ -12714,7 +12744,8 @@ TOOLS = (
             "freezone_create_canvas",
             "Create a new empty canvas in the project for this chat. Pass its canvas_id explicitly "
             "on later canvas tools; calls without canvas_id keep using the bound canvas. "
-            "Only available with the server canvas executor. Does not run any generation.",
+            "Only available with the server canvas executor. Does not run any generation."
+            + _CREATE_CANVAS_HOST_GUIDANCE,
             {
                 "name": {"type": "string", "minLength": 1, "maxLength": 100,
                          "description": "Name of the new canvas."},
@@ -13770,7 +13801,8 @@ TOOLS = (
         "freezone_emit_canvas_command",
         _schema(
             "freezone_emit_canvas_command",
-            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. When an existing node must be edited and then generated, use update_node_data + run_node_action in this one batch so generation reads the updated data without another model turn. Do not ask the user to click Generate after only creating or editing the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
+            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. When an existing node must be edited and then generated, use update_node_data + run_node_action in this one batch so generation reads the updated data without another model turn. Do not ask the user to click Generate after only creating or editing the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first."
+            + _EMIT_HOST_GUIDANCE,
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
                 "commands": {

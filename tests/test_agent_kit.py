@@ -88,6 +88,41 @@ def test_published_skill_matches_canonical_source() -> None:
     assert "synchronized" in result.stdout
 
 
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_workflow_skill_admission_matches_hosts_without_a_chat_turn() -> None:
+    """ISS-143: a host without a product chat turn opens no operation to copy."""
+    root = CE_ROOT / "src" / "novelvideo" / "agent_skills" / "dramaclaw-workflows"
+    skill = _flat((root / "SKILL.md").read_text(encoding="utf-8"))
+    step3 = skill.split("3. Call `freezone_begin_agent_product_generation`", 1)[1].split(
+        " 4. ", 1
+    )[0]
+    step4 = skill.split(" 4. For a normal workflow", 1)[1].split(" 5. ", 1)[0]
+
+    # In-product admission is unchanged: copy the operation id, never invent one.
+    assert (
+        "Copy the returned `operation_id` exactly; never invent, abbreviate, or "
+        "reconstruct one" in step3
+    )
+    # Hosts without a chat turn get a no-op admission and omit the id.
+    assert "`agent_product_operation_not_required`" in step3
+    assert "omit `operation_id`" in step3
+    assert "never invent one" in step3
+    assert "`agent_product_operation_not_required`" in step4
+
+    operations = _flat(
+        (root / "references" / "workflow-operations.md").read_text(encoding="utf-8")
+    )
+    first = operations.split("`freezone_prepare_workflow` takes exactly one", 1)[1].split(
+        "It returns", 1
+    )[0]
+    assert "the admitted `operation_id`" in first
+    assert "`agent_product_operation_not_required`" in first
+    assert "omit" in first
+
+
 def test_interactive_story_discovery_and_duration_contract() -> None:
     skill = (
         CE_ROOT / "src" / "novelvideo" / "agent_skills" / "interactive-story" / "SKILL.md"

@@ -996,6 +996,65 @@ def test_external_agent_without_interface_builds_on_a_new_canvas(external):
     assert _pending_cards(external, b) == []
 
 
+ASK_BEFORE_CREATING = (
+    "No canvas is needed to ask the user",
+    "do not create one before they answer",
+    "right before you prepare the workflow draft or write the nodes",
+    "keep using it and do not create another",
+)
+GENERATION_SETTINGS = {"generation_media_types": ["image"]}
+
+
+@pytest.mark.parametrize("bound_canvas", ["default", None])
+def test_external_agent_asks_for_settings_before_creating_a_canvas(
+    external, monkeypatch, bound_canvas,
+):
+    """A new generation request: ask first, with or without a bound canvas, and create nothing."""
+    if bound_canvas is None:
+        monkeypatch.delenv("DRAMACLAW_CANVAS_ID")
+    asked, seconds = _timed(external, CLARIFY, GENERATION_SETTINGS)
+    assert seconds < 2
+    assert asked["status"] == asked["code"] == NO_UI, asked
+    assert asked["retryable"] is False
+    instruction = " ".join(asked["agent_instruction"].split())
+    for phrase in ASK_BEFORE_CREATING:
+        assert phrase in instruction, instruction
+    assert _posts(external) == []
+    assert [method for method, *_ in external.requests if method != "GET"] == []
+    assert _pending_cards(external, "default") == []
+
+
+def test_external_agent_on_a_canvas_it_created_keeps_using_it(external):
+    b = _created(external, "Rainy street")["canvas_id"]
+    asked = external.call(CLARIFY, {"canvas_id": b, **GENERATION_SETTINGS})
+    _assert_no_ui(asked, b)
+    instruction = " ".join(asked["agent_instruction"].split())
+    assert "keep using it and do not create another" in instruction, instruction
+    assert len(_posts(external)) == 1
+
+
+@pytest.mark.parametrize(("external_mcp", "turn_id"), [
+    (None, "turn-1"),
+    (None, None),
+    ("1", "turn-1"),
+])
+def test_in_product_no_interface_instruction_has_no_external_guidance(
+    agent, monkeypatch, external_mcp, turn_id,
+):
+    """In-product chats still get the unchanged text on a canvas they created."""
+    for name, value in (("DRAMACLAW_EXTERNAL_MCP", external_mcp), ("DRAMACLAW_TURN_ID", turn_id)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "3")
+    b = _created(agent)["canvas_id"]
+    asked = agent.call(CLARIFY, {"canvas_id": b, **QUESTION})
+    _assert_no_ui(asked, b)
+    for phrase in ASK_BEFORE_CREATING:
+        assert phrase not in asked["agent_instruction"]
+
+
 # --- text node fields: displayName or title, plus content -------------------------
 
 

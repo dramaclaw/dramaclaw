@@ -1,12 +1,13 @@
 # Backend workflow operations
 
-`freezone_prepare_workflow` takes exactly one `intent` or `plan`, the admitted `operation_id`,
+`freezone_prepare_workflow` takes exactly one `intent` or `plan`, the admitted `operation_id` (omit
+it when `freezone_begin_agent_product_generation` returned `agent_product_operation_not_required`),
 boolean `run_after_create`, and optional `bindings`. `run_after_create` is required only for plans
 bound to story targets through `source_context.targets` or `source_context.asset_targets`; ordinary
 workflows may omit it and default to `false` (create only). The API validates declared bindings
-against the saved canvas before requiring this decision. A terse confirmation inherits this
-decision from the immediately preceding proposal. It returns the persisted identity, revision,
-digest, preview and next action, not the full compiled graph. It does not execute the canvas.
+against the saved canvas before requiring this decision. A terse confirmation inherits this decision
+from the immediately preceding proposal. It returns the persisted identity, revision, digest,
+preview and next action, not the full compiled graph. It does not execute the canvas.
 
 For an exact `plan`, shared generation controls may use these stable portable names under
 `plan.inputs`; preparation applies them to every matching media node. The same names are also

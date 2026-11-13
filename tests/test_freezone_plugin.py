@@ -407,6 +407,186 @@ def test_in_product_codex_turn_still_requires_workflow_result_operation(monkeypa
     assert result["next_action"] == "begin_workflow_result_generation"
 
 
+# What an external MCP host without a product chat turn is told about when to
+# create a canvas and which path builds a generation request. In-product hosts
+# (a chat turn, or no external MCP flag) must keep seeing exactly these texts.
+_IN_PRODUCT_CREATE_CANVAS_DESCRIPTION = (
+    "Create a new empty canvas in the project for this chat. Pass its canvas_id explicitly "
+    "on later canvas tools; calls without canvas_id keep using the bound canvas. "
+    "Only available with the server canvas executor. Does not run any generation."
+)
+_IN_PRODUCT_EMIT_DESCRIPTION = (
+    "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete "
+    "canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request "
+    "to create a downstream media node and actually generate its output is a mixed operation: "
+    "use add_next_node + run_node_action in this one batch, give add_next_node a client_id, "
+    "and use that same alias as run_node_action.node_id. When an existing node must be edited "
+    "and then generated, use update_node_data + run_node_action in this one batch so "
+    "generation reads the updated data without another model turn. Do not ask the user to "
+    "click Generate after only creating or editing the node. Do not use this tool for "
+    "registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool "
+    "instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first."
+)
+_IN_PRODUCT_NO_UI_INSTRUCTION = (
+    "Do not call freezone_request_user_clarification again for this request. Do not move "
+    "this request to another canvas. Either continue with the most reasonable reading of the "
+    "user's request and state the assumptions you made in your reply, or ask the user in "
+    "this conversation and wait for the answer. Never choose generation settings (model, "
+    "quality, resolution, duration, count) for the user and never pick a more expensive "
+    "option than the user asked for; ask the user in this conversation for missing image or "
+    "video settings, also when a later write returns generation_parameters_required. Paid "
+    "actions still return confirmation_required and need the user's explicit consent before "
+    "freezone_confirm_canvas_action."
+)
+_IN_PRODUCT_HOST_ENVS = [
+    # In-app Codex sets the external MCP flag and always carries a chat turn.
+    {"DRAMACLAW_EXTERNAL_MCP": "1", "DRAMACLAW_TURN_ID": "turn-1"},
+    # In-app Hermes never sets the external MCP flag, with or without a turn id.
+    {"DRAMACLAW_EXTERNAL_MCP": None, "DRAMACLAW_TURN_ID": "turn-1"},
+    {"DRAMACLAW_EXTERNAL_MCP": None, "DRAMACLAW_TURN_ID": None},
+    {"DRAMACLAW_EXTERNAL_MCP": "0", "DRAMACLAW_TURN_ID": None},
+]
+
+
+def _set_host_env(monkeypatch, env) -> None:
+    for name, value in env.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
+def _advertised_descriptions(plugin) -> dict[str, str]:
+    """Tool descriptions exactly as the MCP server lists them to the Agent."""
+    from novelvideo.chat import dramaclaw_mcp
+
+    tools = dramaclaw_mcp.build_mcp_tools(dramaclaw_mcp._tool_index(plugin))
+    return {tool.name: tool.description for tool in tools}
+
+
+def _added_text(description: str, in_product: str) -> str:
+    assert description.startswith(in_product), description
+    added = description[len(in_product):]
+    assert added.strip(), "the turnless host must get extra guidance"
+    return " ".join(added.split())
+
+
+def test_turnless_external_create_canvas_waits_until_the_request_is_complete(monkeypatch):
+    _turnless_external_host(monkeypatch)
+    plugin = _load_plugin_module()
+
+    added = _added_text(
+        _advertised_descriptions(plugin)["freezone_create_canvas"],
+        _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION,
+    )
+
+    for phrase in (
+        "no product chat turn",
+        "ask in this conversation first and do not create the canvas yet",
+        "immediately prepare the workflow draft or write nodes",
+        "at most one canvas per request",
+    ):
+        assert phrase in added, added
+
+
+def test_turnless_external_generation_request_prefers_the_workflow_skill(monkeypatch):
+    _turnless_external_host(monkeypatch)
+    plugin = _load_plugin_module()
+
+    added = _added_text(
+        _advertised_descriptions(plugin)["freezone_emit_canvas_command"],
+        _IN_PRODUCT_EMIT_DESCRIPTION,
+    )
+
+    for phrase in (
+        "no product chat turn",
+        "does not name the exact nodes, edges and actions",
+        "dramaclaw-workflows Skill",
+        "workflow_catalog_search",
+        "freezone_prepare_workflow",
+        # Direct commands keep this tool: exact nodes named by the user, one node,
+        # or edits and runs of nodes that already exist.
+        "names the exact nodes, edges or actions",
+        "for a single node",
+        "nodes that already exist",
+    ):
+        assert phrase in added, added
+
+
+@pytest.mark.parametrize("env", _IN_PRODUCT_HOST_ENVS)
+def test_in_product_tool_descriptions_are_unchanged(monkeypatch, env):
+    _set_host_env(monkeypatch, env)
+    plugin = _load_plugin_module()
+
+    descriptions = _advertised_descriptions(plugin)
+
+    assert descriptions["freezone_create_canvas"] == _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION
+    assert descriptions["freezone_emit_canvas_command"] == _IN_PRODUCT_EMIT_DESCRIPTION
+
+
+@pytest.mark.parametrize("chat_created", [False, True])
+def test_turnless_external_no_ui_result_asks_before_creating_a_canvas(
+    monkeypatch, chat_created
+):
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+
+    result = plugin._clarification_no_ui_result("p", "c", chat_created=chat_created)
+
+    added = _added_text(result["agent_instruction"], _IN_PRODUCT_NO_UI_INSTRUCTION)
+    for phrase in (
+        "No canvas is needed to ask the user",
+        "do not create one before they answer",
+        "right before you prepare the workflow draft or write the nodes",
+        "keep using it and do not create another",
+    ):
+        assert phrase in added, added
+    assert result["status"] == result["code"] == "clarification_ui_unavailable"
+    assert result["retryable"] is False
+    assert result["next_action"] == "continue_with_stated_assumptions_or_ask_in_conversation"
+
+
+@pytest.mark.parametrize("chat_created", [False, True])
+@pytest.mark.parametrize("env", _IN_PRODUCT_HOST_ENVS)
+def test_in_product_no_ui_result_instruction_is_unchanged(monkeypatch, env, chat_created):
+    plugin = _load_plugin_module()
+    _set_host_env(monkeypatch, env)
+
+    result = plugin._clarification_no_ui_result("p", "c", chat_created=chat_created)
+
+    assert result["agent_instruction"] == _IN_PRODUCT_NO_UI_INSTRUCTION
+
+
+def test_workflow_skill_names_the_turnless_admission_status(monkeypatch):
+    """The published Skill's no-operation branch matches what the tool returns."""
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    monkeypatch.setattr(
+        plugin, "_request", lambda *_args, **_kwargs: pytest.fail("must not open an operation")
+    )
+
+    result = plugin._handle_begin_agent_product_generation({
+        "product_kind": "workflow_result",
+        "generation_session_id": "session-1",
+        "normalized_inputs": {"prompt": "example"},
+        "skill_id": "video-ad",
+        "skill_version": "1.0.0",
+    })
+
+    skill_root = (
+        Path(__file__).resolve().parents[1]
+        / "src" / "novelvideo" / "agent_skills" / "dramaclaw-workflows"
+    )
+    skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    operations = (skill_root / "references" / "workflow-operations.md").read_text(
+        encoding="utf-8"
+    )
+    assert result["status"] == "agent_product_operation_not_required"
+    assert f"`{result['status']}`" in skill
+    assert f"`{result['status']}`" in operations
+
+
 def test_workflow_result_admission_derives_versioned_skill_artifact_id(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))

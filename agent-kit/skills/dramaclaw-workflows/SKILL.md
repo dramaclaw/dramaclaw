@@ -278,12 +278,16 @@ including `480P` whenever the schema lists it.
    `freezone_get_workflow_skill` when the standalone server is unavailable. Use only
    the returned Recipe summaries and input contract.
 3. Call `freezone_begin_agent_product_generation` with `product_kind="workflow_result"`, a stable
-   generation session, `skill_id`, `skill_version`, `artifact_id="<skill_id>@<skill_version>"`,
-   and the normalized inputs before authoring the result. These Skill identities must match the
-   later compiled result. Copy the returned `operation_id` exactly; never invent, abbreviate, or
-   reconstruct one, and never call a prepare tool before this admission succeeds.
+   generation session, `skill_id`, `skill_version`, `artifact_id="<skill_id>@<skill_version>"`, and
+   the normalized inputs before authoring the result. These Skill identities must match the later
+   compiled result. Copy the returned `operation_id` exactly; never invent, abbreviate, or
+   reconstruct one, and never call a prepare tool before this admission succeeds. If it returns
+   `agent_product_operation_not_required`, this host has no product chat turn and no operation was
+   opened; that counts as admission: continue, omit `operation_id` from the prepare call, and never
+   invent one.
 4. For a normal workflow, submit one compact `freezone_workflow_intent.v1`, the admitted
-   `operation_id`, and the `run_after_create` decision to `freezone_prepare_workflow` (required for story-bound targets).
+   `operation_id` (omitted when step 3 returned `agent_product_operation_not_required`), and the
+   `run_after_create` decision to `freezone_prepare_workflow` (required for story-bound targets).
    The backend compiles and validates it; do not run a separate compile first.
 5. Present the returned preview. Adjust it with `freezone_revise_workflow`, sending the same
    `draft_id`, `expected_revision`, and only changed fields.
