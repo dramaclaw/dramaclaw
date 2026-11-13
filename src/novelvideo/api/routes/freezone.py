@@ -53,7 +53,11 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
     run_voice_media_operation,
 )
 from novelvideo.freezone.audio_node import recover_user_audio_voice_save
-from novelvideo.api.auth import get_api_user, require_project_scope
+from novelvideo.api.auth import (
+    get_api_user,
+    is_external_agent_key_session,
+    require_project_scope,
+)
 from novelvideo.api.workflow_reads import (
     WorkflowReadBusy,
     workflow_read_executor,
@@ -16113,8 +16117,17 @@ async def create_canvas_workflow_draft(
     state_dir = _canvas_state_project_dir(ctx, project_dir)
     operation_id = str(body.get("operation_id") or "").strip()
     metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
-    if not operation_id and metered_runtime:
+    # Only sessions the server marked as exchanged from an external agent key
+    # may deliver without a product operation; later generation is still admitted
+    # and charged through the normal Recipe path.
+    if not operation_id and metered_runtime and not is_external_agent_key_session(user):
         raise HTTPException(400, "workflow result operation_id is required")
+    if not operation_id and metered_runtime:
+        logger.info(
+            "workflow_draft.create.external_agent_session project_id=%s canvas_id=%s",
+            ctx.project_id,
+            canvas_id,
+        )
     operation = None
     if operation_id:
         try:

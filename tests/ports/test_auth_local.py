@@ -219,3 +219,21 @@ async def test_local_auth_session_create_removes_expired_sessions(tmp_path) -> N
     assert len(list(tmp_path.iterdir())) == 1
     data = await session.verify_agent_session(token.value)
     assert data["username"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_local_auth_session_never_marks_sessions_as_external_key_sessions(
+    tmp_path,
+) -> None:
+    """CE standalone has no external agent keys; caller metadata cannot add the marker."""
+    session = LocalAuthSession(tmp_path)
+    token = await session.create_agent_session(
+        username="alice",
+        scopes=["projects:write"],
+        metadata={"external_agent_key_id": "test-key-id-not-a-secret"},
+    )
+
+    data = await session.verify_agent_session(token.value)
+
+    assert set(data) == AGENT_LEGACY_KEYS
+    assert "external_agent_key_id" not in data

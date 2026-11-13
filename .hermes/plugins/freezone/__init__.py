@@ -4562,6 +4562,20 @@ def _external_mcp_agent_enabled() -> bool:
     }
 
 
+def _turnless_external_mcp_host() -> bool:
+    """Identify an external MCP host without a product chat turn.
+
+    The plugin opens no workflow_result operation; the server alone decides
+    whether the session may deliver a draft without one.
+    """
+    return _external_mcp_agent_enabled() and not os.environ.get(
+        "DRAMACLAW_TURN_ID", ""
+    ).strip()
+
+
+_WORKFLOW_RESULT_OPERATION_REQUIRED = [] if _turnless_external_mcp_host() else ["operation_id"]
+
+
 def _clarification_listener_available() -> bool:
     """Only product chat turns read cards; external MCP hosts need a turn id.
 
@@ -6815,6 +6829,10 @@ def _workflow_plan_operation_admission_error(
 
 
 def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
+    turnless = _turnless_external_mcp_host()
+    if turnless:
+        args = dict(args)
+        args.pop("operation_id", None)
     if build_workflow_graph_commands is None:
         return tool_error(
             "Freezone workflow graph builder is unavailable. "
@@ -6888,9 +6906,10 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if scope_error:
         return tool_result(scope_error)
     assert project is not None and canvas is not None
-    admission_error = _workflow_plan_operation_admission_error(args, project, canvas)
-    if admission_error is not None:
-        return tool_result(admission_error)
+    if not turnless:
+        admission_error = _workflow_plan_operation_admission_error(args, project, canvas)
+        if admission_error is not None:
+            return tool_result(admission_error)
     preflight = _workflow_runtime_preflight(
         validated,
         project_id=project,
@@ -6912,7 +6931,7 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
     operation_id = str(args.get("operation_id") or "").strip()
-    if not operation_id and _available():
+    if not operation_id and _available() and not turnless:
         return tool_result(
             {
                 "ok": False,
@@ -7187,6 +7206,30 @@ def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> st
                 }
             )
         artifact_id = expected_artifact_id
+        if _turnless_external_mcp_host():
+            return _structured_tool_result(
+                {
+                    "ok": True,
+                    "status": "agent_product_operation_not_required",
+                    "operation_id": "",
+                    "product_kind": "workflow_result",
+                    "task_id": "",
+                    "project_id": project_id,
+                    "canvas_id": canvas_id,
+                    "artifact_id": artifact_id,
+                    "generation_session_id": session_id,
+                    "confirmation_required": False,
+                    "next_action": "prepare_workflow_without_operation_id",
+                    "agent_instruction": (
+                        "This MCP host has no product chat turn, so no product operation is "
+                        "opened for a workflow result. Call the workflow draft tool and omit "
+                        "operation_id; never invent one. If the server refuses the draft, "
+                        "tell the user and stop. Generation after the draft still needs "
+                        "the user's confirmation as usual."
+                    ),
+                },
+                tool_name="freezone_begin_agent_product_generation",
+            )
     normalized_inputs = (
         args.get("normalized_inputs")
         if isinstance(args.get("normalized_inputs"), dict)
@@ -7418,6 +7461,9 @@ def _workflow_runtime_preflight(
 
 def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
     """Thin authenticated adapter: compile and patch only on the server."""
+    if action == "prepare" and _turnless_external_mcp_host():
+        args = dict(args)
+        args.pop("operation_id", None)
     project_id, canvas_id, error = _workflow_draft_scope(args)
     if error:
         return tool_result(error)
@@ -7816,6 +7862,10 @@ def _handle_get_workflow(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
+    turnless = _turnless_external_mcp_host()
+    if turnless:
+        args = dict(args)
+        args.pop("operation_id", None)
     if not _workflow_draft_dependencies_available():
         return _workflow_draft_unavailable()
     project_id, canvas_id, scope_error = _workflow_draft_scope(args)
@@ -7889,7 +7939,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
     operation_id = str(args.get("operation_id") or "").strip()
-    if not operation_id and _available():
+    if not operation_id and _available() and not turnless:
         return tool_result(
             {
                 "ok": False,
@@ -13472,7 +13522,7 @@ TOOLS = (
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id"],
+            [*_WORKFLOW_RESULT_OPERATION_REQUIRED],
             reject_unknown=True,
             one_of_required=("intent", "plan"),
         ),
@@ -13539,7 +13589,7 @@ TOOLS = (
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id", "intent"],
+            [*_WORKFLOW_RESULT_OPERATION_REQUIRED, "intent"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_draft,
@@ -13655,7 +13705,7 @@ TOOLS = (
                     ),
                 },
             },
-            ["operation_id", "plan"],
+            [*_WORKFLOW_RESULT_OPERATION_REQUIRED, "plan"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_plan_draft,
