@@ -10179,6 +10179,35 @@ def _canvas_application_receipt_contract(
     }
 
 
+def _canvas_confirmation_pending_contract() -> dict[str, Any]:
+    """A confirmation request was created; nothing has been applied yet.
+
+    run_workflow (always paid) and a build-and-run draft confirmation return this
+    before anything executes.
+    """
+    return {
+        "required": [
+            "project_id",
+            "canvas_id",
+            "confirmation_id",
+            "kinds",
+            "tool_call_status",
+            "canvas_apply_status",
+            "applied",
+        ],
+        "properties": {
+            "status": {"const": "confirmation_required"},
+            "project_id": {"type": "string", "minLength": 1},
+            "canvas_id": {"type": "string", "minLength": 1},
+            "confirmation_id": {"type": "string", "minLength": 1},
+            "kinds": {"type": "array", "minItems": 1},
+            "tool_call_status": {"const": "completed"},
+            "canvas_apply_status": {"const": "awaiting_confirmation"},
+            "applied": {"const": False},
+        },
+    }
+
+
 def _success_contract(name: str) -> dict[str, Any]:
     if name == "freezone_import_external_skill":
         return {"required": ["batch_id", "imports"]}
@@ -10247,6 +10276,7 @@ def _success_contract(name: str) -> dict[str, Any]:
                     {"required": ["operation_id"]},
                     {"required": ["workflow_instance_id"]},
                     {"required": ["run_id"]},
+                    _canvas_confirmation_pending_contract(),
                 ]},
             }
         if name == "freezone_run_workflow":
@@ -10280,6 +10310,7 @@ def _success_contract(name: str) -> dict[str, Any]:
                             "run_id": {"type": "string", "minLength": 1}
                         },
                     },
+                    _canvas_confirmation_pending_contract(),
                 ]
             }
         return {

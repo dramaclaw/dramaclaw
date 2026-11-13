@@ -1007,3 +1007,131 @@ def test_executed_decision_reports_run_not_started(agent, monkeypatch, run, inst
     assert result["confirmation_id"] == CONFIRMATION_ID
     assert result["run"] == run
     assert result["agent_instruction"] == instruction
+
+
+@pytest.mark.parametrize("args", [{"node_ids": ["n1"]}, {"scope": "canvas"}],
+                         ids=["node_ids", "canvas"])
+@pytest.mark.parametrize("via", ["card", "conversation"])
+def test_run_workflow_confirmation_is_a_valid_tool_result(agent, monkeypatch, args, via):
+    plugin, calls, _, _ = agent
+    monkeypatch.setattr(plugin, "_resolve_canvas_generation_recommendations", lambda *_: None)
+    if via == "card":
+        monkeypatch.setenv("DRAMACLAW_TURN_ID", "t1")
+    _respond(agent, monkeypatch, "/presence", {"ok": True, "data": {"browser_open": True}})
+    _respond(agent, monkeypatch, "/freezone/canvases/c", {
+        "ok": True, "data": {"nodes": [{"id": "n1"}]},
+    })
+    data = {**CONFIRMATION, "kinds": ["paid_generation"]}
+    _respond(agent, monkeypatch, "/confirmations", {"ok": True, "data": data})
+    if via == "card":
+        instruction = CARD_INSTRUCTION.replace(
+            "type. Then", "type. Say that it will consume credits; do not give any estimate. Then",
+        )
+    else:
+        instruction = CONVERSATION_INSTRUCTION.replace(
+            "type, and", "type, say that it will consume credits without giving any estimate, and",
+        )
+
+    result = _tool(plugin, "freezone_run_workflow", args)
+
+    assert result == _confirmation_result(data, via, instruction)
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", CONFIRMATION_PATH, {
+            "agent_id": "main", "turn_id": "t1" if via == "card" else None,
+            "commands": [{"type": "run_workflow", "direction": "connected", **args}],
+        }),
+    ]
+
+
+def test_every_tool_that_can_request_confirmation_accepts_the_pending_result(agent, monkeypatch):
+    import ast
+    import inspect
+
+    from jsonschema import ValidationError
+
+    plugin, _, _, _ = agent
+    plugin_file = Path(plugin.__file__).resolve()
+    module = ast.parse(plugin_file.read_text())
+    references = {
+        function.name: {node.id for node in ast.walk(function) if isinstance(node, ast.Name)}
+        for function in module.body
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    def reaches_confirmation(function_name):
+        pending = [function_name]
+        visited = set()
+        while pending:
+            name = pending.pop()
+            if name == "_create_canvas_confirmation":
+                return True
+            if name not in visited:
+                visited.add(name)
+                pending.extend(references.get(name, set()) - visited)
+        return False
+
+    tools = set()
+    for name, _schema, bound in plugin.TOOLS:
+        handler = inspect.getclosurevars(bound).nonlocals["handler"]
+        if Path(handler.__code__.co_filename).resolve() != plugin_file:
+            continue
+        if reaches_confirmation(handler.__name__):
+            tools.add(name)
+    assert tools >= {
+        "freezone_emit_canvas_command", "freezone_delete_nodes", "freezone_run_node_action",
+        "freezone_run_workflow", "freezone_confirm_workflow_draft",
+    }
+
+    failures = []
+    for kind, via, commands in [
+        ("paid_generation", "card", [{"type": "run_workflow", "scope": "canvas"}]),
+        ("delete_nodes", "conversation", DELETE),
+        ("clear_canvas", "conversation", [{"type": "clear_canvas"}]),
+    ]:
+        if via == "card":
+            monkeypatch.setenv("DRAMACLAW_TURN_ID", "t1")
+        else:
+            monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
+        _respond(agent, monkeypatch, "/presence", {"ok": True, "data": {"browser_open": True}})
+        data = {**CONFIRMATION, "kinds": [kind]}
+        _respond(agent, monkeypatch, "/confirmations", {"ok": True, "data": data})
+        payload = plugin._create_canvas_confirmation("p", "c", commands)
+        assert payload["confirmation_via"] == via
+        for name in sorted(tools):
+            try:
+                _assert_real_mcp_output(plugin, name, payload)
+            except ValidationError as error:
+                failures.append(f"{name} ({kind}, {via}): {error.message}")
+    assert not failures, "\n".join(failures)
+
+
+@pytest.mark.parametrize("name", ["freezone_run_workflow", "freezone_confirm_workflow_draft"])
+def test_pending_confirmation_shape_is_not_a_loose_success(agent, monkeypatch, name):
+    from jsonschema import Draft202012Validator, ValidationError
+
+    from novelvideo.chat import dramaclaw_mcp
+
+    plugin, _, _, _ = agent
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "t1")
+    _respond(agent, monkeypatch, "/presence", {"ok": True, "data": {"browser_open": True}})
+    data = {**CONFIRMATION, "kinds": ["paid_generation"]}
+    _respond(agent, monkeypatch, "/confirmations", {"ok": True, "data": data})
+    payload = plugin._create_canvas_confirmation(
+        "p", "c", [{"type": "run_workflow", "scope": "canvas"}],
+    )
+    schema = {n: s for n, s, _h in plugin.TOOLS}[name]["output_schema"]
+    validator = Draft202012Validator(schema)
+    for key, value in [
+        ("applied", True),
+        ("canvas_apply_status", "applied"),
+        ("confirmation_id", None),
+        ("confirmation_id", ""),
+        ("status", "submitted"),
+        ("tool_call_status", "failed"),
+    ]:
+        mutated = {**payload, key: value}
+        if value is None:
+            mutated.pop(key)
+        with pytest.raises(ValidationError):
+            validator.validate(dramaclaw_mcp._normalize_structured_result(schema, mutated))
+    validator.validate(dramaclaw_mcp._normalize_structured_result(schema, payload))
