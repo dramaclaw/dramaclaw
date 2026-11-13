@@ -2,6 +2,7 @@
 # Copyright (c) 2026 ClaymoreLab
 """Canvas confirmation HTTP policy, durable decisions, notices, and bridge payloads."""
 
+import asyncio
 from contextlib import ExitStack
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -17,7 +18,12 @@ from novelvideo.api.routes import chat, freezone as routes
 from novelvideo.chat.store import ChatScope, ChatStore
 from novelvideo import config
 from novelvideo.freezone import agent_canvas, canvas_confirmations as confirmations, canvas_store
-from novelvideo.freezone import canvas_core_pool, server_workflow_index, workflow_runs
+from novelvideo.freezone import (
+    canvas_core_pool,
+    server_workflow_index,
+    workflow_drafts,
+    workflow_runs,
+)
 from novelvideo.task_backend import client as task_client
 from novelvideo.freezone.canvas_command_bridge import list_pending_bridge_messages
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
@@ -1328,3 +1334,249 @@ def test_existing_canvas_confirmations_are_unchanged(setup):
     assert clearing["kinds"] == ["clear_canvas"]
     assert [target["node_id"] for target in clearing["targets"]] == ["n1", "n2", "n3"]
     assert nodes(setup) == ["n1", "n2", "n3"]
+
+
+# Workflow draft delivery through paid canvas confirmations.
+
+
+def _claimed_confirmation_draft(setup, monkeypatch, status="submitted"):
+    draft = workflow_drafts.create_workflow_draft(
+        project_dir=setup.root,
+        project_id="proj",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "Create an ad"},
+        compiled={
+            "ok": True, "skill_id": "video-ad", "edge_count": 0,
+            "plan": {
+                "summary": "Ad", "inputs": {}, "phases": ["image"],
+                "nodes": [{"id": "c1", "name": "Poster", "node_type": "imageGenNode",
+                           "stage": "image"}],
+                "edges": [],
+            },
+        },
+        run_after_create=True,
+    )
+    scope = {"project_dir": setup.root, "canvas_id": "default", "draft_id": draft["draft_id"]}
+    claimed, error = workflow_drafts.claim_workflow_draft_confirmation(
+        **scope, revision=1, now=setup.clock[0],
+    )
+    assert error is None
+    assert claimed is not None
+    started_at = claimed["confirmation_started_at"]
+    bound = workflow_drafts.bind_workflow_draft_task(
+        **scope, task_id="task-1", root_task_id="task-1",
+        expected_confirmation_started_at=started_at,
+    )
+    assert bound is not None
+    if status == "submitted":
+        workflow_drafts.finish_workflow_draft_confirmation(
+            **scope, outcome="submitted", expected_task_id="task-1", expected_revision=1,
+        )
+
+    def get_task_for_project(ctx, task_type, index, beat_num=None, scope=None):
+        return SimpleNamespace(task_id="task-1", status="running")
+
+    monkeypatch.setattr(
+        "novelvideo.task_state.get_task_manager",
+        lambda: SimpleNamespace(get_task_for_project=get_task_for_project),
+    )
+    draft = _read_confirmation_draft(setup, draft)
+    assert draft["status"] == status
+    commands = deepcopy(MIXED)
+    commands[0]["data"].update({
+        "workflowInstanceId": draft["draft_id"], "workflowDraftRevision": 1,
+        "workflowConfirmationTaskId": "task-1",
+    })
+    return draft, started_at, commands
+
+
+def _read_confirmation_draft(setup, draft):
+    stored, error = workflow_drafts.read_workflow_draft(
+        project_dir=setup.root, canvas_id="default", draft_id=draft["draft_id"],
+    )
+    assert error is None
+    assert stored is not None
+    return stored
+
+
+@pytest.mark.parametrize("status", ["confirming", "submitted"])
+def test_paid_confirmation_refusal_releases_workflow_draft(setup, monkeypatch, status):
+    draft, _, commands = _claimed_confirmation_draft(setup, monkeypatch, status)
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=commands)
+
+    response = decide(setup, confirmation, decision="refused")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "refused"
+    stored = _read_confirmation_draft(setup, draft)
+    assert stored["status"] == "ready"
+    assert stored["confirmation_started_at"] is None
+    claimed, error = workflow_drafts.claim_workflow_draft_confirmation(
+        project_dir=setup.root, canvas_id="default", draft_id=draft["draft_id"], revision=1,
+    )
+    assert error is None
+    assert claimed is not None and claimed["status"] == "confirming"
+
+
+@pytest.mark.parametrize("status", ["confirming", "submitted"])
+def test_paid_confirmation_list_expiry_releases_workflow_draft(setup, monkeypatch, status):
+    draft, _, commands = _claimed_confirmation_draft(setup, monkeypatch, status)
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=commands)
+    setup.clock[0] = record(setup, confirmation)["expires_at"] + 1
+
+    response = setup.client.get(BASE + "/confirmations")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["confirmations"] == []
+    assert record(setup, confirmation)["status"] == "expired"
+    assert _read_confirmation_draft(setup, draft)["status"] == "ready"
+
+
+@pytest.mark.parametrize("status", ["confirming", "submitted"])
+def test_paid_confirmation_expired_decision_releases_workflow_draft(setup, monkeypatch, status):
+    draft, _, commands = _claimed_confirmation_draft(setup, monkeypatch, status)
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=commands)
+    setup.clock[0] = record(setup, confirmation)["expires_at"] + 1
+
+    response = decide(setup, confirmation)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "expired"
+    assert _read_confirmation_draft(setup, draft)["status"] == "ready"
+
+
+@pytest.mark.parametrize("status", ["confirming", "submitted"])
+def test_paid_confirmation_edit_failure_releases_workflow_draft(setup, monkeypatch, status):
+    draft, _, commands = _claimed_confirmation_draft(setup, monkeypatch, status)
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=commands)
+    claim = confirmations.claim
+
+    def fail_after_claim(*args, **kwargs):
+        result = claim(*args, **kwargs)
+        setup.pool.apply_fails = True
+        return result
+
+    monkeypatch.setattr(confirmations, "claim", fail_after_claim)
+
+    response = decide(setup, confirmation)
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "executed"
+    assert data["result"]["status"] == "validation_failed"
+    assert created(setup) == []
+    assert nodes(setup) == ["n1", "n2", "n3"]
+    assert _read_confirmation_draft(setup, draft)["status"] == "ready"
+
+
+@pytest.mark.parametrize("status", ["confirming", "submitted"])
+def test_paid_confirmation_execution_error_releases_workflow_draft(setup, monkeypatch, status):
+    draft, _, commands = _claimed_confirmation_draft(setup, monkeypatch, status)
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=commands)
+
+    async def fail_execution(**kwargs):
+        raise HTTPException(422, {"message": "Command rejected"})
+
+    monkeypatch.setattr(routes, "execute_agent_canvas_envelopes", fail_execution)
+
+    response = decide(setup, confirmation)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {"message": "Command rejected"}
+    assert record(setup, confirmation)["status"] == "voided"
+    assert _read_confirmation_draft(setup, draft)["status"] == "ready"
+
+
+def test_paid_confirmation_success_confirms_workflow_draft(setup, monkeypatch):
+    draft, _, commands = _claimed_confirmation_draft(setup, monkeypatch)
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=commands)
+
+    response = decide(setup, confirmation)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "running"
+    assert _read_confirmation_draft(setup, draft)["status"] == "confirmed"
+
+
+def test_workflow_confirmation_runner_stops_after_refusal_release(setup, monkeypatch):
+    from novelvideo.task_backend.runners.freezone import _run_freezone_workflow_confirm_async
+
+    draft, started_at, commands = _claimed_confirmation_draft(setup, monkeypatch)
+    setup.pool.plan = mixed_plan()
+    confirmation = create(setup, commands=commands)
+    response = decide(setup, confirmation, decision="refused")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "refused"
+    envelope = {
+        "payload": {
+            "canvas_id": "default", "draft_id": draft["draft_id"], "revision": 1,
+            "plan_digest": draft["plan_digest"], "confirmation_started_at": started_at,
+        },
+        "__run_task_id": "task-1",
+    }
+
+    async def wait_for_delivery():
+        return await asyncio.wait_for(
+            _run_freezone_workflow_confirm_async(envelope, SimpleNamespace(state_dir=setup.root)),
+            timeout=3,
+        )
+
+    with pytest.raises(RuntimeError, match="not delivered"):
+        asyncio.run(wait_for_delivery())
+
+
+@pytest.mark.parametrize("receipt,expected_status", [
+    pytest.param({
+        "tool_call_status": "failed", "canvas_apply_status": "failed", "applied": False,
+        "applied_count": 0, "created_node_ids": [], "errors": ["x"],
+    }, "ready", id="nothing_applied"),
+    pytest.param({
+        "tool_call_status": "completed", "canvas_apply_status": "applied", "applied": True,
+        "applied_count": 4, "created_node_ids": ["node-1"], "errors": [],
+    }, "confirmed", id="success"),
+    pytest.param({
+        "tool_call_status": "failed", "canvas_apply_status": "partially_applied", "applied": False,
+        "applied_count": 2, "created_node_ids": ["node-1"], "errors": ["x"],
+    }, "submitted", id="partially_applied"),
+])
+def test_paid_confirmation_browser_receipt_updates_workflow_draft(
+    setup, monkeypatch, receipt, expected_status,
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "browser")
+    touch_canvas_presence(setup.root, "default", "browser", now=1000)
+    draft, _, commands = _claimed_confirmation_draft(setup, monkeypatch)
+    confirmation = create(setup, commands=commands)
+    response = decide(setup, confirmation)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "submitted"
+    bridge_key = data["bridge_key"]
+    frames = list_pending_bridge_messages(
+        project_id="proj", canvas_id="default", bridge_dir=directory(setup).parent,
+    )
+    assert len(frames) == 1
+    assert frames[0]["envelope"]["confirmation_id"] == confirmation["confirmation_id"]
+
+    async def project_state_dir(user, payload):
+        return setup.root
+
+    monkeypatch.setattr(chat, "_bridge_project_state_dir", project_state_dir)
+
+    result = asyncio.run(chat.resolve_canvas_command_tool_result(
+        chat.CanvasCommandToolResultIn(
+            bridge_key=bridge_key, project_id="proj", canvas_id="default", turn_id="t1",
+            **receipt,
+        ),
+        user=USER,
+    ))
+
+    assert result["ok"] is True
+    assert result["data"]["canvas_apply_status"] == receipt["canvas_apply_status"]
+    assert record(setup, confirmation)["status"] == "executed"
+    assert _read_confirmation_draft(setup, draft)["status"] == expected_status

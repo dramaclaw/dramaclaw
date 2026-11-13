@@ -72,6 +72,7 @@ from novelvideo.chat.turn_images import CANVAS_NODE_REFERENCE_TYPE, referenced_i
 from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
 from novelvideo.freezone.workflow_draft_delivery import (
     record_workflow_draft_delivery,
+    release_unapplied_workflow_draft,
     workflow_draft_identity,
 )
 from novelvideo.freezone.canvas_change_watch import canvas_change_watch_hub
@@ -906,6 +907,7 @@ async def _record_workflow_draft_canvas_result(
     payload: CanvasCommandToolResultIn,
     draft_receipt: dict[str, Any] | None,
     resolved: dict[str, Any],
+    release_unapplied: bool = False,
 ) -> None:
     if not draft_receipt:
         return
@@ -929,6 +931,11 @@ async def _record_workflow_draft_canvas_result(
         logger.exception(
             "failed to record durable workflow canvas outcome draft_id=%s",
             draft_id,
+        )
+        return
+    if release_unapplied:
+        await release_unapplied_workflow_draft(
+            project_dir=project_ctx.state_dir, canvas_id=canvas_id, identity=draft_receipt,
         )
         return
     await record_workflow_draft_delivery(
@@ -1793,6 +1800,10 @@ async def resolve_canvas_command_tool_result(
     resolved = _resolve_canvas_command_tool_result_payload(
         payload, username=username, project_state_dir=project_state_dir
     )
+    unapplied_confirmation = (
+        bool(confirmation_id) and not resolved.get("ok") and not payload.applied
+        and payload.applied_count == 0 and not payload.created_node_ids
+    )
     if confirmation_id:
         status = str(
             payload.canvas_apply_status or resolved.get("canvas_apply_status") or "unknown"
@@ -1815,6 +1826,7 @@ async def resolve_canvas_command_tool_result(
         payload=payload,
         draft_receipt=workflow_draft_receipt,
         resolved=resolved,
+        release_unapplied=unapplied_confirmation,
     )
     if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
         await _close_canvas_command_worker(username, payload)

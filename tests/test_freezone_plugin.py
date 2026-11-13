@@ -2381,6 +2381,73 @@ def test_workflow_draft_timeout_is_persisted_without_duplicate_submission(
     assert built_instance_ids == [prepared["draft_id"]]
 
 
+def test_workflow_draft_paid_confirmation_waits_without_duplicate_submission(monkeypatch, tmp_path):
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    compiled = {
+        "ok": True,
+        "skill_id": "video-ad",
+        "edge_count": 0,
+        "plan": {
+            "summary": "Ad",
+            "inputs": {},
+            "phases": [],
+            "nodes": [{
+                "id": "input", "name": "Input", "node_type": "textAnnotationNode",
+                "stage": "input",
+            }],
+            "edges": [],
+        },
+    }
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _intent: compiled)
+    monkeypatch.setattr(plugin, "build_workflow_graph_commands", lambda args: {
+        "ok": True,
+        "commands": [
+            {"type": "create_node", "client_id": "input", "node_type": "textAnnotationNode"},
+            {"type": "run_workflow", "node_ids": ["input"], "scope": "selection"},
+        ],
+        "workflow_instance_id": args["workflow_instance_id"],
+    })
+    emitted = []
+    confirmation_id = "cc_" + "a" * 32
+
+    def fake_emit(*args, **kwargs):
+        emitted.append((args, kwargs))
+        return {
+            "ok": True, "status": "confirmation_required", "applied": False,
+            "confirmation_id": confirmation_id,
+        }
+
+    monkeypatch.setattr(plugin, "_emit_canvas_commands", fake_emit)
+    prepared = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "Create an ad"},
+        "run_after_create": True,
+    })
+    assert prepared["ok"] is True
+    confirm_args = {"draft_id": prepared["draft_id"], "revision": 1}
+
+    first = plugin._handle_confirm_workflow_draft(confirm_args)
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"],
+    )
+
+    assert first["status"] == "confirmation_required"
+    assert first["confirmation_id"] == confirmation_id
+    assert first["applied"] is False
+    assert error is None
+    assert stored is not None and stored["status"] == "submitted"
+    assert stored["task_id"]
+    assert stored["run_after_create"] is True
+    repeated = plugin._handle_confirm_workflow_draft(confirm_args)
+    assert repeated["status"] == "workflow_draft_confirmation_in_progress"
+    assert len(emitted) == 1
+    assert read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"],
+    ) == (stored, None)
+
+
 def test_workflow_draft_patch_rejects_skill_replacement(monkeypatch, tmp_path):
     plugin = _load_plugin_module()
     _install_workflow_draft_api(monkeypatch, plugin, tmp_path)

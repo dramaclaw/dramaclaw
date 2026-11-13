@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,32 @@ def canvas_receipt_delivered(receipt: object) -> bool:
         and not receipt.get("cancelled")
         and not receipt.get("errors")
     )
+
+
+async def release_unapplied_workflow_draft(
+    *, project_dir, canvas_id: str, identity: dict[str, Any] | None,
+) -> None:
+    """Release a matching draft when its paid confirmation applied nothing."""
+    if identity is None:
+        return
+    # The draft stayed submitted while paid confirmation was pending. Nothing
+    # was applied, so no receipt will settle it.
+    try:
+        from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+        await asyncio.to_thread(
+            release_workflow_draft_confirmation,
+            project_dir=Path(project_dir),
+            canvas_id=canvas_id,
+            draft_id=identity["draft_id"],
+            expected_task_id=identity["task_id"],
+            expected_revision=identity["revision"],
+        )
+    except Exception:
+        logger.exception(
+            "failed to release workflow draft after unapplied confirmation draft_id=%s",
+            identity.get("draft_id"),
+        )
 
 
 async def record_workflow_draft_delivery(

@@ -232,6 +232,7 @@ from novelvideo.freezone.history import (
 from novelvideo.freezone.workflow_draft_delivery import (
     canvas_receipt_delivered,
     record_workflow_draft_delivery,
+    release_unapplied_workflow_draft,
     workflow_draft_identity,
 )
 from novelvideo.freezone.workflow_drafts import (
@@ -18255,6 +18256,12 @@ async def list_canvas_confirmations(
         )
         expired = await asyncio.to_thread(canvas_confirmations.expire_due, directory, now=now)
         for record in expired:
+            if record["project_id"] == project:
+                await release_unapplied_workflow_draft(
+                    project_dir=state_dir,
+                    canvas_id=record["canvas_id"],
+                    identity=workflow_draft_identity(record["commands"]),
+                )
             if (
                 record["turn_id"] is not None and record["project_id"] == project
                 and record["canvas_id"] == canvas_id
@@ -18385,10 +18392,18 @@ async def decide_canvas_confirmation(
         )
     except canvas_confirmations.CanvasConfirmationError as exc:
         if exc.code == "expired" and exc.record is not None:
+            await release_unapplied_workflow_draft(
+                project_dir=state_dir, canvas_id=canvas_id,
+                identity=workflow_draft_identity(exc.record["commands"]),
+            )
             await append_canvas_confirmation_notice(user, exc.record, "expired")
         raise reject(404 if exc.code == "not_found" else 409, exc.code, message=str(exc)) from exc
     _log_canvas_confirmation_decision(record, body.decision, body.via, now)
     if body.decision == "refused":
+        await release_unapplied_workflow_draft(
+            project_dir=state_dir, canvas_id=canvas_id,
+            identity=workflow_draft_identity(record["commands"]),
+        )
         if body.via == "card":
             await append_canvas_confirmation_notice(user, record, "refused")
         return {"ok": True, "data": {
@@ -18400,6 +18415,10 @@ async def decide_canvas_confirmation(
         record = await asyncio.to_thread(
             canvas_confirmations.void_confirmation, directory, confirmation_id,
             reason="targets_changed", now=now,
+        )
+        await release_unapplied_workflow_draft(
+            project_dir=state_dir, canvas_id=canvas_id,
+            identity=workflow_draft_identity(record["commands"]),
         )
         _log_canvas_confirmation_decision(record, "voided", body.via, now)
         if body.via == "card":
@@ -18451,12 +18470,21 @@ async def decide_canvas_confirmation(
                 canvas_confirmations.void_confirmation, directory, confirmation_id,
                 reason="execution_failed", now=now,
             )
+            await release_unapplied_workflow_draft(
+                project_dir=state_dir, canvas_id=canvas_id,
+                identity=workflow_draft_identity(record["commands"]),
+            )
             _log_canvas_confirmation_decision(record, "voided", body.via, now)
             _log_canvas_confirmation_decision(record, code, body.via, now)
             if body.via == "card":
                 await append_canvas_confirmation_notice(user, record, "failed", code)
             raise
         if not mixed or data["status"] != "applied":
+            if data["status"] != "applied":
+                await release_unapplied_workflow_draft(
+                    project_dir=state_dir, canvas_id=canvas_id,
+                    identity=workflow_draft_identity(record["commands"]),
+                )
             return await finish_edits()
         commands = rewrite_run_commands(
             [command for command in record["commands"] if is_run_command(command)],
