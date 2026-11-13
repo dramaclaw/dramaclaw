@@ -4106,6 +4106,66 @@ def test_freezone_non_execution_request_keeps_full_mcp_servers():
     assert "dramaclaw_workflows" in servers
 
 
+@pytest.mark.parametrize("prompt", [
+    "在「K4秋日画布」画布上新建一个图片生成节点，提示词：一片金黄的银杏叶。用最低画质、最小分辨率、只生成1张。然后运行这个节点生成图片。不要改动其他画布。",
+    "请分两步做。第一步：在「K4秋日画布」画布上新建一个图片生成节点，提示词：一片金黄的银杏叶，用最低画质、最小分辨率、只生成1张。第二步：用第一步创建结果里返回的真实节点 id 运行这个节点生成图片——不要自己编造节点 id。不要改动其他画布。",
+    "在当前画布上新建一个图片生成节点，然后运行这个节点。",
+    "在当前画布添加一个音频节点并执行该节点。",
+    "新建一张画布，在上面放一个图片节点，然后运行这个节点。",
+    "在当前画布加一个视频节点，接着运行这个节点。",
+    "创建一个文生图工作流，然后执行这个工作流。",
+    "Create a new image node beside the selected node, then run it.",
+    "Add an image generation node to the current workflow and run the current workflow.",
+    "Create a new workflow from the selected node and execute the workflow.",
+    "分别新建两个图片节点，然后运行这个节点。",
+    "在当前画布分别添加一个图片节点和一个视频节点，然后执行这个工作流。",
+    "要不加一个图片节点，然后运行这个节点。",
+    "不要新建画布，在当前画布放一个图片节点然后运行这个节点。",
+])
+def test_freezone_create_then_run_request_keeps_full_mcp_servers(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert chat_service._freezone_existing_execution_requested(prompt) is False
+    assert "enabled_tools" not in servers["dramaclaw"]
+    assert "dramaclaw_workflows" in servers
+
+
+@pytest.mark.parametrize("prompt", [
+    "在「K4秋日画布」画布上放一个图片生成节点并运行它，提示词：一片金黄的银杏叶，用最低画质、最小分辨率、只生成1张。不要改动其他画布。",
+    "在「K4秋日画布」画布上新建一个图片生成节点，提示词：一片金黄的银杏叶。不要运行，不要改动其他画布。",
+    "列出画布，然后新建一张叫 K4秋日画布 的画布，在上面放一个文本节点",
+    "在新画布上放一个图片生成节点并运行它",
+])
+def test_freezone_create_requests_without_existing_target_stay_unfocused(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert chat_service._freezone_existing_execution_requested(prompt) is False
+    assert "enabled_tools" not in servers["dramaclaw"]
+    assert "dramaclaw_workflows" in servers
+
+
+@pytest.mark.parametrize("prompt", [
+    "执行这个现有节点。",
+    "运行这个节点。",
+    "运行刚才新建的这个图片节点。",
+    "执行已经创建好的现有工作流。",
+    "不要新建节点，直接运行当前选中的图片节点。",
+    "别新建节点，直接运行当前选中的图片节点。",
+    "给这个节点加个提示词然后运行这个节点。",
+    "Run the existing node that was created yesterday.",
+    "Execute the selected node and do not add a new node.",
+    "Run the selected node; don't create a new node.",
+])
+def test_freezone_run_existing_request_stays_focused_despite_creation_words(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert chat_service._freezone_existing_execution_requested(prompt) is True
+    assert set(servers) == {"dramaclaw"}
+    assert servers["dramaclaw"]["enabled_tools"] == list(
+        chat_service._CODEX_FREEZONE_EXECUTION_TOOLS
+    )
+
+
 def test_freezone_execution_instruction_forbids_progress_reply_before_tool():
     instructions = chat_service._codex_developer_instructions("freezone_canvas")
 

@@ -932,6 +932,30 @@ _FREEZONE_DEFERRED_EXECUTION_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+# Negated creation verbs do not request a new canvas object in this turn.
+_FREEZONE_CREATION_NEGATION_RE = re.compile(
+    r"(?:"
+    r"(?:暂不|暂时不|先不|不要|无需|不用|不再|不会|(?<![分特区识个级类告])别|(?<!要)不)\s*"
+    r"(?:直接|立即|马上|继续|再)?\s*"
+    r"(?:新建|新增|创建|添加|增加|插入|建立|放|加|建|搭|做)"
+    r"|(?:do\s+not|don't|not|without)\s+"
+    r"(?:(?:directly|immediately|then)\s+)?"
+    r"(?:create|add|insert|place|put|make|build)\b"
+    r")",
+    re.IGNORECASE,
+)
+# Creating an object needs the full tool surface; “新建的” describes an existing one.
+_FREEZONE_CREATION_INTENT_RE = re.compile(
+    r"(?:"
+    r"(?:(?:新建|新增|创建|添加|增加|插入|建立)(?!(?:好|过|完)?的)"
+    r"|(?:放|加|建|搭|做)(?:上|入|进)?(?:[一两三几]|\d+)?[个张块])"
+    r"(?:(?!运行|执行)[^。！？!?，,；;\n]){0,32}?(?:节点|画布|工作流)"
+    r"|\b(?:create|add|insert|place|put|make|build)\b[ \t]+"
+    r"(?:a|an|one|another|new)\b"
+    r"[^。！？!?，,；;.\n]{0,32}?\b(?:node|canvas|workflow)\b"
+    r")",
+    re.IGNORECASE,
+)
 # “可执行”/“可运行” are adjectives, and identifiers such as run_after_create
 # are field names; neither asks to run anything.
 _FREEZONE_EXISTING_EXECUTION_ACTION_RE = re.compile(
@@ -976,6 +1000,9 @@ def _freezone_existing_execution_requested(prompt: str | None) -> bool:
         return False
     intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
     intent_text = _FREEZONE_DEFERRED_EXECUTION_RE.sub("", intent_text)
+    creation_text = _FREEZONE_CREATION_NEGATION_RE.sub("", intent_text)
+    if _FREEZONE_CREATION_INTENT_RE.search(creation_text):
+        return False
     return bool(
         _FREEZONE_EXISTING_EXECUTION_ACTION_RE.search(intent_text)
         and _FREEZONE_EXISTING_EXECUTION_TARGET_RE.search(intent_text)
