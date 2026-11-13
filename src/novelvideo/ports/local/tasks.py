@@ -35,10 +35,15 @@ from novelvideo.task_backend.run_core import (
 )
 from novelvideo.task_backend.subprocesses import kill_task_processes
 from novelvideo.task_owner import current_owner
-from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
+from novelvideo.task_state import (
+    ACTIVE_PROJECT_TASK_STATUSES,
+    LANE_EXEMPT_TASK_TYPES,
+    get_task_manager,
+)
 
 logger = logging.getLogger(__name__)
 _LANE_THREAD = threading.local()
+_ORCHESTRATION_POOL = "orchestration"
 
 _AUTHZ_RETRY_MAX_RETRIES = 5
 _AUTHZ_RETRY_BASE_DELAY = 2.0
@@ -89,6 +94,17 @@ class InlineTaskBackend:
             )
             for lane in sorted(QUEUE_KINDS)
         }
+        # Orchestrations wait for child tasks without occupying their execution lanes.
+        # A separate bounded pool keeps those children able to run when parents fill it.
+        self._lanes[_ORCHESTRATION_POOL] = _InlineLane(
+            name=_ORCHESTRATION_POOL,
+            concurrency=global_lane_concurrency("default"),
+            queue_limit=global_lane_queue_limit("default"),
+            executor=ThreadPoolExecutor(
+                max_workers=global_lane_concurrency("default"),
+                thread_name_prefix="inline-orchestration",
+            ),
+        )
 
     def _forward_loop(self) -> asyncio.AbstractEventLoop | None:
         loop = asyncio.get_running_loop()
@@ -250,7 +266,13 @@ class InlineTaskBackend:
         }
 
     def _submit_lane_job(self, job: _InlineLaneJob) -> None:
-        lane = self._lanes[normalize_queue_kind(job.envelope.get("queue_kind"))]
+        queue_kind = normalize_queue_kind(job.envelope.get("queue_kind"))
+        pool_name = (
+            _ORCHESTRATION_POOL
+            if job.envelope["task_type"] in LANE_EXEMPT_TASK_TYPES
+            else queue_kind
+        )
+        lane = self._lanes[pool_name]
         if lane.active < lane.concurrency:
             self._start_lane_job(lane, job)
             return
@@ -261,13 +283,13 @@ class InlineTaskBackend:
                 int(job.envelope.get("episode") or 0),
                 beat_num=job.envelope.get("beat_num"),
                 scope=job.envelope.get("scope"),
-                error=f"{lane.name} lane queue is full",
+                error=f"{queue_kind} lane queue is full",
                 metadata=job.metadata,
                 expected_task_id=job.run_task_id,
             )
             raise GlobalLaneQueueLimitExceeded(
                 project_id=job.project_id,
-                queue_kind=lane.name,
+                queue_kind=queue_kind,
                 limit=lane.queue_limit,
                 queued=len(lane.queued),
             )

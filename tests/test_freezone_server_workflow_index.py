@@ -1,7 +1,10 @@
 """Workflow recovery fails a dead process's tasks before it enqueues the next drive."""
 
+import multiprocessing
 import socket
+import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -182,3 +185,113 @@ async def test_terminal_recovery_keeps_pending_delivery(
     if elapsed > 3600:
         assert f"run_id={run['run_id']}" in caplog.text
         assert "pending=1" in caplog.text
+
+
+READ_GATE_TIMEOUT_SECONDS = 2
+
+
+def _register_index_run(state_dir: Path, run_id: str) -> None:
+    index.register_server_workflow_run(
+        project_id="project", state_dir=state_dir, canvas_id="default", run_id=run_id,
+        requester={"user_id": "requester", "username": "requester"},
+    )
+
+
+def _update_index_runs(
+    state_dir: Path, run_ids: tuple[str, ...], ready, read_gate=None, *, unregister=False,
+) -> None:
+    config.STATE_DIR = state_dir
+    if read_gate is not None:
+        real_read = index._read
+
+        def gated_read():
+            entries = real_read()
+            try:
+                read_gate.wait(timeout=READ_GATE_TIMEOUT_SECONDS)
+            except threading.BrokenBarrierError:
+                pass
+            return entries
+
+        index._read = gated_read
+
+    ready.wait(timeout=30)
+    for run_id in run_ids:
+        if unregister:
+            index.unregister_server_workflow_run(run_id)
+        else:
+            _register_index_run(state_dir, run_id)
+
+
+def _run_index_processes(processes) -> None:
+    started = []
+    try:
+        for process in processes:
+            process.start()
+            started.append(process)
+        for process in started:
+            process.join(timeout=60)
+        for process in started:
+            assert not process.is_alive()
+            assert process.exitcode == 0
+    finally:
+        for process in started:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=10)
+
+
+def test_concurrent_register_across_processes_keeps_both_runs(tmp_path, monkeypatch):
+    state_dir = tmp_path / "index"
+    monkeypatch.setattr(config, "STATE_DIR", state_dir)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Barrier(2)
+    read_gate = context.Barrier(2)
+    processes = [
+        context.Process(
+            target=_update_index_runs, args=(state_dir, (run_id,), ready, read_gate),
+        )
+        for run_id in ("r0", "r1")
+    ]
+    _run_index_processes(processes)
+
+    assert sorted(entry["run_id"] for entry in index.list_server_workflow_runs()) == ["r0", "r1"]
+
+
+def test_register_and_unregister_across_processes_keep_both_changes(tmp_path, monkeypatch):
+    state_dir = tmp_path / "index"
+    monkeypatch.setattr(config, "STATE_DIR", state_dir)
+    _register_index_run(state_dir, "r0")
+    context = multiprocessing.get_context("spawn")
+    ready = context.Barrier(2)
+    read_gate = context.Barrier(2)
+    processes = [
+        context.Process(
+            target=_update_index_runs, args=(state_dir, ("r1",), ready, read_gate),
+        ),
+        context.Process(
+            target=_update_index_runs, args=(state_dir, ("r0",), ready, read_gate),
+            kwargs={"unregister": True},
+        ),
+    ]
+    _run_index_processes(processes)
+
+    assert [entry["run_id"] for entry in index.list_server_workflow_runs()] == ["r1"]
+
+
+def test_many_processes_register_without_losing_runs(tmp_path, monkeypatch):
+    state_dir = tmp_path / "index"
+    monkeypatch.setattr(config, "STATE_DIR", state_dir)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Barrier(4)
+    run_ids_by_worker = [
+        tuple(f"r{worker}-{number}" for number in range(20)) for worker in range(4)
+    ]
+    processes = [
+        context.Process(target=_update_index_runs, args=(state_dir, run_ids, ready))
+        for run_ids in run_ids_by_worker
+    ]
+    _run_index_processes(processes)
+
+    actual = sorted(entry["run_id"] for entry in index.list_server_workflow_runs())
+    expected = sorted(run_id for run_ids in run_ids_by_worker for run_id in run_ids)
+    assert actual == expected

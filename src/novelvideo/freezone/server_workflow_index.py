@@ -1,4 +1,4 @@
-"""Durable single-process index and recovery sweeper for server workflows."""
+"""Durable index and recovery sweeper for server workflows with cross-process locking."""
 
 from __future__ import annotations
 
@@ -7,11 +7,14 @@ import json
 import logging
 import os
 import tempfile
-import threading
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
+import portalocker
 from fastapi import HTTPException
 
 from novelvideo import config
@@ -19,12 +22,36 @@ from novelvideo.freezone import workflow_runs as store
 from novelvideo.project_context import ProjectContext
 
 logger = logging.getLogger(__name__)
-_LOCK = threading.Lock()
+_INDEX_LOCK_TIMEOUT_SECONDS = 30.0
+_INDEX_LOCK_RETRY_INTERVAL_SECONDS = 0.02
 SERVER_WORKFLOW_DELIVERY_GRACE_SECONDS = 3600
 
 
 def _path() -> Path:
     return Path(config.STATE_DIR) / "server_workflow_runs.json"
+
+
+@contextmanager
+def _index_lock() -> Iterator[None]:
+    """Serialize index reads and read-modify-write transactions."""
+    # Host-level lock, like the other file locks here; leave the lock file in place.
+    # Separate opens also exclude other threads, so no threading lock is needed.
+    lock_path = _path().with_name("server_workflow_runs.json.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _INDEX_LOCK_TIMEOUT_SECONDS
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        while True:
+            try:
+                portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                break
+            except portalocker.exceptions.AlreadyLocked as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("server workflow index lock busy") from exc
+                time.sleep(_INDEX_LOCK_RETRY_INTERVAL_SECONDS)
+        try:
+            yield
+        finally:
+            portalocker.unlock(lock_file)
 
 
 def _read() -> list[dict]:
@@ -68,7 +95,7 @@ def _write(entries: list[dict]) -> None:
 def register_server_workflow_run(
     *, project_id: str, state_dir: str | Path, canvas_id: str, run_id: str, requester: dict,
 ) -> None:
-    with _LOCK:
+    with _index_lock():
         entries = [entry for entry in _read() if entry["run_id"] != run_id]
         entries.append(dict(project_id=project_id, state_dir=str(state_dir), canvas_id=canvas_id,
                             run_id=run_id, requester=requester))
@@ -76,12 +103,12 @@ def register_server_workflow_run(
 
 
 def list_server_workflow_runs() -> list[dict]:
-    with _LOCK:
+    with _index_lock():
         return _read()
 
 
 def unregister_server_workflow_run(run_id: str) -> None:
-    with _LOCK:
+    with _index_lock():
         entries = _read()
         remaining = [entry for entry in entries if entry["run_id"] != run_id]
         if len(remaining) != len(entries):
@@ -211,8 +238,9 @@ async def sweep_server_workflow_runs(*, now: datetime | None = None, enqueue=Non
                             **scope, attempt=attempt, error_kind=type(exc).__name__,
                         )
                     except Exception:
-                        logger.warning("Server workflow enqueue failure recording deferred run_id=%s",
-                                       run_id)
+                        logger.warning(
+                            "Server workflow enqueue failure recording deferred run_id=%s", run_id,
+                        )
                     logger.warning("Server workflow enqueue deferred run_id=%s", run_id)
                     results.append(dict(run_id=run_id, action="skipped"))
                 else:
