@@ -4375,6 +4375,7 @@ tests/test_freezone_mark_detect_egress.py,Elastic-2.0,2026 SuperTale contributor
 tests/test_freezone_multi_view_prompt.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_plugin.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_freezone_plugin_canvas_create_tools.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_plugin_server_executor.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_projection_merge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_recipe_timeout_message.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
