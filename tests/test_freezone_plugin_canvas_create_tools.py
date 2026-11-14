@@ -1208,3 +1208,129 @@ def test_real_node_still_gets_its_action_catalog(agent):
     assert isinstance(response["data"], dict)
     missing = agent.call("freezone_get_node_action_catalog", {"node_id": "default:nope"})
     assert missing["code"] == "node_not_found", missing
+
+
+# --- external key sessions: write the structure now, confirm only paid generation ---
+
+EXTERNAL_KEY_ID = "test-external-key-id-not-a-secret"
+CAT_BATCH = [
+    {"type": "create_node", "client_id": "cat_prompt", "node_type": "textAnnotationNode",
+     "data": {"displayName": "Prompt", "content": "An orange cat on a windowsill, watercolor",
+              "semanticOutputRole": "input_text"},
+     "position": {"x": 160, "y": 160}},
+    {"type": "add_next_node", "source_node_id": "cat_prompt", "client_id": "cat_image",
+     "node_type": "imageGenNode",
+     "data": {"displayName": "Cat watercolor", "model": "image-model", "aspectRatio": "1:1",
+              "size": "1K", "quality": "standard", "count": 1}},
+    {"type": "create_edge", "source": "cat_prompt", "target": "cat_image",
+     "link_type": "prompt_for"},
+    {"type": "run_node_action", "node_id": "cat_image", "action": "generate_image"},
+]
+
+
+def _confirmation_record(h, confirmation_id):
+    return canvas_confirmations.read_confirmation(
+        canvas_confirmations.confirmations_dir("alice", "main", h.root), confirmation_id,
+    )
+
+
+def test_server_preflight_maps_a_next_node_to_its_own_client_id(agent):
+    result = asyncio.run(freezone_server_workflow_start.check_server_workflow(
+        ctx=agent.ctx, state_dir=agent.root, canvas_id="default", commands=CAT_BATCH,
+    ))
+    assert result["status"] == "runnable", result
+    assert [action["action"] for action in result["plan"]["actions"]] == ["generate_image"]
+
+
+def test_server_preflight_names_the_failing_command_by_its_batch_index(agent):
+    commands = [CAT_BATCH[0], {"type": "run_node_action", "node_id": "cat_ghost",
+                               "action": "generate_image"}]
+    with pytest.raises(canvas_core_pool.CanvasCoreError) as raised:
+        asyncio.run(freezone_server_workflow_start.check_server_workflow(
+            ctx=agent.ctx, state_dir=agent.root, canvas_id="default", commands=commands,
+        ))
+    message = str(raised.value)
+    assert "commands[1]" in message and "cat_ghost" in message, message
+    assert "commands[0]" not in message, message
+
+
+def test_in_product_batch_with_a_next_node_waits_whole_for_confirmation(agent):
+    paid = agent.call("freezone_emit_canvas_command", {"commands": CAT_BATCH})
+    assert paid["code"] == "canvas_confirmation_required", paid
+    assert paid["confirmation_via"] == "conversation"
+    for key in ("written", "generation_settings", "generation_summary"):
+        assert key not in paid, paid
+    assert "no canvas change was made" in paid["agent_instruction"]
+    assert _node_ids(agent.root, "default") == []
+    assert _confirmation_record(agent, paid["confirmation_id"])["commands"] == CAT_BATCH
+
+
+def test_external_key_batch_writes_nodes_and_defers_only_the_generation(external):
+    external.user["external_agent_key_id"] = EXTERNAL_KEY_ID
+    b = _created(external, "Cat")["canvas_id"]
+    paid = external.call("freezone_emit_canvas_command", {"canvas_id": b, "commands": CAT_BATCH})
+    assert paid["ok"] is True, paid
+    assert paid["status"] == "confirmation_required", paid
+    assert paid["code"] == "canvas_confirmation_required"
+    assert paid["applied"] is False
+    canvas = _read(external.root, b)
+    by_type = {node["type"]: node["id"] for node in canvas["nodes"]}
+    assert set(by_type) == {"textAnnotationNode", "imageGenNode"}
+    text_id, image_id = by_type["textAnnotationNode"], by_type["imageGenNode"]
+    assert any(edge["source"] == text_id and edge["target"] == image_id
+               for edge in canvas["edges"])
+    assert {node["client_id"]: node["node_id"] for node in paid["written"]["nodes"]} == {
+        "cat_prompt": text_id, "cat_image": image_id,
+    }
+    assert paid["written"]["revision"] == canvas["revision"]
+    assert paid["targets"] == [{"node_id": image_id, "title": "Cat watercolor",
+                                "node_type": "imageGenNode", "action": "generate_image"}]
+    (settings,) = paid["generation_settings"]
+    assert {key: settings[key] for key in (
+        "model", "aspect_ratio", "resolution", "quality", "count",
+    )} == {"model": "image-model", "aspect_ratio": "1:1", "resolution": "1K",
+           "quality": "standard", "count": 1}
+    for part in ("Cat watercolor", "image-model", "1:1", "1K", "standard"):
+        assert part in paid["generation_summary"], paid["generation_summary"]
+    instruction = paid["agent_instruction"]
+    assert "no canvas change was made" not in instruction
+    assert "freezone_confirm_canvas_action" in instruction
+    assert _confirmation_record(external, paid["confirmation_id"])["commands"] == [
+        {"type": "run_node_action", "node_id": image_id, "action": "generate_image"},
+    ]
+
+    again = external.call("freezone_emit_canvas_command", {"canvas_id": b, "commands": CAT_BATCH})
+    assert again["confirmation_id"] == paid["confirmation_id"], again
+    assert _read(external.root, b)["nodes"] == canvas["nodes"]
+
+    cancelled = external.call("freezone_cancel_canvas_action", {
+        "canvas_id": b, "confirmation_id": paid["confirmation_id"],
+    })
+    assert cancelled["ok"] is True, cancelled
+    after = _read(external.root, b)
+    assert (after["nodes"], after["edges"]) == (canvas["nodes"], canvas["edges"])
+
+
+def test_external_key_typed_run_lists_the_generation_settings(external):
+    external.user["external_agent_key_id"] = EXTERNAL_KEY_ID
+    b = _created(external, "Ship")["canvas_id"]
+    image = external.call("freezone_create_node", {
+        "canvas_id": b, "node_type": "imageGenNode", "data": IMAGE,
+    })
+    (node_id,) = image["created_node_ids"]
+    paid = external.call("freezone_run_node_action", {
+        "canvas_id": b, "node_id": node_id, "action": "generate_image",
+    })
+    assert paid["code"] == "canvas_confirmation_required", paid
+    assert "written" not in paid
+    for part in ("image-model", "1:1", "1K", "standard"):
+        assert part in paid["generation_summary"], paid["generation_summary"]
+
+
+def test_external_host_without_a_key_marker_keeps_the_batch_whole(external):
+    b = _created(external, "Cat")["canvas_id"]
+    paid = external.call("freezone_emit_canvas_command", {"canvas_id": b, "commands": CAT_BATCH})
+    assert paid["code"] == "canvas_confirmation_required", paid
+    for key in ("written", "generation_settings", "generation_summary"):
+        assert key not in paid, paid
+    assert _node_ids(external.root, b) == []

@@ -5892,6 +5892,27 @@ def _commands_include_open_node_action(commands: list[Any]) -> bool:
     )
 
 
+def _canvas_generation_summary(settings: list[dict]) -> str:
+    summaries = []
+    for target in settings:
+        values = []
+        for key, label, suffix in (
+            ("model", "model", ""), ("aspect_ratio", "aspect ratio", ""),
+            ("resolution", "resolution", ""), ("quality", "quality", ""),
+            ("duration_seconds", "duration", "s"), ("generate_audio", "audio", ""),
+            ("count", "count", ""),
+        ):
+            if key in target:
+                value = target[key]
+                if key == "generate_audio":
+                    value = "on" if value else "off"
+                values.append(f"{label} {value}{suffix}")
+        title = target["title"] or target["node_id"]
+        detail = ", ".join(values) or "settings from the node defaults"
+        summaries.append(f'"{title}" ({target["node_type"]}, {target["action"]}): {detail}')
+    return "; ".join(summaries)
+
+
 def _create_canvas_confirmation(
     project: str, canvas: str, commands: list[Any],
 ) -> str:
@@ -5947,7 +5968,7 @@ def _create_canvas_confirmation(
             "or in this same turn. The confirmation expires in 30 minutes; after that, ask again. "
             "Do not tell the user that anything was started, sent, submitted or done."
         )
-    return tool_result({
+    result = {
         "ok": True,
         "status": "confirmation_required",
         "code": "canvas_confirmation_required",
@@ -5963,7 +5984,29 @@ def _create_canvas_confirmation(
         "confirmation_via": "card" if card else "conversation",
         "message": "尚未执行：已创建待确认请求，用户确认后才会执行。",
         "agent_instruction": instruction,
-    })
+    }
+    if isinstance(data.get("generation_settings"), list):
+        result["generation_settings"] = data["generation_settings"]
+        if data["generation_settings"]:
+            result["generation_summary"] = _canvas_generation_summary(data["generation_settings"])
+    if "written" in data:
+        result["written"] = data["written"]
+        result["created_node_ids"] = data["written"]["created_node_ids"]
+        result["message"] = "已写入节点和连线；付费生成尚未执行，用户确认后才会提交。"
+        result["agent_instruction"] = (
+            "The nodes and links in this batch are already on the canvas (see written); only the "
+            "paid generation is waiting for confirmation. Nothing has been generated and no "
+            "credits were spent. Tell the user which nodes were added, then list the generation "
+            "settings from generation_summary and say that it will consume credits without "
+            "giving any estimate, and ask them to confirm. Only after the user explicitly "
+            "confirms in a later message, call freezone_confirm_canvas_action with this "
+            "confirmation_id; if they decline, call freezone_cancel_canvas_action. The added "
+            "nodes stay on the canvas either way. Never confirm on your own or in this same "
+            "turn. The confirmation expires in 30 minutes; after that, ask again. Use the node "
+            "ids in written for any follow-up; do not emit this batch again. Do not tell the "
+            "user that any generation was started, sent or submitted."
+        )
+    return tool_result(result)
 
 
 def _canvas_agent_identity() -> tuple[str, str | None]:
@@ -9976,6 +10019,9 @@ _CANVAS_RESULT_FIELDS = (
     "confirmation_id",
     "kinds",
     "targets",
+    "written",
+    "generation_settings",
+    "generation_summary",
     "expires_at",
     "confirmation_via",
     "project_id",
@@ -10044,6 +10090,7 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "command_results",
         "confirmed_stages",
         "created_node_ids",
+        "generation_settings",
         "edge_ids",
         "edges",
         "errors",
@@ -10105,6 +10152,7 @@ _RESULT_INTEGER_FIELDS = frozenset(
 )
 _RESULT_OBJECT_FIELDS = frozenset(
     {
+        "written",
         "story",
         "outline",
         "counts",
@@ -10121,6 +10169,7 @@ _RESULT_OBJECT_FIELDS = frozenset(
 )
 _RESULT_STRING_FIELDS = frozenset(
     {
+        "generation_summary",
         "story_id",
         "current_stage_id",
         "run_status",

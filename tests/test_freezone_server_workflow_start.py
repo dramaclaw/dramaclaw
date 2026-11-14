@@ -83,6 +83,22 @@ async def launch(setup, **kwargs):
     )
 
 
+def test_created_node_mapping_keys_each_new_node_by_its_own_client_id():
+    commands = [
+        {"type": "create_node", "client_id": "text", "node_type": "textAnnotationNode"},
+        {"type": "add_next_node", "source_node_id": "text", "client_id": "image",
+         "node_type": "imageGenNode"},
+        {"type": "group_nodes", "node_ids": ["text", "image"]},
+    ]
+    receipt = {"command_results": [
+        {"commandIndex": 0, "type": "create_node", "nodeId": "text", "createdNodeId": "node-a"},
+        {"commandIndex": 1, "type": "add_next_node", "nodeId": "text",
+         "createdNodeId": "node-b"},
+        {"commandIndex": 2, "type": "group_nodes", "nodeId": "text", "createdNodeId": "group-c"},
+    ]}
+    assert start.created_node_mapping(receipt, commands) == {"text": "node-a", "image": "node-b"}
+
+
 async def test_metered_image_and_text_are_runnable(setup):
     assert (await check(setup))["status"] == "runnable"
 

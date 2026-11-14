@@ -1336,6 +1336,198 @@ def test_existing_canvas_confirmations_are_unchanged(setup):
     assert nodes(setup) == ["n1", "n2", "n3"]
 
 
+# External agent key sessions: structure is written now, only paid generation waits.
+
+EXTERNAL = {**AGENT, "external_agent_key_id": "test-external-key-id-not-a-secret"}
+SETTINGS_IMAGE = {"label": "新海报", "model": "image-model", "aspectRatio": "16:9",
+                  "size": "2K", "quality": "high", "count": 2}
+SPLIT = [
+    {"type": "create_node", "client_id": "c1", "node_type": "imageGenNode",
+     "position": {"x": 300, "y": 0}, "data": SETTINGS_IMAGE},
+    {"type": "create_edge", "source": "n3", "target": "c1", "link_type": "prompt_for"},
+    {"type": "run_workflow", "node_ids": ["c1"], "scope": "selection"},
+]
+BASE_RESPONSE_KEYS = {"confirmation_id", "kinds", "targets", "expires_at", "browser_open"}
+
+
+def external_create(setup, *, commands=SPLIT, canvas="default"):
+    setup.user[0] = EXTERNAL
+    return create(setup, commands=commands, turn_id=None, canvas=canvas)
+
+
+def referenced_node_ids(record):
+    return {node_id for command in record["commands"]
+            for node_id in [*command.get("node_ids", []), command.get("node_id")] if node_id}
+
+
+def test_external_key_paid_batch_writes_structure_before_confirmation(setup):
+    setup.pool.plan = mixed_plan()
+    confirmation = external_create(setup)
+    real, = created(setup)
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    assert next(node for node in canvas["nodes"] if node["id"] == real)["data"] == SETTINGS_IMAGE
+    assert [(edge["source"], edge["target"]) for edge in canvas["edges"]] == [
+        ("n1", "n2"), ("n3", real),
+    ]
+    assert confirmation["kinds"] == ["paid_generation"]
+    assert confirmation["targets"] == [
+        {"node_id": real, "title": "新海报", "node_type": "imageGenNode",
+         "action": "run_workflow"},
+    ]
+    assert confirmation["written"] == {
+        "revision": canvas["revision"],
+        "nodes": [{"client_id": "c1", "node_id": real, "node_type": "imageGenNode",
+                   "title": "新海报"}],
+        "created_node_ids": [real],
+        "created_edge_ids": [canvas["edges"][1]["id"]],
+    }
+    assert confirmation["generation_settings"] == [{
+        "node_id": real, "title": "新海报", "node_type": "imageGenNode",
+        "action": "run_workflow", "model": "image-model", "aspect_ratio": "16:9",
+        "resolution": "2K", "quality": "high", "count": 2,
+    }]
+    stored = record(setup, confirmation)
+    assert stored["status"] == "pending"
+    assert stored["turn_id"] is None
+    assert stored["kinds"] == ["paid_generation"]
+    assert stored["commands"] == [
+        {"type": "run_workflow", "node_ids": [real], "scope": "selection"},
+    ]
+    assert runs(setup) == []
+    assert setup.queued == []
+
+
+def test_external_key_confirm_runs_the_written_node_without_recreating_it(setup):
+    setup.pool.plan = mixed_plan()
+    confirmation = external_create(setup)
+    real, = created(setup)
+    applies = len(setup.pool.apply_calls)
+    response = decide(setup, confirmation, via="conversation", turn_id=None)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data == {
+        "confirmation_id": confirmation["confirmation_id"], "status": "running",
+        "run_id": data["run_id"], "refused": [],
+        "actions": [{"node_id": real, "action": "generate_image", "label": "新海报"}],
+    }
+    assert created(setup) == [real]
+    assert len(setup.pool.apply_calls) == applies
+    run, = runs(setup)
+    assert [(a["node_id"], a["action"]) for a in run["actions"]] == [(real, "generate_image")]
+    assert [task["task_type"] for task in setup.queued] == ["freezone_workflow_drive"]
+
+
+def test_external_key_cancel_keeps_the_written_nodes(setup):
+    setup.pool.plan = mixed_plan()
+    confirmation = external_create(setup)
+    before = canvas_store.read_canvas(setup.root, "default")
+    response = decide(setup, confirmation, decision="refused", via="conversation", turn_id=None)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == {
+        "confirmation_id": confirmation["confirmation_id"], "status": "refused",
+        "applied": False,
+    }
+    after = canvas_store.read_canvas(setup.root, "default")
+    assert (after["nodes"], after["edges"]) == (before["nodes"], before["edges"])
+    assert len(created(setup)) == 1
+    assert record(setup, confirmation)["status"] == "refused"
+    assert runs(setup) == []
+    assert setup.queued == []
+
+
+def test_external_key_expiry_keeps_nodes_and_leaves_no_dangling_reference(setup):
+    setup.pool.plan = mixed_plan()
+    confirmation = external_create(setup)
+    real, = created(setup)
+    setup.clock[0] = confirmation["expires_at"]
+    response = decide(setup, confirmation, via="conversation", turn_id=None)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "expired"
+    stored = record(setup, confirmation)
+    assert stored["status"] == "expired"
+    on_canvas = set(nodes(setup))
+    assert real in on_canvas
+    assert referenced_node_ids(stored) <= on_canvas
+    assert {target["node_id"] for target in stored["targets"]} <= on_canvas
+    assert runs(setup) == []
+
+
+def test_external_key_identical_resubmit_returns_the_same_confirmation(setup):
+    setup.pool.plan = mixed_plan()
+    first = external_create(setup)
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    applies = len(setup.pool.apply_calls)
+    second = external_create(setup)
+    assert second == first
+    again = canvas_store.read_canvas(setup.root, "default")
+    assert (again["revision"], again["nodes"], again["edges"]) == (
+        canvas["revision"], canvas["nodes"], canvas["edges"],
+    )
+    assert len(setup.pool.apply_calls) == applies
+    assert len(list(directory(setup).glob("cc_*.json"))) == 1
+
+
+def test_external_key_write_failure_creates_no_confirmation(setup, monkeypatch):
+    setup.pool.plan = mixed_plan()
+
+    async def fail_execution(**kwargs):
+        raise HTTPException(409, {"code": "canvas_revision_conflict"})
+
+    monkeypatch.setattr(routes, "execute_agent_canvas_envelopes", fail_execution)
+    setup.user[0] = EXTERNAL
+    response = setup.client.post(BASE + "/confirmations", json={
+        "commands": SPLIT, "turn_id": None, "agent_id": "main",
+    })
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "canvas_revision_conflict"
+    assert list(directory(setup).glob("cc_*.json")) == []
+    assert nodes(setup) == ["n1", "n2", "n3"]
+
+
+@pytest.mark.parametrize("commands", [
+    [*SPLIT[:2], {"type": "delete_nodes", "node_ids": ["n2"]}, SPLIT[2]],
+    [SPLIT[0], {"type": "clear_canvas"}],
+], ids=["delete", "clear"])
+def test_external_key_destructive_batch_still_waits_whole(setup, commands):
+    setup.pool.plan = mixed_plan()
+    confirmation = external_create(setup, commands=commands)
+    assert "written" not in confirmation
+    assert nodes(setup) == ["n1", "n2", "n3"]
+    assert record(setup, confirmation)["commands"] == commands
+
+
+def test_external_key_paid_run_on_existing_node_lists_its_settings(setup):
+    confirmation = external_create(setup, commands=PAID)
+    assert "written" not in confirmation
+    assert confirmation["generation_settings"] == [
+        {"node_id": "n1", "title": "海报", "node_type": "imageGenNode",
+         "action": "generate_image"},
+    ]
+    assert record(setup, confirmation)["commands"] == PAID
+
+
+@pytest.mark.parametrize("user,turn_id", [
+    (USER, "t1"), (AGENT, "t1"), (AGENT, None), (EXTERNAL, "t1"),
+], ids=["browser", "agent-turn", "agent-turnless", "external-key-turn"])
+def test_in_product_paid_batches_still_wait_whole(setup, user, turn_id):
+    setup.pool.plan = mixed_plan()
+    setup.user[0] = user
+    confirmation = create(setup, commands=SPLIT, turn_id=turn_id)
+    assert set(confirmation) == BASE_RESPONSE_KEYS
+    assert nodes(setup) == ["n1", "n2", "n3"]
+    stored = record(setup, confirmation)
+    assert stored["commands"] == SPLIT
+    assert "pre_applied" not in stored
+
+
+def test_browser_executor_keeps_external_key_batches_whole(setup, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "browser")
+    confirmation = external_create(setup)
+    assert "written" not in confirmation
+    assert nodes(setup) == ["n1", "n2", "n3"]
+    assert record(setup, confirmation)["commands"] == SPLIT
+
+
 # Workflow draft delivery through paid canvas confirmations.
 
 

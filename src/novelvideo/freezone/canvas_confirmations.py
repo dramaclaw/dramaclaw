@@ -107,6 +107,13 @@ def _batch_nodes(commands: list[dict]) -> dict[str, dict]:
     return nodes
 
 
+def node_title(data: dict) -> str:
+    return next((
+        value.strip() for key in ("label", "displayName", "title", "name")
+        if isinstance(value := data.get(key), str) and value.strip()
+    ), "")
+
+
 def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
     nodes = {node["id"]: node for node in canvas.get("nodes", [])}
     batch_nodes = _batch_nodes(commands)
@@ -132,13 +139,8 @@ def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
             if (node_id, action) in seen:
                 continue
             seen.add((node_id, action))
-            data = node.get("data", {})
-            title = next((
-                value.strip() for key in ("label", "displayName", "title", "name")
-                if isinstance(value := data.get(key), str) and value.strip()
-            ), "")
             targets.append({
-                "node_id": node_id, "title": title,
+                "node_id": node_id, "title": node_title(node.get("data", {})),
                 "node_type": node.get("type") or "", "action": action,
             })
     if missing:
@@ -146,6 +148,25 @@ def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
             "targets_missing", "Canvas nodes missing: " + ", ".join(sorted(missing))
         )
     return targets
+
+
+def generation_settings(canvas: dict, commands: list[dict], targets: list[dict]) -> list[dict]:
+    nodes = {**_batch_nodes(commands), **{node["id"]: node for node in canvas.get("nodes", [])}}
+    settings = []
+    for target in targets:
+        if target["action"] in {"delete_nodes", "clear_canvas"}:
+            continue
+        entry = {key: target[key] for key in ("node_id", "title", "node_type", "action")}
+        data = nodes.get(target["node_id"], {}).get("data", {})
+        for source, destination in (
+            ("model", "model"), ("aspectRatio", "aspect_ratio"), ("size", "resolution"),
+            ("quality", "quality"), ("durationSec", "duration_seconds"),
+            ("generateAudio", "generate_audio"), ("count", "count"),
+        ):
+            if source in data:
+                entry[destination] = data[source]
+        settings.append(entry)
+    return settings
 
 
 def changed_targets(canvas: dict, record: dict) -> list[str]:
@@ -183,6 +204,7 @@ def _save(directory: Path, record: dict) -> None:
 def create_confirmation(
     directory: str | Path, *, project_id: str, canvas_id: str, agent_id: str,
     username: str, turn_id: str | None, commands: list[dict], targets: list[dict], now: float,
+    pre_applied: dict | None = None,
 ) -> dict:
     record = {
         "id": "cc_" + uuid4().hex, "project_id": project_id, "canvas_id": canvas_id,
@@ -192,6 +214,8 @@ def create_confirmation(
         "created_at": now, "expires_at": now + CONFIRMATION_TTL_SECONDS,
         "updated_at": now, "status": "pending", "decided_via": None, "outcome": None,
     }
+    if pre_applied is not None:
+        record["pre_applied"] = pre_applied
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     with _directory_lock(directory):
@@ -222,6 +246,27 @@ def list_pending(
         ):
             records.append(record)
     return sorted(records, key=lambda record: record["created_at"])
+
+
+def find_pre_applied(
+    directory: str | Path, *, project_id: str, canvas_id: str,
+    source_command_hash: str, now: float,
+) -> dict | None:
+    directory = Path(directory)
+    if not directory.is_dir():
+        return None
+    with _directory_lock(directory):
+        records = []
+        for path in directory.glob("cc_*.json"):
+            record = read_confirmation(directory, path.stem)
+            if (
+                record is not None and record["status"] == "pending"
+                and now < record["expires_at"] and record["project_id"] == project_id
+                and record["canvas_id"] == canvas_id
+                and record.get("pre_applied", {}).get("source_command_hash") == source_command_hash
+            ):
+                records.append(record)
+        return max(records, key=lambda record: record["created_at"], default=None)
 
 
 @contextmanager
@@ -341,6 +386,7 @@ def confirmations_dir(username: str, agent_id: str, project_state_dir: str | Pat
 def request_confirmation(
     *, username: str, agent_id: str, project_id: str, canvas_id: str,
     project_state_dir: str | Path, turn_id: str | None, commands: list[dict], now: float,
+    pre_applied: dict | None = None,
 ) -> dict:
     from novelvideo.freezone import canvas_store
 
@@ -354,4 +400,5 @@ def request_confirmation(
         confirmations_dir(username, agent_id, project_state_dir),
         project_id=project_id, canvas_id=canvas_id, agent_id=agent_id,
         username=username, turn_id=turn_id, commands=commands, targets=targets, now=now,
+        pre_applied=pre_applied,
     )

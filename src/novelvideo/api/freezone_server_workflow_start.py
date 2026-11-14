@@ -8,6 +8,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import re
 
 from fastapi import HTTPException
 
@@ -69,12 +70,30 @@ def _server_run_actions(canvas: dict, plan: dict, idempotency_key: str) -> list[
     return actions
 
 
-def created_node_mapping(receipt: dict) -> dict[str, str]:
-    return {
-        result["nodeId"]: result["createdNodeId"]
-        for result in receipt.get("command_results", [])
-        if result.get("nodeId") and result.get("createdNodeId")
-    }
+def created_node_mapping(receipt: dict, commands: list[dict]) -> dict[str, str]:
+    mapping = {}
+    for result in receipt.get("command_results", []):
+        if not result.get("createdNodeId"):
+            continue
+        if result.get("type") == "create_node":
+            client_id = result.get("nodeId")
+        elif result.get("type") == "add_next_node":
+            client_id = commands[result["commandIndex"]].get("client_id")
+        else:
+            continue
+        if client_id:
+            mapping[client_id] = result["createdNodeId"]
+    return mapping
+
+
+def _rewrite_command_indices(message: str, indices: list[int]) -> str:
+    def replace(match: re.Match) -> str:
+        index = int(match[1])
+        if index >= len(indices):
+            return match[0]
+        return f"envelopes[0].commands[{indices[index]}]"
+
+    return re.sub(r"envelopes\[0\]\.commands\[(\d+)\]", replace, message)
 
 
 def rewrite_run_commands(commands: list[dict], mapping: dict[str, str]) -> list[dict]:
@@ -97,6 +116,8 @@ async def check_server_workflow(
     if not run_commands:
         return {"status": "none"}
     other_commands = [command for command in commands if not is_run_command(command)]
+    run_indices = [index for index, command in enumerate(commands) if is_run_command(command)]
+    other_indices = [index for index, command in enumerate(commands) if not is_run_command(command)]
     browser_commands = [command for command in other_commands if (
         command["type"] in {"html_artifact", "open_mainline_projection"}
         or (command["type"] == "run_node_action"
@@ -130,18 +151,24 @@ async def check_server_workflow(
             "env": {"locale": locale, "catalogs": {"image": image, "video": video}},
         })
         if preview["status"] != "applied":
-            raise CanvasCoreError("invalid_request", "; ".join(preview["receipt"]["errors"]))
-        mapping = created_node_mapping(preview["receipt"])
+            raise CanvasCoreError("invalid_request", _rewrite_command_indices(
+                "; ".join(preview["receipt"]["errors"]), other_indices,
+            ))
+        mapping = created_node_mapping(preview["receipt"], other_commands)
         client_ids = {node_id: client_id for client_id, node_id in mapping.items()}
         run_commands = rewrite_run_commands(run_commands, mapping)
         canvas = preview["canvas"]
-    plan = await asyncio.to_thread(get_canvas_core_pool().call, "plan_workflow", {
-        "canvas": canvas, "commands": run_commands,
-        "env": {"locale": locale, "catalogs": {"image": image, "video": video},
-                "selectedNodeIds": []},
-    })
+    try:
+        plan = await asyncio.to_thread(get_canvas_core_pool().call, "plan_workflow", {
+            "canvas": canvas, "commands": run_commands,
+            "env": {"locale": locale, "catalogs": {"image": image, "video": video},
+                    "selectedNodeIds": []},
+        })
+    except CanvasCoreError as exc:
+        raise CanvasCoreError(exc.code, _rewrite_command_indices(str(exc), run_indices)) from exc
     if not plan["ok"]:
-        return {"status": "invalid", "message": plan["message"]}
+        return {"status": "invalid",
+                "message": _rewrite_command_indices(plan["message"], run_indices)}
     metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
     refused = []
     run_actions = _server_run_actions(canvas, plan, "canvas-confirmation:preflight")
