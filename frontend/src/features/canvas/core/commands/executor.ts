@@ -40,7 +40,11 @@ import {
   normalizeCanvasCommandCreateNodeData,
   normalizeCanvasCommandNodeData,
 } from "@/features/freezone/canvasCommandNodeData";
-import type { CanvasEdgeSemanticKind } from "@/features/freezone/canvasEdgeSemantics";
+import {
+  deriveCanvasEdgeSemanticSpec,
+  normalizeCanvasEdgeSemanticKind,
+  type CanvasEdgeSemanticKind,
+} from "@/features/freezone/canvasEdgeSemantics";
 import type { CanvasStoreApi } from "../canvasStore";
 import { selectAndFocusNode } from "../selection";
 import { syncStoryVideoReferencePrompt } from "../storyVideoReferencePrompt";
@@ -250,6 +254,12 @@ function chooseNextNodeType(sourceNode: CanvasNode, requestedType?: CanvasNodeTy
   return allowedTypes[0] ?? CANVAS_NODE_TYPES.textAnnotation;
 }
 
+function normalizedConnectionHandle(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return !trimmed || trimmed === "null" || trimmed === "undefined" ? fallback : trimmed;
+}
+
 function connectNodes(
   store: CanvasStoreApi,
   source: string,
@@ -259,9 +269,24 @@ function connectNodes(
     external_input_image_url?: string;
     external_input_video_url?: string;
   } = {},
-): string | null {
+): { id: string; reused: boolean } | null {
   if (source === target) throw new Error("connection requires two different nodes");
   const state = store.getState();
+  const sourceNode = nodeById(store, source) ?? undefined;
+  const targetNode = nodeById(store, target) ?? undefined;
+  const requestedKind = options.link_type ?? deriveCanvasEdgeSemanticSpec({
+    edge: { id: "", source, target }, sourceNode, targetNode,
+  })?.kind ?? null;
+  const existing = state.edges.find((edge) =>
+    edge.source === source && edge.target === target && edge.type !== "storyChoiceEdge" &&
+    normalizedConnectionHandle(edge.sourceHandle, "source") === "source" &&
+    normalizedConnectionHandle(edge.targetHandle, "target") === "target" &&
+    (normalizeCanvasEdgeSemanticKind(edge.data?.link_type) ??
+      deriveCanvasEdgeSemanticSpec({ edge, sourceNode, targetNode })?.kind ?? null) === requestedKind &&
+    (edge.data?.workflowExternalInputImageUrl ?? "") === (options.external_input_image_url ?? "") &&
+    (edge.data?.workflowExternalInputVideoUrl ?? "") === (options.external_input_video_url ?? ""),
+  );
+  if (existing) return { id: existing.id, reused: true };
   const data: Record<string, unknown> = {};
   if (options.link_type) {
     data.link_type = options.link_type;
@@ -272,12 +297,10 @@ function connectNodes(
   if (options.external_input_video_url) {
     data.workflowExternalInputVideoUrl = options.external_input_video_url;
   }
-  if (Object.keys(data).length > 0) {
-    return state.addEdgeWithData(source, target, {
-      ...data,
-    });
-  }
-  return state.addEdge(source, target);
+  const id = Object.keys(data).length > 0
+    ? state.addEdgeWithData(source, target, data)
+    : state.addEdge(source, target);
+  return id ? { id, reused: false } : null;
 }
 
 function invalidConnectionReason(store: CanvasStoreApi, source: string, target: string): string | null {
@@ -1178,12 +1201,12 @@ export function* applyCanvasCommands(
               });
               break;
             }
-            const edgeId = connectNodes(store, source, target, {
+            const connection = connectNodes(store, source, target, {
               link_type: command.link_type,
               external_input_image_url: command.expected_source_image_url,
               external_input_video_url: command.expected_source_video_url,
             });
-            if (!edgeId) throw new Error(`edge rejected: ${command.source} -> ${command.target}`);
+            if (!connection) throw new Error(`edge rejected: ${command.source} -> ${command.target}`);
             syncStoryVideoReferencePrompt(store, target);
             result.applied += 1;
             result.commandResults.push({
@@ -1192,6 +1215,7 @@ export function* applyCanvasCommands(
               status: "success",
               label: label(command),
               nodeId: source,
+              ...(connection.reused ? { output: { edge_id: connection.id, reused: true } } : {}),
             });
             break;
           }

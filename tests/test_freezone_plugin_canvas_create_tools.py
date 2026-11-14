@@ -1265,6 +1265,17 @@ def test_in_product_batch_with_a_next_node_waits_whole_for_confirmation(agent):
     assert _confirmation_record(agent, paid["confirmation_id"])["commands"] == CAT_BATCH
 
 
+def test_next_node_and_its_own_edge_command_leave_one_edge(agent):
+    """add_next_node connects by default; a create_edge on the same pair must not add a twin."""
+    written = agent.call("freezone_emit_canvas_command", {"commands": CAT_BATCH[:3]})
+    assert written["ok"] is True, written
+    canvas = _read(agent.root, "default")
+    by_type = {node["type"]: node["id"] for node in canvas["nodes"]}
+    assert [(edge["source"], edge["target"]) for edge in canvas["edges"]] == [
+        (by_type["textAnnotationNode"], by_type["imageGenNode"]),
+    ]
+
+
 def test_external_key_batch_writes_nodes_and_defers_only_the_generation(external):
     external.user["external_agent_key_id"] = EXTERNAL_KEY_ID
     b = _created(external, "Cat")["canvas_id"]
@@ -1277,8 +1288,10 @@ def test_external_key_batch_writes_nodes_and_defers_only_the_generation(external
     by_type = {node["type"]: node["id"] for node in canvas["nodes"]}
     assert set(by_type) == {"textAnnotationNode", "imageGenNode"}
     text_id, image_id = by_type["textAnnotationNode"], by_type["imageGenNode"]
-    assert any(edge["source"] == text_id and edge["target"] == image_id
-               for edge in canvas["edges"])
+    assert [(edge["source"], edge["target"]) for edge in canvas["edges"]] == [
+        (text_id, image_id),
+    ]
+    assert paid["written"]["created_edge_ids"] == [canvas["edges"][0]["id"]]
     assert {node["client_id"]: node["node_id"] for node in paid["written"]["nodes"]} == {
         "cat_prompt": text_id, "cat_image": image_id,
     }
