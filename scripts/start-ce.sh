@@ -108,6 +108,12 @@ if [ ! -d "frontend/node_modules" ]; then
   (cd frontend && pnpm install)
 fi
 
+echo "Building the server canvas bundle with pnpm run build:canvas-server ..."
+if ! (cd frontend && pnpm run build:canvas-server); then
+  echo "Building the server canvas bundle failed; canvas creation needs it. Fix the error above and rerun." >&2
+  exit 1
+fi
+
 echo "Starting SuperTale CE API at http://${api_host}:${api_port}/api/v1"
 echo "Health check: http://127.0.0.1:${api_port}/api/v1/config"
 # Dependencies are synchronized explicitly above.  `uv run` otherwise performs

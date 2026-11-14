@@ -384,6 +384,105 @@ def run_freezone_workflow_confirm(
     )
 
 
+def _server_action_runner_factory(ctx, run, runner_id, assert_lease):
+    from novelvideo.api.freezone_server_workflow_host import build_server_action_runner
+
+    return build_server_action_runner(
+        ctx=ctx, run=run, runner_id=runner_id, assert_lease=assert_lease,
+    )
+
+
+async def _run_freezone_workflow_drive_async(
+    envelope: dict[str, Any], ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.freezone.paths import CANVAS_ID_RE
+    from novelvideo.freezone.server_workflow_driver import drive_server_workflow_run
+    from novelvideo.freezone.workflow_runs import (
+        RUN_ID_RE,
+        RUNNER_ID_RE,
+        acknowledge_server_workflow_drive,
+    )
+
+    payload = envelope.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise ValueError("workflow drive payload requires canvas_id and run_id")
+    canvas_id = str(payload.get("canvas_id") or "").strip()
+    run_id = str(payload.get("run_id") or "").strip()
+    task_id = str(envelope.get("__run_task_id") or "").strip()
+    runner_id = f"drive:{task_id}"
+    if not CANVAS_ID_RE.fullmatch(canvas_id) or not RUN_ID_RE.fullmatch(run_id):
+        raise ValueError("workflow drive requires valid canvas_id and run_id")
+    if not task_id or not RUNNER_ID_RE.fullmatch(runner_id):
+        raise ValueError("workflow drive requires a valid task id")
+    if "drive_attempt" in payload:
+        attempt = payload["drive_attempt"]
+        if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+            raise ValueError("workflow drive requires a valid drive_attempt")
+        try:
+            await asyncio.to_thread(
+                acknowledge_server_workflow_drive, project_dir=Path(ctx.state_dir),
+                canvas_id=canvas_id, run_id=run_id, attempt=attempt,
+            )
+        except Exception:
+            logger.warning("Server workflow drive acknowledgement deferred run_id=%s", run_id)
+    result = await drive_server_workflow_run(
+        project_dir=Path(ctx.state_dir), canvas_id=canvas_id, run_id=run_id,
+        runner_id=runner_id,
+        action_runner_factory=lambda run, guard: _server_action_runner_factory(
+            ctx, run, runner_id, guard,
+        ),
+    )
+
+    if (
+        result["status"] in {"completed", "failed", "cancelled"}
+        and result.get("acquired") is not False
+    ):
+        try:
+            from novelvideo.api.routes.freezone import maintain_server_workflow_canvas
+
+            await maintain_server_workflow_canvas(ctx, canvas_id)
+        except Exception:
+            logger.warning("Server workflow delivery deferred run_id=%s", run_id, exc_info=True)
+        try:
+            from novelvideo.api.routes.chat import append_canvas_confirmation_notice
+            from novelvideo.freezone import canvas_confirmations, workflow_runs
+
+            run = await asyncio.to_thread(
+                workflow_runs.read_workflow_run, project_dir=Path(ctx.state_dir),
+                canvas_id=canvas_id, run_id=run_id,
+            )
+            confirmation = run["metadata"].get("confirmation") if run else None
+            if confirmation:
+                directory = await asyncio.to_thread(
+                    canvas_confirmations.confirmations_dir, confirmation["username"],
+                    confirmation["agent_id"], Path(ctx.state_dir),
+                )
+                record = await asyncio.to_thread(
+                    canvas_confirmations.read_confirmation, directory, confirmation["id"],
+                )
+                if record is not None:
+                    requester = run["metadata"]["requester"]
+                    completed = sum(action["status"] == "completed" for action in run["actions"])
+                    failed = sum(action["status"] == "failed" for action in run["actions"])
+                    await append_canvas_confirmation_notice(
+                        {"id": requester["user_id"], "username": requester["username"]},
+                        record, f"run_{result['status']}",
+                        f"{run_id}: {completed} completed, {failed} failed",
+                    )
+        except Exception:
+            logger.error("Server workflow notice deferred run_id=%s", run_id)
+    return result
+
+
+def run_freezone_workflow_drive(
+    envelope: dict[str, Any], ctx: ProjectContext,
+) -> dict[str, Any]:
+    return _run_cancellable(
+        envelope, _run_freezone_workflow_drive_async(envelope, ctx),
+        task_type="freezone_workflow_drive",
+    )
+
+
 def _run_cancellable(
     envelope: dict[str, Any],
     coro,
@@ -1524,8 +1623,16 @@ async def _run_freezone_video_compose_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     cover_url = str(payload.get("cover_url") or payload.get("coverUrl") or "").strip()
     ensure_freezone_dirs(project_dir)
-    studio_film_dir = str(payload.get("studio_film_dir") or "").strip()
-    if studio_film_dir:
+    if payload.get("studio_export"):
+        from novelvideo.freezone.studio import studio_film_for_node
+
+        film = studio_film_for_node(
+            project_dir=ctx.output_dir,
+            state_dir=ctx.state_dir,
+            runtime_dir=ctx.runtime_dir,
+            canvas_id=str(payload.get("canvas_id") or ""),
+            node_id=str(payload.get("node_id") or ""),
+        )
         # The node was cut in the OpenFilm workspace (by hand or by the agent):
         # the film is the cut, so Studio renders it. Untouched nodes keep the
         # timeline path below unchanged.
@@ -1536,7 +1643,7 @@ async def _run_freezone_video_compose_async(
             "run_freezone_studio_export",
             project_dir=project_dir,
             job_id=job_id,
-            film_dir=studio_film_dir,
+            film=film,
             fps=int(payload.get("fps") or 30),
         )
     else:
@@ -2322,6 +2429,11 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_workflow_confirm",
     run_freezone_workflow_confirm,
+    requires_home_node=True,
+)
+register_project_task_runner(
+    "freezone_workflow_drive",
+    run_freezone_workflow_drive,
     requires_home_node=True,
 )
 for _agent_product_task_type in AGENT_PRODUCT_TASK_TYPES:

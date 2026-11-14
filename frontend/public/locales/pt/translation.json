@@ -1,6 +1,5 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Não foi possível salvar o histórico do chat. Tente novamente mais tarde; a mensagem atual continua disponível localmente.",
     "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico."
   },
   "workflowDraftContinuation": {
@@ -791,6 +790,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Compactando o contexto…",
+    "contextCompacted": "Contexto compactado para a conversa continuar",
     "directorRunMode": {
       "manualLabel": "Modo manual",
       "manualDescription": "Confirmar cada etapa de geração antes da execução",
@@ -842,6 +843,8 @@
     "emptyTitle": "Iniciar uma conversa",
     "emptyDescription": "Pergunte sobre o progresso do projeto, tarefas que falharam ou peça ao assistente para organizar o seu plano criativo.",
     "syncingHistoryTitle": "A iniciar conversa",
+    "loadEarlierMessages": "Carregar mensagens anteriores",
+    "loadingEarlierMessages": "Carregando mensagens anteriores…",
     "syncingHistoryDescription": "A ligar ao Xia Director e a sincronizar o histórico da conversa. Aguarde.",
     "disclaimer": "O Xia Director pode cometer erros. Verifique os principais detalhes da história, das personagens e dos recursos.",
     "placeholder": "Depois de enviar um guião, peça ao Xia Director para avançar com os episódios, os elementos visuais, o áudio ou o vídeo final",
@@ -884,10 +887,6 @@
     "dropFiles": "Largue os ficheiros para os enviar",
     "unsupportedDropFiles": "Apenas são suportados ficheiros .txt, .md, .doc e .docx",
     "removeAttachment": "Remover anexo",
-    "approvalExpires": "Expira em {{seconds}}s",
-    "allowOnce": "Permitir uma vez",
-    "allowAlways": "Permitir sempre",
-    "deny": "Negar",
     "instance": "Instância",
     "model": "Modelo",
     "noInstances": "Nenhuma instância",
@@ -994,6 +993,19 @@
         "instrumental": "Instrumental",
         "vocalsAllowed": "Vozes permitidas",
         "continue": "Continuar com a voz selecionada"
+      },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Eliminar nós",
+          "clear_canvas": "Limpar a área de trabalho",
+          "paid_generation": "Executar geração"
+        },
+        "separator": ", ",
+        "credits": "A confirmação irá consumir créditos.",
+        "expiresIn": "Válido por {{minutes}} min",
+        "confirm": "Confirmar",
+        "refuse": "Cancelar",
+        "failed": "A ação falhou. Tente novamente."
       },
       "canvasExecuting": "A executar...",
       "canvasConfirmedExecuting": "Parâmetros confirmados. A execução está em curso; não é necessária nova confirmação.",
@@ -1531,6 +1543,8 @@
       "assetNamePlaceholder": "Introduza um nome para o recurso"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "Um nó que alterou foi eliminado noutro sítio. A sua versão foi mantida.",
+      "localDeletedRemoteChanged": "Um nó que eliminou acabou de ser alterado noutro sítio (por exemplo, pelo Agent). Continua eliminado.",
       "backupFailed": "Falha na cópia de segurança na nuvem. Tente novamente mais tarde.",
       "backupPending": "Guardado localmente; será feita uma nova tentativa da cópia de segurança na nuvem.",
       "bodyOverLimit": "Os dados da área de trabalho ocupam {{actual}} KB, acima do limite de {{limit}} KB. A ação de guardar está em pausa.",
@@ -5946,8 +5960,6 @@
         "conditionalBranch": "Conditional branch (else/automatic)",
         "unknownInitialValues": "Initial variable values are unknown; defaulting to 0 (no global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} exceeds the number of choices and was ignored.",
-        "agentRefreshConflict": "The agent updated the canvas, but you have unsaved local changes. Save a copy or refresh to continue.",
-        "refreshConflict": "The canvas was updated in the background, but you have unsaved local changes. Save a copy or refresh to continue.",
         "storyGroup": "Interactive story",
         "segmentTitle": "Segment {{index}}",
         "firstFrame": "first frame",
@@ -8993,6 +9005,8 @@
       "hint": "Ligue pelo menos {{min}} nós de vídeo para abrir",
       "counts": "Vídeo {{video}} · Áudio {{audio}}",
       "open": "Abrir composição de vídeo",
+      "exporting": "A exportar…",
+      "exportFailed": "Falha na exportação",
       "reopen": "Reabrir",
       "resultName": "Vídeo montado"
     },
@@ -9216,6 +9230,7 @@
       "descriptionLabel": "Descrição"
     },
     "runtime": {
+      "waitingForConfirmation": "Aguardando sua confirmação",
       "waitingForGenerationParameters": "Waiting for generation parameters",
       "clarificationPaused": "Waiting for an answer is paused"
     }

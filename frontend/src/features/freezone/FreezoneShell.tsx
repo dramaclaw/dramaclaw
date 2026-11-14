@@ -1,11 +1,20 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import {
+  canvasCommandValidationFailureResult,
+  CANVAS_COMMAND_VALIDATION_FAILURE_MESSAGE,
+} from "./canvasCommandValidationFailure";
+import { combineMainlineProjectionAssets } from "@/features/canvas/domain/mainlineProjectionAssets";
+import { createBrowserCanvasContextPorts } from "./browserCanvasContextPorts";
+import { canvasContextFailureErrors } from "./context/canvasContextResult";
+import { browserNodeDataDefaults } from "@/features/canvas/infrastructure/browserNodeDataDefaults";
 import { startCanvasCommandStream } from "./canvasCommandStream";
+import { useCanvasTextEditTracking } from "./canvasTextEditTracking";
 import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
 import { uuidGenerator } from "@/features/canvas/infrastructure/idGenerator";
 import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
 import { HtmlArtifactEditor } from '@/features/html-artifacts/HtmlArtifactEditor';
 import { HTML_ARTIFACT_OPEN_EVENT, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, type HtmlArtifactTarget } from '@/features/html-artifacts/api';
-// SPDX-License-Identifier: Elastic-2.0
-// Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -52,14 +61,12 @@ import { cn } from "@/lib/utils";
 import type { TFn } from "@/lib/i18n-types";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 import { api } from "@/lib/api";
+import i18n from "@/i18n";
 import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
   SUPERCHAT_CANVAS_CONTEXT_REQUEST_EVENT,
 } from "@/features/superchat/use-superchat";
-import {
-  mcpDirectCanvasApplyEnabled,
-  openFilmStudioEnabled,
-} from "@/lib/runtime-config";
+import { openFilmStudioEnabled } from "@/lib/runtime-config";
 import { SuperChatPanel } from "@/features/superchat/superchat-panel";
 import type { ChatAttachment } from "@/features/superchat/types";
 import { CommitDialog } from "./commit/CommitDialog";
@@ -134,11 +141,11 @@ import {
 } from "@/components/ui/tooltip";
 import type { CanvasEdge, CanvasNode } from "@/stores/canvasStore";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
+import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCommandEnvelope";
 import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   canvasCommandEnvelopeMatchesCanvas,
   emitCanvasCommandApproval,
-  extractCanvasChatCommandEnvelopes,
   FREEZONE_CANVAS_COMMAND_RESULT_EVENT,
   normalizeCanvasChatCommandEnvelopesForValidation,
   type CanvasChatCommandApplyResult,
@@ -257,7 +264,6 @@ const FREEZONE_CHAT_FLOAT_MARGIN = 12;
 const FREEZONE_CHAT_FLOAT_MIN_TOP = APP_HEADER_HEIGHT + 8;
 const FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE = TASK_STATUS_BAR_HEIGHT + 8;
 const FREEZONE_CHAT_FLOAT_DEFAULT_POS = { right: 24, top: FREEZONE_CHAT_FLOAT_MIN_TOP + 8 };
-const EXTERNAL_CANVAS_REVISION_POLL_MS = 2_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -433,202 +439,7 @@ async function loadMainlineProjectionAssets(project: string): Promise<FreezonePr
     listFreezoneProjectAssets(project),
     listCharacters(project),
   ]);
-  const characterAssets: FreezoneProjectAsset[] = characters
-    .map((character): FreezoneProjectAsset | null => {
-      const name = typeof character.name === "string" ? character.name.trim() : "";
-      if (!name) return null;
-      const displayName =
-        typeof character.display_name === "string" && character.display_name.trim()
-          ? character.display_name.trim()
-          : name;
-      return {
-        id: `character:${name}`,
-        tab: "characters",
-        kind: "character",
-        role: "character_profile",
-        label: displayName,
-        sublabel: typeof character.role === "string" && character.role.trim() ? character.role.trim() : undefined,
-        url: typeof character.portrait_url === "string" && character.portrait_url.trim()
-          ? character.portrait_url.trim()
-          : null,
-        exists: true,
-        media_type: character.portrait_url ? "image" : "text",
-        meta: { character: name },
-      };
-    })
-    .filter((asset): asset is FreezoneProjectAsset => Boolean(asset));
-  return [...assets, ...characterAssets];
-}
-
-function canvasCommandValidationFailureResult(errors: string[]): CanvasChatCommandApplyResult {
-  return {
-    applied: 0,
-    openedUiActions: 0,
-    createdNodeIds: [],
-    errors,
-    commandResults: [
-      {
-        commandIndex: -1,
-        type: "validate",
-        status: "error",
-        label: "校验画布命令",
-        error: errors.join("; "),
-      },
-    ],
-  };
-}
-
-function persistCanvasCommandResult({
-  projectId,
-  canvasId,
-  turnId,
-  envelopes,
-  result,
-  anchorTextPrefix,
-  receivedAt,
-  bridgeKey,
-}: {
-  projectId: string;
-  canvasId: string;
-  turnId: string | null;
-  envelopes: ReturnType<typeof extractCanvasChatCommandEnvelopes>;
-  result: CanvasChatCommandApplyResult;
-  anchorTextPrefix?: string | null;
-  receivedAt?: number;
-  bridgeKey?: string | null;
-}) {
-  if (!turnId) return;
-  void api.post("api/v1/chat/ui-events", {
-    json: {
-      scope: {
-        kind: "project",
-        id: projectId,
-        surface: "freezone",
-        canvasId,
-      },
-      turn_id: turnId,
-      event: {
-        schema_version: "canvas_command_result.v1",
-        type: "canvas_command_result",
-        canvas_id: canvasId,
-        bridge_key: bridgeKey ?? null,
-        envelopes,
-        result,
-        anchor_text_prefix: anchorTextPrefix ?? null,
-        received_at: receivedAt ?? Date.now(),
-      },
-    },
-  }).catch((error) => {
-    console.warn("[freezone-canvas-command] failed to persist canvas command result", {
-      canvasId,
-      turnId,
-      error,
-    });
-  });
-}
-
-function persistCanvasCommandApproval({
-  projectId,
-  canvasId,
-  turnId,
-  envelopes,
-  anchorTextPrefix,
-  receivedAt,
-  externalMcpCommand,
-  bridgeKey,
-}: {
-  projectId: string;
-  canvasId: string;
-  turnId: string | null;
-  envelopes: ReturnType<typeof extractCanvasChatCommandEnvelopes>;
-  anchorTextPrefix?: string | null;
-  receivedAt?: number;
-  externalMcpCommand?: boolean;
-  bridgeKey?: string | null;
-}) {
-  if (!turnId) return;
-  void api.post("api/v1/chat/ui-events", {
-    json: {
-      scope: {
-        kind: "project",
-        id: projectId,
-        surface: "freezone",
-        canvasId,
-      },
-      turn_id: turnId,
-      event: {
-        schema_version: "canvas_command_approval.v1",
-        type: "canvas_command_approval",
-        canvas_id: canvasId,
-        bridge_key: bridgeKey ?? null,
-        envelopes,
-        anchor_text_prefix: anchorTextPrefix ?? null,
-        received_at: receivedAt ?? Date.now(),
-        ...(externalMcpCommand === true ? { external_mcp_command: true } : {}),
-      },
-    },
-  }).catch((error) => {
-    console.warn("[freezone-canvas-command] failed to persist canvas command approval", {
-      canvasId,
-      turnId,
-      error,
-    });
-  });
-}
-
-function persistCanvasCommandValidationActivity({
-  projectId,
-  canvasId,
-  turnId,
-  bridgeKey,
-  ok,
-  errors,
-  anchorTextPrefix,
-  receivedAt,
-  externalMcpCommand,
-}: {
-  projectId: string;
-  canvasId: string;
-  turnId: string | null;
-  bridgeKey: string;
-  ok: boolean;
-  errors: string[];
-  anchorTextPrefix?: string | null;
-  receivedAt?: number;
-  externalMcpCommand?: boolean;
-}) {
-  if (!turnId) return;
-  void api.post("api/v1/chat/ui-events", {
-    json: {
-      scope: {
-        kind: "project",
-        id: projectId,
-        surface: "freezone",
-        canvasId,
-      },
-      turn_id: turnId,
-      event: {
-        schema_version: "canvas_context_result.v1",
-        type: "canvas_context_result",
-        canvas_id: canvasId,
-        bridge_key: bridgeKey,
-        result: {
-          ok,
-          responses: [{ type: "validate_canvas_commands" }],
-          errors,
-        },
-        anchor_text_prefix: anchorTextPrefix ?? null,
-        received_at: receivedAt ?? Date.now(),
-        ...(externalMcpCommand === true ? { external_mcp_command: true } : {}),
-      },
-    },
-  }).catch((error) => {
-    console.warn("[freezone-canvas-command] failed to persist canvas command validation activity", {
-      canvasId,
-      turnId,
-      error,
-    });
-  });
+  return combineMainlineProjectionAssets(assets, characters);
 }
 
 /**
@@ -1159,6 +970,7 @@ export function FreezoneShell({
     }
   }, [projectId, queryClient]);
   const sync = useCanvasSync(projectId, canvasId);
+  useCanvasTextEditTracking();
   // fmv marker：画布 metadata 里出现待确认大纲时才挂方案卡（阶段B）。
   const pendingOutline = useMemo(
     () => parsePendingStoryOutline(sync.metadata),
@@ -1167,10 +979,14 @@ export function FreezoneShell({
   const canvasNodes = useCanvasStore((state) => state.nodes);
   const canvasEdges = useCanvasStore((state) => state.edges);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
-  const syncRetryRef = useRef(sync.retry);
+  const applyPushFrameRef = useRef(sync.applyPushFrame);
+  const syncRevisionRef = useRef(sync.revision);
+  useLayoutEffect(() => {
+    applyPushFrameRef.current = sync.applyPushFrame;
+  }, [sync.applyPushFrame]);
   useEffect(() => {
-    syncRetryRef.current = sync.retry;
-  }, [sync.retry]);
+    syncRevisionRef.current = sync.revision;
+  }, [sync.revision]);
   const visibleSelectedCanvasNodes = useMemo(() => {
     const selectedNodes = canvasNodes.filter((node) => node.selected);
     return selectedNodes.length > 0
@@ -1219,7 +1035,7 @@ export function FreezoneShell({
         chatReferenceCanvasNodes,
         canvasEdges,
         canvasNodes,
-        { displayNodes: visibleSelectedCanvasNodes },
+        { displayNodes: visibleSelectedCanvasNodes, nodeDataDefaults: browserNodeDataDefaults },
       ),
     [canvasEdges, canvasId, canvasNodes, chatReferenceCanvasNodes, projectId, visibleSelectedCanvasNodes],
   );
@@ -1327,71 +1143,6 @@ export function FreezoneShell({
       setRenderedCanvasKey(lastRenderedCanvasKey);
     }
   }, [canvasId, projectId, sync.hydratedCanvasId, sync.hydratedProject, sync.status]);
-
-  useEffect(() => {
-    if (!mcpDirectCanvasApplyEnabled()) return;
-    // 在虾集时不轮询：保活期间画布没人看，没必要为它占着请求配额。
-    // `active` 在依赖里，切回虾画会重跑本 effect —— 末尾那次立即调用就顺带
-    // 补上了「离开这段时间里画布有没有被别处改过」的新鲜度检查。以前靠整体
-    // 重新挂载触发 hydrate 来保证这件事，保活之后这里是唯一的补偿点。
-    if (!active) return;
-    if (
-      sync.status !== "ready" ||
-      sync.hydratedCanvasId !== canvasId ||
-      sync.revision == null
-    ) {
-      return;
-    }
-    let cancelled = false;
-    let inFlight = false;
-    const pollRemoteRevision = async () => {
-      if (cancelled || inFlight || document.visibilityState === "hidden") return;
-      inFlight = true;
-      try {
-        const response = await api
-          .get(
-            `api/v1/projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/revision`,
-          )
-          .json<{ data?: { revision?: number } }>();
-        const remoteRevision = response.data?.revision;
-        if (
-          !cancelled &&
-          typeof remoteRevision === "number" &&
-          sync.revision != null &&
-          remoteRevision > sync.revision
-        ) {
-          syncRetryRef.current();
-        }
-      } catch {
-        // Best effort: missing a poll is fine; the next tick or page refresh catches up.
-      } finally {
-        inFlight = false;
-      }
-    };
-    const timer = window.setInterval(pollRemoteRevision, EXTERNAL_CANVAS_REVISION_POLL_MS);
-    const handleFocus = () => {
-      void pollRemoteRevision();
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") void pollRemoteRevision();
-    };
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    void pollRemoteRevision();
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [
-    active,
-    canvasId,
-    projectId,
-    sync.hydratedCanvasId,
-    sync.revision,
-    sync.status,
-  ]);
 
   const projectionKeys = useMemo(
     () => projectionKeysFromMetadata(sync.metadata),
@@ -1827,17 +1578,6 @@ export function FreezoneShell({
           surfaceOrder: eventReceivedAt + 1,
           externalMcpCommand: isExternalMcpCommand,
         });
-        persistCanvasCommandValidationActivity({
-          projectId,
-          canvasId,
-          turnId,
-          bridgeKey: validationBridgeKey,
-          ok: false,
-          errors,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: eventReceivedAt + 1,
-          externalMcpCommand: isExternalMcpCommand,
-        });
         const result: CanvasChatCommandApplyResult = {
           applied: 0,
           openedUiActions: 0,
@@ -1861,16 +1601,6 @@ export function FreezoneShell({
           canvasId,
           agentId,
           result,
-        });
-        persistCanvasCommandResult({
-          projectId,
-          canvasId,
-          turnId,
-          envelopes: [],
-          result,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: detail?.receivedAt,
-          bridgeKey,
         });
         window.dispatchEvent(new CustomEvent(FREEZONE_CANVAS_COMMAND_RESULT_EVENT, {
           detail: {
@@ -1898,10 +1628,11 @@ export function FreezoneShell({
         normalizedEnvelopes,
         currentState.nodes,
         currentState.edges,
+        browserNodeDataDefaults,
       );
       if (!validation.ok) {
         const errors = [
-          "画布命令预校验失败，前端未展示确认卡，也未执行。",
+          CANVAS_COMMAND_VALIDATION_FAILURE_MESSAGE,
           ...validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
         ];
         console.warn("[freezone-canvas-command] validation failed", {
@@ -1924,17 +1655,6 @@ export function FreezoneShell({
           surfaceOrder: eventReceivedAt + 1,
           externalMcpCommand: isExternalMcpCommand,
         });
-        persistCanvasCommandValidationActivity({
-          projectId,
-          canvasId,
-          turnId,
-          bridgeKey: validationBridgeKey,
-          ok: false,
-          errors,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: eventReceivedAt + 1,
-          externalMcpCommand: isExternalMcpCommand,
-        });
         const result = canvasCommandValidationFailureResult(errors);
         reportCanvasCommandToolResult({
           bridgeKey,
@@ -1944,16 +1664,6 @@ export function FreezoneShell({
           canvasId,
           agentId,
           result,
-        });
-        persistCanvasCommandResult({
-          projectId,
-          canvasId,
-          turnId,
-          envelopes: normalizedEnvelopes,
-          result,
-          anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-          receivedAt: detail?.receivedAt,
-          bridgeKey,
         });
         window.dispatchEvent(new CustomEvent(FREEZONE_CANVAS_COMMAND_RESULT_EVENT, {
           detail: {
@@ -1984,27 +1694,6 @@ export function FreezoneShell({
         surfaceOrder: eventReceivedAt + 1,
         externalMcpCommand: isExternalMcpCommand,
       });
-      persistCanvasCommandValidationActivity({
-        projectId,
-        canvasId,
-        turnId,
-        bridgeKey: validationBridgeKey,
-        ok: true,
-        errors: [],
-        anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-        receivedAt: eventReceivedAt + 1,
-        externalMcpCommand: isExternalMcpCommand,
-      });
-      persistCanvasCommandApproval({
-        projectId,
-        canvasId,
-        turnId,
-        envelopes: normalizedEnvelopes,
-        anchorTextPrefix: detail?.anchorTextPrefix ?? null,
-        receivedAt: eventReceivedAt + 2,
-        bridgeKey,
-        externalMcpCommand: isExternalMcpCommand,
-      });
       console.info("[freezone-canvas-command] approval emitted", {
         bridgeKey,
         turnId,
@@ -2014,6 +1703,7 @@ export function FreezoneShell({
       });
       setChatOpen(true);
       window.setTimeout(() => emitCanvasCommandApproval({
+        serverApproved: "server_approved" in frame && frame.server_approved === true,
         canvasId,
         agentId,
         turnId,
@@ -2039,6 +1729,8 @@ export function FreezoneShell({
   useEffect(() => startCanvasCommandStream<ServerFrame>({
     projectId,
     canvasId,
+    getLastRevision: () => syncRevisionRef.current,
+    getLocale: () => i18n.language,
     getAgentIds: () => loadFreezoneCanvasAgentsWithSource(projectId, canvasId).state.agents
       .map((agent) => agent.id),
     poll: (agentIds, signal) => listPendingCanvasCommandFrames({
@@ -2048,6 +1740,7 @@ export function FreezoneShell({
       ).slice(-200),
     }),
     onFrame: (frame) => {
+      if (applyPushFrameRef.current(frame)) return;
       const frameRecord = frame as Record<string, unknown>;
       const bridgeKey =
         typeof frameRecord.bridge_key === "string"
@@ -2129,7 +1822,7 @@ export function FreezoneShell({
             selectedNodeIds,
             envelopes,
             canvasMetadata: sync.metadata as Record<string, unknown> | null,
-            loadMainlineProjectionAssets: () => loadMainlineProjectionAssets(projectId),
+            ports: createBrowserCanvasContextPorts(projectId, () => loadMainlineProjectionAssets(projectId)),
           });
           reportCanvasContextToolResult({
             bridgeKey,
@@ -2142,8 +1835,7 @@ export function FreezoneShell({
             errors: [],
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error || "unknown error");
-          const errors = [`读取画布上下文失败：${message}`];
+          const errors = canvasContextFailureErrors(error);
           emitCanvasContextActivity({
             turnId,
             anchorTextPrefix,

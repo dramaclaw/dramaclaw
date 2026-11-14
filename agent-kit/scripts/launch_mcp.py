@@ -77,12 +77,24 @@ def _configure_tools_env(env: dict[str, str], ce_root: Path) -> None:
         env.get("DRAMACLAW_AGENT_TOKEN", "").strip()
         or env.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     )
-    if not has_token:
+    has_key = bool(
+        env.get("DRAMACLAW_AGENT_KEY", "").strip()
+        or env.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+    )
+    if not has_token and not has_key:
         env.setdefault("DRAMACLAW_LOCAL_AGENT_TRUST", "1")
     if _truthy(env.get("DRAMACLAW_LOCAL_AGENT_TRUST", "")) and hostname not in LOOPBACK_HOSTS:
         raise SystemExit(
             "DRAMACLAW_LOCAL_AGENT_TRUST is allowed only for a loopback DRAMACLAW_API_URL. "
             "Use a short-lived agent token for non-loopback APIs."
+        )
+
+    if has_key and not has_token and not (
+        urlparse(api_url).scheme == "https"
+        or (urlparse(api_url).scheme == "http" and hostname in LOOPBACK_HOSTS)
+    ):
+        raise SystemExit(
+            "A non-loopback DRAMACLAW_API_URL requires https when using an agent key."
         )
 
     username = (
@@ -95,7 +107,6 @@ def _configure_tools_env(env: dict[str, str], ce_root: Path) -> None:
     env.setdefault("DRAMACLAW_USER", username)
     env.setdefault("ST_LOCAL_USERNAME", username)
     env.setdefault("DRAMACLAW_EXTERNAL_MCP", "1")
-    env.setdefault("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", "0")
     env.setdefault("DRAMACLAW_CHAT_SURFACE", "freezone")
     env.setdefault("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     env.setdefault("DRAMACLAW_AGENT_PROFILE", "freezone:main")

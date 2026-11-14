@@ -9,7 +9,7 @@
  */
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { dirname, join, relative, isAbsolute } from 'node:path';
+import { dirname, join, relative, isAbsolute, sep } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { FetchError } from './fetch-error.mjs';
@@ -151,7 +151,7 @@ export async function downloadFiles(at, commit, folder, files, { dir, signal, ho
   const one = async (/** @type {RemoteFile} */ file) => {
     const to = join(dir, ...file.path.split('/'));
     const inside = relative(dir, to);
-    if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new FetchError(`“${file.path}” is not a path in the folder.`, 422, 'failed');
+    if (!inside || inside.split(sep)[0] === '..' || isAbsolute(inside)) throw new FetchError(`“${file.path}” is not a path in the folder.`, 422, 'failed');
     await mkdir(dirname(to), { recursive: true });
     /* a connection that drops is tried again, a little later each time, from the start of the file */
     const told = { counted: 0 };

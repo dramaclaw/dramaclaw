@@ -55,16 +55,21 @@ async def _film(project, canvas, node, user):
     )
 
     _studio_route_scope(canvas, node)
-    _ctx, _username, _name, project_dir, _output = await _resolve_freezone_project(
-        project, user
-    )
-    folder = studio.film_dir_for_node(project_dir, canvas, node)
+    ctx, _username, _name, project_dir, _output = await _resolve_freezone_project(project, user)
     try:
+        film = studio.studio_film_for_node(
+            project_dir=ctx.output_dir,
+            state_dir=ctx.state_dir,
+            runtime_dir=ctx.runtime_dir,
+            canvas_id=canvas,
+            node_id=node,
+        )
+        folder = film.root
         project_id = hosted.film_id(folder)
         state = await studio._ensure_studio()
         hosted.loopback_origin(state["origin"])
         hosted.loopback_origin(state["film_origin"])
-        registered_id = await studio._studio_project_id(state, folder)
+        registered_id = await studio._studio_project_id(state, film)
         if registered_id != project_id:
             raise studio.StudioError(
                 "Studio project changed; reopen the workspace", 409

@@ -1,6 +1,5 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Chat history could not be saved. Please try again later; the current message is still available locally.",
     "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history."
   },
   "workflowDraftContinuation": {
@@ -791,6 +790,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Compacting context…",
+    "contextCompacted": "Context compacted so the conversation can continue",
     "clearChat": {
       "title": "Clear this chat?",
       "description": "This chat history will be deleted. Your next message will start a new Agent context. The canvas, project, and other chats will stay unchanged. Running generation tasks will continue.",
@@ -842,6 +843,8 @@
     "emptyTitle": "Start a conversation",
     "emptyDescription": "Ask about project progress, failed tasks, or have the assistant organize your creative plan.",
     "syncingHistoryTitle": "Initializing conversation",
+    "loadEarlierMessages": "Load earlier messages",
+    "loadingEarlierMessages": "Loading earlier messages…",
     "syncingHistoryDescription": "Connecting to Xia Director and syncing chat history. Please wait.",
     "disclaimer": "Xia Director can make mistakes. Check key story, character, and asset details.",
     "placeholder": "After uploading a script, ask Xia Director to advance episodes, visuals, audio, or final video",
@@ -884,10 +887,6 @@
     "dropFiles": "Drop to upload files",
     "unsupportedDropFiles": "Only .txt, .md, .doc, and .docx are supported",
     "removeAttachment": "Remove attachment",
-    "approvalExpires": "Expires in {{seconds}}s",
-    "allowOnce": "Allow once",
-    "allowAlways": "Always allow",
-    "deny": "Deny",
     "instance": "Instance",
     "model": "Model",
     "noInstances": "No instances",
@@ -969,6 +968,19 @@
         "instrumental": "Instrumental",
         "vocalsAllowed": "Vocals allowed",
         "continue": "Continue with selected voice"
+      },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Delete nodes",
+          "clear_canvas": "Clear the canvas",
+          "paid_generation": "Run generation"
+        },
+        "separator": ", ",
+        "credits": "Confirming will consume credits.",
+        "expiresIn": "Valid for {{minutes}} min",
+        "confirm": "Confirm",
+        "refuse": "Cancel",
+        "failed": "Action failed. Please try again."
       },
       "canvasExecuting": "Executing...",
       "currentSelection": "Current selection",
@@ -1531,6 +1543,8 @@
       "assetNamePlaceholder": "Enter an asset name"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "A node you changed was deleted elsewhere. Your version was kept.",
+      "localDeletedRemoteChanged": "A node you deleted was just changed elsewhere (for example by the Agent). It stays deleted.",
       "backupFailed": "Cloud backup failed. Please try again later.",
       "backupPending": "Saved locally; the cloud backup will retry.",
       "bodyOverLimit": "Canvas data is {{actual}} KB, over the {{limit}} KB limit. Saving is paused.",
@@ -5946,8 +5960,6 @@
         "conditionalBranch": "Conditional branch (else/automatic)",
         "unknownInitialValues": "Initial variable values are unknown; defaulting to 0 (no global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} exceeds the number of choices and was ignored.",
-        "agentRefreshConflict": "The agent updated the canvas, but you have unsaved local changes. Save a copy or refresh to continue.",
-        "refreshConflict": "The canvas was updated in the background, but you have unsaved local changes. Save a copy or refresh to continue.",
         "storyGroup": "Interactive story",
         "segmentTitle": "Segment {{index}}",
         "firstFrame": "first frame",
@@ -8869,6 +8881,8 @@
       "hint": "Connect at least {{min}} video nodes to open",
       "counts": "Video {{video}} · Audio {{audio}}",
       "open": "Open video compose & edit",
+      "exporting": "Exporting…",
+      "exportFailed": "Export failed",
       "reopen": "Reopen",
       "resultName": "Composed video"
     },
@@ -9092,6 +9106,7 @@
       "noMatches": "No matching nodes"
     },
     "runtime": {
+      "waitingForConfirmation": "Waiting for your confirmation",
       "waitingForGenerationParameters": "Waiting for generation parameters",
       "clarificationPaused": "Waiting for an answer is paused"
     }

@@ -162,8 +162,10 @@ except Exception:
 
 _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
+    from novelvideo.freezone.canvas_confirmations import confirmation_kinds
     from novelvideo.freezone.canvas_command_bridge import (
         canvas_command_bridge_key,
+        canvas_command_result_timeout_seconds,
         canvas_command_idempotency_key,
         canvas_context_bridge_key,
         clarification_bridge_key,
@@ -172,7 +174,6 @@ try:
         resolve_clarification_result,
         put_pending_clarification_event,
         put_pending_canvas_command,
-        put_or_reuse_pending_canvas_command,
         put_pending_canvas_context,
         put_pending_skill_studio_event,
         wait_clarification_result,
@@ -183,7 +184,9 @@ try:
     )
 except Exception as exc:
     _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR = exc
+    confirmation_kinds = None
     canvas_command_bridge_key = None
+    canvas_command_result_timeout_seconds = None
     canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
     clarification_bridge_key = None
@@ -192,7 +195,6 @@ except Exception as exc:
     resolve_clarification_result = None
     put_pending_clarification_event = None
     put_pending_canvas_command = None
-    put_or_reuse_pending_canvas_command = None
     put_pending_canvas_context = None
     put_pending_skill_studio_event = None
     wait_clarification_result = None
@@ -342,6 +344,13 @@ def _agent_token_configured() -> bool:
     )
 
 
+def _agent_key_configured() -> bool:
+    return bool(
+        os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+        or os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+    )
+
+
 def _current_agent_token() -> str:
     """Read a turn token lazily without depending on the CE application venv."""
 
@@ -372,7 +381,7 @@ def _skill_studio_agent_instruction(
 def _available() -> bool:
     return bool(
         os.environ.get("DRAMACLAW_API_URL")
-        and (_agent_token_configured() or _local_agent_trust_enabled())
+        and (_agent_token_configured() or _agent_key_configured() or _local_agent_trust_enabled())
     )
 
 
@@ -410,6 +419,8 @@ def _request_headers(user_agent: str) -> dict[str, str]:
     token = _current_agent_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    elif not _agent_token_configured() and _agent_key_configured():
+        return headers
     elif not _local_agent_trust_enabled():
         raise ValueError("Freezone agent token is not configured")
     return headers
@@ -465,6 +476,76 @@ def _bound_scope_mismatch(project: str | None, canvas: str | None) -> dict[str, 
             "never retype or shorten them."
         ),
     }
+
+
+def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict[str, Any] | None:
+    """Also allow canvases created by this chat, using server-only agent_origin.
+
+    Read metadata.agent_origin.chat_canvas_id from the real canvas list so a
+    mistyped or unknown id stays refused. Skill Studio events stay strict because
+    only the bound canvas has a listener. Clarification requests for a canvas this
+    chat created return clarification_ui_unavailable.
+    Refuse canvases outside this chat without steering the Agent to the bound
+    canvas: retrying there would put content meant for another canvas on it.
+    """
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is None:
+        return None
+    bound_project = _default_project_id()
+    bound_canvas = _default_canvas_id()
+    given_project = str(project or "").strip()
+    given_canvas = str(canvas or "").strip()
+    if not (
+        bound_canvas and given_canvas and given_canvas != bound_canvas
+        and (not given_project or given_project == bound_project)
+        and _agent_canvas_executor() == "server"
+    ):
+        return mismatch
+
+    def _canvas_not_usable_from_chat(*, lookup_failed: bool) -> dict[str, Any]:
+        error = (
+            f"Requested canvas {given_canvas!r} is neither the bound canvas "
+            f"{bound_canvas!r} nor a canvas this chat created. "
+        )
+        if lookup_failed:
+            error += (
+                "The canvas list could not be read to confirm which canvases "
+                "this chat created. "
+            )
+        return {
+            "ok": False,
+            "status": "scope_mismatch",
+            "code": "scope_mismatch",
+            "error": error + "Nothing was sent to the frontend.",
+            **({"project_id": bound_project} if bound_project else {}),
+            "retryable": False,
+            "next_action": "list_canvases_or_tell_user",
+            "agent_instruction": (
+                "Do not retry this call on another canvas. This chat can write only "
+                "to the bound canvas and to canvases it created "
+                "(created_from_this_chat=true in freezone_list_canvases). "
+                "Do not move the change to the bound canvas or any other canvas "
+                "on your own; tell the user this canvas cannot be changed from "
+                "this chat, and use a different canvas only if the user explicitly asks."
+            ),
+        }
+
+    try:
+        result = _request(
+            "GET", f"/api/v1/projects/{quote(given_project or bound_project, safe='')}/freezone/canvases"
+        )
+        if not result.get("ok") or not isinstance(result.get("data"), list):
+            return _canvas_not_usable_from_chat(lookup_failed=True)
+        for item in result["data"]:
+            if not isinstance(item, dict) or item.get("id") != given_canvas:
+                continue
+            metadata = item.get("metadata")
+            origin = metadata.get("agent_origin") if isinstance(metadata, dict) else None
+            if isinstance(origin, dict) and origin.get("chat_canvas_id") == bound_canvas:
+                return None
+    except Exception:
+        return _canvas_not_usable_from_chat(lookup_failed=True)
+    return _canvas_not_usable_from_chat(lookup_failed=False)
 
 
 def _surface() -> str:
@@ -527,12 +608,31 @@ def _request(
     method: str, path: str, *, query: Any = None, body: Any = None
 ) -> dict[str, Any]:
     api_path = _normalize_api_path(path)
-    url = f"{_base_url()}{api_path}{_query_string(query)}"
+    api_base = _base_url()
+    query_string = _query_string(query)
+    url = f"{api_base}{api_path}{query_string}"
     payload = None
     headers = _request_headers("freezone-plugin/0.1.0")
     if body is not None:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
+
+    if not _agent_token_configured() and _agent_key_configured():
+        if _SHARED_AGENT_KEY_SESSION is None:
+            return {
+                "ok": False, "code": "agent_key_unavailable",
+                "error": "Agent key session support is unavailable",
+            }
+        return _SHARED_AGENT_KEY_SESSION.protect(
+            lambda: _SHARED_AGENT_KEY_SESSION.request(
+                api_base=api_base, api_path=api_path, method=method,
+                query_string=query_string, payload=payload, headers=headers,
+                timeout=DEFAULT_TIMEOUT_SECONDS,
+                opener=lambda *args, **kwargs: urlopen(*args, **kwargs),
+                decode_success=_decode_response,
+                shape_http_error=_http_error_result,
+            )
+        )
 
     req = Request(url, data=payload, headers=headers, method=method.upper())
     try:
@@ -568,7 +668,29 @@ def _maybe_json(text: str) -> Any:
 def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, Any]:
     if _SHARED_API_ERRORS is None:
         return {"ok": False, "status": "failed", "status_code": status_code, "error": "HTTP request failed"}
-    return _SHARED_API_ERRORS._http_error_result(status_code, text, reason)
+    result = _SHARED_API_ERRORS._http_error_result(status_code, text, reason)
+    if status_code == 422 and result.get("code") == "invalid_agent_canvas_request":
+        data = _maybe_json(text) if len(text) <= 65536 else None
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if isinstance(detail, dict):
+            message = _SHARED_API_ERRORS._safe_error_string(detail.get("message"), 8192)
+            if message:
+                result["message"] = message
+    if status_code == 409 and result.get("code") in {
+        "canvas_open_required", "workflow_already_running",
+    }:
+        data = _maybe_json(text)
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if isinstance(detail, dict):
+            if isinstance(detail.get("blocked"), list):
+                result["blocked"] = [
+                    {key: item[key] for key in ("node_id", "action", "label", "reason")
+                     if key in item}
+                    for item in detail["blocked"] if isinstance(item, dict)
+                ]
+            if isinstance(detail.get("run_id"), str):
+                result["run_id"] = detail["run_id"]
+    return result
 
 
 def _scope_meta(project: str, canvas: str | None = None) -> dict[str, Any]:
@@ -921,6 +1043,8 @@ def _emit_clarification_event(
     mismatch = _bound_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
+    if not _clarification_listener_available():
+        return tool_result(_clarification_no_ui_result(project, canvas, chat_created=False))
     key = clarification_bridge_key(project_id=project, canvas_id=canvas, event=event)
     server_model_question = any(
         isinstance(question, dict) and question.get("id") in {
@@ -1252,9 +1376,14 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     request_scope = _clarification_request_scope(args)
     # The bridge directory is shared per user/profile and may hold cards from
     # other projects; never look one up outside this session's bound scope.
-    mismatch = _bound_scope_mismatch(project, canvas)
-    if mismatch is not None:
-        return tool_result(mismatch)
+    if _bound_scope_mismatch(project, canvas) is not None:
+        refused = _chat_canvas_scope_mismatch(project, canvas)
+        if refused is not None:
+            return tool_result(refused)
+        # A canvas this chat created has no clarification listener.
+        return tool_result(_clarification_no_ui_result(project, canvas, chat_created=True))
+    if not _clarification_listener_available():
+        return tool_result(_clarification_no_ui_result(project, canvas, chat_created=False))
     explicit = _resume_clarification(project, canvas, clarification_id)
     if explicit is not None and request_scope and explicit[1].get("request_scope"):
         stored_scope = explicit[1]["request_scope"]
@@ -3657,11 +3786,61 @@ def _handle_node_action_catalog(args: dict[str, Any], **_: Any) -> str:
     request: dict[str, Any] = {"type": "node_action_catalog", "node_id": node_id}
     if action:
         request["action"] = action
-    return _request_canvas_context_from_frontend(
+    raw_result = _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
         requests=[request],
     )
+    result = json.loads(raw_result)
+    if not isinstance(result, dict):
+        return raw_result
+    for key in ("project_id", "canvas_id"):
+        if result.get(key) is None:
+            result.pop(key, None)
+    if result.get("ok") is not True:
+        return tool_result(result)
+    responses = result.get("responses")
+    response = next((
+        item for item in responses
+        if isinstance(item, dict) and item.get("type") == "node_action_catalog"
+    ), None) if isinstance(responses, list) else None
+    if response is not None and isinstance(response.get("data"), (dict, list)):
+        return tool_result(result)
+    scope = {
+        key: value for key, value in (
+            ("project_id", result.get("project_id") or project),
+            ("canvas_id", result.get("canvas_id") or canvas),
+        ) if isinstance(value, str) and value.strip()
+    }
+    if response is not None and "data" in response and response["data"] is None:
+        location = f"canvas {scope['canvas_id']}" if "canvas_id" in scope else "this canvas"
+        message = f"Node {node_id} does not exist on {location}."
+        return tool_result({
+            "ok": False, "status": "node_not_found", "code": "node_not_found",
+            "tool_call_status": "completed", "canvas_context_status": "resolved",
+            "node_id": node_id, **scope, "error": message, "message": message,
+            "retryable": False, "next_action": "summarize_canvas_or_tell_user",
+            "agent_instruction": (
+                f"Node {node_id} does not exist on this canvas. Do not call "
+                "freezone_get_node_action_catalog again with this node_id. "
+                "Do not invent or construct node ids. Call freezone_summarize_canvas "
+                "(with the same canvas_id) to see the real node ids, or use the node ids "
+                "returned by the canvas write that created the node. If the node you need "
+                "is not on the canvas, create it first or tell the user."
+            ),
+        })
+    return tool_result({
+        "ok": False, "status": "canvas_context_incomplete", "code": "canvas_context_incomplete",
+        "tool_call_status": "failed", "canvas_context_status": "failed",
+        "node_id": node_id, **scope,
+        "errors": ["The node action catalog response is missing or has invalid data."],
+        "message": f"The canvas did not return an action catalog for node {node_id}.",
+        "retryable": False, "next_action": "summarize_canvas_or_tell_user",
+        "agent_instruction": (
+            "Do not repeat this call with the same arguments. Check the node id "
+            "with freezone_summarize_canvas, or tell the user the canvas could not answer."
+        ),
+    })
 
 
 def _handle_node_create_schema(args: dict[str, Any], **_: Any) -> str:
@@ -4139,6 +4318,94 @@ def _validate_html_artifact_write(
             raise ValueError("reference_node_ids must be an array of non-empty node IDs or earlier client_id aliases")
 
 
+_TEXT_ANNOTATION_INSTRUCTION = (
+    " A textAnnotationNode needs data.displayName (the node title; title is accepted "
+    "as an alias) and data.content (the body)."
+)
+
+
+def _text_annotation_data_refusal(data: Any) -> dict[str, Any] | None:
+    """Use the published schema to describe and repair missing text node fields."""
+    from jsonschema import Draft202012Validator
+    from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
+
+    cleaned = deepcopy(data) if isinstance(data, dict) else None
+    if cleaned is not None:
+        for field in ("displayName", "title", "content"):
+            value = cleaned.get(field)
+            if not isinstance(value, str) or not value.strip():
+                cleaned.pop(field, None)
+    arguments = {"data": cleaned} if cleaned is not None else {}
+    schema = {
+        "type": "object",
+        "properties": {"data": _TEXT_ANNOTATION_DATA_SCHEMA},
+        "required": ["data"],
+    }
+    exc = next(Draft202012Validator(schema).iter_errors(arguments), None)
+    if exc is None:
+        return None
+    refusal = workflow_argument_refusal("textAnnotationNode", arguments, schema, exc)
+    refusal.update(ok=False, status="invalid_command_schema", error=refusal["message"])
+    refusal["agent_instruction"] += _TEXT_ANNOTATION_INSTRUCTION
+    return refusal
+
+
+def _text_annotation_batch_refusal(
+    project: str | None, canvas: str | None, commands: list[Any]
+) -> str | None:
+    errors = []
+    corrected_commands = deepcopy(commands)
+    refusal = None
+    for index, command in enumerate(commands):
+        if not (
+            isinstance(command, dict)
+            and command.get("type") in {"create_node", "add_next_node"}
+            and command.get("node_type") == "textAnnotationNode"
+        ):
+            continue
+        current = _text_annotation_data_refusal(command.get("data"))
+        if current is None:
+            continue
+        refusal = current
+        corrected_commands[index]["data"] = current["example"]["data"]
+        for error in current["errors"]:
+            prefix = f"commands[{index}]."
+            errors.append({
+                **error,
+                "path": prefix + error["path"],
+                "message": prefix + error["message"],
+            })
+    if refusal is None:
+        return None
+    message = "; ".join(error["message"] for error in errors)
+    refusal.update(
+        errors=errors, path=errors[0]["path"], message=message, error=message,
+        example={
+            **({"project_id": project} if project is not None else {}),
+            **({"canvas_id": canvas} if canvas is not None else {}),
+            "commands": corrected_commands,
+        },
+    )
+    if any(isinstance(c, dict) and c.get("type") == "html_artifact" for c in commands):
+        refusal.pop("example", None)
+    return tool_result({**refusal, **_scope_meta(project or "", canvas)})
+
+
+def _text_annotation_tool_refusal(args: dict[str, Any]) -> str | None:
+    if args.get("node_type") != "textAnnotationNode":
+        return None
+    refusal = _text_annotation_data_refusal(args.get("data"))
+    if refusal is None:
+        return None
+    refusal["example"] = {**deepcopy(args), "data": refusal["example"]["data"]}
+    project = str(args.get("project_id") or _default_project_id()).strip() or None
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    return tool_result({**refusal, **_scope_meta(project or "", canvas)})
+
+
 def _validate_write_commands_shape(
     project: str | None,
     canvas: str | None,
@@ -4146,6 +4413,9 @@ def _validate_write_commands_shape(
     *,
     allow_workflow_prepare: bool = False,
 ) -> str | None:
+    text_refusal = _text_annotation_batch_refusal(project, canvas, commands)
+    if text_refusal is not None:
+        return text_refusal
     for index, command in enumerate(commands):
         if not isinstance(command, dict):
             return _emit_command_error(
@@ -4291,24 +4561,6 @@ def _validate_write_commands_shape(
                         "nodes, and only use creatable node types exposed by the command catalog."
                     ),
                 )
-            if node_type == "textAnnotationNode":
-                node_data = command.get("data")
-                missing_text_fields = [
-                    field
-                    for field in ("title", "content")
-                    if not isinstance(node_data, dict)
-                    or not str(node_data.get(field) or "").strip()
-                ]
-                if missing_text_fields:
-                    return _emit_command_error(
-                        project,
-                        canvas,
-                        "invalid_command_schema",
-                        (
-                            f"commands[{index}] create_node requires textAnnotationNode "
-                            f"{', '.join(missing_text_fields)} in data"
-                        ),
-                    )
         if command.get("type") == "create_edge":
             missing = [
                 field
@@ -4336,8 +4588,8 @@ def _validate_write_commands_shape(
     return None
 
 
-def _mcp_direct_canvas_apply_enabled() -> bool:
-    return os.environ.get("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", "").strip().lower() in {
+def _external_mcp_agent_enabled() -> bool:
+    return os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -4345,12 +4597,123 @@ def _mcp_direct_canvas_apply_enabled() -> bool:
     }
 
 
-def _external_mcp_agent_enabled() -> bool:
-    return os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
+def _turnless_external_mcp_host() -> bool:
+    """Identify an external MCP host without a product chat turn.
+
+    The plugin opens no workflow_result operation; the server alone decides
+    whether the session may deliver a draft without one.
+    """
+    return _external_mcp_agent_enabled() and not os.environ.get(
+        "DRAMACLAW_TURN_ID", ""
+    ).strip()
+
+
+def _key_deferral_host() -> bool:
+    return (
+        _turnless_external_mcp_host()
+        and not _agent_token_configured()
+        and _agent_key_configured()
+    )
+
+
+_WORKFLOW_RESULT_OPERATION_REQUIRED = [] if _turnless_external_mcp_host() else ["operation_id"]
+
+# Shown only to external MCP hosts without a product chat turn.
+_TURNLESS_CREATE_CANVAS_GUIDANCE = (
+    " This session has no product chat turn, so no interface can show clarification cards. "
+    "If the request still needs generation settings (for images or video: model, aspect ratio, "
+    "resolution, quality, count; for video also duration) or other answers from the user, ask "
+    "in this conversation first and do not create the canvas yet; create it in the turn where "
+    "you will immediately prepare the workflow draft or write nodes to it. Create at most one "
+    "canvas per request and keep using it."
+)
+_KEY_CREATE_CANVAS_GUIDANCE = _TURNLESS_CREATE_CANVAS_GUIDANCE.replace(
+    "(for images or video: model, aspect ratio, resolution, quality, count; "
+    "for video also duration)",
+    "(for images or video: model, aspect ratio, count; for video also duration; "
+    "for a workflow draft also resolution and quality)",
+).replace(
+    "Create at most one canvas per request",
+    "When you write new image or video nodes with canvas commands and the user did not name "
+    "a resolution or image quality, leave resolution and image quality unset instead of asking; "
+    "the platform standard tier is filled in and marked as a platform standard default in the "
+    "confirmation. Create at most one canvas per request",
+)
+_KEY_NO_UI_TIER_GUIDANCE = (
+    " Exception for this session: when you write new image or video nodes with canvas commands "
+    "and the user did not name a resolution or image quality, leave resolution and image quality "
+    "unset instead of asking; the platform standard tier is filled in and marked as a platform "
+    "standard default in the confirmation. Ask for every other missing setting."
+)
+
+_TURNLESS_EMIT_GUIDANCE = (
+    " In this session (no product chat turn), when the user describes in their own words a "
+    "result that needs several generated images, videos or audio clips, or a multi-step "
+    "pipeline such as text to image to video, and does not name the exact nodes, edges and "
+    "actions to create, do not build it node by node with this tool: follow the "
+    "dramaclaw-workflows Skill (find the workflow with workflow_catalog_search, then "
+    "freezone_prepare_workflow). Keep using this tool when the user names the exact nodes, "
+    "edges or actions, for a single node, or to edit or run nodes that already exist."
+)
+_TURNLESS_NO_UI_CANVAS_GUIDANCE = (
+    " No canvas is needed to ask the user. If you ask the user and have not created a canvas "
+    "for this request yet, do not create one before they answer: create it once the settings "
+    "are complete, right before you prepare the workflow draft or write the nodes, and only "
+    "if the request needs a new canvas. If you already created one for this request, keep "
+    "using it and do not create another."
+)
+_CREATE_CANVAS_HOST_GUIDANCE = (
+    _KEY_CREATE_CANVAS_GUIDANCE if _key_deferral_host()
+    else _TURNLESS_CREATE_CANVAS_GUIDANCE if _turnless_external_mcp_host() else ""
+)
+_EMIT_HOST_GUIDANCE = _TURNLESS_EMIT_GUIDANCE if _turnless_external_mcp_host() else ""
+
+
+def _clarification_listener_available() -> bool:
+    """Only product chat turns read cards; external MCP hosts need a turn id.
+
+    An external host setting its own turn id is treated as having a listener and
+    waits as before. An in-app Codex turn with an empty id fails safe without waiting.
+    """
+    return not _external_mcp_agent_enabled() or bool(
+        os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    )
+
+
+def _clarification_no_ui_result(
+    project: str | None, canvas: str | None, *, chat_created: bool
+) -> dict[str, Any]:
+    message = (
+        f"Clarification cards are shown only on the canvas this chat is bound to; "
+        f"canvas {canvas!r} was created by this chat and has no listener. "
+        if chat_created else
+        "No DramaClaw interface in this session can show or answer a clarification card. "
+    ) + "No card was created and nothing was written."
+    return {
+        "ok": False,
+        "status": "clarification_ui_unavailable",
+        "code": "clarification_ui_unavailable",
+        "tool_call_status": "completed",
+        "clarification_status": "not_shown",
+        **({"project_id": project} if project else {}),
+        "canvas_id": canvas,
+        "error": message,
+        "message": message,
+        "retryable": False,
+        "next_action": "continue_with_stated_assumptions_or_ask_in_conversation",
+        "agent_instruction": (
+            "Do not call freezone_request_user_clarification again for this request. "
+            "Do not move this request to another canvas. Either continue with the most "
+            "reasonable reading of the user's request and state the assumptions you made "
+            "in your reply, or ask the user in this conversation and wait for the answer. "
+            "Never choose generation settings (model, quality, resolution, duration, count) "
+            "for the user and never pick a more expensive option than the user asked for; "
+            "ask the user in this conversation for missing image or video settings, also "
+            "when a later write returns generation_parameters_required. Paid actions still "
+            "return confirmation_required and need the user's explicit consent before "
+            "freezone_confirm_canvas_action."
+        ) + (_TURNLESS_NO_UI_CANVAS_GUIDANCE if _turnless_external_mcp_host() else "")
+        + (_KEY_NO_UI_TIER_GUIDANCE if _key_deferral_host() else ""),
     }
 
 
@@ -5178,6 +5541,7 @@ def _workflow_generation_mode_clarification(
 def _generation_parameters_required_result(
     missing: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    listener = _clarification_listener_available()
     media_types = sorted(
         {
             "image" if item["node_type"] == "imageGenNode" else "video"
@@ -5200,6 +5564,8 @@ def _generation_parameters_required_result(
             # Video stores its resolution in data.quality.
             if media_type == "video" and field == "quality":
                 portable = "resolution"
+            if not listener:
+                portable = str(field)
             if portable not in choices:
                 choices.append(portable)
     requires_user_choices = any(required_choices.values())
@@ -5242,7 +5608,21 @@ def _generation_parameters_required_result(
                 "put them in each image/video node data. For a workflow draft, pass its id and "
                 "revision so the tool applies the choices. Do not claim success and do not "
                 "silently choose defaults."
-                if requires_user_choices
+                if requires_user_choices and listener
+                else (
+                    "Stop before every canvas write. No interface in this session can show a "
+                    "clarification card. Do not call freezone_request_user_clarification for "
+                    "these settings; ask the user in this conversation for every field listed "
+                    "in required_choices (the node data keys in missing_parameters[].fields; "
+                    "a videoNode keeps its resolution in quality) in one message and wait for "
+                    "the answer. Never choose these settings for the user and never pick a more "
+                    "expensive option than the user asked for. Do not add a duration question "
+                    "for interactive story segments. After the user answers, write each answer "
+                    "into the matching field of each listed node without replacing explicit "
+                    "per-shot values, and retry the same operation once with the completed "
+                    "settings. For a WorkflowPlan, put them in each image/video node data. "
+                    "Do not claim success."
+                ) if requires_user_choices
                 else "Retry the same operation only after every listed story segment has its "
                 "own durationSec; no user clarification card is needed for duration."
             )
@@ -5250,7 +5630,7 @@ def _generation_parameters_required_result(
     }
     if dynamic_story_duration_nodes:
         result["dynamic_story_duration_node_ids"] = dynamic_story_duration_nodes
-    if requires_user_choices:
+    if requires_user_choices and listener:
         result["clarification"] = {
             "title": "确认图片和视频生成参数",
             "allow_skip": False,
@@ -5262,7 +5642,10 @@ def _external_generation_parameter_preflight(
     project: str,
     canvas: str,
     commands: list[Any],
+    *, deferred_tiers: dict[str, dict] | None = None,
 ) -> dict[str, Any] | None:
+    from novelvideo.freezone.workflow_preflight import GENERATION_TIER_FIELDS
+
     execution_commands = [
         command
         for command in commands
@@ -5400,6 +5783,21 @@ def _external_generation_parameter_preflight(
                 for field in required_fields
                 if not _generation_parameter_value_present(field, data.get(field))
             ]
+            if (
+                deferred_tiers is not None and node_id in created_ids
+                and node_type in GENERATION_TIER_FIELDS
+            ):
+                removed = [field for field in missing_fields
+                           if field in GENERATION_TIER_FIELDS[node_type]]
+                if removed:
+                    deferred_tiers[node_id] = {
+                        "node_id": node_id, "node_type": node_type,
+                        "display_name": str(
+                            data.get("displayName") or data.get("title") or node_id
+                        )[:120],
+                        "fields": removed,
+                    }
+                    missing_fields = [field for field in missing_fields if field not in removed]
             if missing_fields:
                 missing_by_node[node_id] = {
                     "node_id": node_id,
@@ -5506,59 +5904,6 @@ def _external_generation_parameter_preflight(
     return _generation_parameters_required_result(list(missing_by_node.values()))
 
 
-def _mcp_canvas_approval_enabled() -> bool:
-    value = os.environ.get("DRAMACLAW_MCP_CANVAS_APPROVAL", "").strip().lower()
-    if value in {"0", "false", "no", "off"}:
-        return False
-    return _external_mcp_agent_enabled() or _mcp_direct_canvas_apply_enabled()
-
-
-def _approval_dir() -> Path:
-    root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
-    base = Path(root) if root else Path("/tmp") / "dramaclaw_canvas_command_bridge"
-    return base / "mcp_canvas_approvals"
-
-
-def _approval_path(approval_id: str) -> Path:
-    safe = "".join(ch for ch in approval_id if ch.isalnum() or ch in {"_", "-"})
-    return _approval_dir() / f"{safe}.json"
-
-
-def _approval_required_for_commands(commands: list[Any]) -> tuple[bool, list[str]]:
-    reasons: list[str] = []
-    command_count = len(commands)
-    command_types = [
-        str(command.get("type") or "").strip()
-        for command in commands
-        if isinstance(command, dict)
-    ]
-    destructive = {"delete_nodes", "delete_edges"}
-    mutating = {
-        "html_artifact",
-        "create_node",
-        "add_next_node",
-        "update_node_data",
-        "create_edge",
-        "layout_nodes",
-        "group_nodes",
-        "move_nodes",
-        "select_nodes",
-        "clear_canvas",
-    }
-    costly_or_ui = {"run_node_action", "run_workflow", "open_mainline_projection"}
-    if any(command_type in destructive for command_type in command_types):
-        reasons.append("包含删除类画布操作")
-    if any(command_type in mutating for command_type in command_types):
-        reasons.append("包含画布结构或内容变更")
-    if any(command_type in costly_or_ui for command_type in command_types):
-        reasons.append("包含运行节点动作、生成任务或打开/映射主线内容")
-    if command_count > 1:
-        reasons.append(f"包含 {command_count} 个批量画布操作")
-    if any(command_type == "group_nodes" for command_type in command_types):
-        reasons.append("包含分组结构变更")
-    return bool(reasons), reasons
-
-
 def _requires_frontend_canvas_executor(commands: list[Any]) -> bool:
     frontend_types = {"html_artifact", "run_node_action", "run_workflow", "open_mainline_projection"}
     return any(
@@ -5618,115 +5963,187 @@ def _commands_include_open_node_action(commands: list[Any]) -> bool:
     )
 
 
-def _create_mcp_canvas_approval(
-    *,
-    project: str,
-    canvas: str,
-    commands: list[Any],
-    slim_result: bool,
-    reasons: list[str],
+def _canvas_generation_summary(settings: list[dict]) -> str:
+    summaries = []
+    for target in settings:
+        values = []
+        for key, label, suffix in (
+            ("model", "model", ""), ("aspect_ratio", "aspect ratio", ""),
+            ("resolution", "resolution", ""), ("quality", "quality", ""),
+            ("duration_seconds", "duration", "s"), ("generate_audio", "audio", ""),
+            ("count", "count", ""),
+        ):
+            if key in target:
+                value = target[key]
+                if key == "generate_audio":
+                    value = "on" if value else "off"
+                marker = {
+                    "agent": " (agent choice)",
+                    "server_default": " (platform standard default)",
+                    "node_default": " (node default)",
+                }.get(target.get("sources", {}).get(key), "")
+                values.append(f"{label} {value}{suffix}{marker}")
+        title = target["title"] or target["node_id"]
+        detail = ", ".join(values) or "settings from the node defaults"
+        summaries.append(f'"{title}" ({target["node_type"]}, {target["action"]}): {detail}')
+    return "; ".join(summaries)
+
+
+def _create_canvas_confirmation(
+    project: str, canvas: str, commands: list[Any],
+    *, fill_standard_tiers: list[str] | None = None,
 ) -> str:
-    approval_id = f"mcp_canvas_{uuid.uuid4().hex}"
-    now_ms = int(time.time() * 1000)
-    expires_at_ms = now_ms + max(
-        30_000,
-        int(os.environ.get("DRAMACLAW_MCP_CANVAS_APPROVAL_TTL_MS", "300000")),
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    agent_id, turn_id = _canvas_agent_identity()
+    response = _request(
+        "POST",
+        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/"
+        f"{quote(canvas, safe='')}/confirmations",
+        body={
+            "agent_id": agent_id, "turn_id": turn_id, "commands": commands,
+            **({"fill_standard_tiers": fill_standard_tiers} if fill_standard_tiers else {}),
+        },
     )
-    payload = {
-        "approval_id": approval_id,
-        "project_id": project,
-        "canvas_id": canvas,
-        "commands": commands,
-        "slim_result": bool(slim_result),
-        "reasons": reasons,
-        "created_at_ms": now_ms,
-        "expires_at_ms": expires_at_ms,
-        "summary": _command_summary(commands),
-    }
-    directory = _approval_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    _approval_path(approval_id).write_text(
-        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-    )
-    return tool_result(
-        {
-            "ok": False,
-            "status": "approval_required",
-            "code": "mcp_canvas_approval_required",
-            "approval_id": approval_id,
-            "project_id": project,
-            "canvas_id": canvas,
-            "reasons": reasons,
-            "expires_at_ms": expires_at_ms,
-            "summary": payload["summary"],
-            "message": "该画布操作需要用户在 Codex 对话中确认后才能执行。",
-            "agent_instruction": (
-                "Ask the user to confirm this canvas operation in the Codex chat. "
-                "If the user confirms, call freezone_confirm_canvas_action with approval_id. "
-                "If the user cancels, call freezone_cancel_canvas_action."
-            ),
-        }
-    )
-
-
-def _workflow_run_turn_key(project: str, canvas: str) -> str | None:
-    """Reuse the durable bridge receipt for the sole run request in this turn."""
-    turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
-    if not turn_id or canvas_command_idempotency_key is None:
-        return None
-    return canvas_command_idempotency_key(
-        project_id=project,
-        canvas_id=canvas,
-        commands=[{"workflow_run_turn": turn_id}],
-    )
-
-
-def _workflow_run_timeout_result(result: dict[str, Any]) -> dict[str, Any]:
-    # A missing receipt cannot prove that persistence or execution did not happen.
-    return {
-        **result,
-        "cancelled": False,
-        "user_message": "工作流提交结果尚未确认，请查看画布状态。",
-        "agent_instruction": (
-            "Stop this turn; do not call freezone_run_workflow again. The original request "
-            "may already be running. Inspect its existing canvas status before "
-            "any user-requested recovery."
-        ),
-    }
-
-
-def _workflow_run_missing_turn_result() -> str:
-    return tool_result({
-        "ok": False,
-        "tool_call_status": "failed",
-        "canvas_apply_status": "failed",
+    if not response.get("ok"):
+        if response.get("code") == "generation_parameters_required" and isinstance(
+            response.get("missing_parameters"), list
+        ):
+            batch_data = {
+                command.get("client_id"): command.get("data") or {}
+                for command in commands if isinstance(command, dict)
+                and command.get("type") in {"create_node", "add_next_node"}
+            }
+            items = []
+            for item in response["missing_parameters"]:
+                node_id = item["node_id"]
+                data = batch_data.get(node_id, {})
+                items.append({**item, "display_name": str(
+                    data.get("displayName") or data.get("label") or data.get("title") or node_id
+                )[:120]})
+            return tool_result(_generation_parameters_required_result(items))
+        failure = _canvas_executor_failure(response)
+        code = response.get("code")
+        if code in {"canvas_open_required", "workflow_plan_invalid"}:
+            failure["canvas_apply_status"] = "not_applied"
+            if "blocked" in response:
+                failure["blocked"] = response["blocked"]
+            failure["agent_instruction"] = (
+                _canvas_open_required_instruction(response.get("blocked", []))
+                if code == "canvas_open_required"
+                else _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS[code]
+            )
+        return tool_result(failure)
+    data = response["data"]
+    card = bool(turn_id) and data["browser_open"] is True
+    paid = "paid_generation" in data["kinds"]
+    if card:
+        credits = " Say that it will consume credits; do not give any estimate." if paid else ""
+        instruction = (
+            "Nothing has been executed yet: no canvas change was made, no generation was submitted "
+            "and no credits were spent. "
+            "A confirmation card is now shown in the user's DramaClaw chat. Tell the user briefly "
+            f"what will happen, naming each target node by title and type.{credits} "
+            "Then end your turn. Do not call freezone_confirm_canvas_action in this turn and "
+            "never confirm on the user's behalf. The outcome arrives later as a canvas "
+            "background result. If the user answers in the conversation instead, call "
+            "freezone_confirm_canvas_action or freezone_cancel_canvas_action with this "
+            "confirmation_id in that later turn. The confirmation expires in 30 minutes. "
+            "Do not tell the user that anything was started, sent, submitted or done."
+        )
+    else:
+        credits = " say that it will consume credits without giving any estimate," if paid else ""
+        instruction = (
+            "Nothing has been executed yet: no canvas change was made, no generation was submitted "
+            "and no credits were spent. "
+            "Tell the user what will happen, naming each target node by title and type,"
+            f"{credits} and ask them to confirm. Only after the user explicitly confirms in a "
+            "later message, call freezone_confirm_canvas_action with this confirmation_id; "
+            "if they decline, call freezone_cancel_canvas_action. Never confirm on your own "
+            "or in this same turn. The confirmation expires in 30 minutes; after that, ask again. "
+            "Do not tell the user that anything was started, sent, submitted or done."
+        )
+    result = {
+        "ok": True,
+        "status": "confirmation_required",
+        "code": "canvas_confirmation_required",
+        "tool_call_status": "completed",
+        "canvas_apply_status": "awaiting_confirmation",
         "applied": False,
-        "message": "Workflow run requires a stable turn identity; nothing was submitted.",
-        "agent_instruction": "Stop this turn and report the workflow submission failure.",
-    })
+        "project_id": project,
+        "canvas_id": canvas,
+        "confirmation_id": data["confirmation_id"],
+        "kinds": data["kinds"],
+        "targets": data["targets"],
+        "expires_at": data["expires_at"],
+        "confirmation_via": "card" if card else "conversation",
+        "message": "尚未执行：已创建待确认请求，用户确认后才会执行。",
+        "agent_instruction": instruction,
+    }
+    if isinstance(data.get("generation_settings"), list):
+        result["generation_settings"] = data["generation_settings"]
+        if data["generation_settings"]:
+            result["generation_summary"] = _canvas_generation_summary(data["generation_settings"])
+    if "written" in data:
+        result["written"] = data["written"]
+        result["created_node_ids"] = data["written"]["created_node_ids"]
+        result["message"] = "已写入节点和连线；付费生成尚未执行，用户确认后才会提交。"
+        result["agent_instruction"] = (
+            "The nodes and links in this batch are already on the canvas (see written); only the "
+            "paid generation is waiting for confirmation. Nothing has been generated and no "
+            "credits were spent. Tell the user which nodes were added, then list the generation "
+            "settings from generation_summary and say that it will consume credits without "
+            "giving any estimate, and ask them to confirm. Only after the user explicitly "
+            "confirms in a later message, call freezone_confirm_canvas_action with this "
+            "confirmation_id; if they decline, call freezone_cancel_canvas_action. The added "
+            "nodes stay on the canvas either way. Never confirm on your own or in this same "
+            "turn. The confirmation expires in 30 minutes; after that, ask again. Use the node "
+            "ids in written for any follow-up; do not emit this batch again. Do not tell the "
+            "user that any generation was started, sent or submitted."
+        )
+    if any(
+        isinstance(target, dict) and isinstance(target.get("sources"), dict)
+        and "server_default" in target["sources"].values()
+        for target in result.get("generation_settings", [])
+    ):
+        result["agent_instruction"] += (
+            " Values marked platform standard default in generation_summary were filled by the "
+            "platform because the request named none; tell the user these values and that they "
+            "can ask for a different resolution or quality before confirming."
+        )
+    return tool_result(result)
 
 
-def _put_frontend_canvas_command(
-    *,
-    key: str,
-    project: str,
-    canvas: str,
-    commands: list[Any],
-    envelope: dict[str, Any],
-    reuse_live_request: bool,
-    bridge_dir: Path | None = None,
-) -> tuple[str, dict[str, Any] | None]:
-    arguments = {
-        "key": key,
+def _canvas_agent_identity() -> tuple[str, str | None]:
+    profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
+    agent_id = (
+        profile.removeprefix("freezone:").strip()
+        if profile.startswith("freezone:")
+        else "main"
+    )
+    return agent_id or "main", os.environ.get("DRAMACLAW_TURN_ID", "").strip() or None
+
+
+def _canvas_command_envelope(
+    project: str, canvas: str, commands: list[Any],
+) -> dict[str, Any]:
+    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+    agent_id, turn_id = _canvas_agent_identity()
+    envelope = {
+        "schema_version": "canvas_chat_commands.v1",
         "project_id": project,
         "canvas_id": canvas,
         "commands": commands,
-        "envelope": envelope,
-        "bridge_dir": bridge_dir,
     }
-    if reuse_live_request:
-        return put_or_reuse_pending_canvas_command(**arguments)
-    return key, put_pending_canvas_command(**arguments)
+    # External MCP commands use reconnect polling and legacy canvas geometry.
+    # Hermes keeps its original envelope shape.
+    if external_mcp:
+        envelope["agent_id"] = agent_id
+        envelope["external_mcp_command"] = True
+        if turn_id:
+            envelope["turn_id"] = turn_id
+    return envelope
 
 
 def _dispatch_mcp_approved_frontend_commands(
@@ -5739,37 +6156,16 @@ def _dispatch_mcp_approved_frontend_commands(
     if (
         canvas_command_bridge_key is None
         or put_pending_canvas_command is None
-        or put_or_reuse_pending_canvas_command is None
         or wait_canvas_command_result is None
     ):
         return tool_error(
             "Canvas command bridge is unavailable; cannot dispatch frontend node action. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
-    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
-    profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
-    agent_id = (
-        profile.removeprefix("freezone:").strip()
-        if profile.startswith("freezone:")
-        else "main"
-    )
-    envelope = {
-        "schema_version": "canvas_chat_commands.v1",
-        "project_id": project,
-        "canvas_id": canvas,
-        "commands": commands,
-    }
-    # Only Codex/external MCP commands need the reconnect polling fallback.
-    # Hermes keeps its original websocket-only delivery path and envelope shape.
-    if external_mcp:
-        envelope["agent_id"] = agent_id or "main"
-        envelope["external_mcp_command"] = True
-        turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
-        if turn_id:
-            envelope["turn_id"] = turn_id
+    envelope = _canvas_command_envelope(project, canvas, commands)
     # Dynamic workflow commands carry a stable workflowInstanceId on every
     # create_node. Reuse one bridge key for identical retries so a lost MCP
     # response cannot create a second approval or duplicate the graph.
@@ -5780,12 +6176,7 @@ def _dispatch_mcp_approved_frontend_commands(
         and str(command["data"].get("workflowInstanceId") or "").strip()
         for command in commands
     )
-    is_workflow_run = _commands_include_type(commands, "run_workflow")
-    if is_workflow_run:
-        key = _workflow_run_turn_key(project, canvas)
-        if key is None:
-            return _workflow_run_missing_turn_result()
-    elif is_workflow_batch and canvas_command_idempotency_key is not None:
+    if is_workflow_batch and canvas_command_idempotency_key is not None:
         key = canvas_command_idempotency_key(
             project_id=project,
             canvas_id=canvas,
@@ -5802,13 +6193,12 @@ def _dispatch_mcp_approved_frontend_commands(
     # which the API's candidate-path resolver never polls, so the approval card
     # and the browser refresh both disappear.
     bridge_dir = Path(bridge_root) if bridge_root else None
-    key, immediate_result = _put_frontend_canvas_command(
+    immediate_result = put_pending_canvas_command(
         key=key,
-        project=project,
-        canvas=canvas,
+        project_id=project,
+        canvas_id=canvas,
         commands=commands,
         envelope=envelope,
-        reuse_live_request=is_workflow_run,
         bridge_dir=bridge_dir,
     )
     if immediate_result is not None:
@@ -5821,15 +6211,7 @@ def _dispatch_mcp_approved_frontend_commands(
             if slim_result
             else immediate_result
         )
-    try:
-        timeout_seconds = max(
-            1,
-            int(
-                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")
-            ),
-        )
-    except ValueError:
-        timeout_seconds = 600
+    timeout_seconds = canvas_command_result_timeout_seconds()
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",
@@ -5847,15 +6229,13 @@ def _dispatch_mcp_approved_frontend_commands(
             "them to keep the Freezone page open or retry."
         ),
     }
-    if is_workflow_run:
-        timeout_result = _workflow_run_timeout_result(timeout_result)
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
         # A workflow confirmation is a durable project task. A tool-level wait
         # timeout is not its business outcome; keep the bridge pending so a late
         # browser result can still complete that task safely.
-        timeout_result=None if is_workflow_batch or is_workflow_run else timeout_result,
+        timeout_result=None if is_workflow_batch else timeout_result,
         bridge_dir=bridge_dir,
     )
     if resolved is not None:
@@ -5881,14 +6261,13 @@ def _dispatch_frontend_canvas_commands(
     if (
         canvas_command_bridge_key is None
         or put_pending_canvas_command is None
-        or put_or_reuse_pending_canvas_command is None
         or wait_canvas_command_result is None
     ):
         return tool_error(
             "Canvas command bridge is unavailable; cannot wait for frontend apply result. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
     envelope = {
@@ -5897,15 +6276,9 @@ def _dispatch_frontend_canvas_commands(
         "canvas_id": canvas,
         "commands": commands,
     }
-    is_workflow_run = _commands_include_type(commands, "run_workflow")
-    if is_workflow_run:
-        key = _workflow_run_turn_key(project, canvas)
-        if key is None:
-            return _workflow_run_missing_turn_result()
-    else:
-        key = canvas_command_bridge_key(
-            project_id=project, canvas_id=canvas, commands=commands
-        )
+    key = canvas_command_bridge_key(
+        project_id=project, canvas_id=canvas, commands=commands
+    )
     is_workflow_batch = any(
         isinstance(command, dict)
         and command.get("type") == "create_node"
@@ -5913,13 +6286,12 @@ def _dispatch_frontend_canvas_commands(
         and str(command["data"].get("workflowInstanceId") or "").strip()
         for command in commands
     )
-    key, immediate_result = _put_frontend_canvas_command(
+    immediate_result = put_pending_canvas_command(
         key=key,
-        project=project,
-        canvas=canvas,
+        project_id=project,
+        canvas_id=canvas,
         commands=commands,
         envelope=envelope,
-        reuse_live_request=is_workflow_run,
     )
     if immediate_result is not None:
         return tool_result(
@@ -5931,15 +6303,7 @@ def _dispatch_frontend_canvas_commands(
             if slim_result
             else immediate_result
         )
-    try:
-        timeout_seconds = max(
-            1,
-            int(
-                os.environ.get("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "600")
-            ),
-        )
-    except ValueError:
-        timeout_seconds = 600
+    timeout_seconds = canvas_command_result_timeout_seconds()
     timeout_result = {
         "ok": False,
         "tool_call_status": "failed",
@@ -5957,12 +6321,10 @@ def _dispatch_frontend_canvas_commands(
             "them to retry after checking the canvas connection."
         ),
     }
-    if is_workflow_run:
-        timeout_result = _workflow_run_timeout_result(timeout_result)
     resolved = wait_canvas_command_result(
         key,
         timeout_seconds=timeout_seconds,
-        timeout_result=None if is_workflow_batch or is_workflow_run else timeout_result,
+        timeout_result=None if is_workflow_batch else timeout_result,
     )
     if resolved is not None:
         return tool_result(
@@ -5977,126 +6339,167 @@ def _dispatch_frontend_canvas_commands(
     return tool_result(timeout_result)
 
 
-def _read_mcp_canvas_approval(
-    approval_id: str,
-) -> tuple[dict[str, Any] | None, str | None]:
-    path = _approval_path(approval_id)
-    if not path.exists():
-        return None, "approval not found or already handled"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return None, f"failed to read approval: {exc}"
-    expires_at_ms = int(payload.get("expires_at_ms") or 0)
-    if expires_at_ms and expires_at_ms < int(time.time() * 1000):
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        return None, "approval expired"
-    return payload if isinstance(payload, dict) else None, None
+_CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS = {
+    "expired": (
+        "The confirmation expired after 30 minutes and nothing was executed. Ask the user again "
+        "only if it is still wanted; that creates a new confirmation."
+    ),
+    "user_reply_required": (
+        "The user has not answered yet. Wait for the user's next message; never confirm in "
+        "the turn that requested the confirmation."
+    ),
+    "targets_changed": (
+        "The target nodes changed, so the confirmation was voided and nothing was executed. "
+        "Read the canvas again and ask the user again if it is still wanted."
+    ),
+    "already_handled": "This confirmation was already decided. Do not retry.",
+    "canvas_open_required": (
+        "Ask the user to open this canvas, then call freezone_confirm_canvas_action again "
+        "with the same confirmation_id within 30 minutes. Do not retry on your own. "
+        "Blocked actions: {actions}."
+    ),
+    "workflow_plan_invalid": (
+        "Nothing ran. Explain the server message and fix the canvas or ask the user. "
+        "Do not retry unchanged."
+    ),
+    "workflow_already_running": (
+        "Another workflow run is active. Observe {run_id} with freezone_observe_workflow_run. "
+        "Confirm again only after it ends and only if still wanted."
+    ),
+    "canvas_browser_required": (
+        "Ask the user to open this canvas, then call freezone_confirm_canvas_action again "
+        "with the same confirmation_id within 30 minutes. Do not retry on your own."
+    ),
+}
+
+
+def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
+    confirmation_id = str(args.get("confirmation_id") or "").strip()
+    if not confirmation_id:
+        return tool_result({
+            "ok": False, "status": "confirmation_id_required",
+            "error": "confirmation_id is required",
+        })
+    project = str(args.get("project_id") or _default_project_id()).strip() or None
+    canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
+    if scope_error:
+        return scope_error
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    agent_id, turn_id = _canvas_agent_identity()
+    response = _request(
+        "POST",
+        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/"
+        f"{quote(canvas, safe='')}/confirmations/{quote(confirmation_id, safe='')}/decision",
+        body={
+            "decision": decision, "via": "conversation", "agent_id": agent_id, "turn_id": turn_id,
+        },
+    )
+    scope = {"confirmation_id": confirmation_id, "project_id": project, "canvas_id": canvas}
+    if not response.get("ok"):
+        code = response.get("code") or "confirmation_failed"
+        message = response.get("message") or response.get("error") or "画布确认失败，未执行。"
+        return tool_result({
+            "ok": False, "status": "confirmation_failed", "code": code,
+            "tool_call_status": "failed", "canvas_apply_status": "not_applied", "applied": False,
+            **scope, "errors": [message], "message": message,
+            **{key: response[key] for key in ("blocked", "run_id") if key in response},
+            "agent_instruction": _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS.get(
+                code,
+                "This confirmation cannot be used here and nothing was executed. Do not retry.",
+            ).format(
+                actions=", ".join(item["label"] for item in response.get("blocked", [])),
+                run_id=response.get("run_id", ""),
+            ),
+        })
+    data = response["data"]
+    if data["status"] == "executed":
+        payload = {
+            **_server_canvas_command_result(project, canvas, data["result"], [], slim_result=True),
+            "confirmation_id": confirmation_id,
+        }
+        if run := data.get("run"):
+            payload["run"] = run
+            if run["code"] == "canvas_open_required":
+                labels = ", ".join(
+                    item.get("label") or item["action"] for item in run.get("blocked", [])
+                )
+                payload["agent_instruction"] = (
+                    "The canvas edits were applied, but the workflow run did not start because "
+                    f"these actions only run in the open canvas: {labels}. Ask the user to open "
+                    "this canvas and run them there. Do not call this confirmation again."
+                )
+            else:
+                payload["agent_instruction"] = (
+                    "The canvas edits were applied, but the workflow run did not start: "
+                    f"{run['message']}. Explain this to the user. Do not call this confirmation again."
+                )
+        return tool_result(payload)
+    if data["status"] == "running":
+        refusal_instruction = ""
+        if data.get("refused"):
+            labels = ", ".join(item.get("label") or item["action"] for item in data["refused"])
+            refusal_instruction = (
+                " These actions were not run because they need the open canvas: "
+                f"{labels}. They are recorded as failed in this run. "
+                "Tell the user; do not retry them on your own."
+            )
+        return tool_result({
+            "ok": True, "status": "running", "tool_call_status": "completed",
+            "canvas_apply_status": "running", "applied": bool(data.get("result")), **scope,
+            **({
+                "revision": data["result"]["revision"],
+                "created_node_ids": data["result"]["receipt"].get("created_node_ids", []),
+            } if data.get("result") else {}),
+            "run_id": data["run_id"], "actions": data["actions"],
+            **({"refused": data["refused"]} if data.get("refused") else {}),
+            "agent_instruction": (
+                f"The confirmed workflow is running on the server as {data['run_id']}. "
+                "Do not call the run tool again. To report progress or results, call "
+                "freezone_observe_workflow_run with this run_id (wait_seconds up to 20; pass "
+                "the previous observation_token as after). Report outcomes only from a "
+                "terminal observation. Call freezone_cancel_workflow_run only if the user "
+                "asks to stop it." + refusal_instruction
+            ),
+        })
+    if data["status"] == "already_completed":
+        return tool_result({
+            "ok": True, "status": "already_completed", "tool_call_status": "completed",
+            "canvas_apply_status": "not_applied", "applied": False, **scope,
+            "agent_instruction": (
+                "Nothing ran: every target already has a current result. Do not call it again."
+            ),
+        })
+    if data["status"] == "submitted":
+        return tool_result({
+            "ok": True, "status": "submitted", "tool_call_status": "completed",
+            "canvas_apply_status": "submitted", "applied": False, **scope,
+            "bridge_key": data["bridge_key"],
+            "agent_instruction": (
+                "The confirmed command was handed to the open canvas. Do not call it again. "
+                "Read the canvas or wait for the canvas background result before reporting "
+                "any outcome."
+            ),
+        })
+    return tool_result({
+        "ok": True, "status": "refused", "tool_call_status": "completed",
+        "canvas_apply_status": "not_applied", "applied": False, **scope,
+        "message": "已取消，未执行任何操作",
+    })
 
 
 def _handle_confirm_canvas_action(args: dict[str, Any], **_: Any) -> str:
-    approval_id = str(args.get("approval_id") or "").strip()
-    if not approval_id:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "approval_id_required",
-                "error": "approval_id is required",
-            }
-        )
-    payload, error = _read_mcp_canvas_approval(approval_id)
-    if error or payload is None:
-        return tool_result(
-            {"ok": False, "status": "approval_unavailable", "error": error}
-        )
-    path = _approval_path(approval_id)
-    try:
-        path.unlink()
-    except OSError:
-        pass
-    project = str(payload.get("project_id") or "").strip()
-    canvas = str(payload.get("canvas_id") or "").strip()
-    commands = payload.get("commands")
-    if not project or not canvas or not isinstance(commands, list):
-        return tool_result(
-            {
-                "ok": False,
-                "status": "invalid_approval_payload",
-                "error": "approval payload is missing project_id, canvas_id, or commands",
-            }
-        )
-    if not _mcp_direct_canvas_apply_enabled() or _requires_frontend_canvas_executor(
-        commands
-    ):
-        return _dispatch_mcp_approved_frontend_commands(
-            project=project,
-            canvas=canvas,
-            commands=commands,
-            slim_result=bool(payload.get("slim_result", True)),
-        )
-    return _direct_apply_canvas_commands(
-        project,
-        canvas,
-        commands,
-        slim_result=bool(payload.get("slim_result", True)),
-    )
+    return _decide_canvas_confirmation(args, "confirmed")
 
 
 def _handle_cancel_canvas_action(args: dict[str, Any], **_: Any) -> str:
-    approval_id = str(args.get("approval_id") or "").strip()
-    if not approval_id:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "approval_id_required",
-                "error": "approval_id is required",
-            }
-        )
-    payload, error = _read_mcp_canvas_approval(approval_id)
-    if error or payload is None:
-        return tool_result(
-            {"ok": False, "status": "approval_unavailable", "error": error}
-        )
-    try:
-        _approval_path(approval_id).unlink()
-    except OSError:
-        pass
-    return tool_result(
-        {
-            "ok": True,
-            "status": "cancelled",
-            "approval_id": approval_id,
-            "project_id": payload.get("project_id"),
-            "canvas_id": payload.get("canvas_id"),
-            "message": "MCP canvas action was cancelled before apply.",
-        }
-    )
+    return _decide_canvas_confirmation(args, "refused")
 
 
 def _clone_json(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False))
-
-
-def _node_size(node_type: str) -> tuple[int, int]:
-    if node_type in {"imageGenNode", "videoNode"}:
-        return 480, 520
-    if node_type == "audioNode":
-        return 360, 190
-    if node_type == "videoComposeNode":
-        return 420, 240
-    return 380, 240
-
-
-def _resolve_command_node_ref(value: Any, id_map: dict[str, str]) -> str:
-    text = str(value or "").strip()
-    return id_map.get(text, text)
-
-
-def _edge_id(source: str, target: str, link_type: str) -> str:
-    return f"e-{source}-{target}-{link_type}"
 
 
 def _default_link_type(source_type: str, target_type: str) -> str:
@@ -6117,444 +6520,172 @@ def _default_link_type(source_type: str, target_type: str) -> str:
     return "context_for"
 
 
-def _apply_layout(
-    nodes_by_id: dict[str, dict[str, Any]], node_ids: list[str], mode: str
-) -> None:
-    targets = [nodes_by_id[node_id] for node_id in node_ids if node_id in nodes_by_id]
-    if len(targets) < 2:
-        return
-    min_x = min(float((node.get("position") or {}).get("x") or 0) for node in targets)
-    min_y = min(float((node.get("position") or {}).get("y") or 0) for node in targets)
-    if mode == "vertical":
-        for index, node in enumerate(targets):
-            node["position"] = {"x": min_x, "y": min_y + index * 320}
-    elif mode == "grid":
-        cols = max(1, int(len(targets) ** 0.5 + 0.999))
-        for index, node in enumerate(targets):
-            node["position"] = {
-                "x": min_x + (index % cols) * 520,
-                "y": min_y + (index // cols) * 360,
-            }
-    else:
-        for index, node in enumerate(targets):
-            node["position"] = {"x": min_x + index * 520, "y": min_y}
+_AGENT_CANVAS_EXECUTOR_CACHE: tuple[float, str] | None = None
 
 
-def _create_group_node(
-    *,
-    nodes: list[dict[str, Any]],
-    nodes_by_id: dict[str, dict[str, Any]],
-    node_ids: list[str],
-    label: str,
-) -> str | None:
-    members = [nodes_by_id[node_id] for node_id in node_ids if node_id in nodes_by_id]
-    if len(members) < 2:
-        return None
-    min_x = min(float((node.get("position") or {}).get("x") or 0) for node in members)
-    min_y = min(float((node.get("position") or {}).get("y") or 0) for node in members)
-    max_x = max(
-        float((node.get("position") or {}).get("x") or 0)
-        + float(node.get("width") or (node.get("measured") or {}).get("width") or 380)
-        for node in members
-    )
-    max_y = max(
-        float((node.get("position") or {}).get("y") or 0)
-        + float(node.get("height") or (node.get("measured") or {}).get("height") or 240)
-        for node in members
-    )
-    group_x = min_x - 60
-    group_y = min_y - 80
-    width = int(max_x - min_x + 120)
-    height = int(max_y - min_y + 160)
-    group_id = str(uuid.uuid4())
-    for node in members:
-        position = (
-            node.get("position") if isinstance(node.get("position"), dict) else {}
+def _agent_canvas_executor() -> str:
+    global _AGENT_CANVAS_EXECUTOR_CACHE
+    now = time.monotonic()
+    if _AGENT_CANVAS_EXECUTOR_CACHE is not None:
+        cached_at, executor = _AGENT_CANVAS_EXECUTOR_CACHE
+        if now - cached_at < 30:
+            return executor
+    executor = "browser"
+    try:
+        response = _request("GET", "/api/v1/config")
+        if response.get("ok") and response.get("data", {}).get("agent_canvas_executor") == "server":
+            executor = "server"
+    except Exception:
+        pass
+    _AGENT_CANVAS_EXECUTOR_CACHE = (now, executor)
+    return executor
+
+
+def _canvas_browser_required_error(project: str, canvas: str) -> dict[str, Any] | None:
+    try:
+        response = _request(
+            "GET",
+            f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/"
+            f"{quote(canvas, safe='')}/presence",
         )
-        node["parentId"] = group_id
-        node["position"] = {
-            "x": float(position.get("x") or 0) - group_x,
-            "y": float(position.get("y") or 0) - group_y,
-        }
-    group = {
-        "id": group_id,
-        "type": "groupNode",
-        "position": {"x": group_x, "y": group_y},
-        "data": {"displayName": label or "工作流", "label": label or "工作流"},
-        "width": width,
-        "height": height,
-        "style": {"width": width, "height": height},
-        "selected": False,
-        "measured": {"width": width, "height": height},
-    }
-    nodes.append(group)
-    nodes_by_id[group_id] = group
-    return group_id
-
-
-def _direct_apply_canvas_commands(
-    project: str,
-    canvas: str,
-    commands: list[Any],
-    *,
-    slim_result: bool,
-) -> str:
-    response = _request(
-        "GET",
-        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
-    )
-    if not response.get("ok", True):
-        return tool_result(
-            {
-                "ok": False,
-                "tool_call_status": "failed",
-                "canvas_apply_status": "read_failed",
-                "project_id": project,
-                "canvas_id": canvas,
-                "errors": [response.get("error") or "failed to read canvas"],
-            }
-        )
-    current = response.get("data") if isinstance(response.get("data"), dict) else {}
-    nodes = _clone_json(
-        current.get("nodes") if isinstance(current.get("nodes"), list) else []
-    )
-    edges = _clone_json(
-        current.get("edges") if isinstance(current.get("edges"), list) else []
-    )
-    nodes_by_id = {
-        str(node.get("id")): node
-        for node in nodes
-        if isinstance(node, dict) and str(node.get("id") or "").strip()
-    }
-    id_map: dict[str, str] = {}
-    created_node_ids: list[str] = []
-    command_results: list[dict[str, Any]] = []
-    errors: list[str] = []
-
-    for index, raw_command in enumerate(commands):
-        command = raw_command if isinstance(raw_command, dict) else {}
-        command_type = str(command.get("type") or "").strip()
-        try:
-            if command_type == "create_node":
-                node_type = str(command.get("node_type") or "").strip()
-                node_id = str(uuid.uuid4())
-                client_id = str(command.get("client_id") or "").strip()
-                if client_id:
-                    id_map[client_id] = node_id
-                width, height = _node_size(node_type)
-                position = (
-                    command.get("position")
-                    if isinstance(command.get("position"), dict)
-                    else {}
-                )
-                node = {
-                    "id": node_id,
-                    "type": node_type,
-                    "position": {
-                        "x": float(position.get("x") or 0),
-                        "y": float(position.get("y") or 0),
-                    },
-                    "data": _clone_json(command.get("data") or {}),
-                    "selected": False,
-                    "measured": {"width": width, "height": height},
-                }
-                if node_type in {"imageGenNode", "videoNode"}:
-                    node["width"] = width
-                    node["height"] = height
-                    node["style"] = {"width": width, "height": height}
-                nodes.append(node)
-                nodes_by_id[node_id] = node
-                created_node_ids.append(node_id)
-                command_results.append(
-                    {
-                        "commandIndex": index,
-                        "type": command_type,
-                        "status": "applied",
-                        "nodeId": node_id,
-                    }
-                )
-            elif command_type == "add_next_node":
-                source = _resolve_command_node_ref(
-                    command.get("source_node_id"), id_map
-                )
-                source_node = nodes_by_id.get(source)
-                if source_node is None:
-                    raise ValueError(f"source node not found: {source}")
-                node_type = str(command.get("node_type") or "").strip()
-                node_id = str(uuid.uuid4())
-                client_id = str(command.get("client_id") or "").strip()
-                if client_id:
-                    id_map[client_id] = node_id
-                width, height = _node_size(node_type)
-                source_position = (
-                    source_node.get("position")
-                    if isinstance(source_node.get("position"), dict)
-                    else {}
-                )
-                node = {
-                    "id": node_id,
-                    "type": node_type,
-                    "position": {
-                        "x": float(source_position.get("x") or 0) + 520,
-                        "y": float(source_position.get("y") or 0),
-                    },
-                    "data": _clone_json(command.get("data") or {}),
-                    "selected": False,
-                    "measured": {"width": width, "height": height},
-                }
-                if node_type in {"imageGenNode", "videoNode"}:
-                    node["width"] = width
-                    node["height"] = height
-                    node["style"] = {"width": width, "height": height}
-                nodes.append(node)
-                nodes_by_id[node_id] = node
-                created_node_ids.append(node_id)
-                if command.get("connect", True):
-                    link_type = _default_link_type(
-                        str(source_node.get("type") or ""), node_type
-                    )
-                    edges.append(
-                        {
-                            "id": _edge_id(source, node_id, link_type),
-                            "source": source,
-                            "target": node_id,
-                            "sourceHandle": "source",
-                            "targetHandle": "target",
-                            "type": "disconnectableEdge",
-                            "data": {"link_type": link_type},
-                        }
-                    )
-                command_results.append(
-                    {
-                        "commandIndex": index,
-                        "type": command_type,
-                        "status": "applied",
-                        "nodeId": node_id,
-                    }
-                )
-            elif command_type == "create_edge":
-                source = _resolve_command_node_ref(command.get("source"), id_map)
-                target = _resolve_command_node_ref(command.get("target"), id_map)
-                link_type = str(command.get("link_type") or "context_for").strip()
-                if source not in nodes_by_id or target not in nodes_by_id:
-                    raise ValueError(
-                        f"edge source/target not found: {source} -> {target}"
-                    )
-                edge = {
-                    "id": _edge_id(source, target, link_type),
-                    "source": source,
-                    "target": target,
-                    "sourceHandle": "source",
-                    "targetHandle": "target",
-                    "type": "disconnectableEdge",
-                    "data": {"link_type": link_type},
-                }
-                edges = [item for item in edges if item.get("id") != edge["id"]]
-                edges.append(edge)
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "group_nodes":
-                node_ids = [
-                    _resolve_command_node_ref(item, id_map)
-                    for item in command.get("node_ids", [])
-                    if str(item or "").strip()
-                ]
-                group_id = _create_group_node(
-                    nodes=nodes,
-                    nodes_by_id=nodes_by_id,
-                    node_ids=node_ids,
-                    label=str(command.get("label") or "工作流"),
-                )
-                command_results.append(
-                    {
-                        "commandIndex": index,
-                        "type": command_type,
-                        "status": "applied" if group_id else "skipped",
-                        "nodeId": group_id,
-                    }
-                )
-            elif command_type == "layout_nodes":
-                node_ids = [
-                    _resolve_command_node_ref(item, id_map)
-                    for item in command.get("node_ids", [])
-                    if str(item or "").strip()
-                ]
-                _apply_layout(
-                    nodes_by_id, node_ids, str(command.get("mode") or "horizontal")
-                )
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "select_nodes":
-                selected_ids = {
-                    _resolve_command_node_ref(item, id_map)
-                    for item in command.get("node_ids", [])
-                    if str(item or "").strip()
-                }
-                for node in nodes:
-                    if isinstance(node, dict):
-                        node["selected"] = str(node.get("id") or "") in selected_ids
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "update_node_data":
-                node_id = _resolve_command_node_ref(command.get("node_id"), id_map)
-                node = nodes_by_id.get(node_id)
-                if node is None:
-                    raise ValueError(f"node not found: {node_id}")
-                data = node.get("data") if isinstance(node.get("data"), dict) else {}
-                data.update(_clone_json(command.get("data") or {}))
-                node["data"] = data
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "delete_nodes":
-                delete_ids = {
-                    _resolve_command_node_ref(item, id_map)
-                    for item in command.get("node_ids", [])
-                    if str(item or "").strip()
-                }
-                if delete_ids:
-                    nodes = [
-                        node
-                        for node in nodes
-                        if str(node.get("id") or "") not in delete_ids
-                    ]
-                    edges = [
-                        edge
-                        for edge in edges
-                        if edge.get("source") not in delete_ids
-                        and edge.get("target") not in delete_ids
-                    ]
-                    nodes_by_id = {
-                        str(node.get("id")): node
-                        for node in nodes
-                        if isinstance(node, dict) and str(node.get("id") or "").strip()
-                    }
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            elif command_type == "delete_edges":
-                source = _resolve_command_node_ref(command.get("source"), id_map)
-                target = _resolve_command_node_ref(command.get("target"), id_map)
-                if source and target:
-                    edges = [
-                        edge
-                        for edge in edges
-                        if not (
-                            edge.get("source") == source
-                            and edge.get("target") == target
-                        )
-                    ]
-                command_results.append(
-                    {"commandIndex": index, "type": command_type, "status": "applied"}
-                )
-            else:
-                raise ValueError(
-                    f"{command_type} is not supported by direct MCP canvas apply"
-                )
-        except Exception as exc:
-            errors.append(f"commands[{index}]: {exc}")
-            command_results.append(
-                {
-                    "commandIndex": index,
-                    "type": command_type or "unknown",
-                    "status": "error",
-                    "error": str(exc),
-                }
-            )
-            break
-
-    if errors:
-        for outcome in command_results:
-            if outcome.get("status") == "applied":
-                outcome["status"] = "not_applied"
-        return tool_result(
-            {
-                "ok": False,
-                "tool_call_status": "failed",
-                "canvas_apply_status": "direct_apply_failed",
-                "applied": False,
-                "cancelled": False,
-                "project_id": project,
-                "canvas_id": canvas,
-                "errors": errors,
-                "command_results": command_results,
-            }
-        )
-
-    payload = {
-        "schema_version": 2,
-        "canvas_id": canvas,
-        "project_id": project,
-        "canvas_scope": current.get("canvas_scope") or "default",
-        "nodes": nodes,
-        "edges": edges,
-        "viewport": current.get("viewport"),
-        "metadata": current.get("metadata"),
-        "base_revision": current.get("revision"),
-        "client_save_id": f"mcp-direct-canvas-apply:{int(time.time() * 1000)}",
-        "save_source": "manual_clear" if not nodes else "manual_save",
-        "allow_empty_overwrite": not nodes,
-    }
-    saved = _request(
-        "PUT",
-        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
-        body=payload,
-    )
-    if not saved.get("ok", True):
-        for outcome in command_results:
-            if outcome.get("status") == "applied":
-                outcome["status"] = "not_applied"
-        return tool_result(
-            {
-                "ok": False,
-                "tool_call_status": "failed",
-                "canvas_apply_status": "save_failed",
-                "applied": False,
-                "cancelled": False,
-                "project_id": project,
-                "canvas_id": canvas,
-                "errors": [saved.get("error") or "failed to save canvas"],
-                "command_results": command_results,
-                **({"code": saved["code"]}
-                   if saved.get("code") in {"revision_conflict", "canvas_revision_conflict"}
-                   else {}),
-                **({"current_revision": saved["current_revision"]}
-                   if type(saved.get("current_revision")) is int else {}),
-            }
-        )
-    resolved = {
-        "ok": True,
-        "tool_call_status": "completed",
-        "canvas_apply_status": "direct_applied",
-        "applied": True,
-        "cancelled": False,
+        if response.get("ok") and response.get("data", {}).get("browser_open") is True:
+            return None
+    except Exception:
+        pass
+    return {
+        "ok": False,
+        "code": "canvas_browser_required",
+        "tool_call_status": "failed",
+        "canvas_apply_status": "browser_required",
+        "applied": False,
         "project_id": project,
         "canvas_id": canvas,
-        "applied_count": len(command_results),
-        "opened_ui_actions": 0,
-        "created_node_ids": created_node_ids,
-        "command_results": command_results,
-        "revision": (
-            (saved.get("data") or {}).get("revision")
-            if isinstance(saved.get("data"), dict)
-            else None
+        "errors": ["需要打开画布才能运行"],
+        "message": "需要打开画布才能运行",
+        "agent_instruction": (
+            "Ask the user to open this canvas and retry. Do not retry on your own."
         ),
-        "message": "Canvas commands were applied directly by the local MCP server.",
-        "agent_instruction": "The canvas change has already been applied. Report success briefly.",
+    }
+
+
+def _canvas_open_required_instruction(blocked: list[dict[str, Any]]) -> str:
+    actions = ", ".join(item["label"] for item in blocked)
+    return (
+        f"These actions only run in the open canvas: {actions}. "
+        "Ask the user to open this canvas, then call the tool again afterwards. "
+        "Do not retry on your own."
+    )
+
+
+def _dispatch_server_host_commands(
+    *, project: str, canvas: str, commands: list[Any], slim_result: bool,
+) -> str:
+    error = _canvas_browser_required_error(project, canvas)
+    if error is not None:
+        blocked = [
+            {
+                "node_id": command.get("node_id"),
+                "action": command.get("action") or "run_workflow",
+                "label": command.get("action") or "run_workflow",
+                "reason": "action_not_on_server",
+            }
+            for command in commands
+            if command.get("type") == "run_workflow" or (
+                command.get("type") == "run_node_action"
+                and not str(command.get("action") or "").startswith("open_")
+            )
+        ]
+        if blocked:
+            message = "这些动作需要打开画布才能运行：" + ", ".join(
+                item["label"] for item in blocked
+            )
+            error.update(
+                code="canvas_open_required", blocked=blocked,
+                canvas_apply_status="not_applied", message=message, errors=[message],
+                agent_instruction=_canvas_open_required_instruction(blocked),
+            )
+        return tool_result(error)
+    dispatch = (
+        _dispatch_mcp_approved_frontend_commands
+        if _external_mcp_agent_enabled() else _dispatch_frontend_canvas_commands
+    )
+    return dispatch(project=project, canvas=canvas, commands=commands, slim_result=slim_result)
+
+
+_INVALID_CANVAS_REQUEST_INSTRUCTION = (
+    "The canvas rejected this batch as invalid. The message names the failing command "
+    "(commands[N] is the command at zero-based position N in the batch you sent) and its field, "
+    "with the accepted values or shape when it can. Fix that command and retry the corrected "
+    "batch once; do not resend it unchanged. If it fails again, tell the user the error."
+)
+
+
+def _canvas_executor_failure(response: dict[str, Any], *, context: bool = False) -> dict[str, Any]:
+    message = response.get("message") or response.get("error") or "Canvas API request failed"
+    return {
+        "ok": False,
+        "tool_call_status": "failed",
+        **({"canvas_context_status": "failed"} if context else {
+            "canvas_apply_status": "failed", "applied": False,
+        }),
+        **({
+            "retryable": True,
+            "agent_instruction": _INVALID_CANVAS_REQUEST_INSTRUCTION,
+        } if response.get("code") == "invalid_agent_canvas_request" and not context else {}),
+        "errors": [message],
+        "message": message,
+        **{key: response[key] for key in ("code", "current_revision") if key in response},
+    }
+
+
+def _server_apply_canvas_commands(
+    project: str, canvas: str, commands: list[Any], *, slim_result: bool,
+) -> str:
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    response = _request(
+        "POST",
+        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-commands",
+        body={
+            "envelopes": [_canvas_command_envelope(project, canvas, commands)],
+        },
+    )
+    if not response.get("ok"):
+        return tool_result(_canvas_executor_failure(response))
+    data = response["data"]
+    if data["status"] == "host_required":
+        return _dispatch_server_host_commands(
+            project=project, canvas=canvas, commands=commands, slim_result=slim_result,
+        )
+    return tool_result(
+        _server_canvas_command_result(project, canvas, data, commands, slim_result=slim_result)
+    )
+
+
+def _server_canvas_command_result(
+    project: str, canvas: str, data: dict[str, Any], commands: list[Any], *, slim_result: bool,
+) -> dict[str, Any]:
+    receipt = data["receipt"]
+    resolved = {
+        **receipt,
+        "ok": (
+            receipt["tool_call_status"] == "completed"
+            and receipt["canvas_apply_status"] == "applied"
+            and bool(receipt["applied"])
+            and not receipt.get("cancelled")
+            and not receipt.get("errors")
+        ),
+        "project_id": project,
+        "canvas_id": canvas,
+        "revision": data["revision"],
+        "receipt": data["receipt"],
     }
     if slim_result:
-        summarized = _summarize_canvas_command_result(
-            resolved,
-            bridge_key="mcp-direct",
-            commands=commands,
-        )
-        summarized["canvas_apply_status"] = "direct_applied"
-        summarized["revision"] = resolved.get("revision")
-        return tool_result(summarized)
-    return tool_result(resolved)
+        summarized = _summarize_canvas_command_result(resolved, bridge_key="", commands=commands)
+        summarized["revision"] = data["revision"]
+        return summarized
+    return resolved
 
 
 def _emit_canvas_commands(
@@ -6564,7 +6695,6 @@ def _emit_canvas_commands(
     *,
     allow_dynamic_workflow_batch: bool = False,
     slim_result: bool = False,
-    require_canvas_receipt: bool = False,
 ) -> str:
     if not isinstance(commands, list) or not commands:
         return _emit_command_error(
@@ -6621,40 +6751,37 @@ def _emit_canvas_commands(
     )
     if shape_error:
         return shape_error
+    executor = _agent_canvas_executor()
     recommendation_error = _resolve_canvas_generation_recommendations(project, canvas, commands)
     if recommendation_error is not None:
         return tool_result(recommendation_error)
+    deferred = {} if _key_deferral_host() else None
     generation_preflight = _external_generation_parameter_preflight(
         project,
         canvas,
         commands,
+        **({"deferred_tiers": deferred} if deferred is not None else {}),
     )
     if generation_preflight is not None:
         return tool_result(generation_preflight)
-    if _mcp_direct_canvas_apply_enabled() and not require_canvas_receipt:
-        needs_approval, approval_reasons = _approval_required_for_commands(commands)
-        if _mcp_canvas_approval_enabled() and needs_approval:
-            return _create_mcp_canvas_approval(
-                project=project,
-                canvas=canvas,
-                commands=commands,
-                slim_result=slim_result,
-                reasons=approval_reasons,
-            )
-        if _requires_frontend_canvas_executor(commands):
-            return _dispatch_mcp_approved_frontend_commands(project=project, canvas=canvas, commands=commands, slim_result=slim_result)
-        return _direct_apply_canvas_commands(
-            project,
-            canvas,
-            commands,
-            slim_result=slim_result,
+    if confirmation_kinds is None:
+        return tool_error(
+            "Canvas command bridge is unavailable; cannot determine required confirmations. "
+            f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
+    if confirmation_kinds(commands):
+        return _create_canvas_confirmation(
+            project, canvas, commands, fill_standard_tiers=list(deferred or {}),
+        )
+    if deferred:
+        return tool_result(_generation_parameters_required_result(list(deferred.values())))
+    if executor == "server":
+        if _requires_frontend_canvas_executor(commands):
+            return _dispatch_server_host_commands(
+                project=project, canvas=canvas, commands=commands, slim_result=slim_result,
+            )
+        return _server_apply_canvas_commands(project, canvas, commands, slim_result=slim_result)
     if _external_mcp_agent_enabled():
-        # Codex/Claude/OpenClaw external MCP uses the same browser bridge as
-        # Hermes. Do not return a second tool-level approval_id here: that
-        # approval lives inside the agent conversation and never reaches the
-        # Freezone chat approval card. The pending bridge frame is consumed by
-        # FreezoneShell, which displays the card and applies after confirmation.
         return _dispatch_mcp_approved_frontend_commands(
             project=project,
             canvas=canvas,
@@ -6927,6 +7054,10 @@ def _workflow_plan_operation_admission_error(
 
 
 def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
+    turnless = _turnless_external_mcp_host()
+    if turnless:
+        args = dict(args)
+        args.pop("operation_id", None)
     if build_workflow_graph_commands is None:
         return tool_error(
             "Freezone workflow graph builder is unavailable. "
@@ -7000,9 +7131,10 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if scope_error:
         return tool_result(scope_error)
     assert project is not None and canvas is not None
-    admission_error = _workflow_plan_operation_admission_error(args, project, canvas)
-    if admission_error is not None:
-        return tool_result(admission_error)
+    if not turnless:
+        admission_error = _workflow_plan_operation_admission_error(args, project, canvas)
+        if admission_error is not None:
+            return tool_result(admission_error)
     preflight = _workflow_runtime_preflight(
         validated,
         project_id=project,
@@ -7024,7 +7156,7 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
     operation_id = str(args.get("operation_id") or "").strip()
-    if not operation_id and _available():
+    if not operation_id and _available() and not turnless:
         return tool_result(
             {
                 "ok": False,
@@ -7299,6 +7431,30 @@ def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> st
                 }
             )
         artifact_id = expected_artifact_id
+        if _turnless_external_mcp_host():
+            return _structured_tool_result(
+                {
+                    "ok": True,
+                    "status": "agent_product_operation_not_required",
+                    "operation_id": "",
+                    "product_kind": "workflow_result",
+                    "task_id": "",
+                    "project_id": project_id,
+                    "canvas_id": canvas_id,
+                    "artifact_id": artifact_id,
+                    "generation_session_id": session_id,
+                    "confirmation_required": False,
+                    "next_action": "prepare_workflow_without_operation_id",
+                    "agent_instruction": (
+                        "This MCP host has no product chat turn, so no product operation is "
+                        "opened for a workflow result. Call the workflow draft tool and omit "
+                        "operation_id; never invent one. If the server refuses the draft, "
+                        "tell the user and stop. Generation after the draft still needs "
+                        "the user's confirmation as usual."
+                    ),
+                },
+                tool_name="freezone_begin_agent_product_generation",
+            )
     normalized_inputs = (
         args.get("normalized_inputs")
         if isinstance(args.get("normalized_inputs"), dict)
@@ -7530,6 +7686,9 @@ def _workflow_runtime_preflight(
 
 def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
     """Thin authenticated adapter: compile and patch only on the server."""
+    if action == "prepare" and _turnless_external_mcp_host():
+        args = dict(args)
+        args.pop("operation_id", None)
     project_id, canvas_id, error = _workflow_draft_scope(args)
     if error:
         return tool_result(error)
@@ -7791,10 +7950,16 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
                 "error": standard["error"],
                 "media_types": standard["media_types"],
                 "required_choices": standard["required_choices"],
-                "clarification": standard["clarification"],
+                **(
+                    {"clarification": standard["clarification"]}
+                    if "clarification" in standard else {}
+                ),
                 "agent_instruction": standard["agent_instruction"],
                 "retryable": True,
-                "next_action": "request_user_clarification",
+                "next_action": (
+                    "request_user_clarification" if _clarification_listener_available()
+                    else "ask_user_in_conversation"
+                ),
             }
         elif action == "prepare" and error.get("code") == "no_compatible_video_model":
             from novelvideo.freezone.workflow_preflight import (
@@ -7881,6 +8046,36 @@ def _handle_observe_workflow_run(args: dict[str, Any], **_: Any) -> str:
     return tool_result(payload if payload is not None else error)
 
 
+def _handle_cancel_workflow_run(args: dict[str, Any], **_: Any) -> str:
+    project_id, canvas_id, error = _workflow_draft_scope(args)
+    if error:
+        return tool_result({**error, "retryable": False})
+    run_id = str(args.get("run_id") or "").strip()
+    if not run_id:
+        return tool_result({
+            "ok": False, "status": "invalid_workflow_cancellation",
+            "error": "run_id is required", "retryable": False,
+        })
+    path = (
+        f"/api/v1/projects/{quote(project_id, safe='')}/freezone/canvases/"
+        f"{quote(canvas_id, safe='')}/workflow-runs/{quote(run_id, safe='')}"
+    )
+    try:
+        response = _request("PATCH", path, body={"status": "cancelled"})
+    except TimeoutError as exc:
+        response = {"ok": False, "error": str(exc) or "Workflow cancellation timed out"}
+    payload, error = _workflow_draft_response(response)
+    if error:
+        return tool_result({
+            "ok": False, "status": "workflow_cancellation_failed", "run_id": run_id,
+            "error": error.get("message") or error.get("error") or "Workflow cancellation failed",
+            "retryable": False,
+        })
+    return tool_result({
+        "ok": True, "status": "cancelled", "run_id": run_id, "run_status": payload["status"],
+    })
+
+
 def _handle_get_workflow_capabilities(args: dict[str, Any], **_: Any) -> str:
     return _handle_workflow_operation(args, action="capabilities")
 
@@ -7898,6 +8093,10 @@ def _handle_get_workflow(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
+    turnless = _turnless_external_mcp_host()
+    if turnless:
+        args = dict(args)
+        args.pop("operation_id", None)
     if not _workflow_draft_dependencies_available():
         return _workflow_draft_unavailable()
     project_id, canvas_id, scope_error = _workflow_draft_scope(args)
@@ -7971,7 +8170,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
     operation_id = str(args.get("operation_id") or "").strip()
-    if not operation_id and _available():
+    if not operation_id and _available() and not turnless:
         return tool_result(
             {
                 "ok": False,
@@ -8731,7 +8930,77 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if current_payload is None:
         return tool_result(current_error)
-    if int(current_payload.get("revision") or 0) != revision:
+    current_revision = int(current_payload.get("revision") or 0)
+    draft_status = current_payload.get("status")
+    if draft_status in {"confirmed", "confirming", "submitted"}:
+        confirmed = draft_status == "confirmed"
+        return tool_result(
+            {
+                "ok": False,
+                "status": (
+                    "workflow_draft_already_confirmed"
+                    if confirmed else "workflow_draft_confirmation_in_progress"
+                ),
+                "retryable": False,
+                "draft_id": draft_id,
+                "revision": revision,
+                "current_revision": current_revision,
+                "error": (
+                    "Workflow draft has already been confirmed."
+                    if confirmed else "Workflow draft confirmation is in progress or submitted."
+                ),
+                "user_message": (
+                    "工作流已创建，本次未创建任何新节点。"
+                    if confirmed else "工作流正在创建或已提交，本次未创建任何新节点。"
+                ),
+                "agent_instruction": (
+                    "Do not call freezone_confirm_workflow_draft again. "
+                    f"The nodes of revision {current_revision} are or will be on the canvas. "
+                    "Use freezone_run_workflow when the user asks to run them."
+                ),
+            }
+        )
+    if draft_status == "cancelled":
+        # A cancelled draft is settled, so no revision fence is needed.
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_draft_not_confirmable",
+                "retryable": False,
+                "draft_id": draft_id,
+                "revision": revision,
+                "current_revision": current_revision,
+                "error": "Workflow draft was cancelled.",
+                "user_message": "该工作流方案已取消，本次未创建任何节点。",
+                "agent_instruction": (
+                    "Do not call freezone_confirm_workflow_draft again for this draft. "
+                    "It was cancelled "
+                    "and nothing was created. If the user still wants this workflow, prepare a new "
+                    "draft with freezone_prepare_workflow and confirm it only after the user "
+                    "reviews it."
+                ),
+            }
+        )
+    if draft_status in {None, "ready"} and revision > current_revision:
+        return tool_result(
+            {
+                "ok": False,
+                "status": "workflow_draft_revision_not_found",
+                "retryable": False,
+                "draft_id": draft_id,
+                "revision": revision,
+                "current_revision": current_revision,
+                "error": "The requested workflow draft revision does not exist.",
+                "user_message": "请求的草稿版本不存在，本次未创建任何节点，请查看当前版本后确认。",
+                "agent_instruction": (
+                    f"Revision {revision} does not exist. The user can only have reviewed "
+                    f"revision {current_revision}. Read it with freezone_get_workflow, show "
+                    "its preview, and confirm only that exact revision after the user "
+                    "explicitly confirms it. Never invent revision numbers."
+                ),
+            }
+        )
+    if current_revision != revision:
         # Rejected from the GET above only: nothing was claimed or dispatched.
         # The user confirmed an exact revision, and the current one may carry
         # changes they never reviewed, so it must not be confirmed silently.
@@ -8939,7 +9208,6 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             built.get("commands"),
             allow_dynamic_workflow_batch=True,
             slim_result=True,
-            require_canvas_receipt=True,
         )
     except Exception:
         _finish_workflow_draft(
@@ -8964,7 +9232,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             revision=revision,
         )
     elif result_payload and result_payload.get("ok"):
-        # Only the server's browser-receipt handler may confirm delivery.
+        # Only the server confirms delivery via browser receipt or agent-commands application.
         # Its callback may race this update; confirmed state is monotonic.
         outcome = "submitted"
         _finish_workflow_draft(
@@ -9077,7 +9345,199 @@ def _validate_dynamic_recipe_action_binding(
     return None
 
 
+def _canvas_management_preamble(project: str) -> dict[str, Any] | None:
+    if _default_project_id() and project != _default_project_id():
+        return _bound_scope_mismatch(project, None)
+    if _agent_canvas_executor() != "server":
+        return {
+            "ok": False, "status": "unsupported", "code": "canvas_server_executor_required",
+            "retryable": False,
+            "error": "Listing and creating canvases from the Agent needs the server canvas executor.",
+            "next_action": "tell_user",
+            "agent_instruction": (
+                "Do not retry. Tell the user the Agent cannot list or create canvases in this "
+                "deployment; they can create the canvas in the canvases tab and open it."
+            ),
+        }
+    return None
+
+
+def _canvas_management_failure(result: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    result = dict(result)
+    status_code = result.pop("status_code", None)
+    result.setdefault("status", "failed")
+    result["code"] = result.get("code") or "request_failed"
+    retryable = result.get("retryable")
+    result["retryable"] = retryable if isinstance(retryable, bool) else False
+    instruction = "Tell the user the canvas request failed."
+    if status_code in {403, 404}:
+        result.update(code="forbidden" if status_code == 403 else "not_found", retryable=False)
+        instruction = "Tell the user the project is unavailable or access is forbidden."
+    elif status_code == 422:
+        result.update(code="invalid_arguments", retryable=True)
+        result["example"] = (
+            {"name": args["name"].strip()[:100] or "Canvas"} if "name" in args else {}
+        )
+        instruction = "Correct the arguments using the example and retry. Keep the user's real values."
+    elif status_code == 503:
+        if result["code"] == "canvas_core_unavailable":
+            result["retryable"] = False
+            instruction = "Do not retry. Tell the user Node.js or the canvas bundle is missing on the server."
+        elif result["code"] in {"canvas_lock_busy", "canvas_core_busy", "canvas_core_timeout"}:
+            result["retryable"] = True
+            result["example"] = {key: args[key] for key in ("name", "project_id") if key in args}
+            instruction = (
+                "Retry the same call once. The same turn reuses the same request id, "
+                "so no second canvas can be created."
+            )
+    result["agent_instruction"] = instruction
+    result["next_action"] = "retry" if result["retryable"] else "tell_user"
+    allowed = set(_RESULT_COMMON_PROPERTIES) | {"example", "errors"}
+    return {key: value for key, value in result.items() if key in allowed}
+
+
+def _canvas_creation_rejection(rejection: dict[str, Any]) -> dict[str, Any]:
+    code = rejection.get("code") or "request_failed"
+    result = {
+        "ok": False, "status": "rejected", "code": code, "rejection": rejection,
+        "retryable": code == "name_required",
+        "next_action": "retry" if code == "name_required" else "tell_user",
+    }
+    instruction = "Tell the user the canvas creation was rejected."
+    if code == "duplicate_name":
+        existing = str(rejection.get("existing_canvas_id") or "")
+        if existing:
+            result["existing_canvas_id"] = existing
+        instruction = (
+            f"Canvas {existing} already exists. Do not create it again. Ask the user for a "
+            "different name. Only continue on the existing canvas if freezone_list_canvases "
+            f"shows created_from_this_chat=true for it; pass canvas_id={existing} explicitly."
+        )
+    elif code == "quota_reached":
+        instruction = (
+            f"The per-user limit of {rejection.get('limit')} canvases is reached. "
+            "Tell the user they must delete or archive a canvas first."
+        )
+    elif code == "quota_unknown":
+        instruction = "The server cannot tell who is creating the canvas. Tell the user."
+    elif code == "name_required":
+        result["example"] = {"name": "A short canvas name"}
+        instruction = "Ask the user for, or use, a real non-blank canvas name."
+    elif code == "id_taken":
+        instruction = "Tell the user to choose a different name because the canvas id is taken."
+    result.update(error=instruction, agent_instruction=instruction)
+    return result
+
+
+def _product_chat_session() -> bool:
+    """Only product chat renders the reply, so only it gets a ready Markdown link."""
+    return _clarification_listener_available()
+
+
+def _canvas_link_markdown(display_name: str, path: str) -> str:
+    label = display_name.replace("\r", " ").replace("\n", " ").strip() or path.rsplit("=", 1)[-1]
+    label = re.sub(r"([\\`*_\[\]<>~|])", r"\\\1", label)
+    return f"[{label}]({path})"
+
+
+def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
+    try:
+        project = _project_from_args(args)
+    except ValueError as exc:
+        return tool_error(str(exc))
+    preamble = _canvas_management_preamble(project)
+    if preamble is not None:
+        return tool_result(preamble)
+    name = args.get("name")
+    if not isinstance(name, str):
+        return tool_result({
+            "ok": False, "status": "invalid_arguments", "code": "invalid_arguments",
+            "error": "name must be a string of 1 to 100 characters.", "retryable": True,
+            "next_action": "retry", "example": {"name": "A short canvas name"},
+            "agent_instruction": (
+                "Retry with the canvas name the user asked for as a string of 1 to 100 "
+                "characters. Keep the user's real values."
+            ),
+        })
+    turn = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    bound = _default_canvas_id()
+    request_id = (
+        hashlib.sha256(json.dumps(
+            [project, turn, name.strip()], ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")).hexdigest() if turn else uuid.uuid4().hex
+    )
+    body = {"name": name, "request_id": request_id}
+    if bound:
+        body["origin"] = {"chat_canvas_id": bound, "turn_id": turn}
+    result = _request(
+        "POST", f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases:create", body=body
+    )
+    if not result.get("ok"):
+        return tool_result(_canvas_management_failure(result, args))
+    data = result.get("data") or {}
+    if data.get("status") == "rejected":
+        return tool_result(_canvas_creation_rejection(data.get("rejection") or {}))
+    if data.get("status") not in {"created", "exists"}:
+        return tool_result(_canvas_management_failure({"ok": False, "error": "Unexpected canvas response"}, args))
+    canvas_id = data["canvas_id"]
+    path = f"/projects/{project}/freezone?canvas={canvas_id}"
+    link = _canvas_link_markdown(data["display_name"], path) if _product_chat_session() else None
+    return tool_result({
+        "ok": True, "status": data["status"], "project_id": project,
+        "canvas_id": canvas_id, "display_name": data["display_name"], "revision": data["revision"],
+        "canvas_path": path,
+        **({"canvas_link_markdown": link} if link is not None else {}),
+        "agent_instruction": (
+            f"Pass canvas_id={canvas_id} explicitly on every later canvas call for this canvas. "
+            f"Calls without canvas_id still go to the bound canvas{(' ' + bound) if bound else ''}. "
+            "Paid generation on it still follows the normal confirmation rules. "
+            + (f"Show the user this link to the new canvas exactly as given: {link}"
+               if link is not None else f"Give the user the link {path}.")
+        ),
+    })
+
+
+def _handle_list_canvases(args: dict[str, Any], **_: Any) -> str:
+    try:
+        project = _project_from_args(args)
+    except ValueError as exc:
+        return tool_error(str(exc))
+    preamble = _canvas_management_preamble(project)
+    if preamble is not None:
+        return tool_result(preamble)
+    bound = _default_canvas_id()
+    result = _request(
+        "GET", f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases:agent-view",
+        query={"chat_canvas_id": bound} if bound else None,
+    )
+    if not result.get("ok"):
+        return tool_result(_canvas_management_failure(result, args))
+    data = result["data"]
+    fields = ("canvas_id", "display_name", "kind", "creator_username", "created_by_viewer",
+              "created_from_this_chat", "modified_at")
+    canvases = [{key: row[key] for key in fields} for row in data["canvases"]]
+    if _product_chat_session():
+        for row in canvases:
+            if row["created_from_this_chat"] is True:
+                path = f"/projects/{project}/freezone?canvas={row['canvas_id']}"
+                row["canvas_link_markdown"] = _canvas_link_markdown(row["display_name"], path)
+    return tool_result({
+        "ok": True, "status": "listed", "project_id": project, "bound_canvas_id": bound or None,
+        "canvases": canvases, "quota": data["quota"], "count": len(canvases),
+        "agent_instruction": (
+            "To write to a canvas other than the bound one, pass its canvas_id explicitly. "
+            + ("Only the bound canvas and canvases with created_from_this_chat=true accept "
+               "writes from this chat." if bound else "This session has no bound canvas.")
+            + (" When you mention a canvas that has canvas_link_markdown, use that link exactly as given."
+               if any("canvas_link_markdown" in row for row in canvases) else "")
+        ),
+    })
+
+
 def _handle_create_node(args: dict[str, Any], **_: Any) -> str:
+    refusal = _text_annotation_tool_refusal(args)
+    if refusal is not None:
+        return refusal
     node_type = str(args.get("node_type") or "").strip()
     if not node_type:
         return tool_result(
@@ -9100,6 +9560,9 @@ def _handle_create_node(args: dict[str, Any], **_: Any) -> str:
 
 
 def _handle_add_next_node(args: dict[str, Any], **_: Any) -> str:
+    refusal = _text_annotation_tool_refusal(args)
+    if refusal is not None:
+        return refusal
     source_node_id = str(args.get("source_node_id") or "").strip()
     node_type = str(args.get("node_type") or "").strip()
     if not source_node_id:
@@ -9577,6 +10040,23 @@ def _request_canvas_context_from_frontend(
     canvas: str | None,
     requests: list[Any],
 ) -> str:
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    if _agent_canvas_executor() == "server":
+        project = project or _default_project_id()
+        canvas = canvas or _default_canvas_id()
+        if not project or not canvas:
+            return tool_result(_canvas_executor_failure({
+                "code": "canvas_scope_required",
+                "message": "Cannot resolve project_id and canvas_id for canvas context.",
+            }, context=True))
+        response = _request(
+            "POST",
+            f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-context",
+            body={"requests": requests},
+        )
+        return tool_result(response["data"] if response.get("ok") else _canvas_executor_failure(response, context=True))
     envelope = {
         "schema_version": "canvas_context_request.v1",
         **({"canvas_id": canvas} if canvas else {}),
@@ -9587,9 +10067,6 @@ def _request_canvas_context_from_frontend(
         and put_pending_canvas_context is not None
         and wait_canvas_context_result is not None
     ):
-        mismatch = _bound_scope_mismatch(project, canvas)
-        if mismatch is not None:
-            return tool_result(mismatch)
         key = canvas_context_bridge_key(
             project_id=project, canvas_id=canvas, requests=requests
         )
@@ -9666,7 +10143,22 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
 }
 
 _CANVAS_RESULT_FIELDS = (
-    "approval_id",
+    "media_types",
+    "missing_parameters",
+    "required_choices",
+    "clarification",
+    "dynamic_story_duration_node_ids",
+    "blocked",
+    "run_id",
+    "actions",
+    "confirmation_id",
+    "kinds",
+    "targets",
+    "written",
+    "generation_settings",
+    "generation_summary",
+    "expires_at",
+    "confirmation_via",
     "project_id",
     "canvas_id",
     "operation_id",
@@ -9693,6 +10185,7 @@ _CANVAS_RESULT_FIELDS = (
 
 _WORKFLOW_RESULT_FIELDS = (
     *_CANVAS_RESULT_FIELDS,
+    "example",
     "draft_id",
     "current_revision",
     "preview",
@@ -9718,6 +10211,8 @@ _WORKFLOW_RESULT_FIELDS = (
 
 _RESULT_ARRAY_FIELDS = frozenset(
     {
+        "dynamic_story_duration_node_ids",
+        "blocked",
         "issues",
         "progress",
         "problems",
@@ -9731,6 +10226,7 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "command_results",
         "confirmed_stages",
         "created_node_ids",
+        "generation_settings",
         "edge_ids",
         "edges",
         "errors",
@@ -9792,6 +10288,7 @@ _RESULT_INTEGER_FIELDS = frozenset(
 )
 _RESULT_OBJECT_FIELDS = frozenset(
     {
+        "written",
         "story",
         "outline",
         "counts",
@@ -9808,12 +10305,14 @@ _RESULT_OBJECT_FIELDS = frozenset(
 )
 _RESULT_STRING_FIELDS = frozenset(
     {
+        "generation_summary",
         "story_id",
         "current_stage_id",
         "run_status",
         "observation_token",
         "action",
-        "approval_id",
+        "confirmation_id",
+        "confirmation_via",
         "bridge_key",
         "canvas_apply_status",
         "canvas_id",
@@ -9858,6 +10357,14 @@ _RESULT_STRING_FIELDS = frozenset(
 
 
 def _result_field_schema(field: str) -> dict[str, Any]:
+    if field == "example":
+        return {"type": "object"}
+    if field == "kinds":
+        return {"type": "array", "items": {"type": "string"}}
+    if field == "targets":
+        return {"type": "array", "items": {"type": "object"}}
+    if field == "expires_at":
+        return {"type": "number"}
     if field == "batch_id":
         return {"type": "string", "minLength": 1}
     if field == "imports":
@@ -9902,6 +10409,14 @@ def _load_stdlib_tool_module(name: str, path: Path):
     return module
 
 
+try:
+    _SHARED_AGENT_KEY_SESSION = _load_stdlib_tool_module(
+        "_freezone_agent_key_session", _PLUGIN_DIR / "_agent_key_session.py"
+    )
+except Exception:
+    _SHARED_AGENT_KEY_SESSION = None
+
+
 _STORY_TOOL_MODULE_ERROR: Exception | None = None
 _SHARED_STORY_TOOLS = None
 if _INCLUDE_INTERACTIVE_STORY:
@@ -9932,8 +10447,56 @@ _STORY_SUCCESS_REQUIRED = (
 )
 
 
+_RESULT_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
+    "freezone_create_canvas": {
+        "rejection": {"type": "object"},
+        "example": {"type": "object"},
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "canvas_path": {"type": "string"},
+        "canvas_link_markdown": {"type": "string"},
+        "existing_canvas_id": {"type": "string"},
+        "display_name": {"type": "string"},
+    },
+    "freezone_list_canvases": {
+        "canvases": {"type": "array", "items": {"type": "object"}},
+        "quota": {"type": "object"},
+        "bound_canvas_id": {"type": ["string", "null"]},
+        "count": {"type": "integer"},
+    },
+    "freezone_studio_import_media": {
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "example": {"type": "object"},
+        "source": {
+            "type": "object",
+            "properties": {
+                "source_url": {"type": "string"},
+                "node_id": {"type": "string"},
+                "label": {"type": "string"},
+            },
+            "required": ["source_url", "node_id", "label"],
+            "additionalProperties": False,
+        },
+    },
+    "freezone_studio_get_film": {
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "example": {"type": "object"},
+    },
+    "freezone_studio_edit_film": {
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "example": {"type": "object"},
+        "valid_ops": {"type": "array", "items": {"type": "string"}},
+    },
+    "freezone_studio_export_film": {
+        "errors": {"type": "array", "items": {"type": "object"}},
+        "example": {"type": "object"},
+    },
+}
+
+
 _STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    "freezone_studio_get_film": ("node_id", "rev", "problems", "film", "media", "studio"),
+    "freezone_studio_get_film": (
+        "node_id", "rev", "problems", "film", "media", "studio", "export",
+    ),
     "freezone_studio_edit_film": (
         "node_id", "rev", "rebased", "ops_applied", "film", "media",
     ),
@@ -9946,8 +10509,18 @@ _STUDIO_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    "freezone_create_canvas": (
+        "project_id", "canvas_id", "display_name", "revision", "canvas_path",
+        "canvas_link_markdown", "rejection", "existing_canvas_id", "example", "errors",
+    ),
+    "freezone_list_canvases": (
+        "project_id", "bound_canvas_id", "canvases", "quota", "count", "errors", "example",
+    ),
     **_STORY_RESULT_FIELDS,
+    "freezone_cancel_workflow_run": ("run_id", "run_status", "errors", "example"),
     "freezone_observe_workflow_run": (
+        "errors",
+        "example",
         "run_id",
         "run_status",
         "terminal",
@@ -9985,9 +10558,12 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_get_audio_voice_options": ("node_id", "voices", "count"),
     "freezone_get_slot_candidates": ("slot", "candidates", "count"),
     "freezone_get_mainline_projection_assets": ("assets", "count"),
-    "freezone_validate_canvas_commands": ("payload", "commands", "errors", "warnings"),
+    "freezone_validate_canvas_commands": ("payload", "commands", "errors", "warnings", "example"),
     "freezone_summarize_canvas": ("summary", "nodes", "edges", "counts"),
     "freezone_request_user_clarification": (
+        "code",
+        "errors",
+        "example",
         "clarification_id",
         "clarification_status",
         "questions",
@@ -10179,12 +10755,13 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         *_WORKFLOW_RESULT_FIELDS,
         "schema_version",
     ),
-    "freezone_emit_canvas_command": (*_CANVAS_RESULT_FIELDS, "commands"),
+    "freezone_emit_canvas_command": (*_CANVAS_RESULT_FIELDS, "commands", "example"),
     "freezone_confirm_canvas_action": _CANVAS_RESULT_FIELDS,
     "freezone_cancel_canvas_action": _CANVAS_RESULT_FIELDS,
-    "freezone_create_node": (*_CANVAS_RESULT_FIELDS, "node_id", "node_type"),
+    "freezone_create_node": (*_CANVAS_RESULT_FIELDS, "node_id", "node_type", "example"),
     "freezone_add_next_node": (
         *_CANVAS_RESULT_FIELDS,
+        "example",
         "node_id",
         "node_type",
         "source_node_id",
@@ -10233,14 +10810,17 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 _STUDIO_RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     "freezone_studio_get_film": ("rev", "film"),
     "freezone_studio_edit_film": ("rev", "film"),
-    "freezone_studio_import_media": ("asset_path",),
+    "freezone_studio_import_media": ("asset_path", "source"),
     "freezone_studio_export_film": ("job_id", "task_key"),
 }
 
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
+    "freezone_create_canvas": ("canvas_id", "display_name", "revision"),
+    "freezone_list_canvases": ("canvases", "quota"),
     **_STORY_SUCCESS_REQUIRED,
     **(_STUDIO_RESULT_SUCCESS_REQUIRED if _OPENFILM_STUDIO_ENABLED else {}),
+    "freezone_cancel_workflow_run": ("run_id", "run_status"),
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -10361,10 +10941,39 @@ def _canvas_application_receipt_contract(
                 "required": ["revision"],
                 "properties": {
                     "revision": {"type": "integer", "minimum": 0},
-                    "canvas_apply_status": {"const": "direct_applied"},
+                    "canvas_apply_status": {"const": "applied"},
                 },
             },
         ],
+    }
+
+
+def _canvas_confirmation_pending_contract() -> dict[str, Any]:
+    """A confirmation request was created; nothing has been applied yet.
+
+    run_workflow (always paid) and a build-and-run draft confirmation return this
+    before anything executes.
+    """
+    return {
+        "required": [
+            "project_id",
+            "canvas_id",
+            "confirmation_id",
+            "kinds",
+            "tool_call_status",
+            "canvas_apply_status",
+            "applied",
+        ],
+        "properties": {
+            "status": {"const": "confirmation_required"},
+            "project_id": {"type": "string", "minLength": 1},
+            "canvas_id": {"type": "string", "minLength": 1},
+            "confirmation_id": {"type": "string", "minLength": 1},
+            "kinds": {"type": "array", "minItems": 1},
+            "tool_call_status": {"const": "completed"},
+            "canvas_apply_status": {"const": "awaiting_confirmation"},
+            "applied": {"const": False},
+        },
     }
 
 
@@ -10427,8 +11036,7 @@ def _success_contract(name: str) -> dict[str, Any]:
                 "if": {"anyOf": [
                     {"required": ["bridge_key"]},
                     {
-                        "required": ["canvas_apply_status"],
-                        "properties": {"canvas_apply_status": {"const": "direct_applied"}},
+                        "required": ["revision"],
                     },
                 ]},
                 "then": receipt,
@@ -10437,6 +11045,7 @@ def _success_contract(name: str) -> dict[str, Any]:
                     {"required": ["operation_id"]},
                     {"required": ["workflow_instance_id"]},
                     {"required": ["run_id"]},
+                    _canvas_confirmation_pending_contract(),
                 ]},
             }
         if name == "freezone_run_workflow":
@@ -10470,6 +11079,7 @@ def _success_contract(name: str) -> dict[str, Any]:
                             "run_id": {"type": "string", "minLength": 1}
                         },
                     },
+                    _canvas_confirmation_pending_contract(),
                 ]
             }
         return {
@@ -10482,7 +11092,7 @@ def _success_contract(name: str) -> dict[str, Any]:
         }
     if name in _CANVAS_RESULT_TOOLS:
         successful_states = [
-            {"required": ["approval_id"]},
+            {"required": ["confirmation_id"]},
             {"required": ["operation_id"]},
             {"required": ["command_id"]},
             {"required": ["bridge_key"]},
@@ -10540,6 +11150,7 @@ def _output_schema(name: str) -> dict[str, Any]:
         raise RuntimeError(f"missing output contract for {name}")
     properties = dict(_RESULT_COMMON_PROPERTIES)
     properties.update({field: _result_field_schema(field) for field in fields})
+    properties.update(_RESULT_SCHEMA_OVERRIDES.get(name, {}))
     schema: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": f"{name}.result",
@@ -11601,15 +12212,22 @@ _POSITIONS_SCHEMA = {
     "additionalProperties": _POSITION_SCHEMA,
     "minProperties": 1,
 }
+_ADD_NEXT_NODE_DATA_SCHEMA = {
+    "type": "object",
+    "description": (
+        "New node data. A textAnnotationNode needs displayName (node title; title is "
+        "accepted as an alias) and content (body)."
+    ),
+}
 _TEXT_ANNOTATION_DATA_SCHEMA = {
     "type": "object",
     "properties": {
-        "title": _NON_EMPTY_STRING,
         "displayName": _NON_EMPTY_STRING,
+        "title": _NON_EMPTY_STRING,
         "content": _NON_EMPTY_STRING,
     },
     "required": ["content"],
-    "anyOf": [{"required": ["title"]}, {"required": ["displayName"]}],
+    "anyOf": [{"required": ["displayName"]}, {"required": ["title"]}],
 }
 _OTHER_AGENT_CREATABLE_NODE_TYPE_VALUES = [
     value
@@ -11675,7 +12293,7 @@ _CANVAS_COMMAND_ITEM_SCHEMA = {
                         "type": "string",
                         "enum": _AGENT_CREATABLE_NODE_TYPE_VALUES,
                     },
-                    "data": {"type": "object"},
+                    "data": _ADD_NEXT_NODE_DATA_SCHEMA,
                     "connect": {"type": "boolean"},
                 },
                 ["source_node_id"],
@@ -11914,35 +12532,149 @@ _STORY_CANVAS_TOOLS = (
 # never touched.
 # ---------------------------------------------------------------------------
 
+_STUDIO_CLIP_ID = {
+    "type": "string", "minLength": 1,
+    "description": "Clip id from freezone_studio_get_film.",
+}
+_STUDIO_SECONDS = {"type": "number", "minimum": 0}
+_STUDIO_SOURCE_RANGE = {
+    "type": "array", "items": _STUDIO_SECONDS, "minItems": 1, "maxItems": 2,
+    "description": "[in, out] source seconds; [in] runs to the source end.",
+}
+_STUDIO_PAIR = {
+    "type": "array", "items": _STUDIO_SECONDS, "minItems": 2, "maxItems": 2,
+    "description": "Exactly two non-negative seconds values.",
+}
+_STUDIO_TRACK_INDEX = {"type": "integer", "minimum": 0}
+_STUDIO_SPEED = {
+    "type": "number", "minimum": 0.1, "maximum": 100,
+    "description": "Playback speed, 0.1-100, 1 = normal.",
+}
+_STUDIO_VOLUME = {
+    "type": "number", "minimum": 0,
+    "description": "Non-negative volume; 1 = original level.",
+}
+_STUDIO_BOX = {
+    "type": "object",
+    "properties": {
+        "x": {"type": "number"}, "y": {"type": "number"},
+        "w": {"type": "number", "exclusiveMinimum": 0},
+        "h": {"type": "number", "exclusiveMinimum": 0},
+        "r": {"type": "number"},
+    },
+    "required": ["x", "y"],
+    "additionalProperties": False,
+    "description": "Stage pixels; w and h must be positive; r is rotation degrees.",
+}
+
+
+def _studio_op_schema(
+    op: str, properties: dict[str, Any], required: list[str], description: str,
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {"op": {"type": "string", "const": op}, **properties},
+        "required": ["op", *required],
+        "additionalProperties": False,
+        "description": description,
+    }
+
+
 _STUDIO_OPS_SCHEMA = {
     "type": "array",
     "minItems": 1,
     "maxItems": 200,
     "description": (
-        "OpenFilm Studio operations, applied in order, each naming a clip by the id "
-        "returned by freezone_studio_get_film. Times are film seconds. Shapes: "
-        "{op:'set', clip, field, value} (field: at | time:[in,out] source seconds | "
-        "speed 0.25-4 | volume | box {x,y,w,h} | overrides; value null removes); "
-        "{op:'move', clip, at, track?}; "
-        "{op:'insert', clip:{src:'assets/<file>', at, time?:[in,out], volume?, speed?}, "
-        "track? | newTrack?, after?}; "
-        "{op:'remove', clip}; "
-        "{op:'split', clip, at, time:[in,cut], restTime:[cut,out]}; "
-        "{op:'props', edits:[{clip, prop:'fade', value:[in,out]}]}; "
-        "{op:'track', track, field:'locked'|'hidden'|'muted', value}; "
-        "{op:'reorder', from, to}; {op:'stage', w, h}."
+        "Studio operations, applied in order. Each item is one of the shapes "
+        "below, picked by op (and by field for set). Clip ids come from "
+        "freezone_studio_get_film; at is film seconds, time is [in, out] source seconds."
     ),
-    "items": {
-        "type": "object",
-        "properties": {"op": {"type": "string", "minLength": 1}},
-        "required": ["op"],
-        "additionalProperties": True,
-    },
+    "items": {"anyOf": [
+        *[
+            _studio_op_schema(
+                "set",
+                {"clip": _STUDIO_CLIP_ID, "field": {"type": "string", "const": field},
+                 "value": value},
+                ["clip", "field", "value"], description,
+            )
+            for field, value, description in (
+                ("at", _STUDIO_SECONDS, "Set the clip start in non-negative film seconds."),
+                ("time", {"anyOf": [_STUDIO_SOURCE_RANGE, {"type": "null"}]},
+                 "Set [in, out] source seconds, [in] to source end, or null for whole source."),
+                ("speed", {"anyOf": [_STUDIO_SPEED, {"type": "null"}]},
+                 "Set speed 0.1-100, 1 = normal; null resets it."),
+                ("volume", {"anyOf": [_STUDIO_VOLUME, {"type": "null"}]},
+                 "Set non-negative volume, 1 = original level; null resets it."),
+                ("box", {"anyOf": [_STUDIO_BOX, {"type": "null"}]},
+                 "Set placement in stage pixels; r is rotation degrees; null = full stage."),
+                ("overrides", {"anyOf": [
+                    {"type": "array", "maxItems": 200, "items": {"type": "object"}},
+                    {"type": "null"},
+                ]}, "Set up to 200 editor per-clip overrides; null clears them."),
+            )
+        ],
+        _studio_op_schema("move", {
+            "clip": _STUDIO_CLIP_ID, "at": _STUDIO_SECONDS,
+            "track": _STUDIO_TRACK_INDEX, "newTrack": _STUDIO_TRACK_INDEX,
+        }, ["clip", "at"], "Move a clip to non-negative film seconds and optionally a track."),
+        _studio_op_schema("insert", {
+            "clip": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string", "minLength": 1,
+                            "description": (
+                                "asset_path from freezone_studio_import_media, "
+                                "e.g. assets/<file>"
+                            )},
+                    "at": _STUDIO_SECONDS, "time": _STUDIO_SOURCE_RANGE,
+                    "volume": _STUDIO_VOLUME, "speed": _STUDIO_SPEED, "box": _STUDIO_BOX,
+                },
+                "required": ["src"], "additionalProperties": False,
+            },
+            "after": {
+                **_STUDIO_CLIP_ID, "description": "Insert right after this clip on its track.",
+            },
+            "track": _STUDIO_TRACK_INDEX, "newTrack": _STUDIO_TRACK_INDEX,
+        }, ["clip"], "Insert an imported asset, optionally after a clip or onto a track."),
+        _studio_op_schema("remove", {"clip": _STUDIO_CLIP_ID},
+                          ["clip"], "Remove a clip from the film."),
+        _studio_op_schema("split", {
+            "clip": _STUDIO_CLIP_ID, "at": {"type": "number", "exclusiveMinimum": 0},
+            "time": {**_STUDIO_PAIR, "description": "Left half [in, out] source seconds."},
+            "restTime": {**_STUDIO_PAIR, "description": "Right half [in, out] source seconds."},
+        }, ["clip", "at", "time", "restTime"], "Split a clip at a positive film second."),
+        _studio_op_schema("props", {
+            "edits": {
+                "type": "array", "minItems": 1, "maxItems": 200,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "clip": _STUDIO_CLIP_ID, "prop": {"type": "string", "const": "fade"},
+                        "value": {"anyOf": [_STUDIO_PAIR, {"type": "null"}]},
+                    },
+                    "required": ["clip", "prop", "value"], "additionalProperties": False,
+                },
+            },
+        }, ["edits"], "Apply 1-200 fades: [in, out] fade seconds; null removes a fade."),
+        _studio_op_schema("track", {
+            "track": _STUDIO_TRACK_INDEX,
+            "field": {"type": "string", "enum": ["locked", "hidden", "muted"]},
+            "value": {"type": "boolean"},
+        }, ["track", "field", "value"], "Set a track flag by non-negative track index."),
+        _studio_op_schema("reorder", {
+            "from": _STUDIO_TRACK_INDEX, "to": _STUDIO_TRACK_INDEX,
+        }, ["from", "to"], "Reorder tracks by non-negative indexes."),
+        _studio_op_schema("stage", {
+            "w": {"type": "integer", "minimum": 1, "maximum": 8192},
+            "h": {"type": "integer", "minimum": 1, "maximum": 8192},
+        }, ["w", "h"], "Set stage width and height in pixels, each 1-8192."),
+    ]},
 }
 
 _STUDIO_NODE_PROP = {
     "node_id": {
         "type": "string",
+        "minLength": 1,
         "description": (
             "The videoComposeNode id, exactly as compose_node_id in the "
             "[FREEZONE_COMPOSE_WORKSPACE] context block."
@@ -11976,7 +12708,7 @@ def _studio_tool_result(response: dict[str, Any], *, node_id: str) -> dict[str, 
         result["ok"] = 200 <= int(response.get("status_code") or 0) < 300
     if not result.get("status"):
         result["status"] = "ok" if result.get("ok") else "failed"
-    if not result.get("ok") and int(response.get("status_code") or 0) == 404:
+    if result.get("code") == "studio_film_missing":
         result.setdefault(
             "agent_instruction",
             "The compose node has no Studio film yet. Ask the user to open the node's "
@@ -12000,7 +12732,7 @@ def _handle_studio_tool(
             {"ok": False, "status": "invalid_arguments", "code": "invalid_arguments", "error": str(exc)},
             tool_name=tool_name,
         )
-    mismatch = _bound_scope_mismatch(project, canvas)
+    mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return _structured_tool_result(mismatch, tool_name=tool_name)
     try:
@@ -12098,7 +12830,9 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
             "src, at, time=[in,out] source seconds, duration, end, speed, volume, fade, box) "
             "and each clip's canvas source (item_id, node_id, label), plus probed media "
             "durations. Always call this before freezone_studio_edit_film and whenever an "
-            "edit reports a conflict. Read-only.",
+            "edit reports a conflict. The result also carries export, the state of the "
+            "node's latest export (running / completed / failed with the error / none). "
+            "Read-only.",
             {**_SCOPE_PROPS, **_STUDIO_NODE_PROP},
             ["node_id"],
             reject_unknown=True,
@@ -12109,13 +12843,15 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
         "freezone_studio_edit_film",
         _schema(
             "freezone_studio_edit_film",
-            "Compose workspace only: cut the open videoComposeNode's film through Studio with "
-            "clip-id operations (trim, move, reorder, split, remove, insert, fade, volume, "
-            "speed, track flags). Pass base_rev from the latest freezone_studio_get_film. The "
-            "person sees the change in the editor at once and can undo it. On "
-            "studio_edit_conflict re-read the film and rebuild the operations from the new "
-            "clip ids; on studio_edit_invalid fix the operations. Never use canvas commands "
-            "or draftTimeline to change the cut.",
+            "Compose workspace only: change the open videoComposeNode's film "
+            "through Studio with clip-id operations (trim, move, split, remove, insert, "
+            "fade, volume, speed, track flags, track order, stage size). Pass the rev "
+            "from the latest freezone_studio_get_film as "
+            "base_rev. The person sees the change in the editor at once and can undo it. On "
+            "studio_edit_conflict re-read the film and rebuild the operations from the "
+            "new clip ids; on studio_edit_invalid or tool_arguments_invalid fix the "
+            "operations as the result says instead of "
+            "sending the same call again. Never use canvas commands or draftTimeline to change the cut.",
             {
                 **_SCOPE_PROPS,
                 **_STUDIO_NODE_PROP,
@@ -12135,8 +12871,9 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
         _schema(
             "freezone_studio_import_media",
             "Compose workspace only: copy a canvas node's finished media (video, audio or "
-            "image) or a project media URL into the film's assets. Returns asset_path and the "
-            "probed duration; then insert it with freezone_studio_edit_film "
+            "image) or a project media URL into the film's assets. Returns asset_path, kind, "
+            "media (first entry includes probed duration), and source; then insert asset_path "
+            "with freezone_studio_edit_film "
             "({op:'insert', clip:{src: asset_path, at, time}}). Use source_node_id for "
             "canvas nodes; it does not create or change canvas nodes.",
             {
@@ -12165,11 +12902,16 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
             "video through Studio. Starts an asynchronous export task and returns job_id / "
             "task_key; the finished video is written to the compose node automatically. Call "
             "it once per export request, only when the user asks to export, render or "
-            "produce the final video; do not poll.",
+            "produce the final video; do not poll in a loop. To report the outcome later, "
+            "call freezone_studio_get_film and read export; a failed export carries the "
+            "error, and the user can export again.",
             {
                 **_SCOPE_PROPS,
                 **_STUDIO_NODE_PROP,
-                "fps": {"type": "integer", "minimum": 1, "maximum": 60},
+                "fps": {
+                    "type": "integer", "minimum": 1, "maximum": 60,
+                    "description": "Frames per second, 1-60. Defaults to the film's own.",
+                },
                 "title": {"type": "string", "description": "Optional title for the export."},
             },
             ["node_id"],
@@ -12181,6 +12923,33 @@ _STUDIO_TOOLS: tuple[tuple[str, dict[str, Any], Any], ...] = (
 
 
 TOOLS = (
+    (
+        "freezone_create_canvas",
+        _schema(
+            "freezone_create_canvas",
+            "Create a new empty canvas in the project for this chat. Pass its canvas_id explicitly "
+            "on later canvas tools; calls without canvas_id keep using the bound canvas. "
+            "Only available with the server canvas executor. Does not run any generation."
+            + _CREATE_CANVAS_HOST_GUIDANCE,
+            {
+                "name": {"type": "string", "minLength": 1, "maxLength": 100,
+                         "description": "Name of the new canvas."},
+                "project_id": _SCOPE_PROPS["project_id"],
+            },
+            ["name"], reject_unknown=True,
+        ),
+        _handle_create_canvas,
+    ),
+    (
+        "freezone_list_canvases",
+        _schema(
+            "freezone_list_canvases",
+            "List the project's canvases with who created them, whether this chat created them, "
+            "and the creation quota.",
+            {"project_id": _SCOPE_PROPS["project_id"]}, [], reject_unknown=True,
+        ),
+        _handle_list_canvases,
+    ),
     *_INTERACTIVE_STORY_TOOLS,
     *_STORY_CANVAS_TOOLS,
     (
@@ -12959,6 +13728,18 @@ TOOLS = (
         _handle_observe_workflow_run,
     ),
     (
+        "freezone_cancel_workflow_run",
+        _schema(
+            "freezone_cancel_workflow_run",
+            "Cancel a workflow run and its submitted generation. Use only when the user asks "
+            "to stop it. This tool never resubmits generation.",
+            {**_SCOPE_PROPS, "run_id": {"type": "string"}},
+            ["run_id"],
+            reject_unknown=True,
+        ),
+        _handle_cancel_workflow_run,
+    ),
+    (
         "freezone_get_workflow_capabilities",
         _schema(
             "freezone_get_workflow_capabilities",
@@ -12993,7 +13774,7 @@ TOOLS = (
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id"],
+            [*_WORKFLOW_RESULT_OPERATION_REQUIRED],
             reject_unknown=True,
             one_of_required=("intent", "plan"),
         ),
@@ -13060,7 +13841,7 @@ TOOLS = (
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id", "intent"],
+            [*_WORKFLOW_RESULT_OPERATION_REQUIRED, "intent"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_draft,
@@ -13176,7 +13957,7 @@ TOOLS = (
                     ),
                 },
             },
-            ["operation_id", "plan"],
+            [*_WORKFLOW_RESULT_OPERATION_REQUIRED, "plan"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_plan_draft,
@@ -13205,7 +13986,8 @@ TOOLS = (
         "freezone_emit_canvas_command",
         _schema(
             "freezone_emit_canvas_command",
-            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. When an existing node must be edited and then generated, use update_node_data + run_node_action in this one batch so generation reads the updated data without another model turn. Do not ask the user to click Generate after only creating or editing the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
+            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. When an existing node must be edited and then generated, use update_node_data + run_node_action in this one batch so generation reads the updated data without another model turn. Do not ask the user to click Generate after only creating or editing the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first."
+            + _EMIT_HOST_GUIDANCE,
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
                 "commands": {
@@ -13223,14 +14005,20 @@ TOOLS = (
         "freezone_confirm_canvas_action",
         _schema(
             "freezone_confirm_canvas_action",
-            "Confirm and apply a pending MCP canvas action after the user explicitly approves it in the Codex/Claude/OpenClaw chat. This is only for external MCP approval_required results; Hermes frontend approvals use their own bridge.",
+            (
+                "Confirm a pending canvas confirmation (delete nodes, clear canvas, or paid "
+                "generation) only after the user explicitly agreed in a later message of this "
+                "conversation. Never call it in the turn that requested the confirmation."
+            ),
             {
-                "approval_id": {
+                "project_id": {"type": "string"},
+                "canvas_id": {"type": "string"},
+                "confirmation_id": {
                     "type": "string",
-                    "description": "approval_id returned by a previous approval_required MCP canvas write.",
+                    "description": "confirmation_id returned by a pending canvas confirmation.",
                 },
             },
-            ["approval_id"],
+            ["confirmation_id"],
         ),
         _handle_confirm_canvas_action,
     ),
@@ -13238,14 +14026,16 @@ TOOLS = (
         "freezone_cancel_canvas_action",
         _schema(
             "freezone_cancel_canvas_action",
-            "Cancel a pending MCP canvas action when the user rejects or abandons the approval request.",
+            "Refuse a pending canvas confirmation when the user declines it. Nothing is executed.",
             {
-                "approval_id": {
+                "project_id": {"type": "string"},
+                "canvas_id": {"type": "string"},
+                "confirmation_id": {
                     "type": "string",
-                    "description": "approval_id returned by a previous approval_required MCP canvas write.",
+                    "description": "confirmation_id returned by a pending canvas confirmation.",
                 },
             },
-            ["approval_id"],
+            ["confirmation_id"],
         ),
         _handle_cancel_canvas_action,
     ),
@@ -13260,7 +14050,7 @@ TOOLS = (
                 "node_type": _NODE_TYPE_SCHEMA,
                 "data": {
                     "type": "object",
-                    "description": "Node data. Prefer stable fields such as prompt, title, content, text, displayName.",
+                    "description": "Node data. A textAnnotationNode needs displayName (node title; title is accepted as an alias) and content (body). Prefer stable fields such as prompt, text, displayName for other node types.",
                 },
                 "position": {
                     "type": "object",
@@ -13285,7 +14075,7 @@ TOOLS = (
                     "description": "Existing source canvas node id.",
                 },
                 "node_type": _NODE_TYPE_SCHEMA,
-                "data": {"type": "object", "description": "New node data."},
+                "data": _ADD_NEXT_NODE_DATA_SCHEMA,
                 "connect": {
                     "type": "boolean",
                     "description": "Whether to auto-connect source to the new node. Defaults to true.",

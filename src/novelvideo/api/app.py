@@ -70,8 +70,43 @@ async def _resume_director_auto_best_effort(application: FastAPI) -> None:
         application.state.director_auto_startup_error = ""
 
 
+def _start_codex_turn_sweeper(application: FastAPI) -> None:
+    from novelvideo.chat.service import _configured_chat_backend, run_codex_turn_sweeper
+
+    if _configured_chat_backend() == "codex":
+        application.state.codex_turn_sweeper = asyncio.create_task(
+            run_codex_turn_sweeper(), name="codex-turn-sweeper"
+        )
+
+
+async def _stop_codex_turn_sweeper(application: FastAPI) -> None:
+    sweeper = getattr(application.state, "codex_turn_sweeper", None)
+    if sweeper is not None:
+        sweeper.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweeper
+
+
+def _start_server_workflow_sweeper(application: FastAPI) -> None:
+    from novelvideo.freezone.server_workflow_index import run_server_workflow_sweeper
+
+    application.state.server_workflow_sweeper = asyncio.create_task(
+        run_server_workflow_sweeper(), name="server-workflow-sweeper",
+    )
+
+
+async def _stop_server_workflow_sweeper(application: FastAPI) -> None:
+    sweeper = getattr(application.state, "server_workflow_sweeper", None)
+    if sweeper is not None:
+        sweeper.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweeper
+
+
 def _request_body_limit(request: Request) -> int:
     content_type = request.headers.get("content-type", "").lower()
+    if request.url.path == "/api/v1/chat/uploads" and "multipart/form-data" in content_type:
+        return MAX_UPLOAD_REQUEST_BODY_BYTES
     if (
         request.url.path.startswith("/api/v1/projects/")
         and (
@@ -115,7 +150,19 @@ def _record_resource_request(resource_key: str) -> tuple[int, int]:
         return _RESOURCE_REQUEST_TOTAL, _RESOURCE_REQUEST_COUNTS[resource_key]
 
 
+async def _warm_canvas_core(pool) -> None:
+    from novelvideo.freezone.canvas_core_pool import CanvasCoreError
+
+    try:
+        await asyncio.to_thread(pool.warm)
+    except CanvasCoreError as exc:
+        logger.warning("canvas_core warm failed code=%s", exc.code)
+
+
 def create_app() -> FastAPI:
+    from novelvideo.freezone.agent_canvas_config import validate_agent_canvas_config
+
+    validate_agent_canvas_config()
     register_verification_routes()
 
     application = FastAPI(title="NovelVideo API", openapi_tags=OPENAPI_TAGS)
@@ -393,6 +440,22 @@ def create_app() -> FastAPI:
 
     @application.on_event("startup")
     async def startup() -> None:
+        from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
+        from novelvideo.freezone.canvas_core_pool import (
+            canvas_core_unavailable_reason,
+            get_canvas_core_pool,
+        )
+
+        reason = canvas_core_unavailable_reason()
+        if reason:
+            logger.warning(
+                "canvas_core unavailable: %s Canvas creation and server canvas commands "
+                "will fail until this is fixed.", reason,
+            )
+        if agent_canvas_executor() == "server":
+            pool = get_canvas_core_pool()
+            application.state.canvas_core_pool = pool
+            application.state.canvas_core_warm_task = asyncio.create_task(_warm_canvas_core(pool))
         try:
             from novelvideo.ports.registry import ensure_bootstrap, get_port
 
@@ -434,10 +497,20 @@ def create_app() -> FastAPI:
         application.state.workflow_event_loop_observer = asyncio.create_task(
             observe_workflow_event_loop(), name="workflow-event-loop-observer"
         )
+        _start_codex_turn_sweeper(application)
+        _start_server_workflow_sweeper(application)
 
     @application.on_event("shutdown")
     async def shutdown() -> None:
         from novelvideo.ports.registry import PortNotRegistered, get_port
+
+        await _stop_server_workflow_sweeper(application)
+        await _stop_codex_turn_sweeper(application)
+
+        pool = getattr(application.state, "canvas_core_pool", None)
+        if pool is not None:
+            await asyncio.to_thread(pool.close)
+            await application.state.canvas_core_warm_task
 
         observer = getattr(application.state, "workflow_event_loop_observer", None)
         if observer is not None:

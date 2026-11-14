@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { compileFreezoneRecipePrompt, generateFreezoneRecipeText } from '@/api/ops';
+import { compileFreezoneRecipePrompt, sendGenerationWireRequest } from '@/api/ops';
 import { CANVAS_NODE_TYPES } from '../domain/canvasNodes';
 import {
   compileWorkflowNodePrompt,
@@ -18,11 +18,12 @@ import {
 
 vi.mock('@/api/ops', () => ({
   compileFreezoneRecipePrompt: vi.fn(),
-  generateFreezoneRecipeText: vi.fn(),
+  sendGenerationWireRequest: vi.fn(),
+  RECIPE_MODEL_TIMEOUT_MS: 600000,
 }));
 
 const compileMock = vi.mocked(compileFreezoneRecipePrompt);
-const generateTextMock = vi.mocked(generateFreezoneRecipeText);
+const generateTextMock = vi.mocked(sendGenerationWireRequest);
 
 describe('workflowRecipeRuntime', () => {
   beforeEach(() => {
@@ -273,13 +274,16 @@ describe('workflowRecipeRuntime', () => {
   });
 
   it('keeps explicitly connected HTML text even when Recipe selects user assets', async () => {
-    generateTextMock.mockResolvedValue('<html></html>');
+    generateTextMock.mockResolvedValue({ content: '<html></html>' });
     await generateWorkflowText({nodeData: {workflowCatalog: {recipeId: 'page', inputStrategy: {type: 'user_assets'}}}, nodePrompt: 'Build', upstreamText: 'Manually connected copy', upstreamInputMode: 'connected'});
-    expect(generateTextMock).toHaveBeenCalledWith(expect.objectContaining({upstreamText: 'Manually connected copy'}));
+    expect(generateTextMock).toHaveBeenCalledWith({ method: 'POST', path: 'freezone/recipes/generate-text', body: {
+      recipe_id: 'page', recipe_version: '', skill_id: '', skill_version: '', confirmed_inputs: {},
+      node_kind: 'text', node_prompt: 'Build', user_goal: '', upstream_text: 'Manually connected copy', reference_media: [],
+    } }, { timeout: 600000 });
   });
 
   it('executes a catalog-backed text node', async () => {
-    generateTextMock.mockResolvedValue('# 电商方案');
+    generateTextMock.mockResolvedValue({ content: '# 电商方案' });
 
     const result = await generateWorkflowText({
       nodeData: {
@@ -294,13 +298,11 @@ describe('workflowRecipeRuntime', () => {
     });
 
     expect(result).toBe('# 电商方案');
-    expect(generateTextMock).toHaveBeenCalledWith({
-      recipeId: 'ecommerce-text-plan',
-      recipeVersion: '1',
-      nodePrompt: '咖啡机卖点',
-      upstreamText: '银色金属机身',
-      userGoal: '生成三屏详情页',
-    });
+    expect(generateTextMock).toHaveBeenCalledWith({ method: 'POST', path: 'freezone/recipes/generate-text', body: {
+      recipe_id: 'ecommerce-text-plan', recipe_version: '1', skill_id: '', skill_version: '',
+      confirmed_inputs: {}, node_kind: 'text', node_prompt: '咖啡机卖点',
+      upstream_text: '银色金属机身', user_goal: '生成三屏详情页', reference_media: [],
+    } }, { timeout: 600000 });
   });
 
   it('passes an ordered supplemental Recipe pipeline to the compiler', async () => {

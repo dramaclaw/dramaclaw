@@ -1,11 +1,10 @@
 import asyncio
 import hashlib
 import json
-import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -72,18 +71,11 @@ async def test_cancelled_canvas_turn_settles_pending_clarification(
         "clarification_id": "clarify-a",
         "questions": [{"id": "image_model", "options": []}],
     }
-    appended = []
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope = ChatScope(kind="project", id="project-a")
+    chat_store.append_ui_event("test-user", scope, "turn-a", event)
     resolved = []
 
-    async def list_messages(*_args, **_kwargs):
-        return [{"role": "user", "turn_id": "turn-a", "ui_events": [event]}]
-
-    async def append_event(_username, _scope, turn_id, persisted_event):
-        appended.append((turn_id, persisted_event))
-        return {}
-
-    monkeypatch.setattr(chat_store, "list_messages_async", list_messages)
-    monkeypatch.setattr(chat_store, "append_ui_event_async", append_event)
     monkeypatch.setattr(
         hermes_workspace,
         "ensure_user_hermes_workspace",
@@ -101,17 +93,17 @@ async def test_cancelled_canvas_turn_settles_pending_clarification(
     )
 
     await chat_service._cancel_pending_clarifications_for_turn(
-        username="admin",
-        store_scope=ChatScope(kind="project", id="project-a"),
+        username="test-user",
+        store_scope=scope,
         turn_id="turn-a",
         project_state_dir=tmp_path / "project",
         agent_profile="freezone:main",
     )
 
-    assert appended[0][0] == "turn-a"
-    assert appended[0][1]["submitted"] is True
-    assert appended[0][1]["cancelled"] is True
-    assert appended[0][1]["clarification_status"] == "cancelled"
+    events = (await chat_store.turn_ui_events_async("test-user", scope, ["turn-a"]))["turn-a"]
+    assert events[-1]["submitted"] is True
+    assert events[-1]["cancelled"] is True
+    assert events[-1]["clarification_status"] == "cancelled"
     assert resolved[0][0] == "bridge-a"
     assert resolved[0][1]["cancelled"] is True
     assert resolved[0][1]["message"] == "用户已取消本轮请求"
@@ -286,23 +278,6 @@ def test_completion_notice_appends_without_replacing_existing_reply():
 
     assert merged.startswith(existing)
     assert notice in merged
-
-
-def test_workflow_planning_reply_rejects_large_unmetered_text():
-    oversized = "正文" * 2_001
-
-    rejected = chat_service._bounded_workflow_planning_reply(
-        oversized,
-        draft_ready=True,
-    )
-
-    assert "已拒绝直接交付" in rejected
-    assert "text Recipe" in rejected
-    assert oversized not in rejected
-    assert (
-        chat_service._bounded_workflow_planning_reply(oversized, draft_ready=False)
-        == oversized
-    )
 
 
 def test_canvas_context_tool_result_infers_missing_status():
@@ -715,64 +690,6 @@ def test_backend_api_get_ignores_stale_legacy_supertale_url(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_append_chat_notification_persists_project_assistant_message(
-    monkeypatch, tmp_path
-):
-    seen = {}
-
-    async def fake_project_context(user, scope):
-        seen["scope"] = scope
-        return SimpleNamespace(
-            output_dir=tmp_path / "out", state_dir=tmp_path / "state"
-        )
-
-    def fake_add_assistant_message(
-        username,
-        project,
-        content,
-        media=None,
-        *,
-        project_dir=None,
-        project_state_dir=None,
-    ):
-        seen.update(
-            {
-                "username": username,
-                "project": project,
-                "content": content,
-                "project_dir": project_dir,
-                "project_state_dir": project_state_dir,
-            }
-        )
-        return {"id": "1", "role": "assistant", "content": content}
-
-    monkeypatch.setattr(chat_routes, "_project_context_for_scope", fake_project_context)
-    monkeypatch.setattr(
-        chat_routes.chat_service,
-        "add_assistant_message",
-        fake_add_assistant_message,
-    )
-
-    result = await chat_routes.append_chat_notification(
-        chat_routes.ChatNotificationIn(
-            scope=chat_routes.ChatScopePayload(kind="project", id="demo"),
-            text="  任务已完成。  ",
-        ),
-        user={"username": "alice"},
-    )
-
-    assert result == {
-        "ok": True,
-        "data": {"id": "1", "role": "assistant", "content": "任务已完成。"},
-    }
-    assert seen["username"] == "alice"
-    assert seen["project"] == "demo"
-    assert seen["content"] == "任务已完成。"
-    assert seen["project_dir"] == tmp_path / "out"
-    assert seen["project_state_dir"] == tmp_path / "state"
-
-
-@pytest.mark.anyio
 async def test_deterministic_stream_redacts_local_paths(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
@@ -965,13 +882,13 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(
     assert state_file.exists()
     home_state_file = tmp_path / "state" / "admin" / "codex_sessions.json"
     assert json.loads(home_state_file.read_text(encoding="utf-8")) == {
-        f'["main","home",null,"{chat_service._CODEX_THREAD_PROTOCOL_VERSION}"]': (
+        '["main","home",null,"session"]': (
             "codex-home-thread"
         ),
     }
-    for project, thread_id in (
-        ("project-a", "codex-thread-1"),
-        ("project-b", "codex-thread-2"),
+    for project, thread_id, key in (
+        ("project-a", "codex-thread-1", '["main","project","project-a","session"]'),
+        ("project-b", "codex-thread-2", '["main","project","project-b","session"]'),
     ):
         project_state_file = (
             tmp_path
@@ -983,8 +900,7 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(
             / "sessions.json"
         )
         assert json.loads(project_state_file.read_text(encoding="utf-8")) == {
-            f'["main","project","{project}",'
-            f'"{chat_service._CODEX_THREAD_PROTOCOL_VERSION}"]': thread_id,
+            key: thread_id,
         }
 
 
@@ -1044,22 +960,25 @@ def test_codex_freezone_threads_are_canvas_and_agent_scoped(monkeypatch, tmp_pat
         / "codex"
         / "sessions.json"
     )
-    protocol = chat_service._CODEX_FREEZONE_THREAD_PROTOCOL_VERSION
     assert json.loads(state_file.read_text(encoding="utf-8")) == {
-        f'["freezone:agent-1","project","project-a","canvas-a","{protocol}"]': (
+        '["freezone:agent-1","project","project-a","canvas-a","session"]': (
             "thread-canvas-a"
         ),
-        f'["freezone:agent-1","project","project-a","canvas-b","{protocol}"]': (
+        '["freezone:agent-1","project","project-a","canvas-b","session"]': (
             "thread-canvas-b"
         ),
-        f'["freezone:agent-2","project","project-a","canvas-a","{protocol}"]': (
+        '["freezone:agent-2","project","project-a","canvas-a","session"]': (
             "thread-agent-2"
         ),
     }
 
 
-def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("old_key", [
+    '["freezone:main","project","project-a","canvas-a"]',
+    '["freezone:main","project","project-a","canvas-a","canvas-workflows-v36"]',
+])
+def test_codex_freezone_does_not_resume_threads_under_old_keys(
+    monkeypatch, tmp_path, old_key
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     state_file = (
@@ -1073,9 +992,7 @@ def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
     )
     state_file.parent.mkdir(parents=True)
     state_file.write_text(
-        json.dumps(
-            {'["freezone:main","project","project-a","canvas-a"]': ("legacy-thread")}
-        ),
+        json.dumps({old_key: "legacy-thread"}),
         encoding="utf-8",
     )
 
@@ -1090,24 +1007,26 @@ def test_codex_freezone_protocol_upgrade_does_not_resume_legacy_thread(
     )
 
 
-def test_codex_main_thread_key_is_discovery_protocol_scoped():
-    protocol = chat_service._CODEX_THREAD_PROTOCOL_VERSION
+def test_codex_main_thread_key_has_no_protocol_version():
     assert chat_service._codex_scope_key("project-a") == (
-        f'["main","project","project-a","{protocol}"]'
+        '["main","project","project-a","session"]'
     )
     assert (
         chat_service._codex_scope_key("project-a", canvas_id="ignored-canvas")
-        == f'["main","project","project-a","{protocol}"]'
+        == '["main","project","project-a","session"]'
     )
-    assert chat_service._codex_scope_key("") == f'["main","home",null,"{protocol}"]'
+    assert chat_service._codex_scope_key("") == '["main","home",null,"session"]'
+    assert not hasattr(chat_service, "_CODEX_THREAD_PROTOCOL_VERSION")
+    assert not hasattr(chat_service, "_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION")
 
 
 @pytest.mark.parametrize("old_key", [
     "project:project-a",
     '["main","project","project-a","tool-discovery-v2"]',
     '["main","project","project-a","tool-discovery-v3"]',
+    '["main","project","project-a","tool-discovery-v4"]',
 ])
-def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
+def test_codex_main_does_not_resume_threads_under_old_keys(
     monkeypatch, tmp_path, old_key
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
@@ -1126,6 +1045,18 @@ def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
     )
 
     assert chat_service._get_codex_thread_id("admin", "project-a") is None
+
+
+def test_codex_freezone_resumes_thread_in_same_scope(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    chat_service._set_codex_thread_id(
+        "admin", "project-a", "thread-1",
+        agent_profile="freezone:main", canvas_id="canvas-a",
+    )
+
+    assert chat_service._get_codex_thread_id(
+        "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
+    ) == "thread-1"
 
 
 @pytest.mark.anyio
@@ -1148,6 +1079,9 @@ async def test_codex_canvas_archive_removes_only_matching_scope(monkeypatch, tmp
             {
                 canvas_a: "thread-a",
                 canvas_a_agent_2: "thread-agent-2",
+                '["freezone:main","project","project-a","canvas-a",'
+                '"canvas-workflows-v36"]': "thread-old-versioned",
+                '["freezone:main","project","project-a","canvas-a"]': "thread-old-plain",
                 canvas_b: "thread-b",
                 mainline: "thread-mainline",
             }
@@ -1168,10 +1102,12 @@ async def test_codex_canvas_archive_removes_only_matching_scope(monkeypatch, tmp
         "admin", "project-a", "canvas-a", project_state_dir=project_state
     )
 
-    assert count == 2
+    assert count == 4
     assert calls == [
         ("archive", "thread-a", None),
         ("archive", "thread-agent-2", None),
+        ("archive", "thread-old-plain", None),
+        ("archive", "thread-old-versioned", None),
     ]
     assert json.loads(sessions.read_text(encoding="utf-8")) == {
         canvas_b: "thread-b",
@@ -1293,6 +1229,15 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
                 raw={"runtime": "codex", "method": "turn/plan/updated"},
             )
             yield SimpleNamespace(
+                type="item_started",
+                item={"type": "reasoning", "id": "r-1", "summary": []},
+                started_at_ms=1,
+            )
+            yield SimpleNamespace(
+                type="item_delta", item_id="r-1", name="reasoning",
+                text="Checking projects", summary_index=0,
+            )
+            yield SimpleNamespace(
                 type="thought_delta",
                 text="Checking projects",
                 name="reasoning_summary",
@@ -1300,6 +1245,10 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
                     "runtime": "codex",
                     "method": "item/reasoning/summaryTextDelta",
                 },
+            )
+            yield SimpleNamespace(
+                type="item_completed",
+                item={"type": "reasoning", "id": "r-1", "summary": ["Checking projects"]},
             )
             yield SimpleNamespace(
                 type="tool_started",
@@ -1377,300 +1326,192 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert captured["tool_mode"] == tool_mode
     assert captured["canvas_id"] == expected_canvas
     assert captured["turn_id"] == "business-turn"
-    assert history_sentinel not in str(captured["prompt"])
+    assert captured["prompt"] == "hello"
+    assert captured["client_user_message_id"] == "business-turn"
+    for key in ("prompt", "turn_context", "execution_context"):
+        assert history_sentinel not in captured[key]
+    assert "[USER_MESSAGE]" not in captured["turn_context"]
+    protocol = chat_service._codex_protocol_text(tool_mode)
     assert not Path(captured["agent_token_file"]).exists()
     assert revoked == ["agent-token"]
     if tool_mode == "freezone_canvas":
-        assert "Do not rerun generation" in captured["prompt"]
-        assert "[FREEZONE_CANVAS_ASSISTANT]" in captured["prompt"]
-        assert "[FREEZONE_CANVAS_CONTEXT]" in captured["prompt"]
-        assert "canvas_id: canvas-a" in captured["prompt"]
-        assert "generation_parameter_round: business-turn" in captured["prompt"]
-        assert "Historical clarification answers" in captured["prompt"]
-        assert "they never count as confirmation for this round" in captured["prompt"]
-        assert "references/custom-topology.md" in captured["prompt"]
-        assert (
-            "Do not use freezone_emit_canvas_command for a workflow"
-            in captured["prompt"]
-        )
-        developer_instructions = chat_service._codex_developer_instructions(tool_mode)
-        assert "scope-filtered concrete operations" in developer_instructions
-        assert "call the selected tool directly" in developer_instructions
-        assert "custom-topology reference" in developer_instructions
-        assert "top-level schema_version plus skill.id and skill.version" in developer_instructions
-        assert "Never invent, abbreviate, or reconstruct an operation_id" in developer_instructions
-        assert "reserved input/resource/asset stages" in developer_instructions
-        assert "business totals belong in the compact Intent" in developer_instructions
+        for text in (
+            "Do not rerun generation",
+            "[FREEZONE_CANVAS_CONTEXT]",
+            "canvas_id: canvas-a",
+            "generation_parameter_round: business-turn",
+            "Historical clarification answers",
+            "they never count as confirmation for this round",
+        ):
+            assert text in captured["turn_context"]
+        for text in (
+            "[FREEZONE_CANVAS_ASSISTANT]",
+            "references/custom-topology.md",
+            "Do not use freezone_emit_canvas_command for a workflow",
+        ):
+            assert text in protocol
+            assert text not in captured["turn_context"]
+        assert "scope-filtered concrete operations" in protocol
+        assert "call the selected tool directly" in protocol
+        assert "custom-topology reference" in protocol
+        assert "top-level schema_version plus skill.id and skill.version" in protocol
+        assert "Never invent, abbreviate, or reconstruct an operation_id" in protocol
+        assert "reserved input/resource/asset stages" in protocol
+        assert "business totals belong in the compact Intent" in protocol
         assert (
             "explicitly enumerates canvas nodes and a dependency graph"
-            in developer_instructions
+            in protocol
         )
-        assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
+        assert "freezone_prepare_workflow_plan_draft once" in protocol
         assert (
             "dependency_for only controls execution order and never consumes source output"
-            in developer_instructions
+            in protocol
         )
-        assert "must not use dependency_for" in developer_instructions
-        assert "expected_node_count" in developer_instructions
-        assert "placeholder graph such as A/B" in developer_instructions
-        assert "a user selection cannot authorize that bypass" in developer_instructions
-        assert "short-drama production Skill" in developer_instructions
-        assert "not a Workflow catalog skill_id" in developer_instructions
+        assert "must not use dependency_for" in protocol
+        assert "expected_node_count" in protocol
+        assert "placeholder graph such as A/B" in protocol
+        assert "a user selection cannot authorize that bypass" in protocol
+        assert "short-drama production Skill" in protocol
+        assert "not a Workflow catalog skill_id" in protocol
         assert (
             "never pass dramaclaw-workflows to workflow_skill_get"
-            in developer_instructions
+            in protocol
         )
-        assert "call freezone_request_user_clarification once" in developer_instructions
-        assert "never include questions in the same call" in developer_instructions
-        assert "applies only to image and video for now" in developer_instructions
-        assert "run_after_create=true" in developer_instructions
+        assert "call freezone_request_user_clarification once" in protocol
+        assert "never include questions in the same call" in protocol
+        assert "applies only to image and video for now" in protocol
+        assert "run_after_create=true" in protocol
         assert "Workflows bound to story targets must explicitly pass run_after_create" in (
-            developer_instructions
+            protocol
         )
         assert "A terse confirmation such as 可以 or 确认 inherits" in (
-            developer_instructions
+            protocol
         )
-        assert "video_generation_mode" in developer_instructions
-        assert "omit generation_media_types" in developer_instructions
+        assert "video_generation_mode" in protocol
+        assert "omit generation_media_types" in protocol
     else:
+        assert "[DRAMACLAW_MAINLINE_SCOPE]" in protocol
+        assert "[FREEZONE_CANVAS_ASSISTANT]" not in protocol
+        assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["turn_context"]
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
-        assert "scope-filtered concrete MCP tools" in (
-            chat_service._codex_developer_instructions(tool_mode)
-        )
+        assert "scope-filtered concrete MCP tools" in protocol
     expected_events = [
         "thread_started",
         "turn_started",
         "plan_update",
-        "thought_delta",
+        "item",
+        "item_delta",
+        "item",
         "tool_started",
         "usage_update",
         "turn_completed",
         "done",
     ]
-    if tool_mode == "freezone_canvas":
-        expected_events.insert(-1, "assistant_delta")
     assert [event["type"] for event in events] == expected_events
     assert events[2] == {
         "type": "plan_update",
         "text": "Inspect the project",
         "entries": [{"step": "List projects", "status": "inProgress"}],
     }
-    assert events[3] == {
-        "type": "thought_delta",
+    assert events[4] == {
+        "type": "item_delta",
+        "message_id": "assistant:codex-turn",
+        "item_id": "r-1",
+        "kind": "reasoning",
+        "offset": 0,
         "text": "Checking projects",
-        "source": "reasoning_summary",
     }
-    assert events[4]["name"] == "dramaclaw.list_projects"
-    assert events[4]["result_json"] is None
-    assert events[5] == {
+    assert events[6]["name"] == "dramaclaw.list_projects"
+    assert events[6]["result_json"] is None
+    assert events[7] == {
         "type": "usage_update",
         "usage": {"last": {"inputTokens": 10}},
     }
     assert all("raw" not in event for event in events)
     assert all("method" not in event for event in events)
-    assert events[-1]["type"] == "done"
+    assert events[-1] == {"type": "done", "message": None}
 
 
-def test_codex_freezone_write_request_detection_ignores_injected_context_and_questions():
-    assert chat_service._freezone_canvas_write_requested("创建一个图片节点") is True
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "创建一个图片节点\n[SUPERTALE_CANVAS_ROUTING] canvas edits"
-        )
-        is True
-    )
-    assert chat_service._freezone_canvas_write_requested("怎么创建图片节点？") is False
-    assert chat_service._freezone_canvas_write_requested(
-        "请核实角色参考图和场景参考图是否已经生成。只读检查，不生成或修改。"
-    ) is False
-    assert chat_service._freezone_canvas_write_requested(
-        "请检查图片是否生成。只分析，不生成或修改任何内容。"
-    ) is False
-    assert chat_service._freezone_canvas_write_requested(
-        "先只分析场景，然后生成一个图片节点"
-    ) is True
-    assert chat_service._freezone_canvas_write_requested("角色参考图是否已经生成？") is False
-    assert chat_service._freezone_canvas_write_requested("查看场景图有没有生成成功") is False
-    assert chat_service._freezone_canvas_write_requested("图片是否已生成？没有的话生成一张图片") is True
-    assert (
-        chat_service._freezone_canvas_write_requested("能否帮我创建一个短视频工作流？")
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested("可不可以创建一个图片节点？")
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested("你们是否支持创建图片节点？")
-        is False
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "生成下这个\n[SUPERTALE_CANVAS_NODE_REFERENCES] node_id: image-a"
-        )
-        is True
-    )
-    assert chat_service._freezone_canvas_write_requested("清空一下") is True
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "你好\n[SUPERTALE_CANVAS_ROUTING] For canvas edits, use Freezone tools"
-        )
-        is False
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "不要移动节点，只给我布局建议"
-        )
-        is False
-    )
-    assert chat_service._freezone_canvas_write_requested("生成一张图片") is True
-    assert (
-        chat_service._freezone_canvas_write_requested("生成一张赛博朋克风格的图片")
-        is True
-    )
-    assert chat_service._freezone_canvas_write_requested("生成一段视频") is True
-    assert (
-        chat_service._freezone_canvas_write_requested("做一个女总裁复仇短视频") is True
-    )
-    assert chat_service._freezone_canvas_write_requested("生成一个视频脚本") is False
-    assert (
-        chat_service._freezone_canvas_write_requested("generate a video script")
-        is False
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested("create an image prompt") is False
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested("生成这个工作流的文案") is False
-    )
-    assert chat_service._freezone_canvas_write_requested("生成一张带文案的图片") is True
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "create an image from this prompt"
-        )
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "Create an image showing a sunset"
-        )
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "Generate a video showing our product"
-        )
-        is True
-    )
-    assert (
-        chat_service._freezone_canvas_write_requested("根据这个提示词生成视频") is True
-    )
-    assert chat_service._freezone_canvas_write_requested("用这段描述生成一张图") is True
-    assert (
-        chat_service._freezone_canvas_write_requested(
-            "请生成本集完整剧本。输出 20—25 个视觉 Beat，并描述旧图片与视频质感。"
-        )
-        is False
+@pytest.mark.anyio
+@pytest.mark.parametrize("script_upload_guidance", [False, True])
+async def test_codex_stream_separates_execution_context(
+    monkeypatch, tmp_path, script_upload_guidance
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    captured = {}
+
+    class FakeThread:
+        async def stream(self, prompt):
+            captured["prompt"] = prompt
+            yield SimpleNamespace(type="complete", thread_id=None, text="ok")
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, _token):
+            pass
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    def fake_build_thread(*_args, **kwargs):
+        captured.update(kwargs)
+        return FakeThread()
+
+    async def on_event(_event):
+        pass
+
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", fake_create_token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    await chat_service._stream_assistant_reply_codex(
+        "viewer", "project-a", "hello\n[CANVAS_REFS]\nnode-1\n[/CANVAS_REFS]", on_event,
+        route_prompt="hello",
+        **({"script_upload_guidance": True} if script_upload_guidance else {}),
     )
 
+    assert captured["prompt"] == "hello"
+    assert captured["execution_context"] == "[CANVAS_REFS]\nnode-1\n[/CANVAS_REFS]"
+    assert "[DRAMACLAW_EXECUTION_CONTEXT]" not in captured["turn_context"]
+    assert (
+        chat_service._DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS.strip()
+        in captured["turn_context"]
+    ) is script_upload_guidance
 
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("prompt", "expected"),
+    ("backend", "prompt", "guidance"),
     [
-        ("创建图片转黑白线稿 Skill，先展示草稿，确认后保存，暂不运行", False),
-        ("帮我生成一个图片转黑白线稿 Skill", False),
-        ("修改这个 Skill，添加画幅选项，保存但不要创建画布节点", False),
-        ("创建一个工作流 Skill", False),
-        ("创建图片转线稿 Skill，然后用它生成一张图片", True),
-        ("保存 Skill 后运行工作流", True),
-        ("创建 Skill 并添加到画布", True),
-        ("创建一个 Skill，然后删除画布上的旧节点", True),
-        ("创建一个 Skill，同时更新画布节点", True),
-        ("创建一个 Skill，然后清空画布", True),
-        ("创建一个 Skill，再连接画布上的两个节点", True),
-        ("创建一个 Skill，并创建一个文本节点", True),
-        ("创建一个 Skill，不用确认，直接添加到画布", True),
-        ("创建一个 Skill，不要废话，直接运行它", True),
-        ("创建一个 Skill，但不删除画布节点", False),
-        ("创建一个 Skill，不修改画布", False),
-        ("创建一个 Skill，但不要使用它", False),
-        ("创建一个 Skill，暂时不用这个 Skill", False),
-        ("创建一个用于清空画布的 Skill", False),
-        ("创建一个删除画布旧节点的 Skill", False),
-        ("创建一个 Skill，用于更新画布节点", False),
-        ("创建一个 Skill，然后生成一份使用说明", False),
-        ("创建一个 Skill，保存后创建一份说明文档", False),
-        ("创建一个 Skill，然后让它生成一张图片", True),
-        ("创建一个 Skill，然后由它生成一张图片", True),
-        ("创建一个 Skill，然后让这个 Skill 生成一张图片", True),
-        ("创建一个会使用图片清理 Skill 的 Skill", False),
-        ("创建一个设计为使用现有 Skill 的 Skill", False),
-        ("用刚保存的 Skill 生成图片", True),
-        ("Create an image cleanup Skill, but do not run it", False),
-        ("Create a Skill and then run it", True),
-        ("Create a Skill, then delete the old canvas node", True),
-        ("Create a Skill and update a canvas node", True),
-        ("Create a Skill, then clear the canvas", True),
-        ("Create a Skill, but do not delete the old canvas node", False),
-        ("Create a Skill, without confirmation, add it to canvas", True),
-        ("Create a Skill, but not delete the canvas node", False),
-        ("Create a Skill, but do not use it", False),
-        ("Create a Skill for clearing the canvas", False),
-        ("Create a Skill that deletes canvas nodes", False),
-        ("Create a Skill to clear the canvas", False),
-        ("Create a Skill capable of clearing canvas nodes", False),
-        ("Create a Skill that can clear canvas nodes", False),
-        ("Create a Skill which can update the canvas", False),
-        ("Create a Skill designed to clear the canvas", False),
-        ("Create a Skill built to update canvas nodes", False),
-        ("Create a Skill designed to use the image cleanup Skill", False),
-        ("Create a Skill that can use another Skill", False),
-        ("Create a Skill able to use another Skill", False),
-        ("Create a Skill, then write its documentation", False),
-        ("Create a Skill, then generate an image with it", True),
-        ("Create a Skill, then have it generate an image", True),
-        ("Create a Skill, then let it generate an image", True),
-        ("Create a Skill, then generate an image using it", True),
-        ("Create a Skill, then generate an image with this Skill", True),
-        ("Create a Skill, then ask it to generate an image", True),
+        ("codex", "帮我写一个赛博朋克短剧剧本", True),
+        ("codex", "hello", False),
+        ("hermes", "帮我写一个赛博朋克短剧剧本", True),
     ],
 )
-def test_codex_freezone_write_request_separates_skill_authoring_from_runtime(
-    prompt,
-    expected,
+async def test_script_creation_dispatch_preserves_backend_prompt(
+    monkeypatch, tmp_path, backend, prompt, guidance
 ):
-    assert chat_service._freezone_canvas_write_requested(prompt) is expected
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(chat_service, "_chat_backend", lambda: backend)
+    captured = {}
 
+    async def fake_stream(_username, _project, prompt, _on_event, **kwargs):
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return {"role": "assistant", "content": "ok"}
 
-def test_codex_freezone_write_receipt_accepts_durable_browser_result():
-    event = SimpleNamespace(
-        name="freezone_confirm_workflow_draft",
-        status="completed",
-        error=None,
-        structured={
-            "ok": True,
-            "applied": True,
-            "canvas_apply_status": "applied",
-            "bridge_key": "bridge-a",
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-        },
-        output=None,
-    )
+    async def on_event(_event):
+        pass
 
-    assert chat_service._codex_freezone_write_result_succeeded(event) is True
+    monkeypatch.setattr(chat_service, f"_stream_assistant_reply_{backend}", fake_stream)
+    await chat_service.stream_assistant_reply("viewer", "project-a", prompt, on_event)
 
-
-def test_codex_freezone_write_receipt_rejects_counts_without_durable_identity():
-    event = SimpleNamespace(
-        name="freezone_confirm_workflow_draft",
-        status="completed",
-        error=None,
-        structured={"ok": True, "created_node_count": 3, "status": "completed"},
-        output=None,
-    )
-
-    assert chat_service._codex_freezone_write_result_succeeded(event) is False
+    if backend == "codex":
+        assert captured["prompt"] == prompt
+        assert captured["script_upload_guidance"] is guidance
+    else:
+        assert captured["prompt"] == chat_service._script_creation_model_reply_prompt(prompt)
 
 
 def test_codex_freezone_instructions_forbid_invented_resource_uris():
@@ -1890,18 +1731,22 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
         surface_context={"freezone_canvas_id": "canvas-a", "nodes": [story_node]},
     )
 
-    if blocked:
-        assert result["content"].startswith("阶段确认未写入")
-    elif chat_service._freezone_canvas_write_requested(prompt):
-        # A requested canvas write that ends without a receipt keeps the canvas
-        # write guard; it is still not a stage-confirmation block.
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith(reply_text)
-    else:
-        assert result["content"] == reply_text
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
+    with chat_store.connect("admin", scope) as conn:
+        rows = conn.execute("SELECT role, content, turn_id FROM chat_messages").fetchall()
+    assert [tuple(row) for row in rows] == (
+        [("system", chat_service._stage_confirmation_not_written_message(prompt), "business-turn")]
+        if blocked else []
+    )
     assert [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [result["content"]]
+        event["card"] for event in events
+        if event["type"] == "item" and event["card"] is not None
+        and event["card"]["type"] == "text"
+    ] == [
+        {"id": "m-1", "type": "text", "text": ""},
+        {"id": "m-1", "type": "text", "text": reply_text},
+    ]
     thread_id = chat_service._get_codex_thread_id(
         "admin",
         "project-a",
@@ -1909,7 +1754,28 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
         canvas_id="canvas-a",
         project_state_dir=state_dir,
     )
-    assert thread_id == (None if blocked else "codex-thread")
+    assert thread_id == "codex-thread"
+
+
+def test_codex_scope_thread_reset_is_removed():
+    from novelvideo.chat import session_registry
+
+    assert not hasattr(chat_service, "reset_codex_scope_thread")
+    assert not hasattr(session_registry, "reset_codex_scope_thread")
+
+
+def test_codex_skill_locator_says_workflow_server_cannot_read_skill_files(tmp_path):
+    workspace = tmp_path / "workspace"
+    skill = workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# Workflow skill\n", encoding="utf-8")
+
+    instructions = chat_service._codex_agent_skill_locator_instructions(workspace)
+
+    assert instructions.endswith(
+        "workflow_catalog_server is only for Workflow Catalog discovery and compilation. "
+        "It reads only dramaclaw-workflow:// URIs and cannot read file:// Agent Skill files. "
+    )
 
 
 def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
@@ -1958,12 +1824,32 @@ def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
         authorization=None,
         agent_profile="freezone:main",
         tool_mode="freezone_canvas",
+        turn_context="TURN",
+        execution_context="PAGE",
+        client_user_message_id="turn-1",
     )
 
+    assert (
+        captured["developer_instructions"]
+        == chat_service._CODEX_SESSION_DEVELOPER_INSTRUCTIONS
+    )
+    protocol_entries = [
+        entry for key, entry in captured["additional_context"].items()
+        if key.startswith("dramaclaw-protocol")
+    ]
+    assert protocol_entries
+    assert all(entry["kind"] == "application" for entry in protocol_entries)
+    assert captured["additional_context"]["dramaclaw-turn"] == {
+        "value": "TURN", "kind": "application",
+    }
+    assert captured["additional_context"]["dramaclaw-execution-context"] == {
+        "value": "PAGE", "kind": "untrusted",
+    }
+    assert captured["client_user_message_id"] == "turn-1"
     match = re.search(
         r"\[DRAMACLAW_AGENT_SKILL_LOCATORS\]\n(.*?)\n"
         r"\[/DRAMACLAW_AGENT_SKILL_LOCATORS\]",
-        captured["developer_instructions"],
+        "".join(entry["value"] for entry in protocol_entries),
         re.DOTALL,
     )
     assert thread == "new-thread"
@@ -2110,6 +1996,23 @@ def test_codex_exact_audio_planner_has_no_canvas_tools_and_uses_plan_schema(
         == chat_service._CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS
     )
     assert captured["output_schema"] == chat_service._CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
+    assert captured.get("additional_context") is None
+    assert captured.get("client_user_message_id") is None
+
+
+def test_clarification_without_interface_is_not_retried_or_moved():
+    skill = (
+        Path(chat_service.__file__).resolve().parents[1]
+        / "agent_skills"
+        / "dramaclaw-workflows"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    for instructions in (
+        chat_service._codex_developer_instructions("freezone_canvas"),
+        chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS,
+        skill,
+    ):
+        assert "clarification_ui_unavailable" in instructions
 
 
 def test_named_recipe_distinguishes_existing_output_from_external_media_input():
@@ -2139,67 +2042,6 @@ def test_explicit_standalone_node_edit_does_not_trigger_recipe_generation():
         assert "edit fields on one existing standalone node without generating" in instructions
         assert "freezone_update_node_data" in instructions
         assert "do not call freezone_run_node_action" in instructions
-
-
-def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
-    event = SimpleNamespace(
-        name="dramaclaw.freezone_confirm_workflow_draft",
-        output={
-            "content": [
-                {
-                    "type": "text",
-                    "text": json.dumps(
-                        {
-                            "ok": False,
-                            "status": "invalid_command_schema",
-                            "error": (
-                                "commands[0] create_node requires "
-                                "textAnnotationNode content in data"
-                            ),
-                        }
-                    ),
-                }
-            ]
-        },
-        structured=None,
-        error=None,
-    )
-
-    assert chat_service._codex_freezone_write_result_error(event) == (
-        "commands[0] create_node requires textAnnotationNode content in data"
-    )
-
-
-@pytest.mark.parametrize("container", ["structured", "structuredContent", "text"])
-@pytest.mark.parametrize(
-    "outcome", ["answered", "failed", "cancelled", "submitted", "transport_error"]
-)
-def test_codex_clarification_requires_successful_answer(container, outcome):
-    payload = {"ok": True, "clarification_status": "answered", "action": "submit"}
-    if outcome == "failed":
-        payload["ok"] = False
-    elif outcome == "cancelled":
-        payload["clarification_status"] = "cancelled"
-    elif outcome == "submitted":
-        payload.pop("clarification_status")
-    event = SimpleNamespace(
-        name="dramaclaw.freezone_request_user_clarification",
-        status="completed",
-        error="connection lost" if outcome == "transport_error" else None,
-        structured=payload if container == "structured" else None,
-        output=(
-            {"structuredContent": payload}
-            if container == "structuredContent"
-            else (
-                {"content": [{"type": "text", "text": json.dumps(payload)}]}
-                if container == "text"
-                else None
-            )
-        ),
-    )
-    assert chat_service._codex_freezone_clarification_answered(event) is (
-        outcome == "answered"
-    )
 
 
 @pytest.mark.anyio
@@ -2270,7 +2112,7 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "draft_confirm_policy_unverified_retry",
     ],
 )
-async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
+async def test_codex_freezone_tool_outcomes_do_not_store_assistant_reply(
     monkeypatch,
     tmp_path,
     tool_outcome,
@@ -3283,567 +3125,35 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         route_prompt=request_prompt,
     )
 
-    assistant_deltas = [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ]
-    if tool_outcome in {"success", "preflight_retry"}:
-        assert result["content"] == "好的，已创建一个图片节点。"
-        assert assistant_deltas == ["好的，已创建一个图片节点。"]
-    elif tool_outcome == "video_preflight_retry":
-        assert result["content"] == "已提交视频生成任务。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "video_preflight_other_failure":
-        assert result["content"] == "画布操作未完成：另一个节点未保存"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"single_run_retry", "workflow_run_retry"}:
-        assert result["content"] == "已提交生成任务。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"draft_confirm_retry", "draft_confirm_policy_retry"}:
-        assert result["content"] == "工作流已提交创建。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {
-        "draft_confirm_policy_only_patch",
-        "draft_confirm_policy_skip_patch",
-        "draft_confirm_policy_unverified_retry",
-    }:
-        # The guard rejection stays a failure unless a confirming receipt of the
-        # same draft verifiably applied the requested run_after_create: no
-        # receipt at all, a receipt that kept the old policy (patch skipped), or
-        # a receipt that does not report the policy. The user sees the localized
-        # message rather than the agent hint.
-        assert result["content"] == "画布操作未完成：工作流草稿的执行方式需要先更新草稿再确认。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {
-        "preflight_only", "preflight_other_success", "single_run_only_update",
-        "draft_confirm_other_success", "draft_confirm_only_patch",
-    }:
-        assert result["content"] == (
-            "画布操作未完成：image/video generation parameters "
-            "require user clarification"
-        )
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "failure":
-        assert result["content"] == "画布操作未完成：文本节点缺少 content 字段"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "missing":
-        # #862 trade-off: the prompt is not recognised as a canvas write request
-        # and no tool ran, so the host has no evidence to contradict the reply
-        # and delivers it as written. Prompt intent detection
-        # (_freezone_canvas_write_requested) is the only guard left for
-        # zero-write turns; the model's self-declared mode no longer exists.
-        assert result["content"] == "好的，已创建一个图片节点。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"draft_ready", "plan_draft_ready", "generic_draft_ready"}:
-        assert result["content"] == (
-            "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
-        )
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "patched_draft_ready":
-        assert result["content"] == (
-            "工作流草稿已更新，等待你重新确认后创建画布节点；尚未执行生成。"
-        )
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome.startswith("draft_then_"):
-        assert result["content"].startswith("画布操作未完成：")
-        assert "等待你" not in result["content"]
-        if tool_outcome == "draft_then_failed_write":
-            assert "draft revision conflict" in result["content"]
-    elif tool_outcome == "clarification_answered":
-        assert result["content"] == "参数已确认，尚未执行画布操作。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "skill_saved":
-        assert result["content"] == (
-            "图片转黑白线稿 Skill 已保存，当前没有运行或写入画布。"
-        )
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "read_only":
-        assert result["content"] == "建议保持当前节点位置，先检查配置。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "false_read_only":
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith("generate_audio。")
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "mixed":
-        assert result["content"] == "画布操作未完成：第二个节点未保存"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "wrong_scope":
-        assert "成功画布写入回执" in result["content"]
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {"story_retry", "story_create_missing_id_retry"}:
-        assert result["content"] == "互动故事已更新。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_wrong_retry":
-        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_conflict_retry":
-        assert result["content"] == "互动故事已更新。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_conflict_chain_retry":
-        assert result["content"] == "互动故事已更新。"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_conflict_changed_payload":
-        assert result["content"] == "画布操作未完成：Conflict"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome in {
-        "story_validate_after_create",
-        "outline_conflict_retry",
-        "outline_missing_id_retry",
-        "outline_missing_id_duplicate",
-        "story_validation_save_kind",
-        "story_validation_save_kind_generated_id",
-        "story_validation_save_kind_default_version",
-        "story_validation_confirm_missing_id",
-    }:
-        assert result["content"] == "互动故事已更新。"
-    elif tool_outcome in {
-        "outline_missing_id_changed_content",
-        "outline_missing_id_wrong_scope",
-        "outline_missing_id_wrong_project",
-        "outline_missing_id_wrong_tool",
-        "outline_missing_id_wrong_receipt",
-        "outline_missing_id_handler_failure",
-        "outline_missing_id_different_rejection",
-        "outline_missing_id_wrong_phase",
-        "story_validation_save_kind_wrong_generated_id",
-        "story_validation_save_kind_default_version_changed_title",
-        "story_validation_unreported_change",
-        "story_validation_incomplete_diagnostic",
-    }:
-        assert result["content"].startswith("画布操作未完成：")
-    elif tool_outcome == "outline_missing_id_other_failure":
-        assert result["content"] == "画布操作未完成：another_failure"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_conflict_wrong_retry":
-        assert result["content"] == "画布操作未完成：canvas revision conflict"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "unstructured_proposal":
-        # Markdown is a valid reply shape; only the missing write is reported.
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith("## 互动广告方案\n先展示口香糖，再让用户选择。")
-        # No format rejection, so the thread is kept.
-        assert chat_service._get_codex_thread_id(
-            "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
-            project_state_dir=tmp_path / "state" / "admin" / "project-a",
-        ) == "codex-thread"
-        assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "unstructured_json_proposal":
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith("视频按九段规划。")
-        assert "canvas_receipts" not in result["content"]
-        assert assistant_deltas == [result["content"]]
-    else:
-        # "blocked": the model explains why nothing was written; the host still
-        # leads with the verified outcome because a write was requested.
-        assert result["content"].startswith("画布操作未完成：本轮没有可验证的画布写入回执")
-        assert result["content"].endswith("未能创建工作流：找不到匹配的 Workflow Skill。")
-        assert assistant_deltas == [result["content"]]
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
+    assert await chat_store.history_contents_async("admin", scope, "assistant", limit=10) == []
+    assert chat_service._get_codex_thread_id(
+        "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+    ) == "codex-thread"
     assert revoked == ["agent-token"]
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "scenario",
-    [
-        "argument_retry",
-        "argument_retry_dropped_command",
-        "argument_only",
-        "handler_failure_retry",
-        "argument_retry_duplicate_dropped",
-        "argument_retry_other_draft",
-        "argument_retry_other_move_target",
-        "argument_retry_other_html_artifact",
-        "argument_retry_other_projection",
-        "argument_retry_move_corrected",
-        "argument_retry_draft_revision_corrected",
-        "argument_retry_other_draft_revision",
-        "argument_retry_other_html_version",
-        "argument_retry_non_ascii_revision",
-        "argument_retry_huge_revision",
-        "argument_retry_projection_episode_corrected",
-        "argument_retry_reordered_batch",
-        "argument_retry_with_extra_command",
-        "argument_retry_same_target_moves_reordered",
-        "argument_retry_correction_plus_data_change",
-        "argument_retry_unreported_field_dropped",
-        "argument_retry_open_data_integer_changed",
-    ],
-)
-async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
-    monkeypatch,
-    tmp_path,
-    scenario,
-):
-    """#686: a schema-rejected write retried successfully is not a failed turn.
-
-    Only the exact rejected call, minus the fields the MCP server reported as
-    unexpected and with numeric strings coerced in integer fields, supersedes
-    the rejection. Any other difference keeps the turn failed.
-    """
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
-    events = []
-
-    async def fake_authorize(**_kwargs):
-        return None
-
-    async def fake_create_token(*_args, **_kwargs):
-        return "agent-token"
-
-    class FakeAuthPort:
-        async def revoke_agent_session(self, token):
-            return None
-
-    commands = [
-        {
-            "type": "add_next_node",
-            "source_node_id": "upload-a",
-            "client_id": "watercolor",
-            "node_type": "imageGenNode",
-            "data": {"prompt": "水彩风格"},
-        },
-        {
-            "type": "run_node_action",
-            "node_id": "watercolor",
-            "action": "generate_image",
-        },
-    ]
-    rejected_commands = [dict(command) for command in commands]
-    rejected_commands[0]["position"] = {"x": 640, "y": 120}
-    if scenario == "handler_failure_retry":
-        rejected_commands = commands
-        rejection = {"ok": False, "error": "源节点不存在"}
-    else:
-        # Shape of dramaclaw_mcp._mcp_error_result for an input-schema failure.
-        rejection = {
-            "ok": False,
-            "error": "tool_arguments_invalid",
-            "tool_name": "freezone_emit_canvas_command",
-            "message": "{...} is not valid under any of the given schemas",
-            "path": "commands[0]",
-            "status": "tool_arguments_invalid",
-            "phase": "tool_validation",
-            "retryable": False,
-        }
-    retry_commands = (
-        commands[:1] if scenario == "argument_retry_dropped_command" else commands
-    )
-    tool = "freezone_emit_canvas_command"
-    rejected_input = {
-        "project_id": "project-a",
-        "canvas_id": "canvas-a",
-        "commands": rejected_commands,
-    }
-    retry_input = {
-        "project_id": "project-a",
-        "canvas_id": "canvas-a",
-        "commands": retry_commands,
-    }
-    if scenario == "argument_retry_duplicate_dropped":
-        # Two identical anonymous creates must not collapse into one identity.
-        note = {"type": "create_node", "node_type": "textAnnotationNode"}
-        rejected_input["commands"] = [
-            {**note, "data": {"text": "甲"}, "bogus": 1},
-            {**note, "data": {"text": "乙"}},
-        ]
-        retry_input["commands"] = [{**note, "data": {"text": "甲"}}]
-    elif scenario in {
-        "argument_retry_draft_revision_corrected",
-        "argument_retry_other_draft_revision",
-    }:
-        # A numeric-string revision is a schema error; retrying it as the same
-        # integer is the correction, a different revision is another version.
-        tool = "freezone_confirm_workflow_draft"
-        rejected_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "draft_id": "draft-a",
-            "revision": "1",
-        }
-        retry_input = {
-            **rejected_input,
-            "revision": (
-                1 if scenario == "argument_retry_draft_revision_corrected" else 2
-            ),
-        }
-    elif scenario in {
-        "argument_retry_non_ascii_revision",
-        "argument_retry_huge_revision",
-    }:
-        # "²".isdigit() is true but int("²") raises, and int() refuses strings
-        # beyond its digit limit; the turn must still fail cleanly.
-        tool = "freezone_confirm_workflow_draft"
-        rejected_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "draft_id": "draft-a",
-            "revision": (
-                "²" if scenario == "argument_retry_non_ascii_revision" else "9" * 5000
-            ),
-        }
-        retry_input = {**rejected_input, "revision": 2}
-    elif scenario == "argument_retry_same_target_moves_reordered":
-        # Both commands target node-a; only their coordinates and order differ.
-        first = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
-        second = {"type": "move_nodes", "positions": {"node-a": {"x": 20, "y": 20}}}
-        rejected_input["commands"] = [{**first, "bogus": 1}, second]
-        retry_input["commands"] = [second, first]
-    elif scenario == "argument_retry_correction_plus_data_change":
-        retry_input["commands"] = [
-            {**commands[0], "data": {"prompt": "油画风格"}},
-            commands[1],
-        ]
-    elif scenario in {
-        "argument_retry_reordered_batch",
-        "argument_retry_with_extra_command",
-    }:
-        # Commands run in array order: set (10,10) then shift +5 gives (15,10),
-        # the reverse gives (10,10). Neither reordering nor an extra command is
-        # a provable correction.
-        absolute = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
-        relative = {"type": "move_nodes", "deltas": {"node-a": {"x": 5, "y": 0}}}
-        rejected_input["commands"] = [{**absolute, "bogus": 1}, relative]
-        retry_input["commands"] = (
-            [relative, absolute]
-            if scenario == "argument_retry_reordered_batch"
-            else [absolute, {"type": "select_nodes", "node_ids": ["node-a"]}, relative]
-        )
-    elif scenario == "argument_retry_projection_episode_corrected":
-        # The single-step tool declares episode an integer; a batch command's
-        # request is an open object where "1" is never rejected at all.
-        tool = "freezone_open_mainline_projection"
-        rejected_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "scope": "episode",
-            "episode": "1",
-        }
-        retry_input = {**rejected_input, "episode": 1}
-    elif scenario == "argument_retry_open_data_integer_changed":
-        # data is open: the server reports only bogus, so changing the type of
-        # data.episode is a different node, not a correction.
-        beat_context = {
-            "type": "create_node",
-            "node_type": "beatContextNode",
-            "data": {"projectId": "project-a", "episode": "1", "beat": 1},
-        }
-        rejected_input["commands"] = [{**beat_context, "bogus": 1}]
-        retry_input["commands"] = [
-            {**beat_context, "data": {**beat_context["data"], "episode": 1}}
-        ]
-    elif scenario == "argument_retry_other_html_version":
-        restore = {"type": "html_artifact", "action": "restore", "artifact_id": "a"}
-        rejected_input["commands"] = [{**restore, "version": 1, "bogus": 1}]
-        retry_input["commands"] = [{**restore, "version": 2}]
-    elif scenario == "argument_retry_other_draft":
-        # Confirming draft B says nothing about the rejected draft A.
-        tool = "freezone_confirm_workflow_draft"
-        rejected_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "draft_id": "draft-a",
-            "revision": "1",
-        }
-        retry_input = {
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
-            "draft_id": "draft-b",
-            "revision": 1,
-        }
-    elif scenario in {
-        "argument_retry_other_move_target",
-        "argument_retry_other_html_artifact",
-        "argument_retry_other_projection",
-        "argument_retry_move_corrected",
-    }:
-        # The target lives in a map key, artifact_id, or a nested request
-        # rather than a plain id field; another target must not match.
-        rejected_command, retry_command = {
-            "argument_retry_other_move_target": (
-                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
-                {"type": "move_nodes", "positions": {"node-b": {"x": 1, "y": 2}}},
-            ),
-            "argument_retry_other_html_artifact": (
-                {"type": "html_artifact", "action": "update", "artifact_id": "a"},
-                {"type": "html_artifact", "action": "update", "artifact_id": "b"},
-            ),
-            "argument_retry_move_corrected": (
-                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
-                {"type": "move_nodes", "positions": {"node-a": {"x": 9, "y": 8}}},
-            ),
-            "argument_retry_other_projection": (
-                {
-                    "type": "open_mainline_projection",
-                    "request": {"scope": "beat", "episode": 1, "beat": 1},
-                },
-                {
-                    "type": "open_mainline_projection",
-                    "request": {"scope": "beat", "episode": 1, "beat": 2},
-                },
-            ),
-        }[scenario]
-        rejected_input["commands"] = [{**rejected_command, "bogus": 1}]
-        retry_input["commands"] = [retry_command]
-    if tool != "freezone_emit_canvas_command":
-        rejection = {**rejection, "tool_name": tool}
-    if rejection.get("error") == "tool_arguments_invalid" and (
-        scenario != "argument_retry_unreported_field_dropped"
-    ):
-        # What dramaclaw_mcp._unexpected_argument_fields reports for these inputs.
-        unexpected = [
-            {"path": ["commands", index], "fields": fields}
-            for index, command in enumerate(rejected_input.get("commands") or [])
-            if (
-                fields := [
-                    field
-                    for field in sorted(command)
-                    if field == "bogus"
-                    or (field == "position" and command["type"] == "add_next_node")
-                ]
-            )
-        ]
-        if unexpected:
-            rejection = {**rejection, "unexpected_fields": unexpected}
-        # Top-level fields these tools' schemas declare integer; nested open
-        # objects (node data, batch requests) declare nothing.
-        integer_strings = [
-            [field]
-            for field in ("revision", "episode", "beat")
-            if isinstance(rejected_input.get(field), str)
-            and re.fullmatch(r"-?[0-9]+", rejected_input[field], re.ASCII)
-        ]
-        if integer_strings:
-            rejection = {**rejection, "integer_string_fields": integer_strings}
-
-    class FakeThread:
-        async def stream(self, _prompt):
-            yield SimpleNamespace(
-                type="thread_started",
-                thread_id="codex-thread",
-                turn_id="codex-turn",
-            )
-            yield SimpleNamespace(
-                type="tool_updated",
-                text=f"[mcp:failed] dramaclaw.{tool}",
-                name=f"dramaclaw.{tool}",
-                call_id="call-rejected",
-                status="failed",
-                input=rejected_input,
-                output={
-                    "content": [{"type": "text", "text": json.dumps(rejection)}]
-                },
-                structured=rejection,
-                error=None,
-            )
-            receipts = []
-            if scenario != "argument_only":
-                receipts.append({"bridge_key": "bridge-retry", "revision": None})
-                yield SimpleNamespace(
-                    type="tool_updated",
-                    text=f"[mcp:completed] dramaclaw.{tool}",
-                    name=f"dramaclaw.{tool}",
-                    call_id="call-retry",
-                    status="completed",
-                    input=retry_input,
-                    output=None,
-                    structured={
-                        "ok": True,
-                        "canvas_apply_status": "accepted",
-                        "applied": True,
-                        "errors": [],
-                        "bridge_key": "bridge-retry",
-                        "project_id": "project-a",
-                        "canvas_id": "canvas-a",
-                    },
-                    error=None,
-                )
-            yield SimpleNamespace(
-                type="assistant_delta",
-                text=json.dumps(
-                    {
-                        "message": "已创建水彩风格图片节点并提交生成。",
-                        "mode": "mutation",
-                        "canvas_receipts": receipts,
-                    }
-                ),
-            )
-            yield SimpleNamespace(type="complete", thread_id="codex-thread", text="")
-
-    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
-    monkeypatch.setattr(
-        chat_service, "_create_page_agent_session_token", fake_create_token
-    )
-    monkeypatch.setattr(
-        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
-    )
-    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
-    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
-
-    async def collect_event(event):
-        events.append(event)
-
-    scope = ChatScope(
-        kind="project",
-        id="project-a",
-        surface="freezone",
-        canvas_id="canvas-a",
-        agent_id="main",
-        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
-    )
-    result = await chat_service._stream_assistant_reply_codex(
-        "admin",
-        "project-a",
-        "把选中的图片转成水彩风格",
-        collect_event,
-        project_state_dir=tmp_path / "state" / "admin" / "project-a",
-        tool_mode="freezone_canvas",
-        surface_context={"freezone_canvas_id": "canvas-a"},
-        store_scope=scope,
-        turn_id="business-turn",
-        route_prompt="把选中的图片转成水彩风格",
-    )
-
-    if scenario in {
-        "argument_retry",
-        "argument_retry_draft_revision_corrected",
-        "argument_retry_projection_episode_corrected",
-    }:
-        assert result["content"] == "已创建水彩风格图片节点并提交生成。"
-    elif scenario == "handler_failure_retry":
-        # Only a pre-handler schema rejection is side-effect free; a business
-        # failure from the handler keeps the turn failed.
-        assert result["content"] == "画布操作未完成：源节点不存在"
-    else:
-        # No retry, or a retry that differs beyond the provable corrections:
-        # dropped, added or reordered commands, other targets, coordinates or
-        # data, or a field the server never reported as unexpected.
-        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
-    assistant_deltas = [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ]
-    assert assistant_deltas == [result["content"]]
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "disposition,runtime_text,expected",
+    "disposition,runtime_text",
     [
         (
             "timeout",
             "Codex App Server 响应超时，请重试。",
-            "Codex App Server 响应超时，请重试。",
         ),
-        ("cancelled", '{"mode":"mutation","text":"已创建成功', "已取消本轮请求。"),
+        ("cancelled", '{"mode":"mutation","text":"已创建成功'),
         (
             "cancelled",
             '{"mode":"mutation","text":"已创建成功","canvas_receipts":[]}',
-            "已取消本轮请求。",
         ),
-        ("cancelled", "", "已取消本轮请求。"),
+        ("cancelled", ""),
     ],
 )
 @pytest.mark.parametrize("notification", ["egress_disposition", "turn_completed"])
-async def test_codex_freezone_interruption_discards_unvalidated_output(
-    monkeypatch, tmp_path, disposition, runtime_text, expected, notification
+async def test_codex_freezone_interruption_preserves_stream_and_records_notice(
+    monkeypatch, tmp_path, disposition, runtime_text, notification
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     events = []
@@ -3864,6 +3174,12 @@ async def test_codex_freezone_interruption_discards_unvalidated_output(
                 type="thread_started",
                 thread_id="codex-thread",
                 turn_id="codex-turn",
+            )
+            yield backend_sdk.ChatBackendEvent(
+                type="item_started", item={"type": "agentMessage", "id": "m-1", "text": ""},
+            )
+            yield backend_sdk.ChatBackendEvent(
+                type="item_delta", item_id="m-1", name="text", text=runtime_text,
             )
             yield SimpleNamespace(type="assistant_delta", text=runtime_text)
             yield SimpleNamespace(
@@ -3915,15 +3231,16 @@ async def test_codex_freezone_interruption_discards_unvalidated_output(
         route_prompt="创建一个图片工作流",
     )
 
-    assert result["content"] == expected
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
     assert [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [expected]
-    from novelvideo.chat.store import chat_store
-
-    assert await chat_store.history_contents_async(
-        "admin", scope, "assistant", limit=10
-    ) == [expected]
+        event["text"] for event in events if event["type"] == "item_delta"
+    ] == ([runtime_text] if runtime_text else [])
+    with chat_store.connect("admin", scope) as conn:
+        rows = conn.execute("SELECT role, content, turn_id FROM chat_messages").fetchall()
+    assert [tuple(row) for row in rows] == (
+        [("system", "已取消本轮请求。", "business-turn")] if disposition == "cancelled" else []
+    )
 
 
 @pytest.mark.asyncio
@@ -3934,7 +3251,6 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
     project_state = tmp_path / "state" / "admin" / "project-a"
     runtime_root = tmp_path / "runtime"
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(runtime_root))
-    captured: dict[str, Path] = {}
     revoked: list[str] = []
     finished: list[str] = []
 
@@ -3952,11 +3268,8 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
     async def fake_create_token(*_args, **_kwargs):
         return "agent-token"
 
-    def fake_build_thread(*_args, **kwargs):
-        token_file = Path(kwargs["agent_token_file"])
-        assert token_file.read_text(encoding="utf-8") == "agent-token"
-        captured["token_file"] = token_file
-        return SimpleNamespace()
+    def fake_build_thread(*_args, **_kwargs):
+        pytest.fail("prompt failure must happen before building a thread")
 
     def fail_prompt(*_args, **_kwargs):
         raise RuntimeError("prompt construction failed")
@@ -3973,7 +3286,7 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
         fake_create_token,
     )
     monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
-    monkeypatch.setattr(chat_service, "_prompt_with_user_context", fail_prompt)
+    monkeypatch.setattr(chat_service, "_user_context_parts", fail_prompt)
     monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
     monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
 
@@ -3990,13 +3303,111 @@ async def test_codex_prompt_construction_failure_cleans_turn_credentials(
             turn_id="business-turn",
         )
 
-    assert not captured["token_file"].exists()
     assert revoked == ["agent-token"]
     assert finished == ["failed"]
     token_root = runtime_root / "codex" / "turn_tokens"
     assert list(token_root.iterdir()) == []
     assert token_root.stat().st_mode & 0o777 == 0o700
     assert not (project_state / "agents" / "codex" / "turn_tokens").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_kind", ["cancel_after_start", "cancel_before_start", "complete"])
+async def test_codex_turn_credentials_follow_turn_lifetime(monkeypatch, tmp_path, exit_kind):
+    from novelvideo.chat.backend_sdk import ChatBackendEvent
+
+    state_root = tmp_path / "state"
+    monkeypatch.setattr(chat_service, "time", SimpleNamespace(time=lambda: 1234.5))
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    started = asyncio.Event()
+    revoked = []
+    dispositions = []
+    token_files = []
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
+
+    class FakeTurnOperation:
+        async def finish(self, disposition):
+            dispositions.append(disposition)
+
+    async def authorize(**kwargs):
+        return SimpleNamespace()
+
+    async def create_token(*args, **kwargs):
+        return "agent-token"
+
+    class FakeThread:
+        async def stream(self, prompt):
+            if exit_kind == "cancel_before_start":
+                started.set()
+                await asyncio.Future()
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="thread-lifetime", turn_id="turn-lifetime"
+            )
+            started.set()
+            if exit_kind == "cancel_after_start":
+                await asyncio.Future()
+            yield ChatBackendEvent(type="complete", text="Done")
+
+    def build_thread(*args, **kwargs):
+        token_files.append(Path(kwargs["agent_token_file"]))
+        return FakeThread()
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", authorize)
+    monkeypatch.setattr(
+        chat_service, "_turn_operation_finalizer", lambda authorization: FakeTurnOperation()
+    )
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", create_token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", build_thread)
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kwargs: None)
+
+    async def on_event(event):
+        pass
+
+    task = asyncio.create_task(
+        chat_service.stream_assistant_reply(
+            "test-user",
+            "project-a",
+            "hello",
+            on_event,
+            backend="codex",
+            project_state_dir=state_root / "test-user" / "project-a",
+            turn_id="business-lifetime",
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    if exit_kind != "complete":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+    else:
+        await asyncio.wait_for(task, timeout=2)
+
+    active_path = state_root / "test-user" / "active_codex_turns.json"
+    active = json.loads(active_path.read_text()) if active_path.exists() else {}
+    if exit_kind == "cancel_after_start":
+        entry = active['["main","project","project-a","session"]']
+        assert entry == {
+            "thread_id": "thread-lifetime", "turn_id": "turn-lifetime",
+            "business_turn_id": "business-lifetime", "lock_key": "active_chat_run",
+            "started_at": 1234.5, "token_file": str(token_files[0]),
+            "store_scope": {"kind": "project", "id": "project-a"},
+            "store_state_dir": None,
+            "project_state_dir": str(state_root / "test-user" / "project-a"),
+            "agent_profile": "main", "structured_canvas_reply": False,
+        }
+        assert token_files[0].read_text() == "agent-token"
+        assert revoked == []
+        assert dispositions == ["detached"]
+    else:
+        assert active == {}
+        assert token_files[0].exists() is False
+        assert revoked == ["agent-token"]
+        assert dispositions == (["completed"] if exit_kind == "complete" else ["failed"])
 
 
 @pytest.mark.asyncio
@@ -4279,10 +3690,10 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_AGENT_TOKEN_FILE",
         "DRAMACLAW_CANVAS_ID",
         "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
+        "DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS",
         "DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS",
         "DRAMACLAW_CHAT_SURFACE",
         "DRAMACLAW_EXTERNAL_MCP",
-        "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
         "DRAMACLAW_AGENT_PROFILE",
         "DRAMACLAW_PROJECT_ID",
         "DRAMACLAW_ROOT",
@@ -4346,12 +3757,15 @@ def test_freezone_existing_execution_uses_focused_mcp_tools():
 
     assert set(servers) == {"dramaclaw"}
     assert servers["dramaclaw"]["enabled_tools"] == [
+        "freezone_cancel_canvas_action",
+        "freezone_confirm_canvas_action",
         "freezone_confirm_workflow_draft",
         "freezone_get_canvas_ontology",
         "freezone_get_node_action_catalog",
         "freezone_get_node_detail",
         "freezone_get_workflow",
         "freezone_observe_workflow_run",
+        "freezone_cancel_workflow_run",
         "freezone_request_user_clarification",
         "freezone_run_node_action",
         "freezone_run_workflow",
@@ -4462,7 +3876,7 @@ def test_exact_audio_action_restores_target_subject_omitted_by_planner():
 
 
 @pytest.mark.anyio
-async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
+async def test_codex_exact_audio_plan_requests_confirmation(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
@@ -4491,6 +3905,15 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
                 turn_id="codex-turn",
             )
             yield SimpleNamespace(
+                type="item_started",
+                item={"type": "reasoning", "id": "audio-plan", "summary": []},
+                started_at_ms=1,
+            )
+            yield SimpleNamespace(
+                type="item_delta", item_id="audio-plan", name="reasoning",
+                text="Planning audio", summary_index=0,
+            )
+            yield SimpleNamespace(
                 type="assistant_delta",
                 text=json.dumps(
                     {
@@ -4517,13 +3940,8 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
     async def fake_dispatch(**kwargs):
         dispatched.append(kwargs)
         return {
-            "ok": True,
-            "tool_call_status": "completed",
-            "canvas_apply_status": "accepted",
-            "applied": True,
-            "bridge_key": "bridge-audio",
-            "project_id": "project-a",
-            "canvas_id": "canvas-a",
+            "ok": True, "status": "confirmation_required",
+            "confirmation_id": "cc_" + "0" * 32, "kinds": ["paid_generation"],
         }
 
     def fake_build_thread(*_args, **kwargs):
@@ -4536,7 +3954,7 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
     )
     monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
     monkeypatch.setattr(
-        chat_service, "_dispatch_exact_audio_node_action", fake_dispatch
+        chat_service, "_request_exact_audio_confirmation", fake_dispatch, raising=False
     )
     monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
     monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
@@ -4613,104 +4031,84 @@ async def test_codex_exact_audio_plan_is_dispatched_as_one_protected_batch(
             },
         }
     ]
-    assert result["content"] == "已更新现有音频节点，并提交 generate_audio。"
-    assert [event["text"] for event in events if event["type"] == "assistant_delta"] == [
-        result["content"]
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
+    with chat_store.connect("admin", scope) as conn:
+        rows = conn.execute("SELECT role, content, turn_id FROM chat_messages").fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("system", "音频生成需要你确认后才会提交 generate_audio，确认后会消耗积分。"
+         "请在确认卡片上确认，或在对话里回复确认（确认编号 cc_00000000000000000000000000000000）。",
+         "business-turn"),
     ]
+    assert [e for e in events if e["type"] in {"item", "item_delta", "assistant_delta"}] == []
 
 
 @pytest.mark.anyio
-async def test_exact_audio_dispatch_publishes_once_and_waits_for_same_receipt(
-    monkeypatch, tmp_path
-):
-    from novelvideo.chat import hermes_pool, hermes_workspace
-    from novelvideo.freezone import canvas_command_bridge
-
-    published = []
-    waited = []
-    bridge_dir = tmp_path / "bridge"
+@pytest.mark.parametrize("node_id", ["rcp05-music-result", "missing"])
+async def test_exact_audio_requests_confirmation_without_bridge(monkeypatch, tmp_path, node_id):
+    from novelvideo.chat import hermes_workspace
+    from novelvideo.freezone import canvas_store
+    from novelvideo.freezone.canvas_confirmations import confirmations_dir, read_confirmation
+    from novelvideo.freezone.canvas_command_bridge import list_pending_bridge_messages
 
     monkeypatch.setattr(
-        hermes_workspace,
-        "ensure_user_hermes_workspace",
+        hermes_workspace, "ensure_user_hermes_workspace",
         lambda *_args, **_kwargs: tmp_path / "hermes-home",
     )
-    monkeypatch.setattr(
-        hermes_pool,
-        "canvas_bridge_dir_for_profile",
-        lambda _home, _profile: bridge_dir,
+    state_dir = tmp_path / "state"
+    canvas_store.save_canvas(state_dir, "canvas-a", base_revision=None, build_payload=lambda _: {
+        "project_id": "project-a", "revision": 1, "edges": [], "nodes": [{
+            "id": "rcp05-music-result", "type": "audioNode",
+            "data": {"label": "红杯展示背景音乐"}, "position": {"x": 0, "y": 0},
+        }],
+    })
+    result = await chat_service._request_exact_audio_confirmation(
+        username="admin", project="project-a", canvas_id="canvas-a",
+        agent_profile="freezone:main", turn_id="turn-a", project_state_dir=state_dir,
+        node_id=node_id, action="generate_audio",
+        node_data={"text": "红杯展示，木琴和轻柔鼓点，纯器乐。", "audioKind": "music",
+                   "forceInstrumental": True},
     )
-    monkeypatch.setattr(
-        canvas_command_bridge,
-        "canvas_command_bridge_key",
-        lambda **_kwargs: "bridge-audio",
-    )
-
-    def fake_put(**kwargs):
-        published.append(kwargs)
-        return None
-
-    def fake_wait(key, timeout_seconds, **kwargs):
-        waited.append((key, timeout_seconds, kwargs))
-        return {
-            "ok": True,
-            "tool_call_status": "completed",
-            "canvas_apply_status": "accepted",
-            "applied": True,
-            "bridge_key": key,
+    directory = confirmations_dir("admin", "main", state_dir)
+    if node_id == "missing":
+        assert result == {
+            "ok": False, "message": "音频节点无法进入确认（targets_missing），未提交画布操作。",
         }
-
-    monkeypatch.setattr(canvas_command_bridge, "put_pending_canvas_command", fake_put)
-    monkeypatch.setattr(canvas_command_bridge, "wait_canvas_command_result", fake_wait)
-
-    result = await chat_service._dispatch_exact_audio_node_action(
-        username="admin",
-        project="project-a",
-        canvas_id="canvas-a",
-        agent_profile="freezone:main",
-        turn_id="turn-a",
-        project_state_dir=tmp_path / "state",
-        node_id="rcp05-music-result",
-        action="generate_audio",
-        node_data={
-            "text": "红杯展示，木琴和轻柔鼓点，纯器乐。",
-            "audioKind": "music",
-            "forceInstrumental": True,
-        },
-    )
-
-    commands = [
-        {
-            "type": "update_node_data",
-            "node_id": "rcp05-music-result",
-            "data": {
-                "text": "红杯展示，木琴和轻柔鼓点，纯器乐。",
-                "audioKind": "music",
+        assert list(directory.glob("cc_*.json")) == []
+    else:
+        assert result == {
+            "ok": True, "status": "confirmation_required",
+            "confirmation_id": result["confirmation_id"], "kinds": ["paid_generation"],
+        }
+        stored = read_confirmation(directory, result["confirmation_id"])
+        assert stored["status"] == "pending"
+        assert stored["turn_id"] == "turn-a"
+        assert stored["commands"] == [
+            {"type": "update_node_data", "node_id": "rcp05-music-result", "data": {
+                "text": "红杯展示，木琴和轻柔鼓点，纯器乐。", "audioKind": "music",
                 "forceInstrumental": True,
-            },
-        },
-        {
-            "type": "run_node_action",
-            "node_id": "rcp05-music-result",
-            "action": "generate_audio",
-        },
-    ]
-    assert len(published) == 1
-    assert published[0]["commands"] == commands
-    assert published[0]["envelope"] == {
-        "schema_version": "canvas_chat_commands.v1",
-        "project_id": "project-a",
-        "canvas_id": "canvas-a",
-        "commands": commands,
-        "agent_id": "main",
-        "external_mcp_command": True,
-        "turn_id": "turn-a",
-    }
-    assert published[0]["bridge_dir"] == bridge_dir
-    assert len(waited) == 1
-    assert waited[0][0] == "bridge-audio"
-    assert waited[0][2]["bridge_dir"] == bridge_dir
-    assert result["bridge_key"] == "bridge-audio"
+            }},
+            {"type": "run_node_action", "node_id": "rcp05-music-result",
+             "action": "generate_audio"},
+        ]
+        assert stored["targets"] == [{
+            "node_id": "rcp05-music-result", "title": "红杯展示背景音乐",
+            "node_type": "audioNode", "action": "generate_audio",
+        }]
+    assert list_pending_bridge_messages(
+        project_id="project-a", canvas_id="canvas-a", kinds={"canvas_command"},
+        bridge_dir=directory.parent,
+    ) == []
+    assert list(directory.parent.glob("*.pending.json")) == []
+
+
+@pytest.mark.anyio
+async def test_exact_audio_confirmation_requires_project_canvas():
+    assert await chat_service._request_exact_audio_confirmation(
+        username="admin", project="project-a", canvas_id="canvas-a",
+        agent_profile="freezone:main", turn_id="turn-a", project_state_dir=None,
+        node_id="rcp05-music-result", action="generate_audio", node_data={},
+    ) == {"ok": False, "message": "音频节点执行需要项目画布，未提交画布操作。"}
 
 
 def test_freezone_non_execution_request_keeps_full_mcp_servers():
@@ -4721,6 +4119,66 @@ def test_freezone_non_execution_request_keeps_full_mcp_servers():
 
     assert "enabled_tools" not in servers["dramaclaw"]
     assert "dramaclaw_workflows" in servers
+
+
+@pytest.mark.parametrize("prompt", [
+    "在「K4秋日画布」画布上新建一个图片生成节点，提示词：一片金黄的银杏叶。用最低画质、最小分辨率、只生成1张。然后运行这个节点生成图片。不要改动其他画布。",
+    "请分两步做。第一步：在「K4秋日画布」画布上新建一个图片生成节点，提示词：一片金黄的银杏叶，用最低画质、最小分辨率、只生成1张。第二步：用第一步创建结果里返回的真实节点 id 运行这个节点生成图片——不要自己编造节点 id。不要改动其他画布。",
+    "在当前画布上新建一个图片生成节点，然后运行这个节点。",
+    "在当前画布添加一个音频节点并执行该节点。",
+    "新建一张画布，在上面放一个图片节点，然后运行这个节点。",
+    "在当前画布加一个视频节点，接着运行这个节点。",
+    "创建一个文生图工作流，然后执行这个工作流。",
+    "Create a new image node beside the selected node, then run it.",
+    "Add an image generation node to the current workflow and run the current workflow.",
+    "Create a new workflow from the selected node and execute the workflow.",
+    "分别新建两个图片节点，然后运行这个节点。",
+    "在当前画布分别添加一个图片节点和一个视频节点，然后执行这个工作流。",
+    "要不加一个图片节点，然后运行这个节点。",
+    "不要新建画布，在当前画布放一个图片节点然后运行这个节点。",
+])
+def test_freezone_create_then_run_request_keeps_full_mcp_servers(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert chat_service._freezone_existing_execution_requested(prompt) is False
+    assert "enabled_tools" not in servers["dramaclaw"]
+    assert "dramaclaw_workflows" in servers
+
+
+@pytest.mark.parametrize("prompt", [
+    "在「K4秋日画布」画布上放一个图片生成节点并运行它，提示词：一片金黄的银杏叶，用最低画质、最小分辨率、只生成1张。不要改动其他画布。",
+    "在「K4秋日画布」画布上新建一个图片生成节点，提示词：一片金黄的银杏叶。不要运行，不要改动其他画布。",
+    "列出画布，然后新建一张叫 K4秋日画布 的画布，在上面放一个文本节点",
+    "在新画布上放一个图片生成节点并运行它",
+])
+def test_freezone_create_requests_without_existing_target_stay_unfocused(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert chat_service._freezone_existing_execution_requested(prompt) is False
+    assert "enabled_tools" not in servers["dramaclaw"]
+    assert "dramaclaw_workflows" in servers
+
+
+@pytest.mark.parametrize("prompt", [
+    "执行这个现有节点。",
+    "运行这个节点。",
+    "运行刚才新建的这个图片节点。",
+    "执行已经创建好的现有工作流。",
+    "不要新建节点，直接运行当前选中的图片节点。",
+    "别新建节点，直接运行当前选中的图片节点。",
+    "给这个节点加个提示词然后运行这个节点。",
+    "Run the existing node that was created yesterday.",
+    "Execute the selected node and do not add a new node.",
+    "Run the selected node; don't create a new node.",
+])
+def test_freezone_run_existing_request_stays_focused_despite_creation_words(prompt):
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas", prompt=prompt)
+
+    assert chat_service._freezone_existing_execution_requested(prompt) is True
+    assert set(servers) == {"dramaclaw"}
+    assert servers["dramaclaw"]["enabled_tools"] == list(
+        chat_service._CODEX_FREEZONE_EXECUTION_TOOLS
+    )
 
 
 def test_freezone_execution_instruction_forbids_progress_reply_before_tool():
@@ -4749,7 +4207,8 @@ def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
     assert chat_service._load_api_url() == "http://127.0.0.1:8780"
 
 
-def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
+def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "75")
     overrides = chat_service._codex_mcp_config_overrides(
         chat_service._dramaclaw_mcp_servers()
     )
@@ -4763,15 +4222,16 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         'mcp_servers.dramaclaw.env_vars=["DRAMACLAW_API_URL",'
         '"DRAMACLAW_AGENT_TOKEN_FILE","DRAMACLAW_CANVAS_ID",'
         '"DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",'
+        '"DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS",'
         '"DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS","DRAMACLAW_CHAT_SURFACE",'
         '"DRAMACLAW_EXTERNAL_MCP",'
-        '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
         '"DRAMACLAW_TURN_ID","DRAMACLAW_USERNAME",'
         '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH","PYTHON_DOTENV_DISABLED",'
         '"SUPERTALE_OPENFILM_STUDIO_ENABLED"]' in overrides
     )
+    assert "mcp_servers.dramaclaw.tool_timeout_sec=105" in overrides
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
 
@@ -4806,7 +4266,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     assert thread._model_provider == "dramaclaw_gateway"
 
 
-def test_codex_mcp_config_renders_enabled_tools():
+def test_codex_mcp_config_renders_focused_mcp_tools():
     servers = chat_service._dramaclaw_mcp_servers(
         "freezone_canvas",
         prompt="执行这个现有节点。",
@@ -4815,10 +4275,12 @@ def test_codex_mcp_config_renders_enabled_tools():
     overrides = chat_service._codex_mcp_config_overrides(servers)
 
     assert (
-        'mcp_servers.dramaclaw.enabled_tools=["freezone_confirm_workflow_draft",'
+        'mcp_servers.dramaclaw.enabled_tools=["freezone_cancel_canvas_action",'
+        '"freezone_confirm_canvas_action","freezone_confirm_workflow_draft",'
         '"freezone_get_canvas_ontology",'
         '"freezone_get_node_action_catalog","freezone_get_node_detail",'
         '"freezone_get_workflow","freezone_observe_workflow_run",'
+        '"freezone_cancel_workflow_run",'
         '"freezone_request_user_clarification","freezone_run_node_action",'
         '"freezone_run_workflow","freezone_update_node_data"]'
     ) in overrides
@@ -5134,7 +4596,6 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert freezone_env["DRAMACLAW_AGENT_PROFILE"] == "freezone:agent-2"
     assert Path(freezone_env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"]).is_relative_to(project_state)
     assert freezone_env["DRAMACLAW_EXTERNAL_MCP"] == "1"
-    assert freezone_env["DRAMACLAW_MCP_DIRECT_CANVAS_APPLY"] == "0"
     assert freezone_env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"].endswith(
         "supertale_canvas_command_bridge/freezone_agent-2"
     )
@@ -5375,100 +4836,98 @@ def test_codex_backend_validates_explicit_binary(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch):
-    calls = []
+async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    revoked = []
+
+    async def revoke_agent_session(token):
+        revoked.append(token)
+
     monkeypatch.setattr(
-        chat_service,
-        "interrupt_live_codex_turn",
-        lambda thread_id, turn_id: calls.append((thread_id, turn_id)) or True,
+        chat_service, "get_auth_session_port",
+        lambda: SimpleNamespace(revoke_agent_session=revoke_agent_session),
     )
-    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-        chat_service._ACTIVE_CODEX_TURNS.clear()
-        chat_service._ACTIVE_CODEX_TURNS.update(
-            {
-                ("alice", "project-a"): ("thread-a", "turn-a"),
-                ("alice", "project-b"): ("thread-b", "turn-b"),
-                ("bob", "project-c"): ("thread-c", "turn-c"),
-            }
-        )
-    try:
-        assert await chat_service.interrupt_active_codex_turns("alice") is True
-        assert sorted(calls) == [("thread-a", "turn-a"), ("thread-b", "turn-b")]
-    finally:
-        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-            chat_service._ACTIVE_CODEX_TURNS.clear()
+    calls = []
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
+                        lambda thread, turn: calls.append((thread, turn)) or True)
+    for user, scope, thread, turn in [("alice", "a", "thread-a", "turn-a"),
+                                       ("alice", "b", "thread-b", "turn-b"),
+                                       ("bob", "c", "thread-c", "turn-c")]:
+        token_file = tmp_path / f"token-{scope}"
+        token_file.write_text(f"token-{scope}", encoding="utf-8")
+        chat_service._set_active_codex_turn(user, scope, {
+            "thread_id": thread, "turn_id": turn, "token_file": str(token_file),
+        })
+    assert await chat_service.interrupt_active_codex_turns("alice") is True
+    assert sorted(calls) == [("thread-a", "turn-a"), ("thread-b", "turn-b")]
+    assert sorted(revoked) == ["token-a", "token-b"]
+    assert not (tmp_path / "token-a").exists()
+    assert not (tmp_path / "token-b").exists()
+    assert (tmp_path / "token-c").exists()
 
 
 @pytest.mark.asyncio
 async def test_cancel_interrupts_only_the_exact_codex_scope_and_business_turn(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope_a = chat_service._codex_scope_key(
-        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
-    )
-    scope_b = chat_service._codex_scope_key(
-        "project-a", agent_profile="freezone:main", canvas_id="canvas-b"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    revoked = []
+
+    async def revoke_agent_session(token):
+        revoked.append(token)
+
+    monkeypatch.setattr(
+        chat_service, "get_auth_session_port",
+        lambda: SimpleNamespace(revoke_agent_session=revoke_agent_session),
     )
     calls = []
-    monkeypatch.setattr(
-        chat_service,
-        "interrupt_live_codex_turn",
-        lambda thread_id, turn_id: calls.append((thread_id, turn_id)) or True,
-    )
-    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-        chat_service._ACTIVE_CODEX_TURNS.clear()
-        chat_service._ACTIVE_CODEX_TURNS.update(
-            {
-                ("alice", scope_a): ("thread-a", "runtime-a", "business-a"),
-                ("alice", scope_b): ("thread-b", "runtime-b", "business-b"),
-            }
-        )
-    try:
-        assert (
-            await chat_service.interrupt_active_codex_turn(
-                "alice", scope_a, "business-a"
-            )
-            is True
-        )
-        assert calls == [("thread-a", "runtime-a")]
-    finally:
-        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-            chat_service._ACTIVE_CODEX_TURNS.clear()
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
+                        lambda thread, turn: calls.append((thread, turn)) or True)
+    for scope in ("a", "b"):
+        token_file = tmp_path / f"token-{scope}"
+        token_file.write_text(f"token-{scope}", encoding="utf-8")
+        chat_service._set_active_codex_turn("alice", scope, {
+            "thread_id": f"thread-{scope}", "turn_id": f"runtime-{scope}",
+            "business_turn_id": f"business-{scope}",
+            "token_file": str(token_file),
+        })
+    assert await chat_service.interrupt_active_codex_turn("alice", "a", "business-a") is True
+    assert calls == [("thread-a", "runtime-a")]
+    assert revoked == ["token-a"]
+    assert not (tmp_path / "token-a").exists()
+    assert (tmp_path / "token-b").exists()
 
 
 @pytest.mark.asyncio
 async def test_exact_cancel_rejects_a_stale_business_turn_without_interrupting_new_turn(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = chat_service._codex_scope_key(
-        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
-    )
-    calls = []
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    revoked = []
+
+    async def revoke_agent_session(token):
+        revoked.append(token)
+
     monkeypatch.setattr(
-        chat_service,
-        "interrupt_live_codex_turn",
-        lambda *ids: calls.append(ids) or True,
+        chat_service, "get_auth_session_port",
+        lambda: SimpleNamespace(revoke_agent_session=revoke_agent_session),
     )
-    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-        chat_service._ACTIVE_CODEX_TURNS.clear()
-        chat_service._ACTIVE_CODEX_TURNS[("alice", scope)] = (
-            "thread-new",
-            "runtime-new",
-            "business-new",
-        )
-    try:
-        assert (
-            await chat_service.interrupt_active_codex_turn(
-                "alice", scope, "business-old"
-            )
-            is False
-        )
-        assert calls == []
-    finally:
-        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
-            chat_service._ACTIVE_CODEX_TURNS.clear()
+    token_file = tmp_path / "token-new"
+    token_file.write_text("token-new", encoding="utf-8")
+    chat_service._set_active_codex_turn("alice", "scope-a", {
+        "thread_id": "thread-new", "turn_id": "runtime-new",
+        "business_turn_id": "business-new",
+        "token_file": str(token_file),
+    })
+    calls = []
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn",
+                        lambda *ids: calls.append(ids) or True)
+    assert await chat_service.interrupt_active_codex_turn(
+        "alice", "scope-a", "business-old"
+    ) is False
+    assert calls == []
+    assert revoked == []
+    assert token_file.exists()
 
 
 @pytest.mark.asyncio
@@ -5480,7 +4939,9 @@ async def test_exact_cancel_reads_matching_business_turn_from_other_worker(
         "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
     )
     chat_service._set_active_codex_turn(
-        "alice", scope, ("thread-a", "runtime-a", "business-a")
+        "alice", scope, {
+            "thread_id": "thread-a", "turn_id": "runtime-a", "business_turn_id": "business-a"
+        }
     )
     calls = []
     monkeypatch.setattr(chat_service, "interrupt_live_codex_turn", lambda *_: False)
@@ -5506,7 +4967,7 @@ async def test_exact_cancel_reads_matching_business_turn_from_other_worker(
 async def test_cancel_reads_active_codex_turns_from_other_worker(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     chat_service._set_active_codex_turn(
-        "alice", "project:project-a", ("thread-a", "turn-a")
+        "alice", "project:project-a", {"thread_id": "thread-a", "turn_id": "turn-a"}
     )
     calls = []
     monkeypatch.setattr(chat_service, "interrupt_live_codex_turn", lambda *_: False)
@@ -5535,10 +4996,10 @@ def test_active_codex_turn_registry_keeps_mainline_and_freezone_scopes_separate(
     )
 
     chat_service._set_active_codex_turn(
-        "alice", mainline, ("thread-mainline", "turn-mainline")
+        "alice", mainline, {"thread_id": "thread-mainline", "turn_id": "turn-mainline"}
     )
     chat_service._set_active_codex_turn(
-        "alice", freezone, ("thread-freezone", "turn-freezone")
+        "alice", freezone, {"thread_id": "thread-freezone", "turn_id": "turn-freezone"}
     )
     chat_service._set_active_codex_turn("alice", freezone, None)
 
@@ -5548,65 +5009,6 @@ def test_active_codex_turn_registry_keeps_mainline_and_freezone_scopes_separate(
             "turn_id": "turn-mainline",
         }
     }
-
-
-@pytest.mark.asyncio
-async def test_disconnect_interrupts_only_its_exact_codex_turn(monkeypatch):
-    disconnected = asyncio.Event()
-    disconnected.set()
-    calls = []
-
-    async def interrupt(username, project, thread_id, turn_id, *, backend=None):
-        calls.append((username, project, thread_id, turn_id, backend))
-        return True
-
-    monkeypatch.setattr(chat_service, "interrupt_chat_turn", interrupt)
-    monkeypatch.setattr(
-        chat_service,
-        "get_chat_backend_name",
-        lambda: (_ for _ in ()).throw(AssertionError("backend must be captured")),
-    )
-
-    await chat_routes._interrupt_agent_on_disconnect(
-        disconnected,
-        runtime_backend="codex",
-        username="alice",
-        project="project-a",
-        agent_profile="freezone:main",
-        runtime_ids={"thread_id": "thread-a", "turn_id": "turn-a"},
-    )
-
-    assert calls == [("alice", "project-a", "thread-a", "turn-a", "codex")]
-
-
-@pytest.mark.asyncio
-async def test_disconnect_closes_only_matching_hermes_thread(monkeypatch):
-    from novelvideo.chat import hermes_pool
-
-    disconnected = asyncio.Event()
-    disconnected.set()
-    calls = []
-
-    class FakePool:
-        async def close_user_thread(self, username, profile, thread_id):
-            calls.append((username, profile, thread_id))
-            return True
-
-        async def close_user(self, _username):
-            raise AssertionError("disconnect must not close every user worker")
-
-    monkeypatch.setattr(hermes_pool, "pool", FakePool())
-
-    await chat_routes._interrupt_agent_on_disconnect(
-        disconnected,
-        runtime_backend="hermes",
-        username="alice",
-        project="project-a",
-        agent_profile="freezone:agent-2",
-        runtime_ids={"thread_id": "session-a", "turn_id": "turn-a"},
-    )
-
-    assert calls == [("alice", "freezone:agent-2", "session-a")]
 
 
 @pytest.mark.asyncio
@@ -5706,195 +5108,6 @@ def test_chat_run_lock_uses_named_agent_locks_dir(monkeypatch, tmp_path):
 
     assert lock_path.parent == tmp_path / "state" / "admin" / "chat_agent_locks"
     assert lock_path.name.endswith(".lock")
-
-
-def test_chat_run_lock_file_expires_after_two_minutes(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    assert chat_service._CHAT_RUN_LOCK_TTL_SECONDS == 2 * 60
-
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    stale_started_at = datetime.now(timezone.utc) - timedelta(
-        seconds=chat_service._CHAT_RUN_LOCK_TTL_SECONDS + 1
-    )
-    lock_path.write_text(
-        json.dumps(
-            {
-                "lock_id": "stale-lock",
-                "owner_pid": os.getpid(),
-                "started_at": stale_started_at.isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
-    try:
-        assert lock_id != "stale-lock"
-        assert lock_path.exists()
-    finally:
-        chat_service._release_chat_run_lock("admin", "project-a", lock_id)
-
-
-def test_chat_run_lock_uses_updated_at_for_idle_timeout(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    old_started_at = datetime.now(timezone.utc) - timedelta(seconds=10 * 60 + 1)
-    fresh_updated_at = datetime.now(timezone.utc)
-    lock_path.write_text(
-        json.dumps(
-            {
-                "lock_id": "active-long-run",
-                "owner_pid": os.getpid(),
-                "started_at": old_started_at.isoformat(),
-                "updated_at": fresh_updated_at.isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert chat_service.chat_run_lock_is_active("admin", "project-a") is True
-    with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
-        chat_service._acquire_chat_run_lock("admin", "project-a")
-
-
-def test_chat_run_lock_trusts_fresh_heartbeat_from_another_pod(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setattr(chat_service.socket, "gethostname", lambda: "new-pod")
-    monkeypatch.setattr(chat_service, "_pid_is_alive", lambda pid: False)
-
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    now = datetime.now(timezone.utc).isoformat()
-    lock_path.write_text(
-        json.dumps(
-            {
-                "lock_id": "old-pod-lock",
-                "owner_id": "old-pod:3912",
-                "owner_pid": 3912,
-                "started_at": now,
-                "updated_at": now,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert chat_service.chat_run_lock_is_active("admin", "project-a") is True
-    with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
-        chat_service._acquire_chat_run_lock("admin", "project-a")
-    assert (
-        json.loads(lock_path.read_text(encoding="utf-8"))["lock_id"] == "old-pod-lock"
-    )
-
-
-def test_chat_run_lock_still_has_max_runtime(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    too_old_started_at = datetime.now(timezone.utc) - timedelta(
-        seconds=chat_service._CHAT_RUN_LOCK_MAX_SECONDS + 1
-    )
-    lock_path.write_text(
-        json.dumps(
-            {
-                "lock_id": "too-old-lock",
-                "owner_pid": os.getpid(),
-                "started_at": too_old_started_at.isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
-    try:
-        assert lock_id != "too-old-lock"
-    finally:
-        chat_service._release_chat_run_lock("admin", "project-a", lock_id)
-
-
-def test_chat_run_lock_heartbeat_refreshes_updated_at(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    atomic_writes = []
-    original_atomic_write = chat_service._atomic_write_chat_run_lock_file
-
-    def spy_atomic_write(path, payload):
-        atomic_writes.append((path, payload))
-        original_atomic_write(path, payload)
-
-    monkeypatch.setattr(
-        chat_service, "_atomic_write_chat_run_lock_file", spy_atomic_write
-    )
-
-    lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    try:
-        _current_lock_id, _owner_id, _owner_pid, started_at, updated_at = (
-            chat_service._read_chat_run_lock_file(lock_path)
-        )
-        assert started_at is not None
-        assert updated_at is not None
-        old_updated_at = started_at - timedelta(seconds=30)
-        lock_path.write_text(
-            json.dumps(
-                {
-                    "lock_id": lock_id,
-                    "owner_pid": os.getpid(),
-                    "started_at": started_at.isoformat(),
-                    "updated_at": old_updated_at.isoformat(),
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        assert (
-            chat_service._heartbeat_chat_run_lock("admin", "project-a", lock_id) is True
-        )
-        assert len(atomic_writes) == 1
-        assert atomic_writes[0][0] == lock_path
-        assert json.loads(atomic_writes[0][1])["lock_id"] == lock_id
-        (
-            refreshed_lock_id,
-            _owner_id,
-            _owner_pid,
-            refreshed_started_at,
-            refreshed_updated_at,
-        ) = chat_service._read_chat_run_lock_file(lock_path)
-        assert refreshed_lock_id == lock_id
-        assert refreshed_started_at == started_at
-        assert refreshed_updated_at is not None
-        assert refreshed_updated_at > old_updated_at
-    finally:
-        chat_service._release_chat_run_lock("admin", "project-a", lock_id)
-
-
-def test_chat_run_lock_treats_new_empty_lock_as_active(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    lock_path.write_text("", encoding="utf-8")
-
-    with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
-        chat_service._acquire_chat_run_lock("admin", "project-a")
-
-    assert lock_path.exists()
-
-
-def test_chat_run_lock_removes_old_invalid_lock(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    lock_path = chat_service._chat_run_lock_path("admin", "project-a")
-    lock_path.write_text("", encoding="utf-8")
-    old_mtime = (
-        datetime.now(timezone.utc).timestamp()
-        - chat_service._CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS
-        - 1
-    )
-    os.utime(lock_path, (old_mtime, old_mtime))
-
-    lock_id = chat_service._acquire_chat_run_lock("admin", "project-a")
-    try:
-        assert lock_path.exists()
-        assert chat_service._read_chat_run_lock_file(lock_path)[0] == lock_id
-    finally:
-        chat_service._release_chat_run_lock("admin", "project-a", lock_id)
 
 
 @pytest.mark.anyio
@@ -6632,38 +5845,6 @@ def test_project_chat_storage_creates_missing_resolved_state_dir(monkeypatch, tm
     assert not (tmp_path / "state" / "admin" / "01KS_PROJECT_ID").exists()
 
 
-def test_project_history_hides_trace_messages(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-
-    chat_service.add_user_message("admin", "project-a", "你好")
-    chat_service.add_trace_message(
-        "admin", "project-a", "→ dramaclaw_pipeline_status\ncompleted"
-    )
-    chat_service.add_assistant_message("admin", "project-a", "你好！")
-
-    messages = chat_service.list_messages("admin", "project-a")
-
-    assert [message["role"] for message in messages] == ["user", "assistant"]
-    assert all(
-        "dramaclaw_pipeline_status" not in message["content"] for message in messages
-    )
-
-
-def test_project_history_defaults_to_last_50_messages(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
-
-    for index in range(60):
-        chat_service.add_assistant_message("admin", "project-a", f"message-{index:02d}")
-
-    messages = chat_service.list_messages("admin", "project-a")
-
-    assert len(messages) == 50
-    assert messages[0]["content"] == "message-10"
-    assert messages[-1]["content"] == "message-59"
-
-
 def test_home_history_hides_trace_messages(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     scope = ChatScope(kind="home")
@@ -6719,7 +5900,9 @@ def test_freezone_history_uses_separate_project_chat_db(monkeypatch, tmp_path):
     )
     chat_store.append_message("admin", scope, "user", "canvas")
 
-    assert chat_service.list_messages("admin", "project-a")[0]["content"] == "mainline"
+    assert chat_store.list_messages(
+        "admin", ChatScope(kind="project", id="project-a")
+    )[0]["content"] == "mainline"
     assert chat_store.list_messages("admin", scope)[0]["content"] == "canvas"
     assert (state_root / "admin" / "project-a" / "chat.db").exists()
     assert (
@@ -6778,7 +5961,12 @@ def test_freezone_agent_history_uses_separate_chat_db(monkeypatch, tmp_path):
 async def test_freezone_history_reads_project_name_storage_scope(monkeypatch, tmp_path):
     state_root = tmp_path / "state"
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
-    project_ctx = SimpleNamespace(project_name="readable-project")
+    project_ctx = SimpleNamespace(
+        project_name="readable-project", state_dir=None, output_dir=tmp_path / "output",
+        requester_user_id="admin", requester_username="admin", requester_principals=(),
+        project_id="01PROJECTID",
+    )
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "hermes")
     request_scope = ChatScope(
         kind="project",
         id="01PROJECTID",
@@ -6802,7 +5990,7 @@ async def test_freezone_history_reads_project_name_storage_scope(monkeypatch, tm
         "admin", request_scope, project_ctx=project_ctx
     )
 
-    assert [message["content"] for message in messages] == ["stored under project name"]
+    assert [message["content"] for message in messages.history] == ["stored under project name"]
     assert not (
         state_root
         / "admin"
@@ -7637,191 +6825,59 @@ def test_director_history_path_ignores_agent_id(monkeypatch, tmp_path):
     assert not (state_root / "admin" / "project-a" / "_chat").exists()
 
 
-def test_chat_ui_events_attach_to_user_message_when_turn_has_no_assistant(
-    monkeypatch, tmp_path
-):
+@pytest.mark.parametrize("async_read", [False, True], ids=["sync", "async"])
+def test_list_messages_returns_stored_rows_only(monkeypatch, tmp_path, async_read):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     scope = ChatScope(
         kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
     )
-
-    chat_store.append_message("admin", scope, "user", "加个视频节点", turn_id="turn-a")
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {
-            "type": "canvas_command_approval",
-            "schema_version": "canvas_command_approval.v1",
-            "canvas_id": "canvas-a",
-            "bridge_key": "bridge-a",
-            "envelopes": [],
-        },
-    )
-
-    messages = chat_store.list_messages("admin", scope)
-
-    assert messages[0]["role"] == "user"
-    assert messages[0]["ui_events"][0]["type"] == "canvas_command_approval"
-
-
-def test_chat_message_parts_keep_canvas_feedback_after_stale_snapshot(
-    monkeypatch, tmp_path
-):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = ChatScope(
-        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
-    )
-
     chat_store.append_message("admin", scope, "user", "生成下分镜", turn_id="turn-a")
-    chat_store.append_message("admin", scope, "assistant", "", turn_id="turn-a")
-    context_part = {
-        "id": "canvas_context:context:bridge-a:validation",
-        "type": "canvas_context",
-        "event": {
-            "key": "context:bridge-a:validation",
-            "bridgeKey": "bridge-a:validation",
-            "status": "done",
-            "errors": [],
-        },
-    }
-    approval_part = {
-        "id": "canvas_approval:bridge:bridge-a:turn:turn-a",
-        "type": "canvas_approval",
-        "event": {
-            "key": "bridge:bridge-a:turn:turn-a",
-            "bridgeKey": "bridge-a",
-        },
-    }
-    feedback_part = {
-        "id": "canvas_feedback:bridge:bridge-a:turn:turn-a",
-        "type": "canvas_feedback",
-        "event": {
-            "key": "bridge:bridge-a:turn:turn-a",
-            "errors": ["节点动作完成但未产出 imageUrl。"],
-        },
-    }
+    chat_store.append_message("admin", scope, "assistant", "好的", turn_id="turn-a")
+    chat_store.append_ui_event("admin", scope, "turn-a", {
+        "type": "assistant.message_parts",
+        "parts": [{"id": "text-1", "type": "text", "text": "旧快照"}],
+    })
+    chat_store.append_ui_event("admin", scope, "turn-a", {
+        "type": "assistant.clarification.request", "clarification_id": "c1", "question": "继续?",
+    })
 
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [context_part, approval_part]},
+    messages = (
+        asyncio.run(chat_store.list_messages_async("admin", scope))
+        if async_read else chat_store.list_messages("admin", scope)
     )
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [context_part, feedback_part]},
-    )
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [context_part]},
-    )
-
-    messages = chat_store.list_messages("admin", scope)
-    assistant = next(message for message in messages if message["role"] == "assistant")
-    part_types = [part["type"] for part in assistant["parts"]]
-    feedback = next(
-        part for part in assistant["parts"] if part["type"] == "canvas_feedback"
-    )
-
-    assert "canvas_feedback" in part_types
-    assert "canvas_approval" not in part_types
-    assert feedback["event"]["errors"] == ["节点动作完成但未产出 imageUrl。"]
+    assert [(m["role"], m["content"], m.get("parts"), m.get("ui_events")) for m in messages] == [
+        ("user", "生成下分镜", None, None), ("assistant", "好的", None, None),
+    ]
 
 
-def test_chat_message_parts_drop_stale_skill_studio_status_snapshot(
-    monkeypatch, tmp_path
-):
+def test_append_ui_event_stores_each_server_event(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     scope = ChatScope(
         kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
     )
+    chat_store.append_ui_event("admin", scope, "turn-a", {
+        "type": "assistant.message_parts",
+        "parts": [{"id": "a", "type": "text", "text": "1"}],
+    })
+    chat_store.append_ui_event("admin", scope, "turn-a", {
+        "type": "assistant.message_parts",
+        "parts": [{"id": "b", "type": "text", "text": "2"}],
+    })
 
-    chat_store.append_message(
-        "admin", scope, "user", "做一个公益短片 skill", turn_id="turn-a"
-    )
-    chat_store.append_message(
-        "admin", scope, "assistant", "草稿已生成。", turn_id="turn-a"
-    )
-    question_part = {
-        "id": "skill_studio.questions:question-key",
-        "type": "skill_studio",
-        "event": {
-            "type": "skill_studio.questions",
-            "bridge_key": "question-key",
-            "submitted": True,
-            "questions": [],
-        },
-    }
-    status_part = {
-        "id": "skill_studio.status:skill_studio.status",
-        "type": "skill_studio",
-        "event": {
-            "type": "skill_studio.status",
-            "status": "draft_patch_applied",
-            "message": "已更新 Recipe: public-welfare-storyboard-images",
-        },
-    }
-    text_part = {"id": "text-3", "type": "text", "text": "草稿已生成。"}
-
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [status_part, question_part]},
-    )
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-a",
-        {"type": "assistant.message_parts", "parts": [question_part, text_part]},
-    )
-
-    messages = chat_store.list_messages("admin", scope)
-    assistant = next(message for message in messages if message["role"] == "assistant")
-
-    assert [part["type"] for part in assistant["parts"]] == ["skill_studio", "text"]
-    assert [
-        part.get("event", {}).get("type")
-        for part in assistant["parts"]
-        if part["type"] == "skill_studio"
-    ] == ["skill_studio.questions"]
-
-
-def test_chat_history_does_not_restore_orphan_parts_outside_message_limit(
-    monkeypatch, tmp_path
-):
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    scope = ChatScope(
-        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a"
-    )
-
-    chat_store.append_message("admin", scope, "user", "旧请求", turn_id="turn-old")
-    chat_store.append_message(
-        "admin", scope, "assistant", "完整旧回复", turn_id="turn-old"
-    )
-    chat_store.append_ui_event(
-        "admin",
-        scope,
-        "turn-old",
-        {
+    with chat_store.connect("admin", scope) as conn:
+        rows = conn.execute(
+            "SELECT event_type, payload_json FROM chat_ui_events ORDER BY id"
+        ).fetchall()
+    assert [(row["event_type"], json.loads(row["payload_json"])) for row in rows] == [
+        ("assistant.message_parts", {
             "type": "assistant.message_parts",
-            "parts": [{"id": "text-old", "type": "text", "text": "残缺旧回复"}],
-        },
-    )
-    chat_store.append_message("admin", scope, "user", "新请求", turn_id="turn-new")
-    chat_store.append_message(
-        "admin", scope, "assistant", "完整新回复", turn_id="turn-new"
-    )
-
-    messages = chat_store.list_messages("admin", scope, limit=2)
-
-    assert [message["content"] for message in messages] == ["新请求", "完整新回复"]
-    assert all(message.get("turn_id") != "turn-old" for message in messages)
+            "parts": [{"id": "a", "type": "text", "text": "1"}],
+        }),
+        ("assistant.message_parts", {
+            "type": "assistant.message_parts",
+            "parts": [{"id": "b", "type": "text", "text": "2"}],
+        }),
+    ]
 
 
 def test_chat_scope_round_trips_freezone_canvas_payload() -> None:
@@ -8803,6 +7859,16 @@ def _codex_turn_events(text, *, tool=None, disposition="completed"):
     if tool is not None:
         events.append(tool)
     events += [
+        backend_sdk.ChatBackendEvent(
+            type="item_started", item={"type": "agentMessage", "id": "m-1", "text": ""},
+        ),
+        backend_sdk.ChatBackendEvent(
+            type="item_delta", item_id="m-1", name="text", text=text,
+        ),
+        SimpleNamespace(type="assistant_delta", text=text),
+        backend_sdk.ChatBackendEvent(
+            type="item_completed", item={"type": "agentMessage", "id": "m-1", "text": text},
+        ),
         SimpleNamespace(
             type="turn_completed",
             thread_id="codex-thread",
@@ -9082,10 +8148,16 @@ async def test_codex_freezone_read_only_reply_is_delivered_in_one_turn(
     assert len(prompts) == 1
     assert build_kwargs[0]["request_prompt"] == request_prompt
     assert build_kwargs[0].get("output_schema") is None
-    assert result["content"] == _READ_ONLY_ANSWER
+    assert result is None
+    assert events[-1] == {"type": "done", "message": None}
     assert [
-        event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == [_READ_ONLY_ANSWER]
+        event["card"] for event in events
+        if event["type"] == "item" and event["card"] is not None
+        and event["card"]["type"] == "text"
+    ] == [
+        {"id": "m-1", "type": "text", "text": ""},
+        {"id": "m-1", "type": "text", "text": "工作流失败，未生成视频。"},
+    ]
     assert revoked == ["agent-token"]
     assert chat_service._get_codex_thread_id(
         "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
@@ -9160,9 +8232,7 @@ async def test_codex_freezone_turn_never_sends_a_second_prompt(
     )
 
     assert len(prompts) == 1
-    # A requested write with no receipt is reported by the host, whatever the
-    # model said; the claim is never delivered as the outcome.
-    assert not result["content"].startswith("图片节点已创建成功")
+    assert result is None
 
 
 def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypatch, tmp_path):
@@ -9215,3 +8285,264 @@ def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypat
         surface_context={"freezone_compose_node_id": "compose-1"},
     )
     assert "[FREEZONE_COMPOSE_WORKSPACE]" not in mainline
+
+
+@pytest.fixture
+def codex_turn_runtime(monkeypatch, tmp_path):
+    from novelvideo.chat.backend_sdk import ChatBackendEvent
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    started, finish = asyncio.Event(), asyncio.Event()
+    revoked, prompts = [], []
+
+    class Auth:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
+
+    async def authorize(**kwargs):
+        return SimpleNamespace()
+
+    async def token(*args, **kwargs):
+        return "new-token"
+
+    class Thread:
+        async def stream(self, prompt):
+            prompts.append(prompt)
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="new-thread", turn_id="new-runtime"
+            )
+            started.set()
+            await finish.wait()
+            yield ChatBackendEvent(type="complete", text="Done")
+
+    def snapshot(thread_id, *, include_turns=False):
+        return SimpleNamespace(status=SimpleNamespace(type="active"), turns=[])
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", authorize)
+    monkeypatch.setattr(chat_service, "_turn_operation_finalizer", lambda _: None)
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", lambda *args, **kwargs: Thread())
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: Auth())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kwargs: None)
+    monkeypatch.setattr(chat_service, "_codex_thread_snapshot", snapshot, raising=False)
+    return SimpleNamespace(started=started, finish=finish, revoked=revoked, prompts=prompts)
+
+
+async def _ignore_turn_event(event):
+    pass
+
+
+def _persist_test_turn(tmp_path, *, scope=None, lock_project="project-a"):
+    scope = scope or ChatScope(kind="home")
+    token_file = tmp_path / "old.token"
+    token_file.write_text("old-token")
+    chat_service._set_active_codex_turn("test-user", "old-scope", {
+        "thread_id": "old-thread", "turn_id": "old-runtime",
+        "business_turn_id": "old-business", "started_at": 123.5,
+        "lock_key": chat_service._chat_run_lock_key(lock_project),
+        "token_file": str(token_file), "store_scope": scope.to_dict(),
+        "store_state_dir": scope.state_dir,
+        "project_state_dir": str(tmp_path), "agent_profile": "freezone:main",
+        "structured_canvas_reply": scope.surface == "freezone",
+    })
+    return token_file, scope
+
+
+@pytest.mark.asyncio
+async def test_concurrent_codex_starts_create_one_turn(codex_turn_runtime):
+    runtime = codex_turn_runtime
+    first = asyncio.create_task(chat_service.stream_assistant_reply(
+        "test-user", "project-a", "hello", _ignore_turn_event,
+        backend="codex", turn_id="first-business",
+    ))
+    try:
+        await asyncio.wait_for(runtime.started.wait(), 2)
+        with pytest.raises(chat_service.ChatTurnBusyError) as error:
+            await chat_service.stream_assistant_reply(
+                "test-user", "project-b", "hello", _ignore_turn_event,
+                backend="codex", turn_id="second-business",
+            )
+        assert str(error.value) == "当前用户已有 AI 对话正在处理中，请稍后再试。"
+        assert error.value.turn_id == "first-business"
+        assert len(runtime.prompts) == 1
+    finally:
+        runtime.finish.set()
+        await first
+
+
+@pytest.mark.asyncio
+async def test_start_lock_blocks_start_before_codex_registration(codex_turn_runtime, monkeypatch):
+    runtime = codex_turn_runtime
+    entered = asyncio.Event()
+
+    async def delayed_token(*args, **kwargs):
+        entered.set()
+        await runtime.finish.wait()
+        return "new-token"
+
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", delayed_token)
+    first = asyncio.create_task(chat_service.stream_assistant_reply(
+        "test-user", "project-a", "hello", _ignore_turn_event,
+        backend="codex", turn_id="first-business",
+    ))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        with pytest.raises(chat_service.ChatTurnBusyError) as error:
+            await chat_service.stream_assistant_reply(
+                "test-user", "", "hello", _ignore_turn_event,
+                backend="codex", turn_id="second-business",
+            )
+        assert error.value.turn_id == "first-business"
+    finally:
+        runtime.finish.set()
+        await first
+    assert len(runtime.prompts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check_error", [False, True])
+async def test_persisted_running_turn_blocks_new_start(
+    codex_turn_runtime, monkeypatch, tmp_path, check_error
+):
+    token_file, _ = _persist_test_turn(tmp_path)
+    if check_error:
+        def snapshot(*args, **kwargs):
+            raise RuntimeError("read unavailable")
+        monkeypatch.setattr(chat_service, "_codex_thread_snapshot", snapshot)
+    with pytest.raises(chat_service.ChatTurnBusyError) as error:
+        await chat_service.stream_assistant_reply(
+            "test-user", "project-b", "hello", _ignore_turn_event,
+            backend="codex", turn_id="new-business",
+        )
+    assert error.value.turn_id == "old-business"
+    assert token_file.read_text() == "old-token"
+    assert codex_turn_runtime.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_stale_turn_is_finalized_before_next_start(codex_turn_runtime, monkeypatch, tmp_path):
+    token_file, scope = _persist_test_turn(tmp_path)
+    monkeypatch.setattr(chat_service, "_codex_thread_snapshot", lambda *args, **kwargs: None)
+    codex_turn_runtime.finish.set()
+    await chat_service.stream_assistant_reply(
+        "test-user", "project-b", "hello", _ignore_turn_event,
+        backend="codex", turn_id="new-business",
+    )
+    assert codex_turn_runtime.revoked == ["old-token", "new-token"]
+    assert token_file.exists() is False
+    assert chat_service._load_active_codex_turns("test-user") == {}
+    assert [m["content"] for m in chat_store.list_messages("test-user", scope)] == [
+        "本轮请求已中断。"
+    ]
+    assert len(codex_turn_runtime.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_finalizer_claim_is_conditional_and_idempotent(codex_turn_runtime, tmp_path):
+    scope = ChatScope(kind="project", id="project-a", surface="freezone",
+                      canvas_id="canvas-a", agent_id="main", state_dir=str(tmp_path))
+    token_file, _ = _persist_test_turn(tmp_path, scope=scope)
+    assert await chat_service.finalize_codex_turn(
+        "test-user", "old-scope", "wrong-turn", "cancelled"
+    ) is None
+    assert token_file.read_text() == "old-token"
+    claimed = await chat_service.finalize_codex_turn(
+        "test-user", "old-scope", "old-runtime", "cancelled"
+    )
+    assert claimed["turn_id"] == "old-runtime"
+    assert await chat_service.finalize_codex_turn(
+        "test-user", "old-scope", "old-runtime", "cancelled"
+    ) is None
+    assert codex_turn_runtime.revoked == ["old-token"]
+    assert token_file.exists() is False
+    assert chat_service._load_active_codex_turns("test-user") == {}
+    assert [(m["role"], m["content"]) for m in chat_store.list_messages("test-user", scope)] == [
+        ("system", "已取消本轮请求。")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, notice", [
+    ("completed", []), ("interrupted", ["已取消本轮请求。"]),
+    ("failed", []), (None, ["本轮请求已中断。"]),
+    ("missing", ["本轮请求已中断。"]),
+])
+async def test_stale_turn_disposition_from_codex(
+    codex_turn_runtime, monkeypatch, tmp_path, status, notice
+):
+    scope = ChatScope(kind="project", id="project-a", surface="freezone",
+                      canvas_id="canvas-a", agent_id="main", state_dir=str(tmp_path))
+    token_file, _ = _persist_test_turn(tmp_path, scope=scope)
+
+    def snapshot(thread_id, *, include_turns=False):
+        if status is None:
+            return None
+        turns = [] if status == "missing" else [SimpleNamespace(id="old-runtime", status=status)]
+        return SimpleNamespace(status=SimpleNamespace(type="idle"), turns=turns)
+
+    monkeypatch.setattr(chat_service, "_codex_thread_snapshot", snapshot)
+    assert await chat_service.active_chat_turn("test-user", "project-a") is None
+    assert token_file.exists() is False
+    assert codex_turn_runtime.revoked == ["old-token"]
+    assert chat_service._load_active_codex_turns("test-user") == {}
+    assert [m["content"] for m in chat_store.list_messages("test-user", scope)] == notice
+
+
+@pytest.mark.asyncio
+async def test_codex_registration_failure_releases_credential(
+    codex_turn_runtime, monkeypatch, tmp_path
+):
+    def fail_registration(*args):
+        raise OSError("turn index unavailable")
+
+    monkeypatch.setattr(chat_service, "_set_active_codex_turn", fail_registration)
+    with pytest.raises(OSError, match="turn index unavailable"):
+        await chat_service.stream_assistant_reply(
+            "test-user", "project-a", "hello", _ignore_turn_event,
+            backend="codex", turn_id="new-business",
+        )
+    assert codex_turn_runtime.revoked == ["new-token"]
+    assert list((tmp_path / "runtime" / "codex" / "turn_tokens").glob("*.token")) == []
+    assert await chat_service.active_chat_turn("test-user", "project-a") is None
+
+
+@pytest.mark.asyncio
+async def test_codex_starter_reports_sweeper_timeout(codex_turn_runtime, monkeypatch):
+    runtime = codex_turn_runtime
+    dispositions = []
+
+    class Operation:
+        async def finish(self, disposition):
+            dispositions.append(disposition)
+
+    monkeypatch.setattr(chat_service, "_turn_operation_finalizer", lambda _: Operation())
+    monkeypatch.setenv("DRAMACLAW_CODEX_TURN_MAX_SECONDS", "60")
+    monkeypatch.setattr(chat_service, "_control_codex_thread", lambda *_: True)
+    scope = ChatScope(kind="home")
+    task = asyncio.create_task(chat_service.stream_assistant_reply(
+        "test-user", "project-a", "hello", _ignore_turn_event,
+        backend="codex", turn_id="business", store_scope=scope,
+    ))
+    try:
+        await asyncio.wait_for(runtime.started.wait(), 2)
+        entries = chat_service._load_active_codex_turns("test-user")
+        entry = next(iter(entries.values()))
+        await chat_service.sweep_codex_turns(now=entry["started_at"] + 61)
+    finally:
+        runtime.finish.set()
+        await task
+    assert dispositions == ["timeout"]
+    assert [m["content"] for m in chat_store.list_messages("test-user", scope)] == [
+        "本轮请求超过最长 1 分钟，已停止。"
+    ]
+
+
+def test_codex_canvas_timeout_does_not_change_other_mcp_servers(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "75")
+    overrides = chat_service._codex_mcp_config_overrides(
+        chat_service._dramaclaw_mcp_servers("freezone_canvas")
+    )
+    assert [entry for entry in overrides if ".tool_timeout_sec=" in entry] == [
+        "mcp_servers.dramaclaw.tool_timeout_sec=105"
+    ]

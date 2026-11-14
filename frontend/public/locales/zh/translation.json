@@ -1,6 +1,5 @@
 {
   "chatSnapshot": {
-    "saveFailed": "聊天记录保存失败，请稍后重试；当前消息仍保留在本地。",
     "historyIncomplete": "此对话的部分历史内容过大，已限制加载；正文仍可查看，请联系管理员整理历史记录。"
   },
   "workflowDraftContinuation": {
@@ -791,6 +790,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "正在压缩上下文…",
+    "contextCompacted": "已压缩上下文，对话可以继续",
     "clearChat": {
       "title": "清空当前聊天？",
       "description": "当前聊天记录将被删除，下一条消息会开启新的 Agent 上下文。画布、项目和其他聊天不会受影响；进行中的生成任务不会被取消。",
@@ -842,6 +843,8 @@
     "emptyTitle": "开始对话",
     "emptyDescription": "可以询问项目进度、任务失败原因，或让助手帮你整理创作思路。",
     "syncingHistoryTitle": "正在初始化会话",
+    "loadEarlierMessages": "加载更早的消息",
+    "loadingEarlierMessages": "正在加载更早的消息…",
     "syncingHistoryDescription": "正在连接虾导并同步历史对话，请稍候。",
     "disclaimer": "虾导可能会出错，请核对关键剧情、角色与资产信息。",
     "placeholder": "上传剧本后，说出要推进的分集、画面、配音或成片任务",
@@ -884,10 +887,6 @@
     "dropFiles": "松开以上传文件",
     "unsupportedDropFiles": "仅支持 .txt、.md、.doc、.docx",
     "removeAttachment": "移除附件",
-    "approvalExpires": "{{seconds}} 秒后过期",
-    "allowOnce": "允许一次",
-    "allowAlways": "始终允许",
-    "deny": "拒绝",
     "instance": "实例",
     "model": "模型",
     "noInstances": "无实例",
@@ -969,6 +968,19 @@
         "instrumental": "纯音乐",
         "vocalsAllowed": "允许人声",
         "continue": "使用所选声线继续"
+      },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "删除节点",
+          "clear_canvas": "清空画布",
+          "paid_generation": "运行生成"
+        },
+        "separator": "、",
+        "credits": "确认后会消耗积分。",
+        "expiresIn": "{{minutes}} 分钟内有效",
+        "confirm": "确认执行",
+        "refuse": "取消",
+        "failed": "操作失败，请重试。"
       },
       "canvasExecuting": "执行中...",
       "currentSelection": "当前选中",
@@ -1531,6 +1543,8 @@
       "assetNamePlaceholder": "请输入资产名称"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "你改过的节点已在别处被删除，已保留你的版本。",
+      "localDeletedRemoteChanged": "你删除的节点刚被别处（例如 Agent）修改过，已保持删除。",
       "backupFailed": "云端备份失败，请稍后再试",
       "backupPending": "本地已保存，云端备份待重试",
       "bodyOverLimit": "画布数据 {{actual}} KB 超出 {{limit}} KB 上限，已暂停保存。",
@@ -5946,8 +5960,6 @@
         "conditionalBranch": "条件分支(else/自动)",
         "unknownInitialValues": "变量初值未知,默认 0(无 global decl)",
         "invalidDefaultChoice": "{{name}}: # default {{index}} 超出选项数,已忽略",
-        "agentRefreshConflict": "Agent 已更新画布，但你还有未保存的本地修改。请保留副本或刷新后继续。",
-        "refreshConflict": "画布已在后台更新，但当前还有未保存的本地修改。请保留副本或刷新后继续。",
         "storyGroup": "互动影游",
         "segmentTitle": "片段 {{index}}",
         "firstFrame": "首帧",
@@ -8869,6 +8881,8 @@
       "hint": "连接至少 {{min}} 个视频节点后可打开",
       "counts": "视频 {{video}} · 音频 {{audio}}",
       "open": "打开视频合成与剪辑",
+      "exporting": "正在导出…",
+      "exportFailed": "导出失败",
       "reopen": "重新打开",
       "resultName": "合成视频"
     },
@@ -9092,6 +9106,7 @@
       "noMatches": "没有匹配的节点"
     },
     "runtime": {
+      "waitingForConfirmation": "等待你确认",
       "waitingForGenerationParameters": "等待选择生成参数",
       "clarificationPaused": "等待回答已暂停"
     }

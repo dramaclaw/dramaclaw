@@ -1,0 +1,105 @@
+{
+  "canvas_id": "parity",
+  "nodes": [
+    {
+      "id": "source",
+      "type": "textAnnotationNode",
+      "position": {
+        "x": 10,
+        "y": 20
+      },
+      "data": {
+        "displayName": "文本",
+        "content": "Seed",
+        "model": "newapi_gpt_image2",
+        "extraParams": {},
+        "isGenerating": false
+      },
+      "selected": false
+    },
+    {
+      "id": "parity-1",
+      "type": "groupNode",
+      "position": {
+        "x": 660,
+        "y": -34
+      },
+      "data": {
+        "displayName": "Outputs",
+        "label": "Outputs",
+        "createdAt": 1730000000000
+      },
+      "width": 1020,
+      "height": 894,
+      "style": {
+        "width": 1020,
+        "height": 894
+      },
+      "selected": true
+    },
+    {
+      "id": "generated",
+      "type": "imageGenNode",
+      "position": {
+        "x": 40,
+        "y": 54
+      },
+      "data": {
+        "displayName": "图片节点",
+        "imageUrl": "/output/sea.png",
+        "previewImageUrl": "/output/sea.png",
+        "aspectRatio": "16:9",
+        "isSizeManuallyAdjusted": false,
+        "requestAspectRatio": "auto",
+        "prompt": "Sea",
+        "model": "newapi_gpt_image2",
+        "size": "2K",
+        "count": 1,
+        "styleTemplateId": null,
+        "focusRegion": null,
+        "cameraSelection": null,
+        "referenceImageUrl": null,
+        "marks": [],
+        "isGenerating": false,
+        "generationStartedAt": null,
+        "generationDurationMs": 60000
+      },
+      "parentId": "parity-1",
+      "selected": false
+    },
+    {
+      "id": "spare",
+      "type": "textAnnotationNode",
+      "position": {
+        "x": 540,
+        "y": 534
+      },
+      "data": {
+        "displayName": "文本",
+        "content": "Spare",
+        "model": "newapi_gpt_image2",
+        "extraParams": {},
+        "isGenerating": false
+      },
+      "parentId": "parity-1",
+      "selected": false
+    }
+  ],
+  "edges": [
+    {
+      "id": "existing-edge",
+      "source": "source",
+      "target": "generated",
+      "data": {
+        "linkType": "prompt_for"
+      },
+      "type": "disconnectableEdge",
+      "sourceHandle": "source",
+      "targetHandle": "target"
+    }
+  ],
+  "metadata": null,
+  "client_save_id": "parity-save",
+  "save_source": "autosave",
+  "allow_empty_overwrite": false
+}

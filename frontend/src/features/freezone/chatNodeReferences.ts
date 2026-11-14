@@ -1,3 +1,7 @@
+import { CANVAS_CHAT_COMMANDS_SCHEMA_VERSION } from "@/features/canvas/core/commands/types";
+import { defaultNodeDataDefaults, type NodeDataDefaults } from "@/features/canvas/domain/nodeRegistry";
+import type { FreezoneAudioReferenceItem, FreezoneAudioVoiceRef, FreezoneAudioReferencesResult } from "@/features/canvas/domain/audioReferences";
+import type { ExecuteHtmlNodeReadActionOptions } from "@/features/html-artifacts/readNode";
 import type { ChatAttachment } from "@/features/superchat/types";
 import {
   CANVAS_NODE_TYPES,
@@ -12,8 +16,8 @@ import {
   type CanvasOntologyContext,
 } from "@/features/canvas/ontology/canvasOntology";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
-import { getFreezoneImageModelsSnapshot } from "@/features/canvas/hooks/useFreezoneImageModels";
-import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { getCanvasImageModelCatalog } from "@/features/canvas/domain/canvasModelCatalogs";
+import { getCanvasVideoModelCatalog } from "@/features/canvas/domain/canvasModelCatalogs";
 import {
   sortUpstreamByReferenceOrder,
   upstreamNodesInEdgeOrder,
@@ -34,23 +38,15 @@ import {
   BASE_CANVAS_ACTION_CAPABILITIES,
 } from "@/features/freezone/context/canvasActionCatalog";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
+import { isCanvasChatRunNodeAction } from "@/features/freezone/canvasCommandEnvelope";
 import {
-  CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-  isCanvasChatRunNodeAction,
   normalizeCanvasChatCommandEnvelopesForValidation,
   type CanvasChatCommandEnvelope,
-} from "@/features/freezone/canvasChatCommands";
-import {
-  fetchFreezoneAudioReferences,
-  type FreezoneAudioReferenceItem,
-  type FreezoneAudioVoiceRef,
-} from "@/api/ops";
+} from "@/features/canvas/serverEntry";
 import type { FreezoneProjectAsset } from "@/api/projects";
 import { canvasLinkTypeCatalogJson } from "@/features/freezone/canvasEdgeSemantics";
 import { assetToPushTarget } from "@/features/freezone/commit/pushTarget";
 import { personalCanvasIdForUsername } from "@/features/freezone/projections";
-import { useAuthStore } from "@/stores/auth-store";
-import { executeHtmlNodeReadAction } from "@/features/html-artifacts/nodeActions";
 
 export const CANVAS_NODE_REFERENCE_ATTACHMENT_TYPE = "canvas_node_reference";
 export const CANVAS_NODE_REFERENCE_SCHEMA_VERSION = "canvas_node_reference.v1";
@@ -178,6 +174,12 @@ function nodeMediaType(node: CanvasNode): string | null {
   return stringOrNull((node.data as { media_kind?: unknown }).media_kind);
 }
 
+// A reference carries the node's file address; inline `data:` payloads stay on the canvas.
+function addressOrNull(value: unknown): string | null {
+  const address = stringOrNull(value);
+  return address && !/^data:/i.test(address) ? address : null;
+}
+
 function nodeSourceUrl(node: CanvasNode): string | null {
   const data = node.data as {
     imageUrl?: unknown;
@@ -189,21 +191,21 @@ function nodeSourceUrl(node: CanvasNode): string | null {
   };
   if (node.type === CANVAS_NODE_TYPES.video) {
     return (
-      stringOrNull(data.videoUrl) ||
-      stringOrNull(data.sourceUrl) ||
-      stringOrNull(data.previewImageUrl)
+      addressOrNull(data.videoUrl) ||
+      addressOrNull(data.sourceUrl) ||
+      addressOrNull(data.previewImageUrl)
     );
   }
   if (node.type === CANVAS_NODE_TYPES.audio) {
-    return stringOrNull(data.audioUrl) || stringOrNull(data.sourceUrl);
+    return addressOrNull(data.audioUrl) || addressOrNull(data.sourceUrl);
   }
   return (
-    stringOrNull(data.imageUrl) ||
-    stringOrNull(data.previewImageUrl) ||
-    stringOrNull(data.referenceImageUrl) ||
-    stringOrNull(data.videoUrl) ||
-    stringOrNull(data.audioUrl) ||
-    stringOrNull(data.sourceUrl)
+    addressOrNull(data.imageUrl) ||
+    addressOrNull(data.previewImageUrl) ||
+    addressOrNull(data.referenceImageUrl) ||
+    addressOrNull(data.videoUrl) ||
+    addressOrNull(data.audioUrl) ||
+    addressOrNull(data.sourceUrl)
   );
 }
 
@@ -215,12 +217,12 @@ function nodePreviewUrl(node: CanvasNode): string | null {
     videoUrl?: unknown;
   };
   if (node.type === CANVAS_NODE_TYPES.video) {
-    return stringOrNull(data.previewImageUrl) || stringOrNull(data.videoUrl);
+    return addressOrNull(data.previewImageUrl) || addressOrNull(data.videoUrl);
   }
   return (
-    stringOrNull(data.previewImageUrl) ||
-    stringOrNull(data.imageUrl) ||
-    stringOrNull(data.referenceImageUrl)
+    addressOrNull(data.previewImageUrl) ||
+    addressOrNull(data.imageUrl) ||
+    addressOrNull(data.referenceImageUrl)
   );
 }
 
@@ -234,9 +236,9 @@ function textValueFromField(
 
 function buildAgentCanvasNodeActionCatalog(
   node: CanvasNode,
-  context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
+  context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[]; nodeDataDefaults?: NodeDataDefaults },
 ): CanvasNodeActionCatalog & Record<string, unknown> {
-  const catalog = buildCanvasNodeActionCatalog(node, context);
+  const catalog = buildCanvasNodeActionCatalog(node, { ...context, nodeDataDefaults: context?.nodeDataDefaults ?? defaultNodeDataDefaults });
   const executableActions = catalog.actions.filter((action) =>
     isAgentExecutableNodeAction(action.action));
   if (node.type !== CANVAS_NODE_TYPES.beatContext) {
@@ -305,7 +307,7 @@ function nodeActionInvocationExamples(
 
 function buildAgentNodeActionCatalogResponse(
   node: CanvasNode,
-  context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
+  context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[]; nodeDataDefaults?: NodeDataDefaults },
   requestedAction?: string,
 ): Record<string, unknown> {
   const catalog = buildAgentCanvasNodeActionCatalog(node, context);
@@ -344,8 +346,9 @@ function buildAgentNodeActionCatalogResponse(
 function buildAgentCanvasActionCatalog(
   nodes: readonly CanvasNode[],
   edges: readonly CanvasEdge[],
+  nodeDataDefaults: NodeDataDefaults,
 ): ReturnType<typeof buildCanvasActionCatalog> {
-  const catalog = buildCanvasActionCatalog([...nodes], [...edges]);
+  const catalog = buildCanvasActionCatalog([...nodes], [...edges], nodeDataDefaults);
   return {
     ...catalog,
     frontend_command_catalog: catalog.frontend_command_catalog.filter((capability) => {
@@ -353,7 +356,7 @@ function buildAgentCanvasActionCatalog(
       return isAgentExecutableNodeAction(action);
     }),
     node_action_catalogs: nodes.map((node) =>
-      buildAgentCanvasNodeActionCatalog(node, { nodes, edges }),
+      buildAgentCanvasNodeActionCatalog(node, { nodes, edges, nodeDataDefaults }),
     ),
   };
 }
@@ -383,7 +386,7 @@ function nodeTextReference(
 
 function nodeReferenceItem(
   node: CanvasNode,
-  context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
+  context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[]; nodeDataDefaults?: NodeDataDefaults },
   options: { includeActionCatalog?: boolean } = {},
 ): CanvasNodeReferenceItem {
   const textReference = nodeTextReference(node);
@@ -905,7 +908,7 @@ export function buildCanvasNodeReferenceAttachment(
   nodes: CanvasNode[],
   edges: CanvasEdge[] = [],
   allNodes: CanvasNode[] = nodes,
-  options: { displayNodes?: CanvasNode[]; includeActionCatalog?: boolean } = {},
+  options: { displayNodes?: CanvasNode[]; includeActionCatalog?: boolean; nodeDataDefaults?: NodeDataDefaults } = {},
 ): ChatAttachment | null {
   const referencedNodes = nodes.filter((node) => node.id);
   if (referencedNodes.length === 0) return null;
@@ -920,7 +923,7 @@ export function buildCanvasNodeReferenceAttachment(
     (edge) =>
       referencedNodeIds.has(edge.source) && referencedNodeIds.has(edge.target),
   );
-  const actionContext = { nodes: allNodes, edges };
+  const actionContext = { nodes: allNodes, edges, nodeDataDefaults: options.nodeDataDefaults };
 
   const payload: CanvasNodeReferencePayload = {
     schema_version: CANVAS_NODE_REFERENCE_SCHEMA_VERSION,
@@ -1034,14 +1037,14 @@ export function buildCanvasChatCommandContext(
   ].join("\n");
 }
 
-function isCurrentUserPersonalCanvas(canvasId: string): boolean {
-  const username = useAuthStore.getState().username?.trim();
+function isCurrentUserPersonalCanvas(canvasId: string, currentUsername: string | null): boolean {
+  const username = currentUsername?.trim();
   if (!username) return true;
   return canvasId === personalCanvasIdForUsername(username);
 }
 
-function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
-  const exposeMainlineProjection = isCurrentUserPersonalCanvas(canvasId);
+function buildCanvasCommandCatalog(canvasId: string, username: string | null): Record<string, unknown> {
+  const exposeMainlineProjection = isCurrentUserPersonalCanvas(canvasId, username);
   const commands = [
     {
       type: "create_node",
@@ -1147,11 +1150,10 @@ function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
     },
     {
       type: "clear_canvas",
-      typed_tool: "freezone_clear_canvas",
       required: ["type"],
       optional: [],
       description:
-        "清空当前画布中的普通节点和连接。必须走审批；不要把‘清空画布’转换为空的 delete_nodes。主线投影/系统管理节点会保留并明确报告。",
+        '清空当前画布中的普通节点和连接。没有独立的清空工具；请使用 freezone_emit_canvas_command，传入 commands=[{type: "clear_canvas"}]，必须经用户审批。不要把‘清空画布’转换为空的 delete_nodes。主线投影/系统管理节点会保留并明确报告。',
       example: { type: "clear_canvas" },
     },
     {
@@ -1365,6 +1367,7 @@ function expandSelectedCanvasNodes(
 function buildNodeCreateSchema(
   nodeType: CanvasNodeType | undefined,
   modelId?: string,
+  nodeDataDefaults: NodeDataDefaults = defaultNodeDataDefaults,
 ): Record<string, unknown> | null {
   if (!nodeType) return null;
   const schemaNodeType =
@@ -1374,8 +1377,8 @@ function buildNodeCreateSchema(
   if (!isAgentCreatableCanvasNodeType(schemaNodeType)) return null;
   if (modelId && (schemaNodeType === CANVAS_NODE_TYPES.imageGen || schemaNodeType === CANVAS_NODE_TYPES.video)) {
     const snapshot = schemaNodeType === CANVAS_NODE_TYPES.video
-      ? getFreezoneVideoModelsSnapshot()
-      : getFreezoneImageModelsSnapshot();
+      ? getCanvasVideoModelCatalog()
+      : getCanvasImageModelCatalog();
     if (snapshot.isLoading || snapshot.isFallback) {
       return {
         node_type: schemaNodeType,
@@ -1407,7 +1410,7 @@ function buildNodeCreateSchema(
     position: { x: 0, y: 0 },
     data: (modelId ? { model: modelId } : {}) as CanvasNodeData,
   };
-  const catalog = buildCanvasNodeActionCatalog(node);
+  const catalog = buildCanvasNodeActionCatalog(node, { nodeDataDefaults });
   return {
     node_type: schemaNodeType,
     ...(modelId ? { model_id: modelId } : {}),
@@ -1480,11 +1483,11 @@ function audioVoiceOptionLabel(
 }
 
 async function buildAudioVoiceOptions(
-  project: string,
+  loadAudioReferences: () => Promise<FreezoneAudioReferencesResult>,
   node: CanvasNode | undefined,
 ): Promise<Record<string, unknown>> {
   try {
-    const references = await fetchFreezoneAudioReferences(project);
+    const references = await loadAudioReferences();
     const currentData = node?.data as
       | { voiceRef?: unknown; voiceLabel?: unknown; voiceLanguage?: unknown }
       | undefined;
@@ -1891,6 +1894,19 @@ function mainlineProjectionAssetCandidates(
   return output;
 }
 
+function requiredContextPort<T>(port: T | undefined, name: string): T {
+  if (!port) throw new Error(`${name} is not available`);
+  return port;
+}
+
+export interface CanvasContextPorts {
+  nodeDataDefaults: NodeDataDefaults;
+  username: string | null;
+  loadAudioReferences: () => Promise<FreezoneAudioReferencesResult>;
+  readHtmlNode: (options: Omit<ExecuteHtmlNodeReadActionOptions, "ports">) => Promise<Record<string, unknown>>;
+  loadMainlineProjectionAssets: () => Promise<FreezoneProjectAsset[]>;
+}
+
 export async function buildCanvasContextRequestResponses(params: {
   project: string;
   canvasId: string;
@@ -1899,10 +1915,11 @@ export async function buildCanvasContextRequestResponses(params: {
   ontologyContext: CanvasOntologyContext | null | undefined;
   selectedNodeIds?: string[];
   envelopes: CanvasContextRequestEnvelope[];
-  loadMainlineProjectionAssets?: () => Promise<FreezoneProjectAsset[]>;
+  ports?: Partial<CanvasContextPorts>;
   canvasMetadata?: Record<string, unknown> | null;
 }): Promise<Record<string, unknown>[] | null> {
   if (params.envelopes.length === 0) return null;
+  const nodeDataDefaults = params.ports?.nodeDataDefaults ?? defaultNodeDataDefaults;
   const response: Record<string, unknown>[] = [];
   const nodeById = new Map(
     params.nodes.map((node) => [node.id, node] as const),
@@ -1929,13 +1946,13 @@ export async function buildCanvasContextRequestResponses(params: {
         case "canvas_action_catalog":
           response.push({
             type: "canvas_action_catalog",
-            data: buildAgentCanvasActionCatalog(params.nodes, params.edges),
+            data: buildAgentCanvasActionCatalog(params.nodes, params.edges, nodeDataDefaults),
           });
           break;
         case "canvas_command_catalog":
           response.push({
             type: "canvas_command_catalog",
-            data: buildCanvasCommandCatalog(params.canvasId),
+            data: buildCanvasCommandCatalog(params.canvasId, params.ports?.username ?? null),
             instruction:
               "Use this catalog to build one freezone_emit_canvas_command.commands[] batch. Use typed tools only for explicit exactly-one-operation requests; use client_id for same-batch references.",
           });
@@ -1982,6 +1999,7 @@ export async function buildCanvasContextRequestResponses(params: {
             normalizedEnvelopes,
             params.nodes,
             params.edges,
+            nodeDataDefaults,
           );
           response.push({
             type: "validate_canvas_commands",
@@ -2008,6 +2026,7 @@ export async function buildCanvasContextRequestResponses(params: {
             selected,
             params.edges,
             params.nodes,
+            { nodeDataDefaults },
           );
           response.push({
             type: "selection_detail",
@@ -2032,6 +2051,7 @@ export async function buildCanvasContextRequestResponses(params: {
                     {
                       nodes: params.nodes,
                       edges: params.edges,
+                      nodeDataDefaults,
                     },
                     request.action,
                   )
@@ -2051,6 +2071,7 @@ export async function buildCanvasContextRequestResponses(params: {
                       detailNodes,
                       params.edges,
                       params.nodes,
+                      nodeDataDefaults,
                     );
                   })()
               : null,
@@ -2064,6 +2085,7 @@ export async function buildCanvasContextRequestResponses(params: {
           if (!node) throw new Error(`node not found: ${request.node_id ?? ""}`);
           if (!request.action) throw new Error("unsupported HTML read action");
           const actionDefinition = buildCanvasNodeActionCatalog(node, {
+            nodeDataDefaults,
             nodes: params.nodes,
             edges: params.edges,
           }).actions.find((item) => item.action === request.action);
@@ -2074,7 +2096,7 @@ export async function buildCanvasContextRequestResponses(params: {
             type: "node_action_read",
             node_id: node.id,
             action: request.action,
-            data: await executeHtmlNodeReadAction({
+            data: await requiredContextPort(params.ports?.readHtmlNode, "HTML node reader")({
               projectId: params.project,
               node,
               action: request.action,
@@ -2099,6 +2121,7 @@ export async function buildCanvasContextRequestResponses(params: {
             selected,
             params.edges,
             params.nodes,
+            { nodeDataDefaults },
           );
           response.push({
             type: "neighbor_graph",
@@ -2130,7 +2153,7 @@ export async function buildCanvasContextRequestResponses(params: {
           break;
         }
         case "mainline_projection_assets": {
-          if (!params.loadMainlineProjectionAssets) {
+          if (!params.ports?.loadMainlineProjectionAssets) {
             response.push({
               type: "mainline_projection_assets",
               asset_kinds: request.asset_kinds ?? [],
@@ -2143,14 +2166,14 @@ export async function buildCanvasContextRequestResponses(params: {
           const assets = [
             ...projectionAssetSourcesFromNodes(params.nodes),
             ...projectionAssetSourcesFromMetadata(params.canvasMetadata),
-            ...(await params.loadMainlineProjectionAssets()),
+            ...(await params.ports?.loadMainlineProjectionAssets()),
           ];
           response.push({
             type: "mainline_projection_assets",
             asset_kinds: request.asset_kinds ?? [],
             query: request.query ?? null,
             data: mainlineProjectionAssetCandidates(assets, request),
-            instruction: isCurrentUserPersonalCanvas(params.canvasId)
+            instruction: isCurrentUserPersonalCanvas(params.canvasId, params.ports?.username ?? null)
               ? "Use one candidate's projection_request with freezone_open_mainline_projection to map/open that mainline asset into the Freezone canvas. If no candidate matches, ask the user to choose a more specific mainline asset."
               : "These are read-only mainline asset candidates for context. If no candidate matches, ask the user to choose a more specific mainline asset.",
           });
@@ -2168,7 +2191,7 @@ export async function buildCanvasContextRequestResponses(params: {
           break;
         case "node_create_schema":
           {
-            const schema = buildNodeCreateSchema(request.node_type, request.model_id);
+            const schema = buildNodeCreateSchema(request.node_type, request.model_id, nodeDataDefaults);
             response.push({
               type: "node_create_schema",
               node_type:
@@ -2186,7 +2209,7 @@ export async function buildCanvasContextRequestResponses(params: {
           response.push({
             type: "audio_voice_options",
             node_id: request.node_id ?? null,
-            data: await buildAudioVoiceOptions(params.project, node),
+            data: await buildAudioVoiceOptions(requiredContextPort(params.ports?.loadAudioReferences, "audio reference loader"), node),
           });
           break;
         }
@@ -2196,15 +2219,7 @@ export async function buildCanvasContextRequestResponses(params: {
   return response;
 }
 
-export async function buildCanvasContextRequestResponse(params: {
-  project: string;
-  canvasId: string;
-  nodes: CanvasNode[];
-  edges: CanvasEdge[];
-  ontologyContext: CanvasOntologyContext | null | undefined;
-  selectedNodeIds?: string[];
-  envelopes: CanvasContextRequestEnvelope[];
-}): Promise<string | null> {
+export async function buildCanvasContextRequestResponse(params: Parameters<typeof buildCanvasContextRequestResponses>[0]): Promise<string | null> {
   const response = await buildCanvasContextRequestResponses(params);
   if (!response) return null;
   return [
@@ -2379,6 +2394,7 @@ function buildCompactCanvasNodeDetailPayload(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
   allNodes: CanvasNode[],
+  nodeDataDefaults: NodeDataDefaults,
 ): Record<string, unknown> | null {
   const attachment = buildCanvasNodeReferenceAttachment(
     project,
@@ -2386,6 +2402,7 @@ function buildCompactCanvasNodeDetailPayload(
     nodes,
     edges,
     allNodes,
+    { nodeDataDefaults },
   );
   const payload = attachment ? JSON.parse(attachment.content || "null") : null;
   if (!isRecord(payload) || !Array.isArray(payload.nodes)) return null;

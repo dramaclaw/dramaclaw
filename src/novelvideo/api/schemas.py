@@ -1359,7 +1359,7 @@ class FreezoneVideoEditRequest(FreezoneWorkflowMediaLink):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneVideoExtendRequest(BaseModel):
+class FreezoneVideoExtendRequest(FreezoneWorkflowMediaLink):
     """视频延长请求。输入一个源视频，并从其结尾继续生成指定时长。"""
 
     video_url: str = Field(description="待延长的源视频静态地址，必填")
@@ -1628,7 +1628,7 @@ class FreezoneVideoEraseRequest(BaseModel):
     )
 
 
-class FreezoneVideoUpscaleRequest(BaseModel):
+class FreezoneVideoUpscaleRequest(FreezoneWorkflowMediaLink):
     """视频增强请求。模型由媒体目录能力动态选择。"""
 
     enhancement_model: Literal["standard", "topaz"] = Field(
@@ -2190,6 +2190,43 @@ class FreezoneStageAssetAcceptedResponse(BaseModel):
     data: FreezoneStageAssetAcceptedData
 
 
+class AgentCanvasCommandsRequest(BaseModel):
+    envelopes: list[dict] = Field(min_length=1, max_length=20)
+    locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
+
+
+class CanvasConfirmationRequest(BaseModel):
+    agent_id: str = "main"
+    turn_id: str | None = None
+    commands: list[dict] = Field(min_length=1)
+    fill_standard_tiers: list[str] = Field(default_factory=list)
+
+
+class CanvasConfirmationDecisionRequest(BaseModel):
+    decision: Literal["confirmed", "refused"]
+    via: Literal["card", "conversation"]
+    agent_id: str = "main"
+    turn_id: str | None = None
+    command_hash: str | None = None
+
+
+class AgentCanvasContextRequest(BaseModel):
+    requests: list[dict] = Field(min_length=1, max_length=20)
+    locale: str | None = None
+
+
+class CanvasCreateOrigin(BaseModel):
+    chat_canvas_id: str
+    turn_id: str
+
+
+class CanvasCreateRequest(BaseModel):
+    name: str = Field(max_length=100)
+    request_id: str = Field(min_length=1, max_length=128)
+    locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
+    origin: Optional[CanvasCreateOrigin] = None
+
+
 class CanvasPayload(BaseModel):
     schema_version: Optional[Literal[2]] = None
     canvas_id: Optional[str] = None
@@ -2219,6 +2256,8 @@ class CanvasPayload(BaseModel):
         "import",
         "agent_create",
         "agent_patch",
+        "agent_confirmed",
+        "workflow_result",
     ] = "autosave"
     allow_empty_overwrite: bool = False
     nodes: list[dict] = Field(default_factory=list)

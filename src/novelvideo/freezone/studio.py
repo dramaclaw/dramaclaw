@@ -15,12 +15,14 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,7 +31,7 @@ from urllib.parse import quote, urlencode, urlsplit
 import httpx
 import portalocker
 
-from novelvideo.config import STATE_DIR
+from novelvideo.config import RUNTIME_DIR, STATE_DIR
 from novelvideo.freezone.paths import resolve_static_url_to_path
 
 if TYPE_CHECKING:
@@ -59,15 +61,14 @@ _HEX_COLOR = re.compile(
 )
 
 _BUILD_LOCK = threading.Lock()
+_STUDIO_BUSY_WAIT_SECONDS = 20
+_STUDIO_STOP_WAIT_SECONDS = 5
 # Studio 是第三方 Node 进程，只给它运行所需的系统变量；MODEL_API_KEY、DSN、
 # 会话密钥等 API 环境一律不继承。
 _STUDIO_ENV_PASSTHROUGH = (
     "PATH",
     "HOME",
     "PLAYWRIGHT_BROWSERS_PATH",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
     "LANG",
     "LC_ALL",
     "LC_CTYPE",
@@ -76,6 +77,8 @@ _STUDIO_ENV_PASSTHROUGH = (
     "SYSTEMROOT",
     "WINDIR",
 )
+STUDIO_FILM_MISSING = "studio_film_missing"
+
 _STALE_CLIP_NAME = re.compile(r"^clip-\d+-")
 
 
@@ -92,9 +95,10 @@ def openfilm_studio_enabled() -> bool:
 class StudioError(RuntimeError):
     """A user-facing Studio bridge failure with an HTTP status."""
 
-    def __init__(self, message: str, status_code: int = 500):
+    def __init__(self, message: str, status_code: int = 500, *, code: str = ""):
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 def _repo_root() -> Path:
@@ -116,7 +120,7 @@ async def _studio_process_lock():
     """Serialize lazy startup across Gunicorn workers without blocking their loop."""
     _state_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
     with (_state_dir() / ".startup.lock").open("a+b") as handle:
-        deadline = time.monotonic() + 35
+        deadline = time.monotonic() + 60
         while True:
             try:
                 portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
@@ -168,6 +172,33 @@ def _film_dir(project_dir: Path, canvas_id: str, node_id: str) -> Path:
     except ValueError as exc:
         raise StudioError("studio folder escapes the project", 400) from exc
     return resolved
+
+
+@dataclass(frozen=True)
+class StudioFilm:
+    root: Path
+    state_dir: Path
+    runtime_dir: Path
+
+
+def studio_film_for_node(
+    *,
+    project_dir: Path,
+    state_dir: Path,
+    runtime_dir: Path,
+    canvas_id: str,
+    node_id: str,
+) -> StudioFilm:
+    root = _film_dir(Path(project_dir), canvas_id, node_id)
+    segments = ("openfilm", root.parent.name, root.name)
+    state = Path(state_dir).joinpath(*segments).resolve()
+    runtime = Path(runtime_dir).joinpath(*segments).resolve()
+    home = _studio_home().resolve()
+    system_tmp = Path(tempfile.gettempdir()).resolve()
+    for folder in (state, runtime):
+        if folder.is_relative_to(root) or folder.is_relative_to(home) or folder == system_tmp:
+            raise StudioError("Studio host directory overlaps film, home or system temp", 500)
+    return StudioFilm(root=root, state_dir=state, runtime_dir=runtime)
 
 
 def _number(value: float) -> str:
@@ -648,12 +679,21 @@ def _log_tail(limit: int = 4000) -> str:
 
 
 def _studio_env(port: int, key: str, ready: Path) -> dict[str, str]:
+    tmp = (Path(RUNTIME_DIR) / "openfilm" / "tmp").resolve()
+    if tmp.is_relative_to(_studio_home().resolve()) or tmp == Path(tempfile.gettempdir()).resolve():
+        raise StudioError("Studio temp directory overlaps home or system temp", 500)
+    tmp.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp.chmod(0o700)
     env = {
         name: os.environ[name] for name in _STUDIO_ENV_PASSTHROUGH if name in os.environ
     }
     env.update(
         {
             "OPENFILM_HOME": str(_studio_home()),
+            "OPENFILM_HOST_DIRS": "1",
+            "TMPDIR": str(tmp),
+            "TMP": str(tmp),
+            "TEMP": str(tmp),
             "OPENFILM_STUDIO_PORT": str(port),
             "OPENFILM_STUDIO_KEY": key,
             "OPENFILM_STUDIO_READY_FILE": str(ready),
@@ -664,13 +704,95 @@ def _studio_env(port: int, key: str, ready: Path) -> dict[str, str]:
     return env
 
 
-def _stop_process(proc: subprocess.Popen[bytes]) -> None:
-    proc.terminate()
+def _studio_popen_kwargs(*, env: dict[str, str], log: Any) -> dict[str, Any]:
+    return {
+        "cwd": str(_repo_root()),
+        "env": env,
+        "stdout": log,
+        "stderr": log,
+        "stdin": subprocess.DEVNULL,
+        "start_new_session": True,
+    }
+
+
+def _process_group_exists(pid: int) -> bool:
     try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _studio_group_alive(pid: Any) -> bool:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return False
+    try:
+        return os.getpgid(pid) == pid and _process_group_exists(pid)
+    except ProcessLookupError:
+        return False
+
+
+def _wait_group_stopped(pid: int) -> bool:
+    deadline = time.monotonic() + _STUDIO_STOP_WAIT_SECONDS
+    while True:
+        # A Studio started by this worker may be a zombie until we reap it.
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        if not _process_group_exists(pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def _stop_group(pid: int) -> None:
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            return
+        except PermissionError as exc:
+            raise StudioError(
+                "cannot stop the existing OpenFilm Studio process group", 503
+            ) from exc
+        if _wait_group_stopped(pid):
+            return
+    raise StudioError("OpenFilm Studio process group did not stop", 503)
+
+
+def _stop_process(proc: subprocess.Popen[bytes]) -> None:
+    _stop_group(proc.pid)
+    proc.wait(timeout=5)
+
+
+def _ready_state(state: dict[str, Any]) -> dict[str, Any] | None:
+    ready = state.get("ready")
+    if not isinstance(ready, str):
+        return None
+    said = _read_manifest(Path(ready))
+    if (
+        not said
+        or not isinstance(said.get("origin"), str)
+        or not isinstance(said.get("filmOrigin"), str)
+    ):
+        return None
+    return {
+        **state,
+        "origin": said["origin"],
+        "film_origin": said["filmOrigin"],
+        "port": said.get("port", state["port"]),
+        "status": "ready",
+    }
+
+
+def _publish_ready(state: dict[str, Any]) -> None:
+    _write_state(state)
+    if isinstance(state.get("ready"), str):
+        Path(state["ready"]).unlink(missing_ok=True)
 
 
 def _spawn_studio() -> dict[str, Any]:
@@ -704,38 +826,30 @@ def _spawn_studio() -> dict[str, Any]:
         try:
             proc = subprocess.Popen(
                 [node, str(runner)],
-                cwd=str(_repo_root()),
-                env=env,
-                stdout=log,
-                stderr=log,
-                stdin=subprocess.DEVNULL,
+                **_studio_popen_kwargs(env=env, log=log),
             )
         except OSError as exc:
             raise StudioError(f"could not start OpenFilm Studio: {exc}", 503) from exc
 
+        state = {
+            "pid": proc.pid,
+            "port": port,
+            "key": key,
+            "ready": str(ready),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "status": "starting",
+        }
+        try:
+            _write_state(state)
+        except BaseException:
+            _stop_process(proc)
+            raise
     deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
-        if ready.is_file():
-            try:
-                said = json.loads(ready.read_text(encoding="utf-8"))
-            except ValueError:
-                said = None
-            ready.unlink(missing_ok=True)
-            if (
-                isinstance(said, dict)
-                and isinstance(said.get("origin"), str)
-                and isinstance(said.get("filmOrigin"), str)
-            ):
-                state = {
-                    "pid": proc.pid,
-                    "origin": said["origin"],
-                    "film_origin": said["filmOrigin"],
-                    "port": said.get("port", port),
-                    "key": key,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                }
-                _write_state(state)
-                return state
+        started = _ready_state(state)
+        if started is not None:
+            _publish_ready(started)
+            return started
         if proc.poll() is not None:
             break
         time.sleep(0.1)
@@ -765,6 +879,29 @@ async def _health(origin: str) -> dict[str, Any] | None:
     return said
 
 
+async def _reuse_or_spawn_studio(state: dict[str, Any] | None) -> dict[str, Any]:
+    if state and _studio_group_alive(state.get("pid")):
+        deadline = time.monotonic() + _STUDIO_BUSY_WAIT_SECONDS
+        while True:
+            candidate = _ready_state(state) if state.get("status") == "starting" else state
+            if candidate and isinstance(candidate.get("origin"), str):
+                said = await _health(candidate["origin"])
+                if said:
+                    candidate["film_origin"] = str(
+                        said.get("filmOrigin") or candidate.get("film_origin") or ""
+                    )
+                    candidate["status"] = "ready"
+                    _publish_ready(candidate)
+                    return candidate
+            if not _studio_group_alive(state["pid"]):
+                break
+            if time.monotonic() >= deadline:
+                await asyncio.to_thread(_stop_group, state["pid"])
+                break
+            await asyncio.sleep(0.1)
+    return await asyncio.to_thread(_spawn_studio)
+
+
 async def _ensure_studio() -> dict[str, Any]:
     async with _studio_process_lock():
         external = os.environ.get("SUPERTALE_OPENFILM_STUDIO_ORIGIN", "").strip()
@@ -782,17 +919,9 @@ async def _ensure_studio() -> dict[str, Any]:
                 "key": external_key,
                 "port": None,
             }
-        state = _read_state()
-        if state and isinstance(state.get("origin"), str):
-            said = await _health(state["origin"])
-            if said:
-                state["film_origin"] = str(
-                    said.get("filmOrigin") or state.get("film_origin") or ""
-                )
-                return state
         # Cancelling to_thread does not stop its thread. Keep the process lock
-        # until startup finishes, even if the request is cancelled repeatedly.
-        startup = asyncio.create_task(asyncio.to_thread(_spawn_studio))
+        # until recovery/startup finishes, even if the request is cancelled repeatedly.
+        startup = asyncio.create_task(_reuse_or_spawn_studio(_read_state()))
         cancelled: asyncio.CancelledError | None = None
         while True:
             try:
@@ -840,7 +969,7 @@ async def _studio_post(
 
 
 async def ensure_studio_session(
-    film_dir: Path,
+    film: StudioFilm,
     *,
     host_back: str | None = None,
     host_back_label: str | None = None,
@@ -852,15 +981,7 @@ async def ensure_studio_session(
     if not back:
         raise StudioError("host_back is required: the editor only runs embedded", 400)
     state = await _ensure_studio()
-    said = await _studio_post(
-        state,
-        "/api/projects",
-        {"path": str(film_dir), "create": True},
-    )
-    project = said.get("project")
-    project_id = project.get("id") if isinstance(project, dict) else None
-    if not isinstance(project_id, str):
-        raise StudioError("OpenFilm Studio returned no project id", 502)
+    project_id = await _studio_project_id(state, film)
     return {
         "url": studio_open_url(
             origin=str(state["origin"]),
@@ -942,13 +1063,14 @@ def studio_export_film_dir(
     return film_dir
 
 
-def _require_film(project_dir: Path, canvas_id: str, node_id: str) -> Path:
-    film_dir = _film_dir(Path(project_dir), canvas_id, node_id)
+def _require_film(film: StudioFilm) -> Path:
+    film_dir = film.root
     if not studio_film_exists(film_dir):
         raise StudioError(
             "this compose node has no Studio film yet: open its compose workspace "
             "once so the timeline becomes a film",
             404,
+            code=STUDIO_FILM_MISSING,
         )
     return film_dir
 
@@ -989,9 +1111,16 @@ def _studio_error_text(said: Any, fallback: str) -> str:
     return fallback
 
 
-async def _studio_project_id(state: dict[str, Any], film_dir: Path) -> str:
+async def _studio_project_id(state: dict[str, Any], film: StudioFilm) -> str:
     said = await _studio_post(
-        state, "/api/projects", {"path": str(film_dir), "create": True}
+        state,
+        "/api/projects",
+        {
+            "path": str(film.root),
+            "create": True,
+            "stateDir": str(film.state_dir),
+            "runtimeDir": str(film.runtime_dir),
+        },
     )
     project = said.get("project")
     project_id = project.get("id") if isinstance(project, dict) else None
@@ -1231,15 +1360,23 @@ async def read_studio_film(
     *,
     project_dir: Path,
     state_dir: Path,
+    runtime_dir: Path,
     canvas_id: str,
     node_id: str,
 ) -> dict[str, Any]:
     """The film of a compose node as the agent reads it: clips by id, with where they came from."""
     from novelvideo.freezone import canvas_store
 
-    film_dir = _require_film(project_dir, canvas_id, node_id)
+    film = studio_film_for_node(
+        project_dir=project_dir,
+        state_dir=state_dir,
+        runtime_dir=runtime_dir,
+        canvas_id=canvas_id,
+        node_id=node_id,
+    )
+    film_dir = _require_film(film)
     state = await _ensure_studio()
-    project_id = await _studio_project_id(state, film_dir)
+    project_id = await _studio_project_id(state, film)
     status, said = await _studio_request(state, "GET", _project_api(project_id))
     if status >= 400 or not isinstance(said, dict):
         raise StudioError(
@@ -1286,6 +1423,7 @@ async def edit_studio_film(
     *,
     project_dir: Path,
     state_dir: Path,
+    runtime_dir: Path,
     canvas_id: str,
     node_id: str,
     base_rev: str | None,
@@ -1300,9 +1438,16 @@ async def edit_studio_film(
     from novelvideo.freezone import canvas_store
 
     clean_ops = _check_ops(ops)
-    film_dir = _require_film(project_dir, canvas_id, node_id)
+    film = studio_film_for_node(
+        project_dir=project_dir,
+        state_dir=state_dir,
+        runtime_dir=runtime_dir,
+        canvas_id=canvas_id,
+        node_id=node_id,
+    )
+    film_dir = _require_film(film)
     state = await _ensure_studio()
-    project_id = await _studio_project_id(state, film_dir)
+    project_id = await _studio_project_id(state, film)
     status, said = await _studio_request(
         state,
         "POST",
@@ -1383,6 +1528,8 @@ def _record_import(
 async def import_media_to_film(
     *,
     project_dir: Path,
+    state_dir: Path,
+    runtime_dir: Path,
     canvas_id: str,
     node_id: str,
     source_url: str,
@@ -1390,7 +1537,14 @@ async def import_media_to_film(
     label: str = "",
 ) -> dict[str, Any]:
     """Copy a project media file into the film's assets so a clip can use it."""
-    film_dir = _require_film(project_dir, canvas_id, node_id)
+    film = studio_film_for_node(
+        project_dir=project_dir,
+        state_dir=state_dir,
+        runtime_dir=runtime_dir,
+        canvas_id=canvas_id,
+        node_id=node_id,
+    )
+    film_dir = _require_film(film)
     source = _resolve_import_source(source_url, Path(project_dir))
     digest = hashlib.sha1(source_url.encode("utf-8")).hexdigest()[:8]
     stem = _safe_segment((label or source.stem)[:24], "media")[:24]
@@ -1410,7 +1564,7 @@ async def import_media_to_film(
     facts: dict[str, Any] = {}
     try:
         state = await _ensure_studio()
-        project_id = await _studio_project_id(state, film_dir)
+        project_id = await _studio_project_id(state, film)
         facts = (await _probe_media(state, project_id, [f"assets/{asset_name}"])).get(
             f"assets/{asset_name}", {}
         )
@@ -1429,7 +1583,7 @@ async def import_media_to_film(
 
 async def export_studio_film(
     *,
-    film_dir: Path,
+    film: StudioFilm,
     output_path: Path,
     fps: int = 30,
     poll_seconds: float = _EXPORT_POLL_SECONDS,
@@ -1441,7 +1595,7 @@ async def export_studio_film(
     wrote it, so the render stays in ``studio-exports/`` beside the job output;
     the job's mp4 is a hard link to it (a copy when the disk cannot link).
     """
-    film_dir = Path(film_dir)
+    film_dir = film.root
     if not studio_film_exists(film_dir):
         raise StudioError("the compose node has no Studio film to export", 404)
     output_path = Path(output_path)
@@ -1450,7 +1604,7 @@ async def export_studio_film(
     folder.mkdir(parents=True, exist_ok=True)
 
     state = await _ensure_studio()
-    project_id = await _studio_project_id(state, film_dir)
+    project_id = await _studio_project_id(state, film)
     ask: dict[str, Any] = {"kind": "video", "codec": "h264"}
     if fps:
         ask["fps"] = int(fps)

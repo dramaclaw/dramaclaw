@@ -8,30 +8,27 @@ import {
   type CanvasEdge,
   type CanvasNodeType,
 } from "@/features/canvas/domain/canvasNodes";
-import { getDownstreamSpawnTypes, getNodeDefinition } from "@/features/canvas/domain/nodeRegistry";
+import { defaultNodeDataDefaults, getDownstreamSpawnTypes, getNodeDefinition, type NodeDataDefaults } from "@/features/canvas/domain/nodeRegistry";
 import {
   isPresetManagedNode,
   isSystemManagedNodeData,
 } from "@/features/canvas/domain/mainlineNodeFlags";
-import { getFreezoneImageModelsSnapshot } from "@/features/canvas/hooks/useFreezoneImageModels";
-import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { getCanvasImageModelCatalog } from "@/features/canvas/domain/canvasModelCatalogs";
+import { getCanvasVideoModelCatalog } from "@/features/canvas/domain/canvasModelCatalogs";
 import {
   findSeedance25VideoModel,
   isVideoModeSupportedByModel,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { DEPTH_MAX_DURATION_SEC } from "@/features/canvas/application/depthCapture/depthMath";
-import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
-import {
-  VIDEO_UPSCALE_RESOLUTIONS,
-  VIDEO_UPSCALE_RESOLUTION_LABEL,
-} from "@/features/canvas/application/videoUpscale";
+import type { ModelOption } from "@/features/canvas/domain/modelOptions";
+import { VIDEO_UPSCALE_RESOLUTIONS, VIDEO_UPSCALE_RESOLUTION_LABEL } from "@/features/canvas/domain/videoUpscaleResolutions";
 import { BEAT_CONTEXT_AGENT_EDITABLE_FIELDS } from "@/features/freezone/canvasCommandNodeData";
 import { isCommitCandidateData } from "@/features/freezone/commit/commitEligibility";
 import { resolveInputsForSkill } from "@/features/freezone/context/skillNodeInputs";
 import type { SkillDefinition, SkillInputRole } from "@/features/freezone/context/skillRoles";
-import { nodeAgentSceneDigest } from "@/features/previz/agentSceneEdit";
+import { nodeAgentSceneDigest } from "@/features/previz/agentScenePlanning";
 import { agentSceneCatalog } from "@/features/previz/domain/agentEdit";
-import { STANDARD_TIME_OF_DAY_OPTIONS } from "@/lib/time-of-day";
+import { STANDARD_TIME_OF_DAY_OPTIONS } from "@/features/canvas/domain/timeOfDay";
 
 export type CanvasNodeActionExecution = "chat_command" | "requires_confirmation" | "manual_ui" | "frontend_node" | "tool";
 
@@ -74,6 +71,7 @@ export type CanvasNodeActionCatalog = {
 };
 
 export type CanvasNodeActionCatalogContext = {
+  nodeDataDefaults?: NodeDataDefaults;
   nodes?: readonly CanvasNode[];
   edges?: readonly CanvasEdge[];
 };
@@ -162,7 +160,7 @@ function isInteractiveStoryClipNode(node: CanvasNode): boolean {
 }
 
 function imageModelParameterSchema(): CanvasEditableFieldSchema {
-  const snapshot = getFreezoneImageModelsSnapshot();
+  const snapshot = getCanvasImageModelCatalog();
   return {
     type: "enum",
     label: "模型",
@@ -541,7 +539,7 @@ function modelOptionLabels(models: ModelOption[]): Record<string, string> {
 }
 
 function imageModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
-  const snapshot = getFreezoneImageModelsSnapshot();
+  const snapshot = getCanvasImageModelCatalog();
   return {
     type: "enum",
     label: "模型",
@@ -558,7 +556,7 @@ function imageModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
 function selectedImageModel(node: CanvasNode): ModelOption | undefined {
   const modelId = (node.data as { model?: unknown }).model;
   return typeof modelId === "string"
-    ? getFreezoneImageModelsSnapshot().models.find((model) => model.id === modelId)
+    ? getCanvasImageModelCatalog().models.find((model) => model.id === modelId)
     : undefined;
 }
 
@@ -598,7 +596,7 @@ function imageAspectRatioSchema(node: CanvasNode, label: string): CanvasEditable
 }
 
 function videoModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
-  const snapshot = getFreezoneVideoModelsSnapshot();
+  const snapshot = getCanvasVideoModelCatalog();
   return {
     type: "enum",
     label: "模型",
@@ -613,7 +611,7 @@ function videoModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
 }
 
 function videoAspectRatioSchema(node: CanvasNode): CanvasEditableFieldSchema {
-  const snapshot = getFreezoneVideoModelsSnapshot();
+  const snapshot = getCanvasVideoModelCatalog();
   const modelId = (node.data as { model?: unknown }).model;
   const model = typeof modelId === "string"
     ? snapshot.models.find((item) => item.id === modelId)
@@ -629,7 +627,7 @@ function videoAspectRatioSchema(node: CanvasNode): CanvasEditableFieldSchema {
 }
 
 function videoQualitySchema(node: CanvasNode): CanvasEditableFieldSchema {
-  const snapshot = getFreezoneVideoModelsSnapshot();
+  const snapshot = getCanvasVideoModelCatalog();
   const currentModelId = (node.data as { model?: unknown }).model;
   const currentModel =
     typeof currentModelId === "string"
@@ -649,7 +647,7 @@ function videoQualitySchema(node: CanvasNode): CanvasEditableFieldSchema {
 }
 
 function videoDurationSchema(node: CanvasNode): CanvasEditableFieldSchema {
-  const snapshot = getFreezoneVideoModelsSnapshot();
+  const snapshot = getCanvasVideoModelCatalog();
   const currentModelId = (node.data as { model?: unknown }).model;
   const currentModel =
     typeof currentModelId === "string"
@@ -672,10 +670,11 @@ function videoDurationSchema(node: CanvasNode): CanvasEditableFieldSchema {
   };
 }
 
-function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
-  const snapshot = getFreezoneVideoModelsSnapshot();
+function videoGenModeSchema(node: CanvasNode, defaults: NodeDataDefaults): CanvasEditableFieldSchema {
+  const snapshot = getCanvasVideoModelCatalog();
   const modelId = (node.data as { model?: unknown }).model
-    ?? (getNodeDefinition(CANVAS_NODE_TYPES.video).createDefaultData() as { model?: unknown }).model;
+    ?? (getNodeDefinition(CANVAS_NODE_TYPES.video)
+      .createDefaultData(defaults) as { model?: unknown }).model;
   // Match the generation form when a remembered/persisted model is unavailable.
   // Explicit invalid model fields are still rejected by model schema validation.
   const model = (typeof modelId === "string" && modelId
@@ -809,7 +808,7 @@ const PREVIZ_SCENE_EDIT_DESCRIPTION = [
   "Not available here: audio clips, importing model or motion files.",
 ].join(" ");
 
-function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableFieldSchema> {
+function editableSchemaForNode(node: CanvasNode, defaults: NodeDataDefaults = defaultNodeDataDefaults): Record<string, CanvasEditableFieldSchema> {
   if (isPresetManagedNode(node) && node.type !== CANVAS_NODE_TYPES.beatContext) return {};
   switch (node.type) {
     case CANVAS_NODE_TYPES.textAnnotation:
@@ -900,7 +899,7 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
             ? `${GENERATOR_PROMPT_DESCRIPTION} This is only the video-generation prompt and does not replace narration. When completing a story clip, update narration separately.`
             : GENERATOR_PROMPT_DESCRIPTION,
         },
-        genMode: videoGenModeSchema(node),
+        genMode: videoGenModeSchema(node, defaults),
         model: videoModelSchema(node),
         aspectRatio: videoAspectRatioSchema(node),
         quality: videoQualitySchema(node),
@@ -1646,7 +1645,7 @@ function addMediaActions(
         "画面裁切 / frame crop: enter crop mode for this video node. The user drags the crop box and confirms through the existing frontend crop UI; the cropped video lands as a new node.",
       parameters: { node_id: node.id },
     });
-    if (findSeedance25VideoModel(getFreezoneVideoModelsSnapshot().models)) {
+    if (findSeedance25VideoModel(getCanvasVideoModelCatalog().models)) {
       actions.push({
         action: "open_video_extend_tool",
         execution: "manual_ui",
@@ -1813,7 +1812,7 @@ export function buildCanvasNodeActionCatalog(
     ...(skillId ? { skill_id: skillId } : {}),
     downstream_spawn_types: downstreamSpawnTypesForNode(node),
     editable_fields: editableFieldsForNode(node),
-    editable_schema: editableSchemaForNode(node),
+    editable_schema: editableSchemaForNode(node, context?.nodeDataDefaults),
     actions,
   };
 }

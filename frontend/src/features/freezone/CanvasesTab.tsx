@@ -12,13 +12,26 @@ import {
 import { alertDialog, confirmDialog } from "@/components/confirm-dialog-host";
 import { CanvasOutlineList } from "./CanvasOutlineList";
 import {
-  createBlankFreezoneCanvas,
+  createFreezoneCanvas,
   deleteFreezoneCanvas,
+  generateClientSaveId,
   type FreezoneCanvasSummary,
 } from "@/api/canvas";
-import { ApiError } from "@/api/client";
+import {
+  canvasCreationQuota,
+  canvasKindFromSummary,
+  displayNameForCanvasSummary,
+  isConflictCopyCanvas,
+  isUserCreatedCanvas,
+  planCanvasCreation,
+  type CanvasQuotaStatus,
+  type CanvasSummaryForDisplay,
+  type CanvasTranslate,
+} from "@/features/canvas/core/canvasCreation";
+import { ApiError } from "@/features/canvas/domain/backendErrors";
 import { writeUrl } from "@/lib/url-params";
 import { useTranslation } from "react-i18next";
+import { normalize } from "@/i18n/languages";
 import { useAuthStore } from "@/stores/auth-store";
 import { personalCanvasIdForUsername } from "@/features/freezone/projections";
 import { useFreezoneCanvases } from "@/lib/queries/freezone";
@@ -53,7 +66,7 @@ export function CanvasesTab({
   reloadToken,
   collapsed = false,
 }: CanvasesTabProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const username = useAuthStore((state) => state.username);
   const displayName = useAuthStore((state) => state.displayName);
   const canvasesQuery = useFreezoneCanvases(project);
@@ -112,16 +125,15 @@ export function CanvasesTab({
     }
   };
 
-  // 我自己在这个项目里建了几张、还能不能再建。上限是产品配额，后端不拦（见
-  // lib/limits.ts），所以拦截只能落在这里。
+  // 配额和重名由服务端创建路由强制执行，本地计数仅用于请求前解释上限。
   // 只有列表真的回来了才拿它算配额：`items` 在加载中是空数组，按它判定等于把
   // 「不知道」当成「还有余量」。
   // 刷新失败也算「不知道」：refetch() 不抛，失败后 React Query 留着上一份列表，
-  // 拿它接着数，刚建成的那张就不在账上，下一张能照建。
-  const canvasQuota = canvasCreationQuotaStatus(
+  // 拿它接着数会漏掉刚建成的那张，让本地预检误放行。
+  const canvasQuota = canvasCreationQuota(
     canvasesQuery.data && !canvasesQuery.isError ? items : undefined,
     username,
-  );
+  ).status;
 
   const showCanvasQuotaNotice = (status: Exclude<CanvasQuotaStatus, "available">) =>
     void alertDialog(
@@ -161,43 +173,79 @@ export function CanvasesTab({
   const handleCreateCanvas = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     // 表单可能是超限之前就开着的（别处又建了一张），提交这一下再兜一次。
-    if (canvasQuota !== "available") {
-      showCanvasQuotaNotice(canvasQuota);
+    const requestId = generateClientSaveId();
+    const plan = planCanvasCreation({
+      projectId: project,
+      name: newCanvasName,
+      creatorUsername: username,
+      canvases: canvasesQuery.data && !canvasesQuery.isError ? items : undefined,
+      requestId,
+      saveSource: "manual_save",
+    }, { translate: t });
+    if (plan.status === "rejected") {
+      const rejection = plan.rejection;
+      switch (rejection.code) {
+        case "quota_unknown":
+          showCanvasQuotaNotice("unknown");
+          break;
+        case "quota_reached":
+          showCanvasQuotaNotice("reached");
+          break;
+        case "name_required":
+          setLocalError(t("freezone.canvases.createNameRequired"));
+          break;
+        case "duplicate_name":
+        case "id_taken":
+          setLocalError(t("freezone.canvases.createDuplicate", { name: rejection.name }));
+          break;
+        default: {
+          const exhaustive: never = rejection;
+          return exhaustive;
+        }
+      }
       return;
     }
     const name = newCanvasName.trim();
-    if (!name) {
-      setLocalError(t("freezone.canvases.createNameRequired"));
-      return;
-    }
-    const duplicate = findDuplicateCanvasName(items, name, t);
-    if (duplicate) {
-      setLocalError(t("freezone.canvases.createDuplicate", { name }));
-      return;
-    }
-    const canvasId = userCreatedCanvasId(name, username);
-    if (items.some((item) => item.id === canvasId)) {
-      setLocalError(t("freezone.canvases.createDuplicate", { name }));
-      return;
-    }
+    const locale = normalize(i18n?.language);
     setCreatingCanvas(true);
     setLocalError(null);
     try {
-      await createBlankFreezoneCanvas(project, {
-        canvasId,
-        name,
-        creatorUsername: username,
-      });
+      const result = await createFreezoneCanvas(project, { name, request_id: requestId, locale });
+      if (result.status === "rejected") {
+        const rejection = result.rejection;
+        switch (rejection.code) {
+          case "quota_unknown":
+            showCanvasQuotaNotice("unknown");
+            break;
+          case "quota_reached":
+            showCanvasQuotaNotice("reached");
+            break;
+          case "name_required":
+            setLocalError(t("freezone.canvases.createNameRequired"));
+            break;
+          case "duplicate_name":
+          case "id_taken":
+            setLocalError(t("freezone.canvases.createDuplicate", { name: rejection.name }));
+            break;
+          default: {
+            const exhaustive: never = rejection;
+            return exhaustive;
+          }
+        }
+        // 本地预检已通过，服务端拒绝说明缓存列表需要刷新。
+        void canvasesQuery.refetch();
+        return;
+      }
       setDeletedCanvasIds((prev) => {
-        if (!prev.has(canvasId)) return prev;
+        if (!prev.has(result.canvas_id)) return prev;
         const next = new Set(prev);
-        next.delete(canvasId);
+        next.delete(result.canvas_id);
         return next;
       });
       setNewCanvasName("");
       setShowCreateForm(false);
       await canvasesQuery.refetch();
-      writeUrl({ canvas: canvasId });
+      writeUrl({ canvas: result.canvas_id });
     } catch (err) {
       if (isConflictError(err)) {
         setLocalError(t("freezone.canvases.createDuplicate", { name }));
@@ -502,12 +550,9 @@ function canvasSelectLabel(item: CanvasDisplaySummary, t: Translate): string {
     : displayNameForCanvasSummary(item, t);
 }
 
-type CanvasDisplaySummary = FreezoneCanvasSummary & {
-  displayName?: string;
-  displayKind?: CanvasKind;
-};
+type CanvasDisplaySummary = CanvasSummaryForDisplay;
 
-type Translate = (key: string, options?: Record<string, unknown>) => string;
+type Translate = CanvasTranslate;
 
 interface CanvasBrowserSections {
   defaultCanvas: CanvasDisplaySummary;
@@ -602,14 +647,6 @@ function isPersonalCanvasForAnyUser(item: FreezoneCanvasSummary): boolean {
   return /^user_[a-z0-9_-]+_[a-z0-9]+$/.test(item.id);
 }
 
-function isConflictCopyCanvas(item: FreezoneCanvasSummary): boolean {
-  return item.metadata?.canvas_origin === "conflict_copy" || item.id.startsWith("copy_") || item.id.includes("_copy_");
-}
-
-function isUserCreatedCanvas(item: FreezoneCanvasSummary): boolean {
-  return item.metadata?.canvas_origin === "user_created";
-}
-
 function isConflictError(error: unknown): boolean {
   return (
     (error instanceof ApiError && error.status === 409) ||
@@ -632,41 +669,6 @@ function timestampOf(iso: string): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-type CanvasKind =
-  | "default"
-  | "episode"
-  | "beat"
-  | "personal"
-  | "asset"
-  | "workflow"
-  | "blank"
-  | "other";
-
-export function canvasKindFromSummary(item: FreezoneCanvasSummary): CanvasKind {
-  const displayKind = (item as CanvasDisplaySummary).displayKind;
-  if (displayKind) return displayKind;
-  if (isUserCreatedCanvas(item)) return "blank";
-  const metadata = item.metadata ?? {};
-  if (metadata.free_workflow && typeof metadata.free_workflow === "object") {
-    return "workflow";
-  }
-  const preset = metadata.preset as { scope?: unknown } | undefined;
-  const scope =
-    typeof item.canvas_scope === "string"
-      ? item.canvas_scope
-      : typeof preset?.scope === "string"
-        ? preset.scope
-        : item.id === "default"
-          ? "default"
-          : "";
-  if (scope === "default") return "default";
-  if (scope === "episode") return "episode";
-  if (scope === "beat") return "beat";
-  if (scope === "asset") return "asset";
-  if (scope === "blank") return "blank";
-  return "other";
-}
-
 function sourceCanvasIdFromSummary(item: FreezoneCanvasSummary): string | null {
   const freeWorkflow = item.metadata?.free_workflow;
   if (!freeWorkflow || typeof freeWorkflow !== "object") return null;
@@ -674,199 +676,6 @@ function sourceCanvasIdFromSummary(item: FreezoneCanvasSummary): string | null {
   return typeof sourceCanvasId === "string" && sourceCanvasId.trim().length > 0
     ? sourceCanvasId
     : null;
-}
-
-function metadataString(item: FreezoneCanvasSummary, key: string): string | null {
-  const value = item.metadata?.[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function rawDisplayNameFromSummary(item: FreezoneCanvasSummary): string | null {
-  return metadataString(item, "display_name");
-}
-
-function creatorUsernameFromSummary(item: FreezoneCanvasSummary): string | null {
-  return metadataString(item, "creator_username");
-}
-
-function displayNameForCanvasSummary(item: CanvasDisplaySummary, t: Translate): string {
-  const rawDisplayName = rawDisplayNameFromSummary(item);
-  if (rawDisplayName) {
-    const creator = creatorUsernameFromSummary(item);
-    return creator ? t("freezone.canvases.userCreatedName", { user: creator, name: rawDisplayName }) : rawDisplayName;
-  }
-  return item.displayName ?? describeCanvasSummary(item, t);
-}
-
-function normalizeCanvasName(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
-}
-
-function compareCanvasName(item: FreezoneCanvasSummary, name: string, t: Translate): boolean {
-  const normalized = normalizeCanvasName(name);
-  if (!normalized) return false;
-  const rawDisplayName = rawDisplayNameFromSummary(item);
-  if (rawDisplayName && normalizeCanvasName(rawDisplayName) === normalized) return true;
-  return normalizeCanvasName(describeCanvasSummary(item, t)) === normalized;
-}
-
-export function findDuplicateCanvasName(
-  items: FreezoneCanvasSummary[],
-  name: string,
-  t: Translate,
-): FreezoneCanvasSummary | null {
-  return items.find((item) => compareCanvasName(item, name, t)) ?? null;
-}
-
-/**
- * 本人在这个项目里建了几张画布。只数 `canvas_origin === "user_created"` 的空白
- * 画布 —— 预设画布（default/episode/beat/asset）和个人画布是系统投影出来的，
- * 不占用户配额。
- *
- * 没有 `creator_username` 的老画布归到匿名桶：传 `null` 时数的就是它们，所以
- * 匿名创建者同样受限，不会因为缺元数据绕过配额。
- */
-export function countCanvasesCreatedBy(
-  items: FreezoneCanvasSummary[],
-  username?: string | null,
-): number {
-  const owner = username?.trim() || null;
-  return items.filter(
-    (item) => isUserCreatedCanvas(item) && creatorUsernameFromSummary(item) === owner,
-  ).length;
-}
-
-/** 配额判定的三态。`unknown` 是前置状态还没齐，不是「还有余量」。 */
-export type CanvasQuotaStatus = "unknown" | "available" | "reached";
-
-/**
- * 还能不能再建。
- *
- * 画布列表没回来（`items` 是 undefined）或身份没恢复（username 还是 null）时返回
- * `unknown`，调用方必须当成「不确定」处理而不是放行：后端不数个数，这个窗口里放过
- * 去的就是真的多出来一张，而且身份没恢复时建的画布会带着 `creatorUsername: null`
- * 落库，事后谁的配额都不算。反过来也不能拿匿名桶的数去拦人——那会把真作者挡在自己
- * 没建过的老画布后面。
- */
-export function canvasCreationQuotaStatus(
-  items: FreezoneCanvasSummary[] | undefined,
-  username?: string | null,
-): CanvasQuotaStatus {
-  if (!items || !username?.trim()) return "unknown";
-  return countCanvasesCreatedBy(items, username) >= MAX_USER_CREATED_CANVASES_PER_PROJECT
-    ? "reached"
-    : "available";
-}
-
-export function userCreatedCanvasId(name: string, username?: string | null): string {
-  const base = `${username?.trim() || "user"}:${name.trim()}`;
-  const slug = name
-    .trim()
-    .toLocaleLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 32) || "canvas";
-  return `canvas_${slug}_${stableCanvasIdHash(base)}`.slice(0, 64).replace(/_+$/g, "");
-}
-
-function stableCanvasIdHash(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function describeCanvasSummary(item: FreezoneCanvasSummary, t: Translate): string {
-  const metadata = item.metadata ?? {};
-  if (isConflictCopyCanvas(item)) return t("freezone.canvases.conflictCopy");
-  if (metadata.free_workflow && typeof metadata.free_workflow === "object") {
-    const source = (metadata.free_workflow as { source_preset?: unknown }).source_preset as
-      | { scope?: unknown; episode?: unknown; beat?: unknown; asset_kind?: unknown; asset_id?: unknown }
-      | null
-      | undefined;
-    if (source?.scope === "beat") {
-      return t("freezone.canvases.description.freeWorkflowBeat", {
-        episode: source.episode ?? "?",
-        beat: source.beat ?? "?",
-      });
-    }
-    if (source?.scope === "asset") {
-      return t("freezone.canvases.description.freeWorkflowAsset", {
-        asset: source.asset_id ?? source.asset_kind ?? t("freezone.canvases.description.assetFallback"),
-      });
-    }
-    return t("freezone.canvases.description.freeWorkflow");
-  }
-  const preset = metadata.preset as
-    | {
-        scope?: unknown;
-        episode?: unknown;
-        beat?: unknown;
-        primary_slot?: unknown;
-        asset_kind?: unknown;
-        character?: unknown;
-        identity_id?: unknown;
-        asset_id?: unknown;
-      }
-    | undefined;
-  const scope =
-    typeof item.canvas_scope === "string"
-      ? item.canvas_scope
-      : typeof preset?.scope === "string"
-        ? preset.scope
-        : item.id === "default"
-          ? "default"
-          : "";
-
-  if (scope === "default") return t("freezone.canvases.description.default");
-  if (scope === "episode") {
-    const episode =
-      typeof item.episode === "number"
-        ? item.episode
-        : typeof preset?.episode === "number"
-          ? preset.episode
-          : null;
-    return episode !== null
-      ? t("freezone.canvases.description.episode", { episode })
-      : t("freezone.canvases.description.episodeUnknown");
-  }
-  if (scope === "beat") {
-    const episode =
-      typeof item.episode === "number"
-        ? item.episode
-        : typeof preset?.episode === "number"
-          ? preset.episode
-          : null;
-    const beat =
-      typeof item.beat === "number"
-        ? item.beat
-        : typeof preset?.beat === "number"
-          ? preset.beat
-          : null;
-    const slot = typeof preset?.primary_slot === "string" ? ` · ${preset.primary_slot}` : "";
-    return t("freezone.canvases.description.beat", {
-      episode: episode ?? "?",
-      beat: beat ?? "?",
-      slot,
-    });
-  }
-  if (scope === "asset") {
-    const kind =
-      typeof preset?.asset_kind === "string"
-        ? preset.asset_kind
-        : t("freezone.canvases.description.assetFallback");
-    const character = typeof preset?.character === "string" ? preset.character : "";
-    const identityId = typeof preset?.identity_id === "string" ? preset.identity_id : "";
-    const assetId = typeof preset?.asset_id === "string" ? preset.asset_id : "";
-    const name = character || identityId || assetId;
-    return name
-      ? t("freezone.canvases.description.asset", { name, kind })
-      : t("freezone.canvases.description.assetUnknown", { kind });
-  }
-  if (scope === "blank") return t("freezone.canvases.description.blank");
-  return item.id;
 }
 
 function formatRelative(iso: string, t: Translate): string {

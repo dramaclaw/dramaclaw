@@ -1,7 +1,18 @@
 import type { StructuredBlock } from "@/features/superchat/spec-extract";
-import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasChatCommands";
+import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCommandEnvelope";
 
 export type CanvasCommandExecutionMode = "manual_confirm" | "auto_execute";
+
+export function canvasApprovalIsExpired(expiresAt: number | undefined, nowMs: number): boolean {
+  return typeof expiresAt === "number" && expiresAt <= nowMs;
+}
+
+export function canvasApprovalAppliesWithoutClick(
+  executionMode: CanvasCommandExecutionMode,
+  serverApproved?: boolean,
+): boolean {
+  return executionMode === "auto_execute" || serverApproved === true;
+}
 
 export function isCanvasChatCommandStructuredBlock(block: StructuredBlock): boolean {
   return extractCanvasChatCommandEnvelopes([block.value]).length > 0;

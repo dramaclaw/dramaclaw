@@ -5,9 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiCall } from "@/api/client";
 import {
   compileFreezoneRecipePrompt,
-  generateFreezoneRecipeText,
+  sendGenerationWireRequest,
   listFreezoneStyleTemplates,
-  submitFreezoneAudioSpeech,
   submitFreezoneGen,
   submitFreezoneVideoGen,
 } from "@/api/ops";
@@ -36,27 +35,21 @@ describe("workflow media task association", () => {
   beforeEach(() => {
     vi.mocked(apiCall).mockReset();
     clearWorkflowProductOperation("image-1");
-    clearWorkflowProductOperation("audio-1");
   });
 
-  it("sends the admitted attempt with image and audio submissions", async () => {
+  it("sends the admitted attempt with image submission", async () => {
     vi.mocked(apiCall).mockResolvedValue({ task_key: "task-1", job_id: "job-1" });
     bindWorkflowProductOperation("image-1", {
       projectId: "project-1", operationId: "operation-image",
       generationAttemptId: "attempt-image",
     });
-    bindWorkflowProductOperation("audio-1", {
-      projectId: "project-1", operationId: "operation-audio",
-      generationAttemptId: "attempt-audio",
-    });
+
 
     await submitFreezoneGen("project-1", {
       prompt: "frame", referenceUrls: [], canvasId: "default", nodeId: "image-1",
       variantCount: 4,
     });
-    await submitFreezoneAudioSpeech("project-1", {
-      text: "voice", canvasId: "default", nodeId: "audio-1",
-    });
+
 
     expect(vi.mocked(apiCall).mock.calls[0][1]).toEqual(expect.objectContaining({
       json: expect.objectContaining({
@@ -65,12 +58,7 @@ describe("workflow media task association", () => {
         variant_count: 4,
       }),
     }));
-    expect(vi.mocked(apiCall).mock.calls[1][1]).toEqual(expect.objectContaining({
-      json: expect.objectContaining({
-        product_operation_id: "operation-audio",
-        generation_attempt_id: "attempt-audio",
-      }),
-    }));
+
   });
 });
 
@@ -128,20 +116,15 @@ describe("freezone recipe API", () => {
   it("allows long-running text generation requests", async () => {
     vi.mocked(apiCall).mockResolvedValueOnce({ content: "创意大纲" });
 
-    const content = await generateFreezoneRecipeText({
-      recipeId: "video-creative-outline",
-      nodePrompt: "生成广告创意大纲",
-      userGoal: "制作运动相机广告",
-    });
+    const request = { method: 'POST', path: 'freezone/recipes/generate-text', body: {
+      recipe_id: 'video-creative-outline', node_prompt: '生成广告创意大纲', user_goal: '制作运动相机广告',
+    } } as const;
+    const data = await sendGenerationWireRequest<{ content: string }>(request, { timeout: 600000 });
 
-    expect(content).toBe("创意大纲");
-    expect(apiCall).toHaveBeenCalledWith(
-      "freezone/recipes/generate-text",
-      expect.objectContaining({
-        method: "POST",
-        timeout: 10 * 60 * 1000,
-      }),
-    );
+    expect(data).toStrictEqual({ content: '创意大纲' });
+    expect(apiCall).toHaveBeenCalledWith(request.path, {
+      method: 'POST', json: request.body, timeout: 600000,
+    });
   });
 
   it("allows long-running prompt compilation before media submission", async () => {

@@ -7,12 +7,14 @@ import * as freezoneShellModule from "@/features/freezone/FreezoneShell";
 import {
   buildCanvasBrowserSections,
   canDeleteCanvasSummary,
+} from "@/features/freezone/CanvasesTab";
+import {
   canvasCreationQuotaStatus,
   canvasKindFromSummary,
   countCanvasesCreatedBy,
   findDuplicateCanvasName,
   userCreatedCanvasId,
-} from "@/features/freezone/CanvasesTab";
+} from "@/features/canvas/core/canvasCreation";
 import { MAX_USER_CREATED_CANVASES_PER_PROJECT } from "@/lib/limits";
 import {
   hasLegacyPresetCanvasMetadata,

@@ -1,11 +1,22 @@
+import { coerceAudioReferences } from "@/features/canvas/domain/audioReferences";
+export type { FreezoneAudioVoiceRef } from "@/features/canvas/domain/audioReferences";
+import type { FreezoneAudioReferencesResult } from "@/features/canvas/domain/audioReferences";
+import { nodeContextWireFields, textTranslateWireBody } from '@/features/canvas/application/generationRequests/nodeContextWire';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { z } from "zod";
+import {
+  recipeCompileRequestBody as recipeCompileJson, recipeCompileResult,
+} from '@/features/canvas/application/generationRequests/recipeCompileRequest';
 import { readVoiceDesignResponse } from "@/lib/queries/voice-design";
 import type { SaveGeneratedAccountVoice } from "@/types/voice-design";
 import { apiCall, apiCallEnvelope, apiClient } from "./client";
 import { workflowProductOperation } from "@/features/canvas/application/workflowExecutionActivity";
-import { readReferenceMediaLimits, type ReferenceMediaLimits } from "./referenceMediaLimits";
+import {
+  coerceModelList, coerceVideoModelList, pickString, pickStringArray,
+  type FreezoneImageModelInfo, type FreezoneVideoModelInfo,
+  type FreezoneProvider, type FreezoneVideoResolution,
+} from '@/features/canvas/domain/modelCatalogPayload';
 
 // Per-node generation history -------------------------------------------- //
 
@@ -58,7 +69,7 @@ export interface FreezoneRecipeCompilePayload {
   onCompileMetadata?: (metadata: FreezoneRecipeCompileMetadata) => void;
 }
 
-const RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
+export const RECIPE_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
 const RECIPE_COMPILE_BATCH_WINDOW_MS = 15;
 const RECIPE_COMPILE_BATCH_MAX_ITEMS = 12;
 
@@ -78,44 +89,13 @@ const pendingRecipeCompiles: PendingRecipeCompile[] = [];
 let recipeCompileBatchTimer: ReturnType<typeof setTimeout> | null = null;
 let recipeCompileRequestSequence = 0;
 
-function recipeCompileJson(payload: FreezoneRecipeCompilePayload) {
-  return {
-    ...(payload.projectId ? { project_id: payload.projectId } : {}),
-    ...(payload.productOperationId
-      ? { product_operation_id: payload.productOperationId }
-      : {}),
-    recipe_id: payload.recipeId,
-    recipe_version: payload.recipeVersion ?? "",
-    ...(payload.recipePipeline?.length
-      ? { recipe_pipeline: payload.recipePipeline }
-      : {}),
-    skill_id: payload.skillId ?? "",
-    skill_version: payload.skillVersion ?? "",
-    confirmed_inputs: payload.confirmedInputs ?? {},
-    node_kind: payload.nodeKind,
-    prompt_strategy: payload.promptStrategy ?? "llm_refine",
-    node_prompt: payload.nodePrompt ?? "",
-    user_goal: payload.userGoal ?? "",
-    upstream_text: payload.upstreamText ?? "",
-    reference_media: payload.referenceMedia ?? [],
-  };
-}
-
 function resolveRecipeCompile(
   pending: PendingRecipeCompile,
   data: FreezoneRecipeCompileWireData,
 ): void {
-  pending.payload.onCompileMetadata?.({
-    mode: data.compile_mode ?? "model",
-    prompt: data.prompt,
-    recipeIds: Array.isArray(data.recipe_ids)
-      ? data.recipe_ids.filter((item): item is string => typeof item === "string" && item.length > 0)
-      : [
-          pending.payload.recipeId,
-          ...(pending.payload.recipePipeline ?? []).map((item) => item.id),
-        ],
-  });
-  pending.resolve(data.prompt);
+  const result = recipeCompileResult(recipeCompileJson(pending.payload), data);
+  pending.payload.onCompileMetadata?.(result.metadata);
+  pending.resolve(result.prompt);
 }
 
 async function sendSingleRecipeCompile(pending: PendingRecipeCompile): Promise<void> {
@@ -214,35 +194,15 @@ export function compileFreezoneRecipePrompt(
   });
 }
 
-export async function generateFreezoneRecipeText(
-  payload: Omit<FreezoneRecipeCompilePayload, "nodeKind">,
-): Promise<string> {
-  const data = await apiCall<{ content: string }>("freezone/recipes/generate-text", {
-    method: "POST",
-    // Recipe-backed text generation is a model call and can legitimately take
-    // longer than the shared 30s API-client timeout.
-    timeout: RECIPE_MODEL_TIMEOUT_MS,
-    json: {
-      ...(payload.projectId ? { project_id: payload.projectId } : {}),
-      ...(payload.productOperationId
-        ? { product_operation_id: payload.productOperationId }
-        : {}),
-      recipe_id: payload.recipeId,
-      recipe_version: payload.recipeVersion ?? "",
-      ...(payload.recipePipeline?.length
-        ? { recipe_pipeline: payload.recipePipeline }
-        : {}),
-      skill_id: payload.skillId ?? "",
-      skill_version: payload.skillVersion ?? "",
-      confirmed_inputs: payload.confirmedInputs ?? {},
-      node_kind: "text",
-      node_prompt: payload.nodePrompt ?? "",
-      user_goal: payload.userGoal ?? "",
-      upstream_text: payload.upstreamText ?? "",
-      reference_media: payload.referenceMedia ?? [],
-    },
+export async function sendGenerationWireRequest<T>(
+  request: { method: 'POST'; path: string; body: Record<string, unknown> },
+  options?: { timeout?: number },
+): Promise<T> {
+  return apiCall<T>(request.path, {
+    method: request.method,
+    json: request.body,
+    ...(options?.timeout !== undefined ? { timeout: options.timeout } : {}),
   });
-  return data.content;
 }
 
 /**
@@ -250,16 +210,7 @@ export async function generateFreezoneRecipeText(
  * emitting keys only when present so legacy callers stay byte-identical.
  */
 function nodeContextBody(ctx: FreezoneNodeContext): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (ctx.canvasId) out.canvas_id = ctx.canvasId;
-  if (ctx.nodeId) out.node_id = ctx.nodeId;
-  if (ctx.modelParams) out.model_params = ctx.modelParams;
-  const operation = workflowProductOperation(ctx.nodeId);
-  if (operation?.generationAttemptId) {
-    out.product_operation_id = operation.operationId;
-    out.generation_attempt_id = operation.generationAttemptId;
-  }
-  return out;
+  return nodeContextWireFields({ ...ctx, productOperation: workflowProductOperation(ctx.nodeId) ?? null });
 }
 
 /** One recorded generation attempt for a node (see generation-history GET). */
@@ -342,12 +293,6 @@ export async function deleteNodeGenerationHistoryRecord(
 
 // /freezone/gen ----------------------------------------------------------- //
 
-export type FreezoneProvider =
-  | "newapi"
-  | "openrouter"
-  | "huimeng"
-  | "openai";
-
 export interface FreezoneGenCamera {
   /** id from /freezone/image/camera-options.camera_bodies */
   cameraBodyId?: string | null;
@@ -418,8 +363,6 @@ export interface FreezoneJobRef {
 // /freezone/video/gen ----------------------------------------------------- //
 
 export type FreezoneVideoAspectRatio = string;
-
-export type FreezoneVideoResolution = string;
 
 /** Local element marker on the source image, used to anchor subjects/objects. */
 export interface FreezoneVideoMark {
@@ -1378,446 +1321,12 @@ export async function fetchFreezoneCameraOptions(
 
 // /freezone/image/models -------------------------------------------------- //
 
-export type MediaModelParameterControl = "select" | "number" | "switch" | "text" | "multiselect";
-export interface MediaModelParameterDefinition {
-  key: string;
-  label: string;
-  control: MediaModelParameterControl;
-  requestPath: string;
-  options?: Array<string | number | boolean>;
-  default?: unknown;
-  min?: number;
-  max?: number;
-  step?: number;
-  required?: boolean;
-  modes?: string[];
-}
-export interface MediaModelRequestSchema {
-  endpoint: "images/generations" | "video/generations" | "audio/speech";
-  parameters?: MediaModelParameterDefinition[];
-  omitPaths?: string[];
+export async function fetchFreezoneImageModels(project: string): Promise<FreezoneImageModelInfo[]> {
+  return coerceModelList(await apiCall<unknown>(`projects/${encodeURIComponent(project)}/freezone/image/models`));
 }
 
-export interface FreezoneImageModelInfo extends ReferenceMediaLimits {
-  /** Opaque database identity used by new billing and task records. */
-  catalogId?: string;
-  /** Stable picker id, e.g. `"newapi_gpt_image2"`. */
-  id: string;
-  /** Provider tab id (`huimeng` / `openrouter` / `openai`). */
-  providerId: FreezoneProvider;
-  /** Value sent to backend `model` field. */
-  apiModel: string;
-  /** Display label in the model chip. */
-  label: string;
-  resolutionOptions?: string[];
-  qualityOptions?: string[];
-  ratioOptions?: string[];
-  referenceImageMax?: number | null;
-  request?: MediaModelRequestSchema;
-}
-
-// Provider inference for raw model strings the backend may return without
-// metadata (e.g. just a flat string list). Order matters — first match wins.
-const MODEL_PROVIDER_HINTS: Array<{
-  match: (raw: string) => boolean;
-  providerId: FreezoneProvider;
-}> = [
-  { match: (s) => s.toLowerCase().startsWith("huimeng"), providerId: "huimeng" },
-  { match: (s) => s.toLowerCase().includes("/gemini"), providerId: "openrouter" },
-  { match: (s) => s.toLowerCase().startsWith("google/"), providerId: "openrouter" },
-  { match: (s) => s.toLowerCase().startsWith("anthropic/"), providerId: "openrouter" },
-  { match: (s) => s.toLowerCase().startsWith("openrouter/"), providerId: "openrouter" },
-  { match: (s) => s.toLowerCase().startsWith("gpt-image"), providerId: "openai" },
-  { match: (s) => s.toLowerCase().startsWith("dall-e"), providerId: "openai" },
-];
-
-function inferProvider(raw: string): FreezoneProvider {
-  for (const hint of MODEL_PROVIDER_HINTS) {
-    if (hint.match(raw)) return hint.providerId;
-  }
-  return "huimeng";
-}
-
-function pickString(record: Record<string, unknown>, ...keys: string[]): string | null {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.length > 0) return value;
-  }
-  return null;
-}
-
-function pickNumber(record: Record<string, unknown>, ...keys: string[]): number | null {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim().length > 0) {
-      const parsed = Number(value);
-      if (Number.isFinite(parsed)) return parsed;
-    }
-  }
-  return null;
-}
-
-function pickBoolean(record: Record<string, unknown>, ...keys: string[]): boolean | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "boolean") return value;
-  }
-  return undefined;
-}
-
-function pickStringArray(record: Record<string, unknown>, ...keys: string[]): string[] {
-  for (const key of keys) {
-    const value = record[key];
-    if (Array.isArray(value)) {
-      return value.filter((item): item is string => typeof item === "string" && item.length > 0);
-    }
-  }
-  return [];
-}
-
-function pickMediaRequestSchema(value: unknown): MediaModelRequestSchema | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const schema = value as Record<string, unknown>;
-  if (typeof schema.endpoint !== "string") return undefined;
-  return schema as unknown as MediaModelRequestSchema;
-}
-
-function normalizeProviderId(raw: string | null): FreezoneProvider | null {
-  if (!raw) return null;
-  const lowered = raw.toLowerCase();
-  if (
-    lowered === "newapi" ||
-    lowered === "huimeng" ||
-    lowered === "openrouter" ||
-    lowered === "openai"
-  ) {
-    return lowered;
-  }
-  return null;
-}
-
-function modelEntryFromObject(entry: Record<string, unknown>): FreezoneImageModelInfo | null {
-  const apiModel = pickString(entry, "model", "apiModel", "api_model", "name");
-  if (!apiModel) return null;
-  const providerId =
-    normalizeProviderId(pickString(entry, "providerId", "provider_id", "provider")) ??
-    inferProvider(apiModel);
-  const id = pickString(entry, "id") ?? `${providerId}/${apiModel}`;
-  const label = pickString(entry, "label", "displayName", "display_name") ?? apiModel;
-  const catalogId = pickString(entry, "catalogId", "catalog_id");
-  return {
-    ...(catalogId ? { catalogId } : {}),
-    id,
-    providerId,
-    apiModel,
-    label,
-    resolutionOptions: pickStringArray(entry, "resolutionOptions", "resolution_options"),
-    qualityOptions: pickStringArray(entry, "qualityOptions", "quality_options"),
-    ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
-    ...readReferenceMediaLimits(entry),
-    referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
-    request: pickMediaRequestSchema(entry.request),
-  };
-}
-
-function modelEntryFromString(raw: string): FreezoneImageModelInfo {
-  const providerId = inferProvider(raw);
-  return {
-    id: `${providerId}/${raw}`,
-    providerId,
-    apiModel: raw,
-    label: raw,
-  };
-}
-
-function coerceModelList(payload: unknown): FreezoneImageModelInfo[] {
-  // Accept several shapes the backend might return — schema is empty in
-  // openapi.json so we normalize defensively rather than guess one shape.
-  let candidate: unknown = payload;
-  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
-    const wrapper = candidate as Record<string, unknown>;
-    if (Array.isArray(wrapper.models)) candidate = wrapper.models;
-    else if (Array.isArray(wrapper.data)) candidate = wrapper.data;
-    else if (Array.isArray(wrapper.items)) candidate = wrapper.items;
-    else {
-      // provider→models[] map: { huimeng: [...], openrouter: [...] }
-      const flattened: FreezoneImageModelInfo[] = [];
-      for (const [providerRaw, value] of Object.entries(wrapper)) {
-        const providerId = normalizeProviderId(providerRaw);
-        if (!providerId || !Array.isArray(value)) continue;
-        for (const item of value) {
-          if (typeof item === "string") {
-            flattened.push({
-              id: `${providerId}/${item}`,
-              providerId,
-              apiModel: item,
-              label: item,
-            });
-          } else if (item && typeof item === "object") {
-            const entry = modelEntryFromObject(item as Record<string, unknown>);
-            if (entry) flattened.push({ ...entry, providerId });
-          }
-        }
-      }
-      if (flattened.length > 0) return flattened;
-    }
-  }
-
-  if (!Array.isArray(candidate)) return [];
-  const result: FreezoneImageModelInfo[] = [];
-  for (const item of candidate) {
-    if (typeof item === "string") {
-      result.push(modelEntryFromString(item));
-    } else if (item && typeof item === "object") {
-      const entry = modelEntryFromObject(item as Record<string, unknown>);
-      if (entry) result.push(entry);
-    }
-  }
-  return result;
-}
-
-export async function fetchFreezoneImageModels(
-  project: string,
-): Promise<FreezoneImageModelInfo[]> {
-  const payload = await apiCall<unknown>(
-    `projects/${encodeURIComponent(project)}/freezone/image/models`,
-  );
-  return coerceModelList(payload);
-}
-
-// /freezone/video/models -------------------------------------------------- //
-
-/** Provider tab id for video generation models. */
-export type FreezoneVideoProvider = "newapi" | "seedance" | "huimeng";
-
-export interface FreezoneVideoModelInfo extends ReferenceMediaLimits {
-  /** Opaque database identity used by new billing and task records. */
-  catalogId?: string;
-  /** Stable picker id, e.g. `"seedance_2"` (backend currently keys by api id). */
-  id: string;
-  /** Provider tab id (`seedance` / `huimeng`). */
-  providerId: FreezoneVideoProvider;
-  /** Value sent to backend `/freezone/video/gen` `model` field. */
-  apiModel: string;
-  /** Display label in the model chip. */
-  label: string;
-  /** Supported output resolution values for this model, when advertised by backend. */
-  resolutionOptions?: FreezoneVideoResolution[];
-  humanReview?: boolean;
-  /** Whether this model can produce native synchronized audio. Missing means legacy-supported. */
-  supportsGenerateAudio?: boolean;
-  /** Smallest supported duration in seconds, when advertised by backend. */
-  minDuration?: number | null;
-  /** Largest supported duration in seconds, when advertised by backend. */
-  maxDuration?: number | null;
-  /** Supported Seedance 2.0 Value style hints, when advertised by backend. */
-  sceneOptimizeOptions?: Array<"anime" | "realistic">;
-  /** Default Seedance 2.0 Value style hint, when advertised by backend. */
-  defaultSceneOptimize?: "anime" | "realistic" | null;
-  ratioOptions?: string[];
-  supportedModes?: string[];
-  referenceImageMax?: number | null;
-  referenceVideoMax?: number | null;
-  referenceAudioMax?: number | null;
-  referenceFileMax?: number | null;
-  referenceLinkMax?: number | null;
-  referenceFileTypes?: string[];
-  referenceAudioMinSeconds?: number | null;
-  referenceAudioMaxSeconds?: number | null;
-  referenceAudioTotalMinSeconds?: number | null;
-  /**
-   * 参考音频**总时长**上限（秒）。厂商 r2v 除了逐条 1.8~15.2s，还另有一条总和限制
-   * （见 videoModelCapabilities 里的说明），这项就是它的后台可配值；没配时前端按
-   * 15.2s 兜底。允许小数，别当成整数字段处理。
-   */
-  referenceAudioTotalMaxSeconds?: number | null;
-  referenceVideoMinSeconds?: number | null;
-  referenceVideoMaxSeconds?: number | null;
-  referenceVideoTotalMinSeconds?: number | null;
-  referenceVideoTotalMaxSeconds?: number | null;
-  request?: MediaModelRequestSchema;
-}
-
-// Provider inference for raw model ids the backend may return without
-// metadata. Order matters — first match wins. Anything we don't recognize
-// falls back to `seedance` (the primary provider).
-const VIDEO_MODEL_PROVIDER_HINTS: Array<{
-  match: (raw: string) => boolean;
-  providerId: FreezoneVideoProvider;
-}> = [
-  { match: (s) => s.toLowerCase().startsWith("huimeng"), providerId: "huimeng" },
-  { match: (s) => s.toLowerCase().startsWith("seedance"), providerId: "seedance" },
-];
-
-function inferVideoProvider(raw: string): FreezoneVideoProvider {
-  for (const hint of VIDEO_MODEL_PROVIDER_HINTS) {
-    if (hint.match(raw)) return hint.providerId;
-  }
-  return "seedance";
-}
-
-function normalizeVideoProviderId(raw: string | null): FreezoneVideoProvider | null {
-  if (!raw) return null;
-  const lowered = raw.toLowerCase();
-  if (lowered === "newapi" || lowered === "seedance" || lowered === "huimeng") return lowered;
-  return null;
-}
-
-function videoModelEntryFromObject(
-  entry: Record<string, unknown>,
-): FreezoneVideoModelInfo | null {
-  const apiModel = pickString(entry, "model", "apiModel", "api_model", "name");
-  if (!apiModel) return null;
-  const providerId =
-    normalizeVideoProviderId(pickString(entry, "providerId", "provider_id", "provider")) ??
-    inferVideoProvider(apiModel);
-  const id = pickString(entry, "id") ?? apiModel;
-  const label = pickString(entry, "label", "displayName", "display_name") ?? apiModel;
-  const catalogId = pickString(entry, "catalogId", "catalog_id");
-  const resolutionOptions = pickStringArray(entry, "resolutionOptions", "resolution_options");
-  const sceneOptimizeOptions = pickStringArray(entry, "sceneOptimizeOptions", "scene_optimize_options")
-    .map((value) => value.toLowerCase())
-    .filter((value): value is "anime" | "realistic" =>
-      value === "anime" || value === "realistic"
-    );
-  const defaultSceneOptimizeRaw = pickString(entry, "defaultSceneOptimize", "default_scene_optimize")
-    ?.toLowerCase();
-  const defaultSceneOptimize =
-    defaultSceneOptimizeRaw === "anime" || defaultSceneOptimizeRaw === "realistic"
-      ? defaultSceneOptimizeRaw
-      : null;
-  return {
-    ...(catalogId ? { catalogId } : {}),
-    id,
-    providerId,
-    apiModel,
-    label,
-    ...(resolutionOptions.length > 0 ? { resolutionOptions } : {}),
-    humanReview: pickBoolean(entry, "humanReview", "human_review"),
-    supportsGenerateAudio: pickBoolean(
-      entry,
-      "supportsGenerateAudio",
-      "supports_generate_audio",
-    ),
-    minDuration: pickNumber(entry, "minDuration", "min_duration"),
-    maxDuration: pickNumber(entry, "maxDuration", "max_duration"),
-    ...(sceneOptimizeOptions.length > 0 ? { sceneOptimizeOptions } : {}),
-    defaultSceneOptimize,
-    ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
-    supportedModes: pickStringArray(entry, "supportedModes", "supported_modes"),
-    referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
-    ...readReferenceMediaLimits(entry),
-    referenceVideoMax: pickNumber(entry, "referenceVideoMax", "reference_video_max"),
-    referenceAudioMax: pickNumber(entry, "referenceAudioMax", "reference_audio_max"),
-    referenceFileMax: pickNumber(entry, "referenceFileMax", "reference_file_max"),
-    referenceLinkMax: pickNumber(entry, "referenceLinkMax", "reference_link_max"),
-    referenceFileTypes: pickStringArray(entry, "referenceFileTypes", "reference_file_types"),
-    referenceAudioMinSeconds: pickNumber(
-      entry,
-      "referenceAudioMinSeconds",
-      "reference_audio_min_seconds",
-    ),
-    referenceAudioMaxSeconds: pickNumber(
-      entry,
-      "referenceAudioMaxSeconds",
-      "reference_audio_max_seconds",
-    ),
-    referenceAudioTotalMinSeconds: pickNumber(
-      entry,
-      "referenceAudioTotalMinSeconds",
-      "reference_audio_total_min_seconds",
-    ),
-    referenceAudioTotalMaxSeconds: pickNumber(
-      entry,
-      "referenceAudioTotalMaxSeconds",
-      "reference_audio_total_max_seconds",
-    ),
-    referenceVideoMinSeconds: pickNumber(
-      entry,
-      "referenceVideoMinSeconds",
-      "reference_video_min_seconds",
-    ),
-    referenceVideoMaxSeconds: pickNumber(
-      entry,
-      "referenceVideoMaxSeconds",
-      "reference_video_max_seconds",
-    ),
-    referenceVideoTotalMinSeconds: pickNumber(
-      entry,
-      "referenceVideoTotalMinSeconds",
-      "reference_video_total_min_seconds",
-    ),
-    referenceVideoTotalMaxSeconds: pickNumber(
-      entry,
-      "referenceVideoTotalMaxSeconds",
-      "reference_video_total_max_seconds",
-    ),
-    request: pickMediaRequestSchema(entry.request),
-  };
-}
-
-function videoModelEntryFromString(raw: string): FreezoneVideoModelInfo {
-  const providerId = inferVideoProvider(raw);
-  return {
-    id: raw,
-    providerId,
-    apiModel: raw,
-    label: raw,
-  };
-}
-
-function coerceVideoModelList(payload: unknown): FreezoneVideoModelInfo[] {
-  let candidate: unknown = payload;
-  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
-    const wrapper = candidate as Record<string, unknown>;
-    if (Array.isArray(wrapper.models)) candidate = wrapper.models;
-    else if (Array.isArray(wrapper.data)) candidate = wrapper.data;
-    else if (Array.isArray(wrapper.items)) candidate = wrapper.items;
-    else {
-      // provider→models[] map: { seedance: [...], huimeng: [...] }
-      const flattened: FreezoneVideoModelInfo[] = [];
-      for (const [providerRaw, value] of Object.entries(wrapper)) {
-        const providerId = normalizeVideoProviderId(providerRaw);
-        if (!providerId || !Array.isArray(value)) continue;
-        for (const item of value) {
-          if (typeof item === "string") {
-            flattened.push({
-              id: item,
-              providerId,
-              apiModel: item,
-              label: item,
-            });
-          } else if (item && typeof item === "object") {
-            const entry = videoModelEntryFromObject(item as Record<string, unknown>);
-            if (entry) flattened.push({ ...entry, providerId });
-          }
-        }
-      }
-      if (flattened.length > 0) return flattened;
-    }
-  }
-
-  if (!Array.isArray(candidate)) return [];
-  const result: FreezoneVideoModelInfo[] = [];
-  for (const item of candidate) {
-    if (typeof item === "string") {
-      result.push(videoModelEntryFromString(item));
-    } else if (item && typeof item === "object") {
-      const entry = videoModelEntryFromObject(item as Record<string, unknown>);
-      if (entry) result.push(entry);
-    }
-  }
-  return result;
-}
-
-export async function fetchFreezoneVideoModels(
-  project: string,
-): Promise<FreezoneVideoModelInfo[]> {
-  const payload = await apiCall<unknown>(
-    `projects/${encodeURIComponent(project)}/freezone/video/models`,
-  );
-  return coerceVideoModelList(payload);
+export async function fetchFreezoneVideoModels(project: string): Promise<FreezoneVideoModelInfo[]> {
+  return coerceVideoModelList(await apiCall<unknown>(`projects/${encodeURIComponent(project)}/freezone/video/models`));
 }
 
 // /freezone/video/camera-templates --------------------------------------- //
@@ -2001,35 +1510,6 @@ export async function submitFreezoneFrameFromContext(
         provider: payload.provider ?? null,
         model: payload.model ?? null,
         quality: payload.quality ?? null,
-        ...nodeContextBody(payload),
-      },
-    },
-  );
-}
-
-// /freezone/image-to-3gs --------------------------------------------------- //
-
-/** SHARP / 3GS 来源类型；master/reverse 单面 SOG，pano 用 360 全景生成。 */
-export type FreezoneImageTo3GSKind = "master" | "reverse" | "pano";
-
-export interface FreezoneImageTo3GSPayload extends FreezoneNodeContext {
-  /** 源图静态地址，通常来自 Freezone 图片节点。 */
-  sourceUrl: string;
-  /** 默认 master；当前 3D 世界节点仅使用 master。 */
-  sourceKind?: FreezoneImageTo3GSKind;
-}
-
-export async function submitFreezoneImageTo3GS(
-  project: string,
-  payload: FreezoneImageTo3GSPayload,
-): Promise<FreezoneJobRef> {
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/image-to-3gs`,
-    {
-      method: "POST",
-      json: {
-        source_url: payload.sourceUrl,
-        source_kind: payload.sourceKind ?? "master",
         ...nodeContextBody(payload),
       },
     },
@@ -2568,182 +2048,13 @@ export async function fetchFreezoneReversePromptResult(
 
 // /freezone/audio/references + /freezone/audio/speech -------------------- //
 
-/**
- * 后端定义的声线 scope。
- * - project_narrator: 项目解说人
- * - character_default: 角色默认声线
- * - character_age_group: 角色年龄段声线（需要 slot）
- * - identity: 身份自己的声线（需要 identity_id）
- * - identity_resolved: 按 身份→年龄段→角色默认 兜底解析后的实际声线
- */
-export type FreezoneAudioVoiceRefScope =
-  | "project_narrator"
-  | "user_custom"
-  | "character_default"
-  | "character_age_group"
-  | "identity"
-  | "identity_resolved";
-
-export interface FreezoneAudioVoiceRef {
-  scope: FreezoneAudioVoiceRefScope;
-  /** scope=character_* / identity* 时必填，匹配项目角色名。 */
-  characterName?: string;
-  /** scope=identity / identity_resolved 时必填。 */
-  identityId?: string;
-  /** scope=character_age_group 时必填：child/youth/middle/elder。 */
-  slot?: string;
-  /** scope=user_custom 时必填：来自 GET/POST /freezone/audio/voices。 */
-  voiceId?: string;
-}
-
-/**
- * `GET /freezone/audio/references` 返回的单条记录。openapi 没给 schema（{}），
- * 这里按后端 description 推测，UI 防御性读取——遇到陌生字段就忽略。
- */
-export interface FreezoneAudioReferenceItem {
-  scope: FreezoneAudioVoiceRefScope;
-  /** scope=character_* 或 identity* 时有值。 */
-  character_name?: string | null;
-  /** scope=identity / identity_resolved 时有值。 */
-  identity_id?: string | null;
-  /** scope=character_age_group 时有值：child/youth/middle/elder。 */
-  slot?: string | null;
-  /** scope=user_custom 时有值：账号级音色 ID（来自 POST /freezone/audio/voices）。 */
-  voice_id?: string | null;
-  /** 展示名（后端给的，若没给前端兜底拼）。 */
-  label?: string | null;
-  /** 语言/腔调说明。 */
-  language?: string | null;
-  /** 性别（如果后端给）。 */
-  gender?: string | null;
-  /** 预览音频静态 URL（如果后端给）。 */
-  preview_url?: string | null;
-  [key: string]: unknown;
-}
-
-export interface FreezoneAudioReferencesResult {
-  /** 项目内可用的声线引用列表。 */
-  available: FreezoneAudioReferenceItem[];
-  [key: string]: unknown;
-}
-
 export async function fetchFreezoneAudioReferences(
   project: string,
 ): Promise<FreezoneAudioReferencesResult> {
   const payload = await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/audio/references`,
   );
-  // 容错：后端可能直接返回数组、或 { available: [...] }，或 { items: [...] }。
-  if (Array.isArray(payload)) {
-    return { available: payload as FreezoneAudioReferenceItem[] };
-  }
-  if (payload && typeof payload === "object") {
-    const wrapper = payload as Record<string, unknown>;
-    if (Array.isArray(wrapper.available)) {
-      return wrapper as unknown as FreezoneAudioReferencesResult;
-    }
-    if (Array.isArray(wrapper.items)) {
-      return { available: wrapper.items as FreezoneAudioReferenceItem[] };
-    }
-    if (Array.isArray(wrapper.data)) {
-      return { available: wrapper.data as FreezoneAudioReferenceItem[] };
-    }
-  }
-  return { available: [] };
-}
-
-export interface FreezoneAudioSpeechPayload extends FreezoneNodeContext {
-  /** 要合成的台词 / 旁白文本。 */
-  text: string;
-  /** preset 无需参考音频；clone 使用 voiceRef 克隆声音。 */
-  speechMode?: "preset" | "clone";
-  presetModel?: string;
-  presetVoice?: string;
-  /** 情绪提示词，留空则用项目解说风格。例："紧张、压低声音、带一点恐惧感"。 */
-  emotionPrompt?: string;
-  /** 声线引用；不传则用项目默认解说人。 */
-  voiceRef?: FreezoneAudioVoiceRef | null;
-  /** 目标 beat;给定后生成的音频会带上 beat_audio slot_target,可直接 commit。 */
-  targetEpisode?: number;
-  targetBeat?: number;
-}
-
-export async function submitFreezoneAudioSpeech(
-  project: string,
-  payload: FreezoneAudioSpeechPayload,
-): Promise<FreezoneJobRef> {
-  const voiceRefBody = payload.voiceRef
-    ? {
-        scope: payload.voiceRef.scope,
-        character_name: payload.voiceRef.characterName ?? "",
-        identity_id: payload.voiceRef.identityId ?? "",
-        slot: payload.voiceRef.slot ?? "",
-        voice_id: payload.voiceRef.voiceId ?? "",
-      }
-    : null;
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/audio/speech`,
-    {
-      method: "POST",
-      json: {
-        ...nodeContextBody(payload),
-        text: payload.text,
-        speech_mode: payload.speechMode ?? "clone",
-        preset_model: payload.presetModel ?? "edge-tts",
-        preset_voice: payload.presetVoice ?? "Serena",
-        emotion_prompt: payload.emotionPrompt ?? "",
-        voice_ref: voiceRefBody,
-        target_episode: payload.targetEpisode,
-        target_beat: payload.targetBeat,
-      },
-    },
-  );
-}
-
-// /freezone/audio/eleven-music ------------------------------------------- //
-
-/**
- * 文本生成音乐请求。除 input 外全部可选，不传走后端默认。
- * model / response_format / output_format 不需要前端传（走后端默认 LingShan-MU-11 / mp3 /
- * mp3_44100_128），故不在此暴露。
- */
-export interface FreezoneAudioMusicPayload extends FreezoneNodeContext {
-  /** 音乐描述 prompt（风格、乐器、氛围等）；映射到后端 `input`。 */
-  prompt: string;
-  /** 生成长度（毫秒），范围 3000–600000，留空走后端默认 30000。 */
-  musicLengthMs?: number;
-  /** 是否强制纯音乐，留空走后端默认 true。 */
-  forceInstrumental?: boolean;
-  /** 是否严格遵守音乐段落时长策略，留空走后端默认 true。 */
-  respectSectionsDurations?: boolean;
-  /** 目标 beat;给定后生成的音频会带上 beat_audio slot_target,可直接 commit。 */
-  targetEpisode?: number;
-  targetBeat?: number;
-}
-
-/**
- * 文本生成音乐。返回异步任务句柄，结果用
- * fetchFreezoneJobResult('freezone_audio_eleven_music') 取。
- */
-export async function submitFreezoneAudioMusic(
-  project: string,
-  payload: FreezoneAudioMusicPayload,
-): Promise<FreezoneJobRef> {
-  return await apiCall<FreezoneJobRef>(
-    `projects/${encodeURIComponent(project)}/freezone/audio/eleven-music`,
-    {
-      method: "POST",
-      json: {
-        ...nodeContextBody(payload),
-        input: payload.prompt,
-        music_length_ms: payload.musicLengthMs,
-        force_instrumental: payload.forceInstrumental,
-        respect_sections_durations: payload.respectSectionsDurations,
-        target_episode: payload.targetEpisode,
-        target_beat: payload.targetBeat,
-      },
-    },
-  );
+  return coerceAudioReferences(payload);
 }
 
 // /freezone/audio/voices ------------------------------------------------- //
@@ -2885,11 +2196,9 @@ export async function submitFreezoneTextTranslate(
     `projects/${encodeURIComponent(project)}/freezone/text/translate`,
     {
       method: "POST",
-      json: {
-        text: payload.text,
-        node_type: payload.nodeType ?? "generic",
-        ...nodeContextBody(payload),
-      },
+      json: textTranslateWireBody({
+        ...payload, productOperation: workflowProductOperation(payload.nodeId) ?? null,
+      }),
     },
   );
 }

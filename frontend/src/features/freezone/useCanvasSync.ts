@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import i18next from 'i18next';
+import { toast } from "sonner";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useReactFlow, type Viewport } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
@@ -21,6 +21,7 @@ import {
 import {
   createCanvasFromPreset,
   generateClientSaveId,
+  isOwnClientSaveId,
   getFreezoneCanvas,
   putFreezoneCanvas,
   type CanvasBackupStatus,
@@ -78,6 +79,13 @@ import {
   beginCanvasHydrateBurst,
   notifyCanvasHydrateViewport,
 } from "@/features/canvas/application/canvasLod";
+import {
+  applyCanvasPatch,
+  mergeCanvas,
+  mergeCanvasMetadata,
+  prepareRemoteCanvasChange,
+  replayRemoteChangeOnSnapshot,
+} from "./canvasMerge";
 
 const DEBOUNCE_MS = 800;
 const DRAFT_DEBOUNCE_MS = 300;
@@ -694,6 +702,7 @@ export function buildConflictCopyMetadata({
 }
 
 interface CanvasSyncResult {
+  applyPushFrame: (frame: unknown) => boolean;
   status: CanvasSyncStatus;
   error: string | null;
   metadata: Record<string, unknown> | null;
@@ -758,7 +767,7 @@ export function useCanvasSync(
   // measure/select pass after load doesn't fire a redundant save.
   const lastSignatureRef = useRef<string | null>(null);
   // All save scheduling for the currently-loaded canvas. Replaced (and the old
-  // one disposed) on every hydrate and every remote refresh, so queued work can
+  // one disposed) on hydrate and custom replacements, so queued work can
   // never survive into a canvas it was not written for. See
   // `canvasSaveCoordinator`.
   const sessionRef = useRef<CanvasSaveSession | null>(null);
@@ -770,6 +779,12 @@ export function useCanvasSync(
   const draftTimerRef = useRef<number | null>(null);
   const suppressNextCanvasAutosaveRef = useRef(false);
   const revisionRef = useRef<number | null>(null);
+  const baseCanvasRef = useRef<CanvasHistorySnapshot | null>(null);
+  const baseMetadataRef = useRef<Record<string, unknown> | null>(null);
+  const applyingRemoteRef = useRef(false);
+  const inFlightSaveRef = useRef<Promise<boolean> | null>(null);
+  const pushChainRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingPushRevisionRef = useRef<number | null>(null);
   const lastPersistedDraftSignatureRef = useRef<string | null>(null);
   const statusRef = useRef<CanvasSyncStatus>("loading");
   const metadataRef = useRef<Record<string, unknown> | null>(null);
@@ -922,6 +937,22 @@ export function useCanvasSync(
       snapshotConflict,
       publishBackupStatus,
       publishRevision: setRevision,
+      recordSavedBase: (nodes, edges, metadata) => {
+        baseCanvasRef.current = { nodes, edges };
+        baseMetadataRef.current = metadata;
+      },
+      recoverConflict: async () => {
+        const remote = await getFreezoneCanvas(project, canvasId);
+        if (canvasGenerationRef.current !== session.generation) return null;
+        const merged = mergeRemoteCanvas({
+          nodes: remote.nodes as CanvasNode[],
+          edges: remote.edges as CanvasEdge[],
+          revision: remote.revision ?? null,
+          metadata: remote.metadata ?? null,
+          payload: remote,
+        }, { scheduleSave: false });
+        return merged.applied ? buildSaveArgs(session, version) : null;
+      },
       clearDraftAfterSave: () => {
         // This save landing does not make the draft redundant. The user may
         // have kept editing while it was on the wire, and that newer content
@@ -947,10 +978,18 @@ export function useCanvasSync(
   const startSaveSession = (): CanvasSaveSession => {
     sessionRef.current?.dispose();
     canvasGenerationRef.current += 1;
+    inFlightSaveRef.current = null;
+    pushChainRef.current = Promise.resolve();
     const session = createCanvasSaveSession({
       canvasKey: `${project}:${canvasId}`,
       generation: canvasGenerationRef.current,
-      runSave: (version, self) => scheduleSave(buildSaveArgs(self, version)),
+      runSave: (version, self) => {
+        const flight = scheduleSave(buildSaveArgs(self, version)).finally(() => {
+          if (inFlightSaveRef.current === flight) inFlightSaveRef.current = null;
+        });
+        inFlightSaveRef.current = flight;
+        return flight;
+      },
     });
     sessionRef.current = session;
     return session;
@@ -958,6 +997,156 @@ export function useCanvasSync(
 
   const requestSave = (): Promise<boolean> =>
     sessionRef.current?.requestSave() ?? Promise.resolve(false);
+
+  const mergeRemoteCanvas = (
+    remote: {
+      nodes: CanvasNode[];
+      edges: CanvasEdge[];
+      revision: number | null;
+      metadata?: Record<string, unknown> | null;
+      payload?: FreezoneCanvasPayload;
+    },
+    options: { scheduleSave?: boolean } = {},
+  ): { applied: boolean; needsSave?: boolean } => {
+    if (!hydratedRef.current || switchingRef.current || !baseCanvasRef.current) {
+      return { applied: false };
+    }
+    if (remote.revision !== null && revisionRef.current !== null &&
+        remote.revision <= revisionRef.current) return { applied: true };
+
+    const store = useCanvasStore.getState();
+    const remoteCanvas = store.normalizeCanvasForMerge(remote.nodes, remote.edges);
+    const prepared = prepareRemoteCanvasChange(baseCanvasRef.current, remoteCanvas);
+    const result = mergeCanvas(store, prepared, store.editingNodeFields);
+    const remoteChanged = [prepared.nodes, prepared.edges].some(change =>
+      change.added.size > 0 || change.deleted.size > 0 || change.changed.size > 0);
+    let localKeptKeys: string[] = [];
+    applyingRemoteRef.current = true;
+    try {
+      if (remoteChanged) {
+        store.applyRemoteCanvasChange(result.nodes, result.edges,
+          snapshot => replayRemoteChangeOnSnapshot(snapshot, prepared));
+      }
+      if (remote.metadata !== undefined) {
+        const merged = mergeCanvasMetadata(baseMetadataRef.current,
+          buildPersistMetadata(useShotMetadataStore.getState().shot), remote.metadata);
+        localKeptKeys = merged.localKeptKeys;
+        metadataRef.current = merged.metadata;
+        setMetadata(merged.metadata);
+        setFreezoneCanvasMetadata(merged.metadata);
+        if (merged.takenFromRemote.includes("shotMetadata")) {
+          useShotMetadataStore.getState().hydrate(
+            (merged.metadata?.shotMetadata ?? EMPTY_SHOT_METADATA) as ShotMetadata);
+        }
+        if (merged.takenFromRemote.includes("viewportBookmarks")) {
+          store.hydrateViewportBookmarks(merged.metadata?.viewportBookmarks);
+        }
+        baseMetadataRef.current = remote.metadata;
+      }
+      if (result.changed) syncHydratedStoryReferencePrompts();
+    } finally {
+      applyingRemoteRef.current = false;
+    }
+    baseCanvasRef.current = remoteCanvas;
+    revisionRef.current = remote.revision;
+    setRevision(remote.revision);
+    canvasEnvelopeRef.current = remote.payload
+      ? canvasEnvelopeFromRemote(remote.payload)
+      : { ...canvasEnvelopeRef.current, revision: remote.revision };
+    if (remote.payload) {
+      publishForeignMediaRefs(project, canvasId, remote.payload.foreign_media ?? []);
+    }
+    lastRemoteNodeCountRef.current = remoteCanvas.nodes.length;
+    const live = useCanvasStore.getState();
+    const signature = canvasContentSignature(live.nodes, live.edges);
+    const needsSave = signature !== canvasContentSignature(remoteCanvas.nodes, remoteCanvas.edges)
+      || localKeptKeys.length > 0;
+    lastSignatureRef.current = signature;
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    if (needsSave) {
+      lastPersistedDraftSignatureRef.current = canvasDraftSignature(
+        remoteCanvas.nodes, remoteCanvas.edges, baseMetadataRef.current);
+      writeDraftNow();
+      if (options.scheduleSave !== false) {
+        const generation = canvasGenerationRef.current;
+        debounceTimerRef.current = window.setTimeout(() => {
+          debounceTimerRef.current = null;
+          if (generation !== canvasGenerationRef.current ||
+              !hydratedRef.current || switchingRef.current) return;
+          lastSavedViewportRef.current = useCanvasStore.getState().currentViewport;
+          void requestSave();
+        }, 0);
+      }
+    } else {
+      clearDraftTimerAndDraft();
+      lastPersistedDraftSignatureRef.current = currentDraftSignature();
+    }
+    for (const kind of new Set(result.notices.map(notice => notice.kind))) {
+      toast(kind === "localDeletedRemoteChanged"
+        ? t("freezone.canvasSync.localDeletedRemoteChanged")
+        : t("freezone.canvasSync.remoteDeletedLocalKept"));
+    }
+    return { applied: true, needsSave };
+  };
+
+  const applyPushFrame = (frame: unknown): boolean => {
+    if (typeof frame !== "object" || frame === null ||
+        !("type" in frame) || (frame.type !== "canvas.patch" && frame.type !== "canvas.reset") ||
+        !("canvas_id" in frame) || frame.canvas_id !== canvasId ||
+        !("revision" in frame) || typeof frame.revision !== "number" ||
+        !Number.isInteger(frame.revision)) return false;
+    if (frame.type === "canvas.patch" &&
+        isOwnClientSaveId("client_save_id" in frame ? frame.client_save_id : undefined)) return true;
+    const revision = frame.revision;
+    const generation = canvasGenerationRef.current;
+    pushChainRef.current = pushChainRef.current.then(async () => {
+      // A coalesced follow-up can start as the previous request resolves.
+      while (inFlightSaveRef.current) {
+        await inFlightSaveRef.current;
+        if (generation !== canvasGenerationRef.current) return;
+      }
+      if (generation !== canvasGenerationRef.current) return;
+      if (!hydratedRef.current || switchingRef.current || !baseCanvasRef.current) {
+        pendingPushRevisionRef.current = Math.max(pendingPushRevisionRef.current ?? revision, revision);
+        return;
+      }
+      if (revision <= (revisionRef.current ?? -1)) return;
+      if (frame.type === "canvas.patch" && "base_revision" in frame &&
+          frame.base_revision === revisionRef.current &&
+          "nodes" in frame && Array.isArray(frame.nodes) &&
+          "edges" in frame && Array.isArray(frame.edges) &&
+          "deleted_node_ids" in frame && Array.isArray(frame.deleted_node_ids) &&
+          "deleted_edge_ids" in frame && Array.isArray(frame.deleted_edge_ids) &&
+          frame.nodes.length + frame.edges.length + frame.deleted_node_ids.length + frame.deleted_edge_ids.length > 0) {
+        const remoteCanvas = applyCanvasPatch(baseCanvasRef.current, {
+          nodes: frame.nodes, edges: frame.edges,
+          deleted_node_ids: frame.deleted_node_ids, deleted_edge_ids: frame.deleted_edge_ids,
+        });
+        mergeRemoteCanvas({ nodes: [...remoteCanvas.nodes], edges: [...remoteCanvas.edges], revision });
+        return;
+      }
+      const remote = await getFreezoneCanvas(project, canvasId);
+      if (generation !== canvasGenerationRef.current) return;
+      if (typeof remote.revision === "number" && remote.revision > (revisionRef.current ?? -1)) {
+        mergeRemoteCanvas({
+          nodes: remote.nodes as CanvasNode[], edges: remote.edges as CanvasEdge[],
+          revision: remote.revision, metadata: remote.metadata ?? null, payload: remote,
+        });
+      }
+    }).catch(err => { console.warn("[freezone] canvas push refresh failed", err); });
+    return true;
+  };
+
+  const catchUpAfterHydrate = () => {
+    const pending = pendingPushRevisionRef.current;
+    pendingPushRevisionRef.current = null;
+    if (pending !== null && pending > (revisionRef.current ?? -1)) {
+      applyPushFrame({ type: "canvas.reset", canvas_id: canvasId, revision: pending });
+    }
+  };
 
   // ---- 0a. Retire the last session on unmount ---- //
   // `startSaveSession` only ever disposes its *predecessor*, so without this the
@@ -981,9 +1170,8 @@ export function useCanvasSync(
   // ---- 0. External-trigger remote canvas refresh ---- //
   // canvasSyncRuntime lets other features (beat-context preset refresh,
   // mainline rebuild) hand us a fresh server payload to apply in place.
-  // We mirror the hydrate path: stop any pending debounce, re-anchor the
-  // signature/revision/envelope so the next local edit doesn't immediately
-  // re-PUT with stale baseline, then push the new content into the store.
+  // Normal refreshes merge against the server base. Custom projection callbacks
+  // keep their replacement behavior and establish a fresh server base afterward.
   useEffect(() => {
     const saveProjectionEditNow = () => {
       window.setTimeout(() => {
@@ -998,54 +1186,14 @@ export function useCanvasSync(
       }, 0);
     };
 
-    return registerFreezoneCanvasRuntime(project, canvasId, (remote, merge, options) => {
-      const local = useCanvasStore.getState();
-      if (options?.protectUnsavedLocalEdits) {
-        const shot = useShotMetadataStore.getState().shot;
-        const localSignature = canvasDraftSignature(
-          local.nodes,
-          local.edges,
-          buildPersistMetadata(shot),
-        );
-        if (
-          lastPersistedDraftSignatureRef.current == null ||
-          localSignature !== lastPersistedDraftSignatureRef.current
-        ) {
-          // An unchanged remote snapshot does not compete with local work.
-          // Keep that work and its pending autosave instead of replacing it.
-          if (revisionRef.current != null && remote.revision === revisionRef.current) {
-            return false;
-          }
-          if (debounceTimerRef.current != null) {
-            window.clearTimeout(debounceTimerRef.current);
-            debounceTimerRef.current = null;
-          }
-          if (draftTimerRef.current != null) {
-            window.clearTimeout(draftTimerRef.current);
-            draftTimerRef.current = null;
-          }
-          // The Agent has already committed a newer remote revision. Sending
-          // this local snapshot with the old base revision can only create a
-          // synthetic 409, and adopting the remote payload would discard the
-          // user's unsaved work. Fence pending saves and surface the existing
-          // recovery flow only for this genuine overlap.
-          startSaveSession();
-          writeConflictSnapshot({
-            canvas_id: canvasId,
-            nodes: local.nodes,
-            edges: local.edges,
-            viewport: local.currentViewport,
-            metadata: buildPersistMetadata(shot),
-            timestamp: new Date().toISOString(),
-          });
-          setError(
-            options.conflictMessage ??
-              i18next.t('canvas.story.messages.refreshConflict'),
-          );
-          setSyncStatus("conflict");
-          return false;
-        }
+    return registerFreezoneCanvasRuntime(project, canvasId, (remote, merge) => {
+      if (!merge) {
+        return mergeRemoteCanvas({
+          nodes: remote.nodes as CanvasNode[], edges: remote.edges as CanvasEdge[],
+          revision: remote.revision ?? null, metadata: remote.metadata ?? null, payload: remote,
+        }).applied;
       }
+      const local = useCanvasStore.getState();
       if (debounceTimerRef.current != null) {
         window.clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
@@ -1093,6 +1241,8 @@ export function useCanvasSync(
         .getState()
         .hydrate(meta?.shotMetadata ?? EMPTY_SHOT_METADATA);
       setCanvasData(next.nodes, next.edges);
+      baseCanvasRef.current = useCanvasStore.getState().normalizeCanvasForMerge(remoteNodes, remoteEdges);
+      baseMetadataRef.current = meta;
       // A plain remote replacement is persisted in the normalized shape now
       // held by the store. Keep merged local work dirty until its scheduled
       // save lands; treating that merged shape as persisted would weaken the
@@ -1180,6 +1330,9 @@ export function useCanvasSync(
     setError(null);
     lastSignatureRef.current = null;
     revisionRef.current = null;
+    baseCanvasRef.current = null;
+    baseMetadataRef.current = null;
+    pendingPushRevisionRef.current = null;
     metadataRef.current = null;
     setRevision(null);
     setHydratedCanvasId(null);
@@ -1247,7 +1400,9 @@ export function useCanvasSync(
           t,
         );
         lastRemoteNodeCountRef.current = nodes.length;
+        baseMetadataRef.current = meta;
         if (draftDecision.kind === "draft") {
+          baseCanvasRef.current = useCanvasStore.getState().normalizeCanvasForMerge(nodes, edges);
           const draftMeta = draftDecision.draft.metadata as
             | (Record<string, unknown> & { shotMetadata?: ShotMetadata })
             | null;
@@ -1292,6 +1447,7 @@ export function useCanvasSync(
           setHydratedCanvasId(canvasId);
           setHydratedProject(project);
           setSyncStatus("ready");
+          catchUpAfterHydrate();
           return;
         }
 
@@ -1344,6 +1500,7 @@ export function useCanvasSync(
         // Seed the fingerprint from the normalized store state so the first
         // post-hydrate emission (measure/select) is recognized as a no-op.
         const hydrated = useCanvasStore.getState();
+        baseCanvasRef.current = { nodes: hydrated.nodes, edges: hydrated.edges };
         lastSignatureRef.current = canvasContentSignature(
           hydrated.nodes,
           hydrated.edges,
@@ -1416,6 +1573,7 @@ export function useCanvasSync(
           consumeQueuedLocalFreezoneProjections(project, canvasId);
           syncHydratedStoryReferencePrompts();
         }
+        catchUpAfterHydrate();
       } catch (err) {
         if (cancelled) return;
         // Stay non-hydrated on failure so an autosave triggered by a stray
@@ -1494,7 +1652,7 @@ export function useCanvasSync(
     // URL 改写完再发，源项目的 URL 就不会先落库一次。
     let saveDeferredByHold = false;
     const triggerSave = () => {
-      if (!hydratedRef.current || switchingRef.current) return;
+      if (applyingRemoteRef.current || !hydratedRef.current || switchingRef.current) return;
       scheduleDraftWrite();
       if (statusRef.current === "conflict" || statusRef.current === "error") {
         return;
@@ -1807,6 +1965,7 @@ export function useCanvasSync(
   };
 
   return {
+    applyPushFrame,
     status,
     error,
     metadata,
@@ -1824,6 +1983,9 @@ export function useCanvasSync(
 }
 
 interface SaveArgs {
+  recoverConflict?: () => Promise<SaveArgs | null>;
+  conflictRecoveryRetry?: boolean;
+  recordSavedBase?: (nodes: CanvasNode[], edges: CanvasEdge[], metadata: Record<string, unknown> | null) => void;
   project: string;
   /** 保存链路上的所有文案都要跟着界面语言走，由 hook 从 useTranslation 传下来。 */
   t: TFn;
@@ -1843,8 +2005,8 @@ interface SaveArgs {
   revisionRef: { current: number | null };
   statusRef: { current: CanvasSyncStatus };
   /**
-   * Bumped every time a canvas is loaded into these refs (hydrate or remote
-   * refresh). A request stamps itself with the value it saw and refuses to
+   * Bumped every time a canvas is loaded into these refs (hydrate or custom
+   * replacement). A request stamps itself with the value it saw and refuses to
    * apply its response if the stamp has moved on — `FreezoneShell` is mounted
    * without a key, so a canvas switch reuses the whole ref set.
    */
@@ -2051,7 +2213,9 @@ function consumeSaveResponse(
   response: FreezoneCanvasSaveResult,
   decision: Extract<SaveDecision, { kind: "send" }>,
 ): void {
-  if (typeof response.revision === "number") {
+  if (typeof response.revision === "number" &&
+      (args.revisionRef.current === null || response.revision > args.revisionRef.current)) {
+    args.recordSavedBase?.(args.nodes as CanvasNode[], args.edges as CanvasEdge[], args.metadata ?? null);
     args.revisionRef.current = response.revision;
     args.publishRevision?.(response.revision);
     args.canvasEnvelopeRef.current = {
@@ -2130,6 +2294,24 @@ async function handleSaveError(
       // Optimistic-lock conflict: stash the local edits to localStorage so
       // the user can recover them, then surface the overlay.
       dropPendingId();
+      if (outcome.code !== "canvas_idempotency_conflict" && args.recoverConflict &&
+          !args.conflictRecoveryRetry) {
+        let recovered: SaveArgs | null = null;
+        try {
+          recovered = await args.recoverConflict();
+        } catch {
+          // Keep the existing conflict recovery if fetching the base fails.
+        }
+        if (args.canvasGenerationRef.current !== dispatchGeneration) return false;
+        if (recovered) {
+          const retryClientSaveId = generateClientSaveId();
+          args.pendingClientSaveIdRef.current = retryClientSaveId;
+          args.pendingClientSaveIdSignatureRef.current = null;
+          return await performSave(
+            { ...recovered, conflictRecoveryRetry: true }, decision, retryClientSaveId,
+            0, dispatchGeneration, mediaScopeAttempt);
+        }
+      }
       args.snapshotConflict?.(args);
       args.setError(outcome.message);
       args.setStatus("conflict");

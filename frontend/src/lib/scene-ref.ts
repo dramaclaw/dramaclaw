@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { STANDARD_TIME_OF_DAY_OPTIONS } from "@/lib/time-of-day";
+import { STANDARD_TIME_OF_DAY_OPTIONS } from "@/features/canvas/domain/timeOfDay";
 
 export interface SceneRefLike {
   scene_id?: string | null;

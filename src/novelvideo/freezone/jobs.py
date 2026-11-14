@@ -25,7 +25,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
 from PIL import Image
@@ -43,6 +43,9 @@ from novelvideo.task_backend.subprocesses import (
     RestrictedSubprocessPolicy,
     run_project_subprocess,
 )
+
+if TYPE_CHECKING:
+    from novelvideo.freezone.studio import StudioFilm
 
 logger = logging.getLogger(__name__)
 
@@ -1250,7 +1253,7 @@ async def run_freezone_studio_export(
     *,
     project_dir: Path,
     job_id: str,
-    film_dir: str,
+    film: StudioFilm,
     fps: int = 30,
 ) -> Path:
     """Render a compose node's hand-cut OpenFilm film into the compose output slot.
@@ -1263,14 +1266,14 @@ async def run_freezone_studio_export(
     output_dir = outputs_dir(project_dir, "freezone_video_compose")
     output_dir.mkdir(parents=True, exist_ok=True)
     final_output_path = output_dir / f"{job_id}.mp4"
-    film = Path(film_dir).resolve()
+    root = film.root.resolve()
     try:
-        film.relative_to(Path(project_dir).resolve())
+        root.relative_to(Path(project_dir).resolve())
     except ValueError as exc:
         raise RuntimeError("studio film folder is outside the project") from exc
     try:
         return await export_studio_film(
-            film_dir=film, output_path=final_output_path, fps=int(fps or 30)
+            film=film, output_path=final_output_path, fps=int(fps or 30)
         )
     except StudioError as exc:
         raise RuntimeError(str(exc)) from exc

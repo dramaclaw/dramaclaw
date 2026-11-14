@@ -116,38 +116,30 @@ def _confirmed_canvas_receipt():
         "canvas_id": "canvas-a", "bridge_key": "bridge-a",
         "tool_call_status": "completed", "canvas_apply_status": "applied",
         "applied": True, "cancelled": False, "errors": [],
-        "message": "Frontend executor reported the canvas command result.",
+        "message": "Canvas command finished; see canvas_apply_status for the outcome.",
     }
 
 
-@pytest.mark.parametrize("direct", [False, True])
-def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monkeypatch, direct):
-    from types import SimpleNamespace
-    from novelvideo.chat.service import _codex_freezone_write_result_succeeded
-
+@pytest.mark.parametrize("server", [False, True])
+def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monkeypatch, server):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     payload = _confirmed_canvas_receipt()
-    if direct:
+    if server:
         payload.pop("bridge_key")
-        payload.update(canvas_apply_status="direct_applied", revision=3)
+        payload["revision"] = 3
     result = dramaclaw_mcp._structured_tool_result(
         "freezone_confirm_workflow_draft", json.dumps(payload)
     )
     assert result.isError is False
     assert result.structuredContent["applied"] is True
-    event = SimpleNamespace(name="dramaclaw.freezone_confirm_workflow_draft",
-                            status="completed", error=None,
-                            structured=result.structuredContent,
-                            output=result.model_dump())
-    assert _codex_freezone_write_result_succeeded(event)
 
 
 @pytest.mark.parametrize("change", [
     {"bridge_key": ""}, {"project_id": ""}, {"canvas_id": ""},
     {"applied": False}, {"cancelled": True}, {"errors": ["write failed"]},
     {"canvas_apply_status": "pending"},
-    {"canvas_apply_status": "direct_applied", "revision": True},
+    {"bridge_key": "", "revision": True},
 ])
 def test_confirmation_rejects_incomplete_or_contradictory_receipts(monkeypatch, change):
     from jsonschema.exceptions import ValidationError
@@ -759,6 +751,8 @@ async def test_real_clarification_results_preserve_frontend_answers_and_retry_fi
     assert timed_out.structuredContent["clarification_status"] == "pending_user_input"
     assert timed_out.structuredContent["bridge_key"] == "clarify-1"
 
+    # In-app Codex: an external MCP server inside a product chat turn.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     rejected = await dramaclaw_mcp.call_tool(
         "freezone_request_user_clarification",

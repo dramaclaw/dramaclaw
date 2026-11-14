@@ -1,5 +1,25 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import {
+  buildVideoGenerationRequest, videoPromptCompileInput, videoContinuityCompileInput,
+  videoAdmissionRefusalMessage, VIDEO_NO_PROJECT_MESSAGE, VIDEO_GENERATION_IN_PROGRESS_MESSAGE,
+  videoPromptCompileMetadataPatch, videoEditImageOverflow, videoExtendTrimRequirement,
+  videoReferenceDurationProbe, videoUpscaleInput, type VideoGenerationRequestContext,
+} from "../application/generationRequests/videoGenerationRequest";
+import {
+  videoGenerationStartPatch, videoGenerationSubmitPatch, videoGenerationAcceptedPatch,
+  videoGenerationRunOutcome, videoGenerationSettleOutcome, videoGenerationStartedRefusalOutcome,
+  videoGenerationFailurePatch, videoGenerationActionResult, videoUpscaleActionResult,
+  VIDEO_TIMEOUT_ACTION_ERROR, type VideoGenerationRunError, type VideoGenerationRunOutcome,
+} from "../application/generationRequests/videoGenerationResult";
+import { describeGenerationError } from "../application/generationRequests/generationSubmitError";
+import { workflowProductOperation } from "../application/workflowExecutionActivity";
+import { resolveOutputUrl } from "../application/generationRequests/videoOutputUrl";
+import {
+  DEFAULT_DURATION_MIN, videoQualityOptionsForModel, normalizeVideoQuality,
+  videoDurationBoundsForModel, sceneOptimizeOptionsForModel,
+  defaultSceneOptimizeForModel, normalizeSceneOptimize,
+} from "./shared/videoGenerationOptions";
 import { useVideoContinuityMode } from "@/features/canvas/nodes/shared/useVideoContinuityMode";
 import { ensureVideoContinuity, videoContinuitySources } from "@/features/canvas/application/videoContinuity";
 import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
@@ -66,7 +86,6 @@ import {
   isUploadNode,
   isVideoNode,
   type CanvasNode,
-  type Seedance2SceneOptimize,
   type VideoGenCount,
   type VideoGenMode,
   type VideoGenQuality,
@@ -81,19 +100,11 @@ import {
   subscribeNodeAction,
 } from "@/features/canvas/application/nodeActionResult";
 import {
-  audioReferenceDurationRejection,
-  MAX_AUDIO_REFERENCE_DURATION_MS,
-  MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
-  MIN_AUDIO_REFERENCE_DURATION_MS,
-  referenceDurationLimitsMs,
   findSeedance25VideoModel,
   isHappyHorseVideoModel,
-  isSeedance2VideoModel,
   isSeedance25VideoModel,
   isVideoModeSupportedByModel,
-  resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
-  videoModeForcesAutomaticAspectRatio,
   videoModeRequiresMedia,
   videoModeRequiresPrompt,
   videoModelDefaultGenerateAudio,
@@ -120,7 +131,6 @@ import {
 } from "@/features/canvas/application/videoFrameCapture";
 import {
   FALLBACK_VIDEO_ASPECT_OPTIONS,
-  FALLBACK_VIDEO_RESOLUTION_OPTIONS,
 } from "@/features/canvas/domain/mediaModelOptions";
 import { ensureWebSafeVideo } from "@/features/canvas/application/videoTranscode";
 import {
@@ -166,7 +176,6 @@ import {
 import { useReferenceMentionSync } from "@/features/canvas/nodes/useReferenceMentionSync";
 import { useNodeGenerationTaskState } from "@/features/canvas/application/useNodeGenerationTaskState";
 import {
-  resolveErrorContent,
   showErrorDialog,
   notifyTaskStillRunning,
 } from "@/features/canvas/application/errorDialog";
@@ -175,7 +184,6 @@ import {
   backendErrorToastMessage,
 } from "@/lib/api-errors";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
-import { resolveGenerationErrorDiagnostics } from "@/features/canvas/application/generationErrorReport";
 import {
   NodeHeader,
   NODE_HEADER_FLOATING_POSITION_CLASS,
@@ -217,50 +225,37 @@ import { VideoExtendPanel } from "@/features/canvas/nodes/VideoExtendPanel";
 import {
   extendNodeDisplayName,
   extendPromptPrefix,
-  extendPromptPrefixTrimmed,
   extendRangeNeedsTrim,
   type ExtendClipRange,
 } from "@/features/canvas/application/videoExtendClip";
 import { trimAndUploadExtendClip } from "@/features/canvas/application/videoExtendTrim";
-import {
-  submitVideoUpscale,
-  VIDEO_UPSCALE_RESOLUTIONS,
-} from "@/features/canvas/application/videoUpscale";
+import { submitVideoUpscale } from "@/features/canvas/application/videoUpscale";
 import {
   CAMERA_MOVEMENT_PRESETS,
-  findCameraMovementPreset,
   type CameraMovementPreset,
 } from "@/features/canvas/domain/cameraMovementPresets";
 import { useFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFreezoneVideoCameraTemplates";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { useCanvasStore, useIsBoxSelecting } from "@/stores/canvasStore";
-import { ReferenceValidationDialog, referenceDurationIssues, referenceIssues, matchesReference, referenceIssueName, type ReferenceIssue } from "./shared/ReferenceValidationDialog";
+import { ReferenceValidationDialog, matchesReference, referenceIssueName, type ReferenceIssue } from "./shared/ReferenceValidationDialog";
 import { useCanvasPickStore } from "@/stores/canvasPickStore";
 import { commitVideoPickToNode } from "@/features/canvas/application/videoBreakdownLanding";
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoCompose,
   submitFreezoneVideoErase,
-  submitFreezoneVideoEdit,
-  submitFreezoneVideoExtend,
-  submitFreezoneVideoGen,
-  submitFreezoneVideoI2v,
-  submitFreezoneVideoKeyframes,
-  submitFreezoneVideoOmniGen,
+  sendGenerationWireRequest,
   uploadFreezoneImage,
   uploadFreezoneVideo,
   type FreezoneJobRef,
   type FreezoneVideoAspectRatio,
-  type FreezoneVideoReferenceItem,
-  type FreezoneVideoResolution,
-  type FreezoneVideoUpscaleResolution,
 } from "@/api/ops";
+import type { FreezoneVideoResolution } from '@/features/canvas/domain/modelCatalogPayload';
 import {
   awaitTaskCompletion,
   isTaskCancelledError,
   isTaskPollTimeoutError,
 } from "@/api/tasks";
-import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
 import { useNodeGenerationHistory } from "@/features/canvas/hooks/useNodeGenerationHistory";
 import {
   hasCompletedHistoryRecords,
@@ -269,7 +264,7 @@ import {
 import type { FreezoneGenerationHistoryRecord } from "@/api/ops";
 import { readUrl } from "@/lib/url-params";
 import { mediaDurationMs } from "@/lib/media-duration";
-import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
+import type { ModelOption } from "@/features/canvas/domain/modelOptions";
 import { CreditCostPill } from "@/components/credits/credit-visual";
 import { NodeHistoryRail } from "@/features/canvas/ui/NodeHistoryRail";
 import { VideoOperationsPanel } from "@/features/canvas/nodes/VideoOperationsPanel";
@@ -365,42 +360,9 @@ const REFERENCE_CAPS_BY_MODE: Partial<
 // 都来自目录条目的 ratioOptions / resolutionOptions。
 export const ASPECT_RATIOS: ReadonlyArray<FreezoneVideoAspectRatio> =
   FALLBACK_VIDEO_ASPECT_OPTIONS;
-const QUALITIES: ReadonlyArray<VideoGenQuality> = FALLBACK_VIDEO_RESOLUTION_OPTIONS;
-const SCENE_OPTIMIZE_OPTIONS: ReadonlyArray<Seedance2SceneOptimize> = ["anime", "realistic"];
-const DEFAULT_DURATION_MIN = 5;
-const DEFAULT_DURATION_MAX = 15;
 
 export function qualityToResolution(q: VideoGenQuality): FreezoneVideoResolution {
   return q;
-}
-
-function videoQualityOptionsForModel(
-  model: { resolutionOptions?: string[] } | null | undefined,
-): readonly VideoGenQuality[] {
-  const options = (model?.resolutionOptions ?? []).map((item) => item.trim()).filter(Boolean);
-  return options.length > 0 ? options : QUALITIES;
-}
-
-function normalizeVideoQuality(
-  value: VideoGenQuality | undefined,
-  options: readonly VideoGenQuality[],
-): VideoGenQuality {
-  const configured = value
-    ? options.find((option) => option.toLowerCase() === value.toLowerCase())
-    : undefined;
-  const fallback =
-    options.find((option) => option.toLowerCase() === "720p") ?? options[0] ?? "720p";
-  return configured ?? fallback;
-}
-
-function videoDurationBoundsForModel(
-  model: { minDuration?: number | null; maxDuration?: number | null } | null | undefined,
-): { min: number; max: number } {
-  const min = Number(model?.minDuration);
-  const max = Number(model?.maxDuration);
-  const resolvedMin = Number.isFinite(min) && min > 0 ? min : DEFAULT_DURATION_MIN;
-  const resolvedMax = Number.isFinite(max) && max >= resolvedMin ? max : DEFAULT_DURATION_MAX;
-  return { min: resolvedMin, max: resolvedMax };
 }
 
 export function clampVideoDuration(value: number, bounds: { min: number; max: number }): number {
@@ -445,14 +407,6 @@ function probeAudioDurationMs(url: string): Promise<number | null> {
 
 function probeVideoDurationMs(url: string): Promise<number | null> {
   return probeMediaDurationMs(url, "video");
-}
-
-function isSeedance2ValueModel(modelId: string | null | undefined): boolean {
-  const normalized = String(modelId ?? "").trim().toLowerCase();
-  return normalized === "newapi_seedance-2.0-value" ||
-    normalized === "newapi_seedance-2.0-fast-value" ||
-    normalized === "huimeng_seedance-2.0-value" ||
-    normalized === "huimeng_seedance-2.0-fast-value";
 }
 
 // 模型能力判定（isHappyHorseVideoModel / isSeedance1xVideoModel /
@@ -508,14 +462,6 @@ function referenceCapsForMode(
   };
 }
 
-function hasConfiguredReferenceCaps(model: ModelOption | null | undefined): boolean {
-  return (
-    model?.referenceImageMax != null ||
-    model?.referenceVideoMax != null ||
-    model?.referenceAudioMax != null
-  );
-}
-
 function referenceFileExtension(value: string): string {
   try {
     const origin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
@@ -538,42 +484,6 @@ function isValidReferenceLink(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function sceneOptimizeOptionsForModel(
-  model: {
-    id?: string;
-    apiModel?: string;
-    sceneOptimizeOptions?: Array<"anime" | "realistic">;
-  } | null | undefined,
-): readonly Seedance2SceneOptimize[] {
-  if (model?.sceneOptimizeOptions?.length) {
-    return model.sceneOptimizeOptions;
-  }
-  return isSeedance2ValueModel(model?.apiModel ?? model?.id) ? SCENE_OPTIMIZE_OPTIONS : [];
-}
-
-function defaultSceneOptimizeForModel(
-  model: {
-    id?: string;
-    apiModel?: string;
-    defaultSceneOptimize?: "anime" | "realistic" | null;
-  } | null | undefined,
-): Seedance2SceneOptimize {
-  if (model?.defaultSceneOptimize === "anime" || model?.defaultSceneOptimize === "realistic") {
-    return model.defaultSceneOptimize;
-  }
-  const modelId = String(model?.apiModel ?? model?.id ?? "").toLowerCase();
-  return modelId.includes("fast-value") ? "realistic" : "anime";
-}
-
-function normalizeSceneOptimize(
-  value: Seedance2SceneOptimize | undefined,
-  options: readonly Seedance2SceneOptimize[],
-  fallback: Seedance2SceneOptimize,
-): Seedance2SceneOptimize | undefined {
-  if (options.length === 0) return undefined;
-  return value && options.includes(value) ? value : fallback;
 }
 
 function referenceImageUrl(node: CanvasNode | undefined | null): string | null {
@@ -648,17 +558,6 @@ function resolveDroppedVideoFile(event: DragEvent<HTMLElement>): File | null {
   for (const candidate of candidates) {
     const file = candidate.getAsFile();
     if (file && isVideoFile(file)) return file;
-  }
-  return null;
-}
-
-function resolveOutputUrl(
-  result: Record<string, unknown> | null | undefined,
-): string | null {
-  if (!result) return null;
-  for (const key of ["video_url", "output_url", "url"]) {
-    const value = result[key];
-    if (typeof value === "string" && value.length > 0) return value;
   }
   return null;
 }
@@ -772,29 +671,6 @@ export const VideoNode = memo(
             VIDEO_GENERATION_ASPECT_RATIOS,
             "16:9",
           );
-    // 智能续写虽然是全能参考模式，但 Seedance 会按提示词把它识别成「视频延长」，
-    // 这类任务硬校验比例必须跟随原片（`ratio` must be `adaptive`），指定具体比例
-    // 整单打回。时长不受此约束，照常用用户所选。isExtendMode 在下方才声明，这里
-    // 直接读 data，避免暂时性死区。
-    const followsInputAspectRatio =
-      videoModeForcesAutomaticAspectRatio(genMode) || Boolean(data.isExtendMode);
-    // 关键帧/视频编辑的画幅跟随输入素材；只改变本次请求值，不覆盖节点保存的比例。
-    // 其它模式在 Admin 配置存在时原样提交，未配置时保留旧版 auto 推导逻辑。
-    const submitAspectRatio: FreezoneVideoAspectRatio =
-      followsInputAspectRatio
-        ? "auto"
-        : !hasConfiguredAspectRatios && aspectRatio === "auto"
-        ? snapToAllowedAspectRatio(
-            typeof data.widthPx === "number" &&
-              typeof data.heightPx === "number" &&
-              data.widthPx > 0 &&
-              data.heightPx > 0
-              ? `${data.widthPx}:${data.heightPx}`
-              : "",
-            VIDEO_GENERATION_ASPECT_RATIOS,
-            "16:9",
-          )
-        : aspectRatio;
     const qualityOptions = useMemo(
       () => videoQualityOptionsForModel(selectedVideoModel),
       [selectedVideoModel],
@@ -834,7 +710,6 @@ export const VideoNode = memo(
     // 主键（如 `01KZ58VSE52RFFDASY2T9SY4NC`），根本不含模型名，判定恒为 false ——
     // 选了 Seedance 2.0 也会被「全能参考仅支持 Seedance 2.0」挡下，视频/音频上游
     // 也不再自动切模式。CE 兜底列表恰好 id === apiModel，所以这个坑只在 EE 显形。
-    const isSeedance20Model = isSeedance2VideoModel(selectedVideoModelId);
     const supportsAllReference = isVideoModeSupportedByModel(
       "allReference",
       selectedVideoModel,
@@ -931,8 +806,6 @@ export const VideoNode = memo(
       videoModelsLoading || videoModelsFallback
         ? null
         : (selectedVideoModel?.apiModel ?? null);
-    const cameraMovementId =
-      typeof data.cameraMovement === "string" ? data.cameraMovement : null;
     // Pull the camera-template catalog from `/freezone/video/camera-templates`.
     // Fall back to the bundled `CAMERA_MOVEMENT_PRESETS` while loading or if the
     // backend is unreachable so the chip never goes blank.
@@ -945,10 +818,6 @@ export const VideoNode = memo(
       [cameraTemplatesQuery.templates],
     );
     const cameraTemplatesLoading = cameraTemplatesQuery.isLoading;
-    const cameraMovementPreset = useMemo(
-      () => findCameraMovementPreset(cameraTemplates, cameraMovementId),
-      [cameraTemplates, cameraMovementId],
-    );
     const { isGenerating } = useNodeGenerationTaskState(data);
     const generationError =
       typeof data.generationError === 'string' ? data.generationError.trim() : '';
@@ -1226,38 +1095,6 @@ export const VideoNode = memo(
             { startMs: data.extendStartMs, endMs: data.extendEndMs },
           )
         : null;
-
-    // 提交时真正拼进 prompt 的前缀。选区只是源视频的一部分时，提交前会把这一段
-    // 截出来当素材（见 handleSubmit），模型看到的片段从 0 秒起，时间码不再成立。
-    const extendRange: ExtendClipRange | null =
-      isExtendMode &&
-      typeof data.extendStartMs === "number" &&
-      typeof data.extendEndMs === "number"
-        ? { startMs: data.extendStartMs, endMs: data.extendEndMs }
-        : null;
-    const extendSourceDurationMs = useMemo(() => {
-      if (!extendRange) return null;
-      const source = sortUpstreamByReferenceOrder(
-        upstreamNodes,
-        data.referenceOrder,
-      ).find((node) => Boolean(referenceVideoUrl(node)));
-      const duration = source?.data.durationMs;
-      return typeof duration === "number" && duration > 0 ? duration : null;
-      // extendRange 每次渲染都是新对象，这里只关心它有没有。
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [Boolean(extendRange), data.referenceOrder, upstreamNodes]);
-    const extendTrimRange =
-      extendRange && extendRangeNeedsTrim(extendRange, extendSourceDurationMs)
-        ? extendRange
-        : null;
-    const extendTrimStartMs = extendTrimRange?.startMs ?? null;
-    const extendTrimEndMs = extendTrimRange?.endMs ?? null;
-    const extendSubmitPrefix =
-      extendPrefixText !== null && extendTrimRange
-        ? extendPromptPrefixTrimmed(
-            typeof data.extendSourceName === "string" ? data.extendSourceName : "",
-          )
-        : extendPrefixText;
 
     const handleExtendExit = useCallback(() => {
       updateNodeData(id, { isExtendPickMode: false });
@@ -2508,9 +2345,22 @@ export const VideoNode = memo(
 
     const handleSubmit = useCallback(async (
       options: { executionSource?: VideoExecutionSource } = {},
-    ) => {
+    ): Promise<string | null> => {
       const executionSource = options.executionSource ?? 'manual';
-      if (submitDisabled) return;
+      if (submitDisabled) {
+        const state = useCanvasStore.getState();
+        return videoAdmissionRefusalMessage({
+          nodeId: id,
+          nodes: state.nodes.map((node) => node.id === id ? { ...node, data } : node),
+          edges: state.edges, videoModels: availableVideoModels, cameraTemplates,
+          translate: t, executionSource, projectId: readUrl().project ?? '',
+          canvasId: readUrl().canvas ?? 'default', productOperation: null, inlineMedia: 'forward',
+        }, [
+          videoBillingRuleMissing ? t('common.billingRuleNotConfigured') : null,
+          modelTaskAccess.blocked ? modelTaskAccess.message : null,
+          selectedModelReferenceError, mediaRejectionReason,
+        ]);
+      }
       const location = readUrl();
       if (location.project) {
         const admittedRun = runManualVideoRecipe({
@@ -2529,13 +2379,13 @@ export const VideoNode = memo(
               generationError: backendErrorToastMessage(error, t),
             });
           }
-          return;
+          return null;
         }
       }
       // 在途守卫（与 ImageGenNode 一致）：第 1 条完成就会清 isGenerating，
       // submitDisabled 拦不住「旧批次 N-1 个任务还在跑时重新提交」——旧闭包
       // 会用过期的 completedUrls 覆写新批次的 generationBatch。
-      if (submittingRef.current) return;
+      if (submittingRef.current) return VIDEO_GENERATION_IN_PROGRESS_MESSAGE;
       submittingRef.current = true;
       setReferenceErrors([]);
       setReferenceErrorsOpen(false);
@@ -2543,37 +2393,22 @@ export const VideoNode = memo(
       const projectId = readUrl().project;
       if (!projectId) {
         console.error("[video-node] no project in URL");
-        return;
+        return VIDEO_NO_PROJECT_MESSAGE;
       }
-      updateNodeData(id, {
-        isGenerating: true,
-        generationStartedAt: Date.now(),
-        // Clear any prior failure so the banner reflects only this attempt.
-        // 注意 generationBatch 不在这里清：下面还有多条校验失败的早退路径，
-        // 在这里清会让一次失败的提交白白毁掉已有画册——批次清空挪到真正开跑前。
-        generationError: null,
-        generationErrorDetails: null,
-        generationErrorRequestId: null,
-      });
-      // 运镜 fragment 拼接到最终 prompt 的开头；上游 text 在前、用户自己写
-      // 的 prompt 在后，两段以 \n\n 隔开（与 ImageGenNode/ImageEditNode 一致）。
-      const fragment = cameraMovementPreset?.promptFragment;
-      let trimmedPrompt = prompt.trim();
-      const userPrompt = [upstreamTextJoined, trimmedPrompt]
-        .filter((s) => s.length > 0)
-        .join("\n\n");
-      const composedPromptBody = fragment
-        ? userPrompt
-          ? `${fragment}，${userPrompt}`
-          : fragment
-        : userPrompt;
-      // 续写的时间码指令是渲染层挂在输入框里的只读前缀（不在 data.prompt 里，
-      // 免得一个退格就啃掉半句），提交时才拼到最前面，模型才知道从哪一段往后接。
-      const fallbackPrompt = extendSubmitPrefix
-        ? `${extendSubmitPrefix}${composedPromptBody}`
-        : composedPromptBody;
+      const startedAtMs = Date.now();
+      // Clear any prior failure so the banner reflects only this attempt.
+      // 注意 generationBatch 不在这里清：下面还有多条校验失败的早退路径，
+      // 在这里清会让一次失败的提交白白毁掉已有画册——批次清空挪到真正开跑前。
+      updateNodeData(id, videoGenerationStartPatch(startedAtMs));
+      const renderCtx: VideoGenerationRequestContext = {
+        nodeId: id,
+        nodes: [{ id, type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 }, data }, ...upstreamNodes],
+        edges: upstreamNodes.map((node, index) => ({ id: `${id}-upstream-${index}`, source: node.id, target: id })),
+        videoModels: availableVideoModels, cameraTemplates, translate: t, executionSource,
+        projectId, canvasId: location.canvas ?? "default", productOperation: null,
+      };
+      let input = videoPromptCompileInput(renderCtx);
       try {
-        let submitFallbackPrompt = fallbackPrompt;
         if (usesFmvContinuity) {
           await ensureVideoContinuity(id, projectId);
           const liveState = useCanvasStore.getState();
@@ -2587,749 +2422,168 @@ export const VideoNode = memo(
           const liveReferenceError = selectedVideoModelReferenceDisabledReason(selectedVideoModel, liveCounts, genMode, t);
           const liveMediaError = videoSubmitMediaRejectionReason(genMode, selectedVideoModel, liveCounts);
           if (liveReferenceError || liveMediaError) throw new Error(liveReferenceError || t(liveMediaError!));
-          trimmedPrompt = String(useCanvasStore.getState().nodes.find((node) => node.id === id)?.data.prompt ?? prompt).trim();
-          const continuityFallback = [upstreamTextJoined, trimmedPrompt].filter(Boolean).join("\n\n");
-          if (continuityFallback) submitFallbackPrompt = fragment ? `${fragment}，${continuityFallback}` : continuityFallback;
+          const liveNode = useCanvasStore.getState().nodes.find((node) => node.id === id);
+          input = videoContinuityCompileInput(renderCtx, liveNode?.data.prompt);
         }
-        const composedPrompt = await compileWorkflowNodePrompt({
+        const prompt = await compileWorkflowNodePrompt({
           nodeId: id,
           executionSource,
           nodeData: data,
-          nodeKind: "video",
-          nodePrompt: trimmedPrompt,
-          upstreamText: upstreamTextJoined,
-          upstreamContents,
-          fallbackPrompt: submitFallbackPrompt,
-          onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
-            workflowRecipeCompileMode: mode,
-            workflowRecipeCompiledAt: new Date().toISOString(),
-            workflowRecipeCompiledPrompt: compiledPrompt,
-            prompt: compiledPrompt,
-            workflowRecipeIds: recipeIds,
-          }),
+          ...input,
+          onCompileMetadata: (metadata) => updateNodeData(id,
+            videoPromptCompileMetadataPatch(metadata, new Date().toISOString())),
         });
-        // Walk the current edges/nodes once — used by every non-textToVideo
-        // branch to collect upstream resources. 必须与 UI 编号侧（useVideoReferenceNodes）
-        // 同源：按连线顺序收集。曾按 state.nodes 顺序（节点创建顺序）收集，先创建
-        // 但后连线的节点会排到 references 前面，@图片N 在后端就指向错位的图。
-        const collectUpstream = () => {
-          const state = useCanvasStore.getState();
-          return sortUpstreamByReferenceOrder(
-            videoReferenceNodesInEdgeOrder(state.nodes, state.edges, id),
-            data.referenceOrder,
-          );
+        const state = useCanvasStore.getState();
+        const buildCtx: VideoGenerationRequestContext = {
+          ...renderCtx,
+          nodes: state.nodes.map((node) => node.id === id ? { ...node, data } : node),
+          edges: state.edges, canvasId: readUrl().canvas ?? "default",
+          inlineMedia: 'forward', isGenerating: false,
         };
-        const collectUpstreamImageUrls = (): string[] => {
-          const upstream = collectUpstream();
-          const urls: string[] = [];
-          for (const node of upstream) {
-            const url = submittableImageUrl(node);
-            if (typeof url === "string" && url.length > 0) urls.push(url);
+        let built = buildVideoGenerationRequest({ ...buildCtx, productOperation: null, prompt });
+        if (built.ok || built.code === 'extend_clip_not_prepared' || built.code === 'reference_duration_invalid') {
+          const overflow = videoEditImageOverflow(buildCtx);
+          if (overflow) toast.warning(t("node.videoNode.videoEdit.imageLimit", overflow));
+          const trim = videoExtendTrimRequirement(buildCtx);
+          if (trim) {
+            const { videoUrl, startMs, endMs } = trim;
+            const { url, durationMs } = await trimAndUploadExtendClip({
+              projectId, videoUrl, range: { startMs, endMs },
+            });
+            buildCtx.preparedExtendClip = { sourceUrl: videoUrl, startMs, endMs, url, durationMs };
           }
-          return urls;
-        };
-        const collectUpstreamKeyframeUrls = (): {
-          firstFrameUrl: string | null;
-          lastFrameUrl: string | null;
-        } => {
-          const state = useCanvasStore.getState();
-          const candidates: Array<{
-            url: string;
-            slot?: "first" | "last";
-            legacyDisplayName?: string | null;
-          }> = [];
-          for (const node of collectUpstream()) {
-            const url = submittableImageUrl(node);
-            if (!url) continue;
-            const edge = state.edges.find(
-              (candidate) => candidate.source === node.id && candidate.target === id,
-            );
-            candidates.push({
-              url,
-              slot: edge?.data?.keyframeSlot,
-              legacyDisplayName:
-                typeof node.data.displayName === "string" ? node.data.displayName : null,
-            });
+          let probe;
+          while ((probe = videoReferenceDurationProbe(buildCtx))) {
+            const { media, urls } = probe;
+            const durations = await Promise.all(urls.map(media === 'audio' ? probeAudioDurationMs : probeVideoDurationMs));
+            buildCtx.mediaDurationsMs = { ...buildCtx.mediaDurationsMs,
+              ...Object.fromEntries(urls.map((url, index) => [url, durations[index] ?? null])) };
           }
-          return resolveVideoKeyframeUrls(candidates, genMode);
-        };
-
-        const validateReferenceDurations = async (
-          media: "audio" | "video",
-          refs: Array<{ url: string; label: string; durationMs: number | null; nodeId: string }>,
-        ): Promise<boolean> => {
-          const configured = referenceDurationLimitsMs(selectedVideoModel, media);
-          const limits = {
-            minMs:
-              configured.minMs ??
-              (media === "audio" && isSeedance20Model
-                ? MIN_AUDIO_REFERENCE_DURATION_MS
-                : undefined),
-            maxMs:
-              configured.maxMs ??
-              (media === "audio" && isSeedance20Model
-                ? MAX_AUDIO_REFERENCE_DURATION_MS
-                : undefined),
-            totalMinMs: configured.totalMinMs,
-            totalMaxMs:
-              configured.totalMaxMs ??
-              (media === "audio" && isSeedance20Model
-                ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS
-                : undefined),
-          };
-          if (refs.length === 0 || Object.values(limits).every((value) => value == null)) {
-            return true;
-          }
-          const resolvedDurations = await Promise.all(
-            refs.map((ref) =>
-              typeof ref.durationMs === "number" && ref.durationMs > 0
-                ? Promise.resolve(ref.durationMs)
-                : media === "audio"
-                  ? probeAudioDurationMs(ref.url)
-                  : probeVideoDurationMs(ref.url),
-            ),
-          );
-          const rejection = audioReferenceDurationRejection(
-            refs.map((ref, index) => ({
-              url: ref.url,
-              nodeId: ref.nodeId,
-              index: index + 1,
-              label: ref.label,
-              durationMs: resolvedDurations[index] ?? null,
-            })),
-            {
-              minMs: limits.minMs ?? null,
-              maxMs: limits.maxMs ?? null,
-              totalMinMs: limits.totalMinMs,
-              totalLimitMs: limits.totalMaxMs ?? null,
-              perClipLimits: limits.minMs != null || limits.maxMs != null,
-            },
-          );
-          if (!rejection) return true;
-
-          setReferenceErrors(referenceDurationIssues(media, rejection, limits));
-          setReferenceErrorsOpen(true);
-          updateNodeData(id, {
-            isGenerating: false,
-            generationStartedAt: null,
-            generationError: t("referenceValidation.title"),
-            generationErrorDetails: null,
-            generationErrorRequestId: null,
-          });
-          return false;
-        };
-
-        const durationClamped = clampVideoDuration(durationSec, durationBounds);
-        const cameraTemplateId = cameraMovementId;
-        // 后端按 canvas_id + node_id 记录每个节点的生成历史。多条生成时每个
-        // 兄弟节点用各自的 targetId 作 node_id，历史才能分别落到对应节点。
-        const canvasId = readUrl().canvas ?? "default";
-
-        // 后端不再支持一次出多条，改为按「生成数量」并发调用 N 次接口。先按
-        // genMode 组装出一个「调一次接口」的闭包 doSubmit，校验失败则置空提前返回。
-        let doSubmit: ((targetId: string) => Promise<FreezoneJobRef>) | null = null;
-        if (genMode === "firstFrame" || genMode === "firstLastFrame") {
-          const keyframes = collectUpstreamKeyframeUrls();
-          const firstFrameUrl = keyframes.firstFrameUrl;
-          const lastFrameUrl = genMode === "firstLastFrame" ? keyframes.lastFrameUrl : null;
-          if (!firstFrameUrl && !lastFrameUrl) {
-            console.warn(
-              "[video-node] firstLastFrame submit without any frame",
-            );
-            updateNodeData(id, {
-              isGenerating: false,
-              generationStartedAt: null,
-              generationError: t("node.videoNode.generation.missingKeyframe"),
-            });
-            return;
-          }
-          doSubmit = (targetId) =>
-            submitFreezoneVideoKeyframes(projectId, {
-              firstFrameUrl,
-              lastFrameUrl,
-              genMode,
-              prompt: composedPrompt,
-              cameraTemplateId,
-              aspectRatio: submitAspectRatio,
-              resolution: qualityToResolution(quality),
-              durationSeconds: durationClamped,
-              generateAudio,
-              model: selectedVideoModel?.catalogId ?? modelId,
-              modelParams: data.modelParams,
-              humanReview: supportsHumanReview && humanReview,
-              sceneOptimize: sceneOptimize ?? null,
-              canvasId,
-              nodeId: targetId,
-            });
-        } else if (genMode === "imageToVideo" || genMode === "imageReference") {
-          // Unified i2v endpoint: 1 image = 图生视频, 2-9 images = 图片参考视频.
-          const imageUrls = collectUpstreamImageUrls().slice(
-            0,
-            referenceCaps?.image ?? 9,
-          );
-          if (imageUrls.length === 0) {
-            console.warn("[video-node] i2v submit without any upstream image");
-            updateNodeData(id, {
-              isGenerating: false,
-              generationStartedAt: null,
-            });
-            return;
-          }
-          doSubmit = (targetId) =>
-            submitFreezoneVideoI2v(projectId, {
-              imageUrls,
-              prompt: composedPrompt,
-              cameraTemplateId,
-              aspectRatio: submitAspectRatio,
-              resolution: qualityToResolution(quality),
-              durationSeconds: durationClamped,
-              generateAudio,
-              model: selectedVideoModel?.catalogId ?? modelId,
-              genMode,
-              modelParams: data.modelParams,
-              humanReview: supportsHumanReview && humanReview,
-              sceneOptimize: sceneOptimize ?? null,
-              canvasId,
-              nodeId: targetId,
-            });
-        } else if (genMode === "videoEdit") {
-          // 视频编辑：1 个源视频，并按媒体目录上限附带参考图片和独立参考音频。
-          // 不再是 HappyHorse 专属 —— 目录里声明了 video_edit 的模型都走这条路。
-          const upstream = collectUpstream();
-          const videoUrl =
-            upstream
-              .map((node) => referenceVideoUrl(node) ?? "")
-              .find((url) => url.length > 0) ?? "";
-          if (!videoUrl) {
-            console.warn("[video-node] videoEdit submit without upstream video");
-            updateNodeData(id, {
-              isGenerating: false,
-              generationStartedAt: null,
-            });
-            return;
-          }
-          const allImageUrls = collectUpstreamImageUrls();
-          const imageLimit = referenceCaps?.image ?? 5;
-          if (allImageUrls.length > imageLimit) {
-            toast.warning(
-              t("node.videoNode.videoEdit.imageLimit", {
-                limit: imageLimit,
-                ignored: allImageUrls.length - imageLimit,
-              }),
-            );
-          }
-          const imageUrls = allImageUrls.slice(0, imageLimit);
-          const audioLimit = referenceCaps?.audio ?? 0;
-          const audioRefs = upstream
-            .filter(isAudioNode)
-            .map((node, index) => {
-              const url =
-                typeof node.data.audioUrl === "string" ? node.data.audioUrl : "";
-              const rawLabel =
-                (typeof node.data.sourceFileName === "string"
-                  ? node.data.sourceFileName
-                  : "") ||
-                (typeof node.data.displayName === "string"
-                  ? node.data.displayName
-                  : "");
-              return {
-                url,
-                nodeId: node.id,
-                label:
-                  rawLabel ||
-                  t("node.videoNode.audio.clipFallbackLabel", { index: index + 1 }),
-                durationMs:
-                  typeof node.data.durationMs === "number"
-                    ? node.data.durationMs
-                    : null,
-              };
-            })
-            .filter((item) => item.url.length > 0)
-            .slice(0, audioLimit);
-          if (!(await validateReferenceDurations("audio", audioRefs))) return;
-          doSubmit = (targetId) =>
-            submitFreezoneVideoEdit(projectId, {
-              videoUrl,
-              imageUrls,
-              audioUrls: audioRefs.map((item) => item.url),
-              prompt: composedPrompt,
-              cameraTemplateId,
-              resolution: qualityToResolution(quality),
-              audioSetting: "auto",
-              generateAudio,
-              model: selectedVideoModel?.catalogId ?? modelId,
-              genMode,
-              modelParams: data.modelParams,
-              humanReview: supportsHumanReview && humanReview,
-              canvasId,
-              nodeId: targetId,
-            });
-        } else if (genMode === "videoExtend") {
-          const upstream = collectUpstream();
-          const videoUrl =
-            upstream
-              .map((node) => referenceVideoUrl(node) ?? "")
-              .find((url) => url.length > 0) ?? "";
-          if (!videoUrl) {
-            console.warn("[video-node] videoExtend submit without upstream video");
-            updateNodeData(id, {
-              isGenerating: false,
-              generationStartedAt: null,
-            });
-            return;
-          }
-          doSubmit = (targetId) =>
-            submitFreezoneVideoExtend(projectId, {
-              videoUrl,
-              prompt: composedPrompt,
-              cameraTemplateId,
-              resolution: qualityToResolution(quality),
-              durationSeconds: durationClamped,
-              generateAudio,
-              model: selectedVideoModel?.catalogId ?? modelId,
-              genMode,
-              modelParams: data.modelParams,
-              humanReview: supportsHumanReview && humanReview,
-              canvasId,
-              nodeId: targetId,
-            });
-        } else if (genMode === "allReference") {
-          // 全能参考是否可用以媒体目录的 supportedModes 为准。这里前置守卫给出
-          // 可读提示，防止切换模型后残留模式打到不支持的端点。
-          if (!supportsAllReference) {
-            void showErrorDialog(
-              t(
-                isHappyHorseModel
-                  ? "node.videoNode.allReference.happyHorseUnsupported"
-                  : "node.videoNode.allReference.modelUnsupported",
-              ),
-              t("common.error"),
-            );
-            updateNodeData(id, {
-              isGenerating: false,
-              generationStartedAt: null,
-            });
-            return;
-          }
-          // Omni-gen: classify each upstream node by its media type.
-          const caps = referenceCaps ?? { image: 9, video: 3, audio: 3 };
-          const totalReferenceLimit = hasConfiguredReferenceCaps(selectedVideoModel)
-            ? caps.image + caps.video + caps.audio
-            : 12;
-          const upstream = collectUpstream();
-          const references: FreezoneVideoReferenceItem[] = [];
-          // 与 references 里 type==="audio" 的项一一对应，用于提交前逐条校验音频时长。
-          const audioRefs: {
-            url: string;
-            label: string;
-            durationMs: number | null;
-            nodeId: string;
-          }[] = [];
-          const videoRefs: {
-            url: string;
-            label: string;
-            durationMs: number | null;
-            nodeId: string;
-          }[] = [];
-          let imageCount = 0;
-          let videoCount = 0;
-          let audioCount = 0;
-          for (const node of upstream) {
-            if (references.length >= totalReferenceLimit) break;
-            const videoRefUrl = referenceVideoUrl(node);
-            if (videoRefUrl) {
-              // 视频节点或携带 videoUrl 的 upload 节点（资产库视频）统一收集。
-              if (videoCount < caps.video) {
-                references.push({ type: "video", url: videoRefUrl });
-                videoRefs.push({
-                  url: videoRefUrl,
-                  nodeId: node.id,
-                  label: t("node.videoNode.referenceDuration.videoFallbackLabel", {
-                    index: videoCount + 1,
-                  }),
-                  durationMs:
-                    typeof node.data.durationMs === "number"
-                      ? node.data.durationMs
-                      : null,
-                });
-                videoCount += 1;
-              }
-            } else if (isAudioNode(node)) {
-              const url =
-                typeof node.data.audioUrl === "string"
-                  ? node.data.audioUrl
-                  : "";
-              if (url && audioCount < caps.audio) {
-                // 音频引用默认走「配乐参考」语义；label 用 sourceFileName /
-                // displayName 之一，方便后端日志和后续 UI 展示对得上。
-                const rawLabel =
-                  (typeof node.data.sourceFileName === "string"
-                    ? node.data.sourceFileName
-                    : "") ||
-                  (typeof node.data.displayName === "string"
-                    ? node.data.displayName
-                    : "");
-                references.push({
-                  type: "audio",
-                  url,
-                  role: "配乐参考", // i18n-exempt —— references[].role 是发给后端的协议字段
-                  label: rawLabel,
-                });
-                audioRefs.push({
-                  url,
-                  nodeId: node.id,
-                  // 时长超限时要指名道姓是哪条，所以这里连标签一起留着；没有文件名
-                  // 的（TTS 直出等）退回「音频N」。序号按音频自身 1-based 计，与后端
-                  // pipeline.py 的 enumerate(audio_paths, start=1) 同口径；标签本身
-                  // 只进提示文案、不随 references 发给后端，所以跟随界面语言。
-                  label:
-                    rawLabel ||
-                    t("node.videoNode.audio.clipFallbackLabel", {
-                      index: audioCount + 1,
-                    }),
-                  durationMs:
-                    typeof node.data.durationMs === "number"
-                      ? node.data.durationMs
-                      : null,
-                });
-                audioCount += 1;
-              }
-            } else {
-              const url = submittableImageUrl(node);
-              if (url && imageCount < caps.image) {
-                references.push({ type: "image", url });
-                imageCount += 1;
-              }
-            }
-          }
-          if (data.referenceFileUrl?.trim()) {
-            references.push({
-              type: "file",
-              url: data.referenceFileUrl.trim(),
-              role: "文件参考", // i18n-exempt —— 同上，协议字段
-              label: data.referenceFileName ?? "",
-            });
-          } else if (data.referenceLink?.trim()) {
-            references.push({
-              type: "link",
-              url: data.referenceLink.trim(),
-              role: "网页参考", // i18n-exempt —— 同上，协议字段
-            });
-          }
-          if (references.length === 0) {
-            console.warn("[video-node] omni-gen submit without any reference");
-            updateNodeData(id, {
-              isGenerating: false,
-              generationStartedAt: null,
-            });
-            return;
-          }
-          // 智能续写：选区只是源视频的一部分时，把这一段真截出来顶替整条源视频。
-          // 源视频是连进来的第一条视频素材（建续写节点时连的那根边）。放在时长校验
-          // 之前——校验该看的是截出来的这段，不是整条源视频。
-          if (extendTrimStartMs !== null && extendTrimEndMs !== null && videoRefs.length > 0) {
-            const sourceRef = videoRefs[0];
-            const trimmed = await trimAndUploadExtendClip({
-              projectId,
-              videoUrl: sourceRef.url,
-              range: { startMs: extendTrimStartMs, endMs: extendTrimEndMs },
-            });
-            const reference = references.find((item) => item.type === "video");
-            if (reference) reference.url = trimmed.url;
-            videoRefs[0] = { ...sourceRef, url: trimmed.url, durationMs: trimmed.durationMs };
-          }
-          if (!(await validateReferenceDurations("audio", audioRefs))) return;
-          if (!(await validateReferenceDurations("video", videoRefs))) return;
-          doSubmit = (targetId) =>
-            submitFreezoneVideoOmniGen(projectId, {
-              prompt: composedPrompt,
-              cameraTemplateId,
-              references,
-              aspectRatio: submitAspectRatio,
-              resolution: qualityToResolution(quality),
-              durationSeconds: durationClamped,
-              generateAudio,
-              model: selectedVideoModel?.catalogId ?? modelId,
-              genMode,
-              // 智能续写：后端按视频延长任务提交（任务类型、提示词要求同视频延长）。
-              continuation: isExtendMode,
-              modelParams: data.modelParams,
-              humanReview: supportsHumanReview && humanReview,
-              sceneOptimize: sceneOptimize ?? null,
-              canvasId,
-              nodeId: targetId,
-            });
-        } else {
-          // textToVideo (default).
-          doSubmit = (targetId) =>
-            submitFreezoneVideoGen(projectId, {
-              prompt: composedPrompt,
-              cameraTemplateId,
-              aspectRatio: submitAspectRatio,
-              resolution: qualityToResolution(quality),
-              durationSeconds: durationClamped,
-              generateAudio,
-              model: selectedVideoModel?.catalogId ?? modelId,
-              genMode,
-              modelParams: data.modelParams,
-              humanReview: supportsHumanReview && humanReview,
-              sceneOptimize: sceneOptimize ?? null,
-              canvasId,
-              nodeId: targetId,
-            });
+          built = buildVideoGenerationRequest({ ...buildCtx,
+            productOperation: workflowProductOperation(id) ?? null, prompt });
         }
-
-        const referenceSnapshot = collectUpstream();
-        if (!doSubmit) {
-          updateNodeData(id, { isGenerating: false, generationStartedAt: null });
-          return;
+        if (!built.ok) {
+          const { patches, notice, warning } = videoGenerationStartedRefusalOutcome(built,
+            { genMode, startedAtMs, isHappyHorseModel }, t);
+          if (warning) console.warn(warning);
+          if (notice?.kind === 'error_dialog') void showErrorDialog(notice.message, notice.title);
+          if (notice?.kind === 'reference_issues') {
+            setReferenceErrors(notice.issues);
+            setReferenceErrorsOpen(true);
+          }
+          for (const patch of patches) updateNodeData(id, patch);
+          return built.message;
         }
-        const submitOnce = doSubmit;
-
-        // 多条生成不再复制兄弟节点：N 个任务并发、全部回填到当前节点的
-        // generationBatch（叠卡画册，与图片节点一致）。第 1 条完成的设为主视频，
-        // 其余逐条追加。
-        const total = Math.min(Math.max(count, 1), 4);
-        // 各并发任务完成顺序不定，本地累积已完成的 URL，整组写回（避免读改写竞态）。
-        const completedUrls: string[] = [];
+        const referenceState = useCanvasStore.getState();
+        const referenceSnapshot = sortUpstreamByReferenceOrder(
+          videoReferenceNodesInEdgeOrder(referenceState.nodes, referenceState.edges, id), data.referenceOrder,
+        );
+        const total = built.requests.length;
+        let completedUrls: string[] = [];
         let panelCollapsedAfterSubmit = false;
-        // 收集每个子任务的失败，留到整批 settle 后统一决定是否弹错误框——避免
-        // 「N 条里 1 条秒失败（如命中队列上限）、其余正常生成」时一边弹报错一边
-        // 又冒加载动画的矛盾观感。
-        const runErrors: unknown[] = [];
+        const runErrors: VideoGenerationRunError[] = [];
+        const requests = built.requests;
         const runOne = async (runIndex: number) => {
+          const applyOutcome = (outcome: VideoGenerationRunOutcome) => {
+            const result = videoGenerationRunOutcome({ runIndex, total, completedUrls, outcome }, t);
+            completedUrls = result.completedUrls;
+            if (result.patch) updateNodeData(id, result.patch);
+            if (result.runError) runErrors.push(result.runError);
+          };
           try {
-            const ref = await submitOnce(id);
+            const ref = await sendGenerationWireRequest<FreezoneJobRef>(requests[runIndex]);
             if (!panelCollapsedAfterSubmit) {
               panelCollapsedAfterSubmit = true;
               setPanelExpanded(false);
             }
-            // Persist the task handle so a page refresh can resume this job.
-            // N 个并发任务同节点只能存一个句柄——保留第 1 个（主视频）的。
-            if (runIndex === 0) {
-              updateNodeData(id, generationTaskDescriptor(ref));
-            }
+            // Only run 0 owns the persisted task handle, regardless of acceptance order.
+            if (runIndex === 0) updateNodeData(id, videoGenerationAcceptedPatch(ref));
             const completed = await awaitTaskCompletion(ref.task_key, projectId, {
               taskType: ref.task_type,
             });
-            // Prefer the dedicated result endpoint — SSE `task.result` may only
-            // carry metadata (same pattern as reverse_prompt + video_erase).
-            let url = resolveOutputUrl(completed.result);
-            if (!url) {
+            let fallbackUrl: string | null = null;
+            if (!resolveOutputUrl(completed.result)) {
               try {
-                const result = await fetchFreezoneJobResult(
-                  projectId,
-                  ref.task_type,
-                  ref.job_id,
-                );
-                url = result.url || null;
+                const result = await fetchFreezoneJobResult(projectId, ref.task_type, ref.job_id);
+                fallbackUrl = result.url || null;
               } catch (error) {
                 console.error("[video-node] fetch job result failed", error);
               }
             }
-            if (url) {
-              completedUrls.push(url);
-              const isFirstCompleted = completedUrls.length === 1;
-              updateNodeData(id, {
-                // 第 1 条完成的设为主视频并结束 loading；后续只扩充画册。
-                ...(isFirstCompleted
-                  ? {
-                      videoUrl: url,
-                      isGenerating: false,
-                      generationStartedAt: null,
-                      sourceFileName: null,
-                      generationError: null,
-                      generationErrorDetails: null,
-                      generationErrorRequestId: null,
-                    }
-                  : {}),
-                ...(total > 1 ? { generationBatch: [...completedUrls] } : {}),
-              });
-            } else {
-              console.warn(
-                "[video-node] video gen completed without output url",
-                completed,
-              );
-              // 只有 run 0（任务句柄归属者）且尚无任何成功时才终结 loading——
-              // 非首个任务先「无 URL 完成」不能把还在跑的整体 loading 掐掉。
-              if (runIndex === 0 && completedUrls.length === 0) {
-                updateNodeData(id, {
-                  isGenerating: false,
-                  generationStartedAt: null,
-                  generationError: t("node.videoNode.generation.noResult"),
-                  generationErrorDetails: null,
-                  generationErrorRequestId: null,
-                });
-              }
+            if (!resolveOutputUrl(completed.result) && !fallbackUrl) {
+              console.warn("[video-node] video gen completed without output url", completed);
             }
+            applyOutcome({ kind: 'completed', result: completed.result ?? null, fallbackUrl });
           } catch (error) {
             if (isTaskCancelledError(error)) {
-              // 用户已在终止确认里知情：不进 runErrors、不弹错误框、不落错误横幅。
-              if (runIndex === 0 && completedUrls.length === 0) {
-                updateNodeData(id, { isGenerating: false, generationStartedAt: null });
-              }
+              applyOutcome({ kind: 'cancelled' });
               return;
             }
             console.error("[video-node] video gen failed", error);
-            // 先记下错误再决定是否早退 —— settle 后的聚合分支靠 runErrors 判断
-            // 「部分失败」并弹 toast；早退前不记会把首个成功之后的失败彻底吞掉。
-            runErrors.push(error);
-            // 已有同批其它视频完成（主视频已落）时不覆盖成功态为错误——
-            // 部分失败只影响画册条数。
-            if (completedUrls.length > 0) return;
-            // 轮询超时 ≠ 生成失败：后端还在跑。保留 isGenerating 与任务句柄，
-            // 刷新页面时 resumeNodeGeneration 会重新接上并回填结果；这里写错误
-            // 横幅只会把一个还活着的任务标成失败、并清掉可续接的句柄。
-            if (isTaskPollTimeoutError(error)) return;
-            const resolved = resolveErrorContent(error, t("node.videoNode.generation.failed"));
-            const displayErrorMessage = backendErrorToastMessage(error, t);
-            const diagnostics = resolveGenerationErrorDiagnostics(error, resolved.details);
-            // Persist the failure on the node so the 重新生成 entry survives after
-            // the user dismisses the dialog (previously the error was dialog-only).
-            // 只有 run 0 失败才终结 loading：非首 run 失败时 run 0 可能还在跑，
-            // 它的成功补丁会清掉这里写的错误横幅。
-            updateNodeData(id, {
-              ...(runIndex === 0
-                ? { isGenerating: false, generationStartedAt: null }
-                : {}),
-              generationError: displayErrorMessage,
-              generationErrorDetails: diagnostics.details,
-              generationErrorRequestId: diagnostics.requestId,
+            applyOutcome(isTaskPollTimeoutError(error) ? { kind: 'poll_timeout' } : {
+              kind: 'failed', error: describeGenerationError(error, t, t("node.videoNode.generation.failed")),
             });
           }
         };
 
-        // 旧画册清空 + 占位计数都在所有校验通过、真正开跑前才动——前面有多个
-        // 校验失败的早退路径，提前动会白白毁掉已有画册 / 把「生成中」占位卡死。
-        updateNodeData(id, { generationBatch: null });
+        updateNodeData(id, videoGenerationSubmitPatch());
         setAlbumPendingTotal(id, total > 1 ? total : 0);
         await Promise.allSettled(
           Array.from({ length: total }, (_, runIndex) => runOne(runIndex)),
         );
         setAlbumPendingTotal(id, 0);
-        // 整批结束后再决定错误反馈：
-        //  - 一条都没成功 → 弹一次错误框（含真人素材被拦截的专用引导）；
-        //  - 部分成功 → 不弹模态打断，仅用轻量 toast 告知少出了几条。
-        // 这样「N 条里 1 条命中队列上限秒失败、其余正常在跑」时不会再出现
-        // 「先弹上限报错、节点却又冒出加载动画」的矛盾观感。
-        if (completedUrls.length === 0 && runErrors.length > 0) {
-          const firstError = runErrors[0];
-          const issues = referenceIssues(firstError);
-          if (issues.length) {
-            const upstream = referenceSnapshot;
-            setReferenceErrors(issues.map((issue) => {
-              const matching = upstream.filter((node) => {
-                const values = [submittableImageUrl(node),
-                  "audioUrl" in node.data ? node.data.audioUrl : null,
-                  "videoUrl" in node.data ? node.data.videoUrl : null];
-                return values.some((url) => typeof url === "string" && matchesReference(url, issue.reference_key));
-              });
-              const node = matching.length === 1 ? matching[0] : undefined;
-              return { ...issue, nodeId: node?.id,
-                label: referenceIssueName(issue, node?.data.sourceFileName) };
-            }));
-            setReferenceErrorsOpen(true);
-            updateNodeData(id, { generationError: t("referenceValidation.title"),
-              generationErrorDetails: null, generationErrorRequestId: null });
-            return;
-          }
-          // 整批都只是「前端不等了」时走中性提示：后端仍在生成，节点保持生成中
-          // 状态等待刷新续接，不该按报错呈现。真有失败混在里面则仍按失败处理。
-          if (runErrors.every((error) => isTaskPollTimeoutError(error))) {
-            notifyTaskStillRunning(t);
-            void refreshHistory();
-            return;
-          }
-          const resolved = resolveErrorContent(
-            firstError,
-            t("node.videoNode.generation.failed"),
-          );
-          const displayErrorMessage = backendErrorToastMessage(firstError, t);
-          const diagnostics = resolveGenerationErrorDiagnostics(firstError, resolved.details);
-          const haystack = `${displayErrorMessage}\n${diagnostics.details ?? ""}`;
-          if (
-            supportsHumanReview &&
-            !humanReview &&
-            haystack.includes(
-              "InputImageSensitiveContentDetected.PrivateInformation",
-            )
-          ) {
-            // 素材含真实人脸被拦截：引导用户开启「真人素材审核」后重试。
-            void showErrorDialog(
-              t("node.videoNode.generation.faceBlockedMessage"),
-              t("node.videoNode.generation.faceBlockedTitle"),
-              diagnostics.details ?? undefined,
-            );
-          } else {
-            void showErrorDialog(
-              displayErrorMessage,
-              t("common.error"),
-              diagnostics.details ?? undefined,
-            );
-          }
-        } else if (runErrors.length > 0) {
-          toast.error(
-            t("node.videoNode.partialBatchFailed", {
-              ok: completedUrls.length,
-              total,
-            }),
-          );
+        const settled = videoGenerationSettleOutcome({ completedUrls, runErrors, total,
+          supportsHumanReview, humanReview }, t);
+        const notice = settled.notice;
+        if (notice?.kind === 'reference_issues') {
+          const issues = notice.issues;
+          const upstream = referenceSnapshot;
+          setReferenceErrors(issues.map((issue) => {
+            const matching = upstream.filter((node) => {
+              const values = [submittableImageUrl(node),
+                "audioUrl" in node.data ? node.data.audioUrl : null,
+                "videoUrl" in node.data ? node.data.videoUrl : null];
+              return values.some((url) => typeof url === "string" && matchesReference(url, issue.reference_key));
+            });
+            const node = matching.length === 1 ? matching[0] : undefined;
+            return { ...issue, nodeId: node?.id,
+              label: referenceIssueName(issue, node?.data.sourceFileName) };
+          }));
+          setReferenceErrorsOpen(true);
+          if (settled.patch) updateNodeData(id, settled.patch);
+          return null;
         }
-        // 所有任务尘埃落定后统一拉一次历史：N 条记录都落在本节点名下，run 0
-        // settle 时就拉会漏掉后完成的 N-1 条（后端成功失败都会记）。
+        if (settled.patch) updateNodeData(id, settled.patch);
+        if (notice?.kind === 'still_running') {
+          notifyTaskStillRunning(t);
+          void refreshHistory();
+          return VIDEO_TIMEOUT_ACTION_ERROR;
+        }
+        if (notice?.kind === 'error_dialog') {
+          void showErrorDialog(notice.message, notice.title, notice.details ?? undefined);
+        } else if (notice?.kind === 'partial_failure') {
+          toast.error(t("node.videoNode.partialBatchFailed", { ok: notice.ok, total: notice.total }));
+        }
         void refreshHistory();
       } catch (error) {
         console.error("[video-node] video gen failed", error);
-        // Failures before any run starts (e.g. Recipe compilation) must land on
-        // the node too, or the workflow runner only sees "no videoUrl".
-        updateNodeData(id, {
-          isGenerating: false,
-          generationStartedAt: null,
-          generationError: backendErrorToastMessage(error, t),
-        });
+        const info = describeGenerationError(error, t, t("node.videoNode.generation.failed"));
+        updateNodeData(id, videoGenerationFailurePatch(info));
         if (usesFmvContinuity) {
-          toast.error(backendErrorToastMessage(error, t));
+          toast.error(info.display);
         }
         setAlbumPendingTotal(id, 0);
       }
       } finally {
         submittingRef.current = false;
       }
+      return null;
     }, [
-      aspectRatio,
-      submitAspectRatio,
-      cameraMovementId,
-      cameraMovementPreset,
-      count,
-      data,
-      data.referenceFileName,
-      data.referenceFileUrl,
-      data.referenceLink,
-      data.referenceOrder,
-      durationBounds,
-      durationSec,
-      extendSubmitPrefix,
-      isExtendMode,
-      extendTrimEndMs,
-      extendTrimStartMs,
-      generateAudio,
-      genMode,
-      humanReview,
-      id,
-      usesFmvContinuity,
-      isSeedance20Model,
-      supportsAllReference,
-      supportsHumanReview,
-      modelId,
-      prompt,
-      quality,
-      refreshHistory,
-      sceneOptimize,
-      submitDisabled,
-      t,
-      updateNodeData,
-      upstreamTextJoined,
-      upstreamContents,
+      availableVideoModels, cameraTemplates, data, genMode, humanReview, id, isHappyHorseModel,
+      refreshHistory, selectedVideoModel, submitDisabled, supportsHumanReview, t,
+      updateNodeData, upstreamNodes, usesFmvContinuity, videoBillingRuleMissing,
+      modelTaskAccess.blocked, modelTaskAccess.message, selectedModelReferenceError,
+      mediaRejectionReason,
     ]);
 
     useEffect(() => {
@@ -3339,53 +2593,31 @@ export const VideoNode = memo(
         const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
         const latestData = isVideoNode(latest) ? latest.data : data;
         if (latestData.isUpscaleNode === true) {
-          const sourceUrl =
-            typeof latestData.upscaleSourceUrl === "string" ? latestData.upscaleSourceUrl : "";
-          const resolution =
-            typeof latestData.upscaleResolution === "string" &&
-            VIDEO_UPSCALE_RESOLUTIONS.includes(
-              latestData.upscaleResolution as FreezoneVideoUpscaleResolution,
-            )
-              ? (latestData.upscaleResolution as FreezoneVideoUpscaleResolution)
-              : "1080p";
+          const { sourceUrl, resolution } = videoUpscaleInput(latestData);
           if (!sourceUrl) {
-            publishNodeActionError(requestId, id, action, new Error("缺少高清视频源"));
+            const result = videoUpscaleActionResult(latestData, executionMode);
+            if (result.status === 'error') publishNodeActionError(requestId, id, action, new Error(result.error));
             return;
           }
           void submitVideoUpscale(id, { sourceUrl, resolution })
-            .then(() => {
+            .then((outcome) => {
               const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
-              const videoUrl =
-                isVideoNode(finished) && typeof finished.data.videoUrl === "string"
-                  ? finished.data.videoUrl
-                  : undefined;
-              publishNodeActionSuccess(requestId, id, action, {
-                ...(videoUrl ? { videoUrl } : {}),
-                ...(executionMode === "single" ? { submitted: true } : {}),
-              });
+              const result = videoUpscaleActionResult({ ...(isVideoNode(finished) ? finished.data : {}),
+                upscaleSourceUrl: sourceUrl }, executionMode, outcome);
+              if (result.status === 'success') publishNodeActionSuccess(requestId, id, action, result.output);
+              else publishNodeActionError(requestId, id, action, new Error(result.error));
             })
             .catch((error) => publishNodeActionError(requestId, id, action, error));
           return;
         }
         void handleSubmit({ executionSource: 'workflow' })
-          .then(() => {
+          .then((refusal) => {
             const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
-            const generationError =
-              isVideoNode(finished) && typeof finished.data.generationError === "string"
-                ? finished.data.generationError
-                : null;
-            if (generationError) {
-              publishNodeActionError(requestId, id, action, new Error(generationError));
-              return;
-            }
-            const videoUrl =
-              isVideoNode(finished) && typeof finished.data.videoUrl === "string"
-                ? finished.data.videoUrl
-                : undefined;
-            publishNodeActionSuccess(requestId, id, action, {
-              ...(videoUrl ? { videoUrl } : {}),
-              ...(executionMode === "single" ? { submitted: true } : {}),
-            });
+            const result = videoGenerationActionResult(
+              isVideoNode(finished) ? finished.data : undefined, executionMode, refusal,
+            );
+            if (result.status === 'error') publishNodeActionError(requestId, id, action, new Error(result.error));
+            else publishNodeActionSuccess(requestId, id, action, result.output);
           })
           .catch((error) => publishNodeActionError(requestId, id, action, error));
       });
@@ -4315,7 +3547,7 @@ export const VideoNode = memo(
             mediaRejectionReason={mediaRejectionReason}
             expanded={panelExpanded}
             onExpandedChange={setPanelExpanded}
-            onSubmit={handleSubmit}
+            onSubmit={async () => { await handleSubmit(); }}
             historyPanel={hasCompletedHistoryRecords(historyRecords) ? (
               <NodeHistoryRail
                 records={historyRecords}

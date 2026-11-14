@@ -14,7 +14,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { submitFreezoneGen } from "@/api/ops";
+import { sendGenerationWireRequest } from "@/api/ops";
 import { TaskCompletionError } from "@/api/tasks";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
 import {
@@ -66,7 +66,7 @@ vi.mock("@/api/ops", async (importOriginal) => ({
   listFreezoneStyleTemplates: vi.fn(async () => []),
   fetchFreezoneCameraOptions: vi.fn(async () => null),
   listFreezoneGenerationHistory: vi.fn(async () => []),
-  submitFreezoneGen: vi.fn(async () => {
+  sendGenerationWireRequest: vi.fn(async () => {
     submitSeq += 1;
     return {
       task_key: `task-${submitSeq}`,
@@ -121,7 +121,10 @@ function nodeData(): Record<string, unknown> {
 }
 
 function payloads() {
-  return vi.mocked(submitFreezoneGen).mock.calls.map((call) => call[1]);
+  return vi.mocked(sendGenerationWireRequest).mock.calls.map(([request]) => {
+    expect(request.path).toBe("projects/demo-project/freezone/gen");
+    return request.body;
+  });
 }
 
 /** 挂 hook、等就绪、提交、等落地。 */
@@ -140,7 +143,7 @@ async function submitAndSettle(options?: { onGenerationSettled?: () => void }) {
 beforeEach(() => {
   clearWorkflowProductOperation("img-1");
   submitSeq = 0;
-  vi.mocked(submitFreezoneGen).mockClear();
+  vi.mocked(sendGenerationWireRequest).mockClear();
   vi.mocked(compileWorkflowNodePrompt).mockClear();
   awaitTaskCompletion.mockReset();
   awaitTaskCompletion.mockImplementation(async (taskKey: string) => ({
@@ -156,13 +159,13 @@ describe("图片节点：三种参考图形态的提交载荷", () => {
 
     expect(payloads()).toHaveLength(1);
     expect(payloads()[0]).toMatchObject({
-      genMode: "text_to_image",
-      referenceUrls: [],
+      gen_mode: "text_to_image",
+      reference_urls: [],
       model: "test_image_api",
-      modelId: "huimeng/test-image",
+      model_id: "huimeng/test-image",
       // 画布 id 从 URL 取，后端按它归档产物。
-      canvasId: "canvas-7",
-      nodeId: "img-1",
+      canvas_id: "canvas-7",
+      node_id: "img-1",
       quality: "medium",
     });
   });
@@ -186,8 +189,8 @@ describe("图片节点：三种参考图形态的提交载荷", () => {
     await submitAndSettle();
 
     expect(payloads()[0]).toMatchObject({
-      genMode: "image_to_image",
-      referenceUrls: ["/static/a.png"],
+      gen_mode: "image_to_image",
+      reference_urls: ["/static/a.png"],
     });
   });
 
@@ -208,8 +211,8 @@ describe("图片节点：三种参考图形态的提交载荷", () => {
     await submitAndSettle();
 
     expect(payloads()[0]).toMatchObject({
-      genMode: "image_to_image",
-      referenceUrls: ["/static/own.png", "/static/a.png", "/static/b.png"],
+      gen_mode: "image_to_image",
+      reference_urls: ["/static/own.png", "/static/a.png", "/static/b.png"],
     });
   });
 });
@@ -294,7 +297,7 @@ describe("图片节点：多结果画册", () => {
     await waitFor(() => expect(result.current.submitDisabled).toBe(false));
     const output = await result.current.submit({ executionSource, completionMode: "submitted" });
     expect(payloads()).toHaveLength(1);
-    expect(payloads()[0]).toMatchObject({ variantCount: 4, nodeId: "img-1" });
+    expect(payloads()[0]).toMatchObject({ variant_count: 4, node_id: "img-1" });
     expect(nodeData().generationBatch).toEqual(urls);
     expect(output?.imageUrls).toEqual(urls);
   });
@@ -302,7 +305,7 @@ describe("图片节点：多结果画册", () => {
   it("后端重复返回同一个任务结果时不会把同一张图追加四次", async () => {
     useCanvasStore.getState().setCanvasData([imageGenNode({ count: 4 })], []);
     for (let index = 0; index < 4; index++) {
-      vi.mocked(submitFreezoneGen).mockResolvedValueOnce({
+      vi.mocked(sendGenerationWireRequest).mockResolvedValueOnce({
         task_key: "same-task", task_type: "freezone_gen", job_id: "same-job",
       });
     }
@@ -344,7 +347,7 @@ describe("图片节点：提交前置失败反馈", () => {
       });
       expect(result.current.submitDisabled).toBe(false);
     });
-    expect(submitFreezoneGen).not.toHaveBeenCalled();
+    expect(sendGenerationWireRequest).not.toHaveBeenCalled();
   });
 });
 
@@ -391,7 +394,7 @@ describe("图片节点：恢复与历史", () => {
     await waitFor(() => expect(result.current.submitDisabled).toBe(false));
     await expect(result.current.submit()).resolves.toBeUndefined();
 
-    expect(submitFreezoneGen).toHaveBeenCalledTimes(2);
+    expect(sendGenerationWireRequest).toHaveBeenCalledTimes(2);
     expect(nodeData()).toMatchObject({
       imageUrl: "/static/old.png",
       previewImageUrl: "/static/old.png",

@@ -164,10 +164,11 @@ class _FakeThread:
     """Minimal ACP thread. `on_stream` runs *inside* an active turn, which is the
     only window in which the pool holds a live org slot (see C2-11)."""
 
-    def __init__(self, session_id: str, *, on_stream=None) -> None:
+    def __init__(self, session_id: str, *, on_stream=None, deltas=()) -> None:
         self.id = session_id
         self.closed = False
         self._on_stream = on_stream
+        self._deltas = list(deltas)
         self.gateway_api_keys: list[str | None] = []
 
     async def close(self) -> None:
@@ -196,6 +197,10 @@ class _FakeThread:
         )
         if self._on_stream is not None:
             await self._on_stream()
+        for delta in self._deltas:
+            yield SimpleNamespace(
+                type="assistant_delta", text=delta, thread_id=self.id, turn_id="turn-1"
+            )
         yield SimpleNamespace(
             type="complete",
             text="hermes says hello",
@@ -289,7 +294,9 @@ def harness(monkeypatch, tmp_path):
                 if fn is not None:
                     await fn()  # type: ignore[operator]
 
-            thread = _FakeThread(session_id, on_stream=_hook)
+            thread = _FakeThread(
+                session_id, on_stream=_hook, deltas=stream_hook.get("deltas") or ()
+            )
             threads.append(thread)
             return thread
 
@@ -373,7 +380,9 @@ _DRAIN_EVENT = "__drain__"
 _DRAIN_REPLY = f"unsupported event: {_DRAIN_EVENT}"
 
 
-def _send_home_turn(harness, *, text: str = "帮我想个故事") -> list[dict]:
+def _send_home_turn(
+    harness, *, text: str = "帮我想个故事", attachments: list[dict] | None = None
+) -> list[dict]:
     """Drive one **home-scope** turn through `/api/v1/chat/ws` and drain its frames.
 
     收帧不能停在 `chat.done`：`_stream_home_turn` 的 `finally` 先发 `chat.done`，
@@ -390,6 +399,7 @@ def _send_home_turn(harness, *, text: str = "帮我想个故事") -> list[dict]:
                 "scope": {"kind": "home"},
                 "turn_id": "turn-1",
                 "text": text,
+                **({"attachments": attachments} if attachments else {}),
             }
         )
         drain_sent = False
@@ -756,6 +766,167 @@ def test_home_codex_uses_backend_neutral_service_without_hermes_worker(harness):
     assert harness.envs == []
 
 
+def _assemble_assistant_deltas(frames: list[dict]) -> tuple[list[dict], str]:
+    """Rebuild the reply with the browser rule: keep `offset` UTF-16 units."""
+    deltas = [frame for frame in frames if frame.get("type") == "assistant.delta"]
+    text = ""
+    for frame in deltas:
+        kept = text.encode("utf-16-le")[: frame["offset"] * 2].decode("utf-16-le")
+        text = kept + frame["text"]
+    return deltas, text
+
+
+def test_home_codex_streams_offset_patches_with_linear_traffic(harness):
+    chunk = "x" * 50
+    snapshots = [chunk * (step + 1) for step in range(200)]
+    final_text = snapshots[-1]
+
+    async def fake_stream(username, project, prompt, on_event, **kwargs):
+        for snapshot in snapshots:
+            await on_event({"type": "assistant_delta", "text": snapshot})
+        message = {"id": 1, "role": "assistant", "content": final_text, "media": []}
+        await on_event({"type": "done", "message": message})
+        return message
+
+    harness.monkeypatch.setattr(
+        harness.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    harness.monkeypatch.setattr(
+        harness.chat_service, "stream_assistant_reply", fake_stream
+    )
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+
+    frames = _send_home_turn(harness)
+
+    deltas, assembled = _assemble_assistant_deltas(frames)
+    assert len(deltas) == 200
+    assert sorted(deltas[0]) == ["offset", "scope", "text", "turn_id", "type"]
+    assert sum(len(frame["text"]) for frame in deltas) == 10_000
+    assert [frame["offset"] for frame in deltas[:3]] == [0, 50, 100]
+    assert assembled == final_text
+
+
+def test_home_codex_final_correction_is_a_patch_from_the_change_point(harness):
+    async def fake_stream(username, project, prompt, on_event, **kwargs):
+        await on_event({"type": "assistant_delta", "text": "路径 /Users/alice"})
+        await on_event({"type": "assistant_delta", "text": "路径 [本地路径] 已保存"})
+        message = {
+            "id": 1,
+            "role": "assistant",
+            "content": "路径 [本地路径] 已保存。",
+            "media": [],
+        }
+        await on_event({"type": "done", "message": message})
+        return message
+
+    harness.monkeypatch.setattr(
+        harness.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    harness.monkeypatch.setattr(
+        harness.chat_service, "stream_assistant_reply", fake_stream
+    )
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+
+    frames = _send_home_turn(harness)
+
+    deltas, assembled = _assemble_assistant_deltas(frames)
+    assert [(frame["offset"], frame["text"]) for frame in deltas] == [
+        (0, "路径 /Users/alice"),
+        (3, "[本地路径] 已保存"),
+        (13, "。"),
+    ]
+    assert assembled == "路径 [本地路径] 已保存。"
+
+
+def test_home_hermes_replay_rewind_reassembles_to_the_final_text(harness):
+    from novelvideo.chat.store import chat_store
+
+    previous_answer = "这是上一轮的完整回答，内容足够长以便识别出来。"
+    chat_store.append_message(_USERNAME, ChatScope(kind="home"), "assistant", previous_answer)
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+    # Hermes replays the previous answer before the new one. The short replayed
+    # prefix is displayed, withdrawn once recognised, then the reply streams.
+    harness.stream_hook["deltas"] = [
+        "这是上一轮",
+        previous_answer[:17],
+        previous_answer,
+        previous_answer + "hermes",
+        previous_answer + "hermes says hello",
+    ]
+
+    frames = _send_home_turn(harness)
+
+    deltas, assembled = _assemble_assistant_deltas(frames)
+    assert [(frame["offset"], frame["text"]) for frame in deltas] == [
+        (0, "这是上一轮"),
+        (0, ""),
+        (0, "hermes"),
+        (6, " says hello"),
+    ]
+    assert assembled == "hermes says hello"
+    messages = [frame for frame in frames if frame.get("type") == "assistant.message"]
+    assert messages[-1]["message"]["content"] == "hermes says hello"
+
+
+def test_home_turn_attachments_reach_history_and_codex_as_addresses_only(harness):
+    from novelvideo.chat.store import chat_store
+
+    captured: dict[str, str] = {}
+
+    async def fake_stream(username, project, prompt, on_event, **kwargs):
+        captured["prompt"] = prompt
+        message = {"id": 1, "role": "assistant", "content": "收到", "media": []}
+        await on_event({"type": "done", "message": message})
+        return message
+
+    harness.monkeypatch.setattr(
+        harness.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    harness.monkeypatch.setattr(
+        harness.chat_service, "stream_assistant_reply", fake_stream
+    )
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+
+    frames = _send_home_turn(
+        harness,
+        text="看看附件",
+        attachments=[
+            {
+                "type": "file",
+                "fileName": "notes.md",
+                "url": "/api/v1/chat/uploads/b6aa2a754278da9f-notes.md",
+                "content": "# 大纲",
+            },
+            {
+                "type": "image",
+                "fileName": "paste.png",
+                "url": "data:image/png;base64,iVBORw0KGgo=",
+            },
+        ],
+    )
+
+    assert [frame for frame in frames if frame.get("type") == "error"] == []
+    with chat_store.connect(_USERNAME, ChatScope(kind="home")) as conn:
+        rows = conn.execute(
+            "SELECT role, media_json FROM chat_messages WHERE role = 'user'"
+        ).fetchall()
+    assert [(row[0], json.loads(row[1])) for row in rows] == [
+        (
+            "user",
+            [
+                {
+                    "type": "file",
+                    "fileName": "notes.md",
+                    "url": "/api/v1/chat/uploads/b6aa2a754278da9f-notes.md",
+                },
+                {"type": "image", "fileName": "paste.png"},
+            ],
+        )
+    ]
+    assert "url=/api/v1/chat/uploads/b6aa2a754278da9f-notes.md" in captured["prompt"]
+    assert "data:" not in captured["prompt"]
+
+
 def test_c2_09b_scope_does_not_leak_on_the_exception_path(harness):
     _use_authz(harness.monkeypatch, _Authz(kind="organization"))
     _use_org_credentials(harness.monkeypatch)
@@ -958,3 +1129,32 @@ def test_route_and_backend_fixture_are_wired(harness):
     # 且 `/api/v1/chat/ws` 真的能连上（其余用例都走这条）。
     with harness.client.websocket_connect("/api/v1/chat/ws") as websocket:
         assert websocket.receive_json()["type"] == "scope.changed"
+
+
+def test_home_codex_item_frames(harness):
+    card = {"id": "m-1", "seq": 7, "type": "text", "text": ""}
+
+    async def stream(username, project, prompt, on_event, **kwargs):
+        await on_event({
+            "type": "item", "message_id": "assistant:turn-1", "item_id": "m-1", "card": card,
+        })
+        await on_event({
+            "type": "item_delta", "message_id": "assistant:turn-1", "item_id": "m-1",
+            "kind": "text", "offset": 0, "text": "hello",
+        })
+
+    harness.monkeypatch.setattr(harness.chat_service, "get_chat_backend_name", lambda: "codex")
+    harness.monkeypatch.setattr(harness.chat_service, "stream_assistant_reply", stream)
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+    frames = _send_home_turn(harness)
+    assert [f for f in frames if f["type"] in {"chat.item", "chat.item.delta"}] == [
+        {
+            "type": "chat.item", "scope": {"kind": "home", "id": None}, "turn_id": "turn-1",
+            "message_id": "assistant:turn-1", "item_id": "m-1", "card": card,
+        },
+        {
+            "type": "chat.item.delta", "scope": {"kind": "home", "id": None}, "turn_id": "turn-1",
+            "message_id": "assistant:turn-1", "item_id": "m-1", "kind": "text",
+            "offset": 0, "text": "hello",
+        },
+    ]

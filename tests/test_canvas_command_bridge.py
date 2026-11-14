@@ -685,3 +685,15 @@ def test_concurrent_clarification_retries_share_one_card_and_preserve_answer(tmp
         == answer
     )
     assert not (tmp_path / f"{key}.pending.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [(None, 600), ("75", 75), ("invalid", 600), ("0", 1), ("-4", 1)],
+)
+def test_canvas_command_result_timeout_seconds(monkeypatch, configured, expected):
+    if configured is None:
+        monkeypatch.delenv("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", configured)
+    assert canvas_command_bridge.canvas_command_result_timeout_seconds() == expected

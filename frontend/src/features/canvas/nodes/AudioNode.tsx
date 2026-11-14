@@ -43,9 +43,11 @@ import { useNodeGenerationTaskState } from '@/features/canvas/application/useNod
 import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { AudioOperationsPanel } from '@/features/canvas/nodes/AudioOperationsPanel';
-import { deriveAudioText, useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
+import { useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
 import { createInFlightRequestCache } from '@/features/canvas/nodes/inFlightRequestCache';
-import { translateNodeText } from '@/features/canvas/application/translateText';
+import { awaitTranslatedText } from '@/features/canvas/application/translateText';
+import { buildAudioTranslateRequest, audioTranslateResultPatch } from '@/features/canvas/application/generationRequests/audioTranslateRequest';
+import { workflowProductOperation } from '@/features/canvas/application/workflowExecutionActivity';
 import {
   publishNodeActionAccepted,
   publishNodeActionError,
@@ -57,9 +59,10 @@ import {
   hasMainlineContexts,
   NodeContextBadges,
 } from '@/features/freezone/context/NodeContextBadges';
-import { fetchFreezoneAudioReferences, uploadFreezoneImage } from '@/api/ops';
+import { fetchFreezoneAudioReferences, uploadFreezoneImage, sendGenerationWireRequest, type FreezoneJobRef } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
 import { VoiceSelectionModal } from './VoiceSelectionModal';
+import { audioGenerationActionResult, audioGenerationHookError, audioGenerationOutcomePatch } from '@/features/canvas/application/generationRequests/audioGenerationResult';
 
 type AudioNodeProps = NodeProps & {
   id: string;
@@ -88,11 +91,6 @@ function isAudioFile(file: File): boolean {
   return AUDIO_UPLOAD_EXTENSIONS.has(ext);
 }
 
-function isVoicePrerequisiteError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /(?:声线未配置|缺少.*声线|请先配置或选择声线|上传或录制.*音频)/u.test(message); // i18n-exempt -- backend errors
-}
-
 // 只合并同时发生的请求；settled 后立即失效，避免空结果在上传声线后仍被复用。
 const getCachedAudioReferences = createInFlightRequestCache(
   fetchFreezoneAudioReferences,
@@ -115,36 +113,19 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         publishNodeActionAccepted(requestId, id, action);
         void generate()
           .then((output) => {
-            if (output.skipped) {
-              publishNodeActionSuccess(requestId, id, action, output);
-              return;
-            }
             const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
-            const latestAudioUrl = latest?.type === CANVAS_NODE_TYPES.audio
-              && typeof latest.data.audioUrl === 'string'
-              ? latest.data.audioUrl
-              : undefined;
-            publishNodeActionSuccess(requestId, id, action, {
-              ...(output.audioUrl ? { audioUrl: output.audioUrl } : {}),
-              ...(latestAudioUrl ? { audioUrl: latestAudioUrl } : {}),
-            });
+            const result = audioGenerationActionResult({ hookOutput: output,
+              latestNodeData: latest?.type === CANVAS_NODE_TYPES.audio ? latest.data : undefined });
+            if (result.status === 'success') publishNodeActionSuccess(requestId, id, action, result.output);
           })
           .catch((error) => {
-            if (isVoicePrerequisiteError(error)) {
-              updateNodeData(id, {
-                isGenerating: false,
-                generationStartedAt: null,
-                voiceAvailable: false,
-                generationError: '未选择可用自定义声线，已跳过生成', // i18n-exempt -- workflow payload
-              });
-              publishNodeActionSuccess(requestId, id, action, {
-                skipped: true,
-                reason: 'missing_custom_voice',
-                agent_instruction: '未选择自定义声线，本音频节点已跳过，继续其它工作流节点。', // i18n-exempt -- agent protocol
-              });
-              return;
-            }
-            publishNodeActionError(requestId, id, action, error);
+            const hookError = audioGenerationHookError(error);
+            for (const patch of audioGenerationOutcomePatch({
+              outcome: { kind: 'failed', ...hookError }, translate: t,
+            }).patches.slice(1)) updateNodeData(id, patch);
+            const result = audioGenerationActionResult({ hookError, latestNodeData: undefined });
+            if (result.status === 'success') publishNodeActionSuccess(requestId, id, action, result.output);
+            else publishNodeActionError(requestId, id, action, result.error);
           });
         return;
       }
@@ -152,19 +133,17 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         publishNodeActionAccepted(requestId, id, action);
         void (async () => {
           const project = readUrl().project;
-          if (!project) throw new Error('缺少项目 ID，无法翻译音频文本');
-          const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
-          if (latest?.type !== CANVAS_NODE_TYPES.audio) {
-            throw new Error('音频节点不存在');
-          }
-          const text = deriveAudioText(latest.data as AudioNodeData).trim();
-          if (!text) throw new Error('音频节点没有可翻译文本');
-          const translated = await translateNodeText(project, {
-            text,
+          const decision = buildAudioTranslateRequest({
+            nodes: useCanvasStore.getState().nodes,
             nodeId: id,
-            nodeType: 'audio',
+            projectId: project,
+            canvasId: readUrl().canvas ?? 'default',
+            productOperation: workflowProductOperation(id) ?? null,
           });
-          updateNodeData(id, { text: translated });
+          if (!decision.ok) throw new Error(decision.message);
+          const ref = await sendGenerationWireRequest<FreezoneJobRef>(decision.request);
+          const translated = await awaitTranslatedText(project ?? '', ref);
+          updateNodeData(id, audioTranslateResultPatch(translated));
           publishNodeActionSuccess(requestId, id, action, { text: translated });
         })().catch((error) => publishNodeActionError(requestId, id, action, error));
         return;
@@ -176,7 +155,7 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
         publishNodeActionSuccess(requestId, id, action, { openedUiAction: true });
       }
     });
-  }, [generate, id, updateNodeData]);
+  }, [generate, id, t, updateNodeData]);
 
 
   // 任务流(SSE)回报失败时把错误持久化进节点数据 + 清 isGenerating——覆盖刷新后、

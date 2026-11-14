@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 
 import { fetchFreezoneBlockoutModels } from '@/api/ops';
-import type { ModelOption } from '@/features/canvas/ui/ProviderModelPicker';
+import type { ModelOption } from '@/features/canvas/domain/modelOptions';
 import { readUrl } from '@/lib/url-params';
 
 /**

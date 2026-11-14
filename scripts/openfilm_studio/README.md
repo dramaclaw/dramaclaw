@@ -5,7 +5,7 @@ runtime: `src/`, `studio/server/`, the **built** `studio/ui/dist/`, `studio/clie
 `product.json`, `SPEC.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`. The UI *source* stays upstream;
 our edits to it live here as patch files.
 
-Pinned at **OpenFilm v0.2.4, commit `53156ac`** (MIT). The editor ships inside the backend image,
+Pinned at **OpenFilm v0.2.7, commit `b7673b5`** (MIT). The editor ships inside the backend image,
 so a user never updates it themselves: `index.html` is served `no-store`, assets are
 content-hashed and immutable, and the new build is live on the next page load.
 
@@ -14,7 +14,7 @@ content-hashed and immutable, and the new build is live on the next page load.
 | File | Purpose |
 | --- | --- |
 | `revendor.mjs` | One-command upgrade: clone → patches → build → patch bundle → install → guards |
-| `source-patches/*.patch` | Our eight edits to upstream **source** (embed chrome, film title, export and server-copy branding, the self-update/rename/examples gates) |
+| `source-patches/*.patch` | Our ten edits to upstream **source** (embed chrome, host navigation and language, Chrome fallback, export branding, self-update gate, film title, server-copy branding, rename/examples route gates, hosted-render network limits, hosted film dirs) |
 | `patch_studio_ui.mjs` | Exact-string patches against the minified bundle (branding, embed-only UI, `hostBack`, language, version history…) |
 | `run.mjs` | Launcher the Python backend starts per Studio session |
 | `smoke.mjs` | Deployment check the image runs at build time: Chromium launches, Studio boots, the patched chunk is served, and a film actually paints with no vendored brand on screen |
@@ -28,7 +28,7 @@ rewrites their version fields for you.
 ## Upgrading
 
 ```bash
-node scripts/openfilm_studio/revendor.mjs --ref v0.2.5
+node scripts/openfilm_studio/revendor.mjs --ref v0.2.7
 ```
 
 Options: `--from <checkout>` reuse a clean upstream checkout (keeps `node_modules` between
@@ -79,11 +79,32 @@ the upgraded tree actually serves.
 - Open a compose node at **1550 / 1920 / 2300** wide: five panels fit, chat dock defaults to
   420–500px, titlebar and chat header share one 44px baseline.
 - Embed only: no OpenFilm name/logo/link anywhere (top bar, settings, splash, error screens),
-  UI follows the host language, ← returns to the canvas, Download saves files, version history
-  and the developer release notes are absent, and reloading never shows OpenFilm's own splash.
+  UI follows the host language, ← returns to the canvas, Download saves files, version history,
+  the Auto versions switch and the developer release notes are absent, and reloading never shows
+  OpenFilm's own splash.
 - Stage the vendor rename first, then `uv run python scripts/compliance/generate_p0b_artifacts.py`:
   the license台账 lists vendored files from `git ls-files`, so a renamed chunk otherwise leaves
   the previous `*.dramaclawN.js` behind in `license-inventory.csv`.
+
+## Where a film's data lives
+
+`run.mjs` always starts Studio with `OPENFILM_HOST_DIRS=1` (patch 0010, `src/film-dirs.mjs`), and
+`freezone/studio.py` registers each compose node's film with two host folders outside it:
+
+| Data | Folder |
+| --- | --- |
+| the cut (`film.html`, its media, `.film/` id, settings, markers, subtitle style, cover) | film folder under the project output |
+| media kept by versions (`.film/media/<sha256>`), files replaced by a restore (`.film/removed/`) | film folder under the project output |
+| version history (a git repository) and its version posters | `<project state>/openfilm/<canvas>/<node>/{history,commits}` |
+| every other cache (probes, thumbnails, proxies, seek copies, renders, export scratch) | `<project runtime>/openfilm/<canvas>/<node>/cache` |
+| Studio's own temp files | `<runtime dir>/openfilm/tmp` (`TMPDIR`), never the system temp folder |
+
+The hosted Studio never runs upstream's history migration or upgrade (a history in an older format
+is refused with 409), never uses the system Trash, and ignores a `.film/history` left in an output
+folder by an older build: that film opens with an empty history.
+
+Studio runs in its own process group with `<OPENFILM_HOME>/studio.pid` as an exclusive start lock,
+so it outlives a recycled API worker and the next worker reuses it instead of starting another.
 
 ## Deployment note
 

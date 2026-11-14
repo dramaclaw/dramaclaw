@@ -16,6 +16,17 @@ import {
   useUpdateNodeInternals,
   type NodeProps,
 } from '@xyflow/react';
+import {
+  buildWorldGenerationRequest, worldVisibleSourceKind, type DirectorImageSourceKind,
+} from '@/features/canvas/application/generationRequests/worldGenerationRequest';
+import {
+  selectWorldUpstreamFromNodes, worldUpstreamReference,
+} from '@/features/canvas/application/generationRequests/worldGenerationUpstream';
+import {
+  worldGenerationStartPatch, worldGenerationAcceptedPatch, worldGenerationSuccessPatch,
+  worldGenerationFailureOutcome, worldGenerationActionResult,
+} from '@/features/canvas/application/generationRequests/worldGenerationResult';
+import { workflowProductOperation } from '@/features/canvas/application/workflowExecutionActivity';
 import { isLowDetailZoom } from '@/features/canvas/application/canvasLod';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -26,13 +37,12 @@ import { selectNodeExclusively } from '@/features/canvas/application/nodeSelecti
 
 import {
   uploadFreezoneImage,
-  submitFreezoneImageTo3GS,
-  type FreezoneImageTo3GSKind,
+  sendGenerationWireRequest,
+  type FreezoneJobRef,
   type FreezoneGenerationHistoryRecord,
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError, type TaskState } from '@/api/tasks';
 import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
-import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   publishNodeActionAccepted,
   publishNodeActionError,
@@ -57,12 +67,9 @@ import {
 import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadToolOutput';
 import {
   directorPanoSourceFromCanvasNode,
-  imageUrlFromCanvasNode,
   isPanoImageCanvasNode,
   mergeDirectorStageManifestSources,
   mergeDirectorSavedSceneMaps,
-  mergeDirectorWorldSources,
-  sourceFromImageTo3gsResult,
 } from '@/features/canvas/domain/directorWorldSources';
 import { setDirectorWorldSceneSaveHandler } from '@/features/canvas/domain/directorWorldSceneSaveRegistry';
 import {
@@ -77,12 +84,6 @@ import type {
 } from '@/features/viewer-kit/three-d/directorManifest';
 import {
   CANVAS_NODE_TYPES,
-  isExportImageNode,
-  isImageEditNode,
-  isImageGenNode,
-  isStoryboardGenNode,
-  isTextAnnotationNode,
-  isUploadNode,
   type CanvasNode,
   type ThreeDWorldNodeData,
 } from '@/features/canvas/domain/canvasNodes';
@@ -143,39 +144,6 @@ function nodeLabel(node: CanvasNode): string {
   const dn = (node.data as { displayName?: unknown }).displayName;
   if (typeof dn === 'string' && dn.trim().length > 0) return dn;
   return node.type ?? i18n.t('node.threeDWorld.upstreamNodeFallback');
-}
-
-function upstreamRef(node: CanvasNode | undefined | null): UpstreamRef | null {
-  if (!node) return null;
-  if (isImageGenNode(node)) {
-    const ref =
-      typeof node.data.referenceImageUrl === 'string' && node.data.referenceImageUrl.length > 0
-        ? node.data.referenceImageUrl
-        : null;
-    const url = node.data.imageUrl || ref;
-    if (!url) return null;
-    return { nodeId: node.id, kind: 'image', displayName: nodeLabel(node), imageUrl: url };
-  }
-  if (
-    isUploadNode(node) ||
-    isImageEditNode(node) ||
-    isExportImageNode(node) ||
-    isStoryboardGenNode(node)
-  ) {
-    if (!node.data.imageUrl) return null;
-    return {
-      nodeId: node.id,
-      kind: 'image',
-      displayName: nodeLabel(node),
-      imageUrl: node.data.imageUrl,
-    };
-  }
-  if (isTextAnnotationNode(node)) {
-    const text = (node.data.content ?? '').trim();
-    if (!text) return null;
-    return { nodeId: node.id, kind: 'text', displayName: nodeLabel(node), textContent: text };
-  }
-  return null;
 }
 
 function pickPlyUrlFromResult(result: TaskState['result'] | undefined): string | null {
@@ -245,7 +213,6 @@ function resolveNodeDimension(value: number | undefined, fallback: number): numb
 }
 
 type LocalDirectorManifestSource = DirectorStageManifest['source'];
-type DirectorImageSourceKind = 'master' | 'pano';
 
 const DIRECTOR_IMAGE_SOURCE_OPTIONS: Array<{ value: DirectorImageSourceKind; labelKey: string }> = [
   { value: 'master', labelKey: 'nodeToolbar.normalImage' },
@@ -535,21 +502,6 @@ function imageSize(dataUrl: string): Promise<{ width: number; height: number }> 
     image.onerror = () => reject(new Error(i18n.t('node.threeDWorld.captureSizeFailed')));
     image.src = dataUrl;
   });
-}
-
-function imageTo3gsKindForSource(
-  sourceNode: CanvasNode | null,
-  visibleSourceKind: DirectorImageSourceKind,
-): FreezoneImageTo3GSKind {
-  if (visibleSourceKind === 'pano') return 'pano';
-  const source = sourceNode?.data as { output_role?: unknown; __freezone_source?: unknown } | undefined;
-  const outputRole = typeof source?.output_role === 'string' ? source.output_role : '';
-  const sourceRole = typeof (source?.__freezone_source as { role?: unknown } | undefined)?.role === 'string'
-    ? (source?.__freezone_source as { role?: string }).role
-    : '';
-  return outputRole === 'scene_reverse_master' || sourceRole === 'scene_reverse_master'
-    ? 'reverse'
-    : 'master';
 }
 
 function ReferenceImageThumb({
@@ -910,8 +862,8 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
     sources.sort((a, b) => (a.position?.y ?? 0) - (b.position?.y ?? 0));
     const refs: UpstreamRef[] = [];
     for (const node of sources) {
-      const ref = upstreamRef(node);
-      if (ref) refs.push(ref);
+      const ref = worldUpstreamReference(node);
+      if (ref) refs.push({ ...ref, displayName: nodeLabel(node) });
     }
     return refs;
   }, [upstreamNodes]);
@@ -920,18 +872,12 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
     () => upstreamRefs.filter((ref) => ref.kind === 'image' && ref.imageUrl),
     [upstreamRefs],
   );
-  const selectedUpstreamImageRef = useMemo<UpstreamRef | null>(() => {
-    if (upstreamImageRefs.length === 0) return null;
-    const selected = typeof data.sourceNodeId === 'string'
-      ? upstreamImageRefs.find((ref) => ref.nodeId === data.sourceNodeId)
-      : null;
-    return selected ?? upstreamImageRefs[0] ?? null;
-  }, [data.sourceNodeId, upstreamImageRefs]);
-  const upstreamTextRef = useMemo(
-    () => upstreamRefs.find((ref) => ref.kind === 'text' && ref.textContent) ?? null,
-    [upstreamRefs],
-  );
-  const upstream = selectedUpstreamImageRef ?? upstreamTextRef;
+  const generationUpstream = useMemo(() => selectWorldUpstreamFromNodes({
+    upstreamNodes, sourceNodeId: data.sourceNodeId,
+  }), [upstreamNodes, data.sourceNodeId]);
+  const upstream = upstreamRefs.find(ref => ref.nodeId === generationUpstream.upstream?.nodeId
+    && ref.kind === generationUpstream.upstream.kind) ?? null;
+  const selectedReferenceNodeId = upstream?.kind === 'image' ? upstream.nodeId : null;
   const referenceImages = useMemo<ReferenceImageRef[]>(
     () =>
       upstreamImageRefs
@@ -1023,140 +969,56 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
     }
   }, [beatContext, contexts, data, upstreamPanoSources]);
 
-  const sourceNodeForGeneration = useMemo(() => {
-    if (upstream?.kind !== 'image') return null;
-    return upstreamNodes.find((node) => node.id === upstream.nodeId) ?? null;
-  }, [upstream, upstreamNodes]);
-  const inferredImageSourceKind: DirectorImageSourceKind = (() => {
-    if (!sourceNodeForGeneration) return 'master';
-    if (isPanoImageCanvasNode(sourceNodeForGeneration)) return 'pano';
-    return 'master';
-  })();
-  const selectedImageSourceKind: DirectorImageSourceKind =
-    data.plyKind === 'pano' || data.plyKind === 'master'
-      ? data.plyKind
-      : inferredImageSourceKind;
+  const sourceNodeForGeneration = generationUpstream.sourceNode;
+  const selectedImageSourceKind = worldVisibleSourceKind(data, sourceNodeForGeneration);
 
   const handleSubmit = useCallback(async (): Promise<{ plyUrl?: string; panoUrl?: string }> => {
-    if (modelTaskAccess.blocked) return {};
     const projectId = readUrl().project;
-    const sourceNode = sourceNodeForGeneration;
-    if (!projectId) {
-      updateNodeData(id, { errorMessage: t('node.threeDWorld.noProject') });
-      return {};
-    }
-    if (!upstream) return {};
-    if (isGenerating) return {};
-    if (upstream.kind === 'text') {
-      updateNodeData(id, {
-        errorMessage: t('node.threeDWorld.textTo3dUnsupported'),
-      });
-      return {};
-    }
-    if (!sourceNode) return {};
-    const sourceUrl = imageUrlFromCanvasNode(sourceNode);
-    if (!sourceUrl) return {};
-
-    const sourceKind = imageTo3gsKindForSource(sourceNode, selectedImageSourceKind);
-    const rawPanoSource = sourceKind === 'pano'
-      ? directorPanoSourceFromCanvasNode(sourceNode) ?? {
-          id: `upstream-pano:${sourceNode.id}`,
-          source_type: 'pano360' as const,
-          source_kind: 'pano' as const,
-          label: t('node.threeDWorld.pano360Label'),
-          url: sourceUrl,
-          pano_url: sourceUrl,
-          slot_kind: 'scene_director_pano_360' as const,
-        }
-      : null;
-
-    updateNodeData(id, {
-      isGenerating: true,
-      generationStartedAt: Date.now(),
-      errorMessage: null,
-      sourceNodeId: sourceNode.id,
-      sourceKind: 'image',
-      plyKind: sourceKind,
-      previewImageUrl: sourceUrl,
-      ...(rawPanoSource
-        ? {
-            sources: mergeDirectorWorldSources(data.sources ?? [], rawPanoSource),
-            activeSourceId: rawPanoSource.id ?? null,
-            panoUrl: rawPanoSource.pano_url ?? rawPanoSource.url ?? null,
-          }
-        : {}),
+    const decision = buildWorldGenerationRequest({
+      nodeId: id, projectId, canvasId: readUrl().canvas ?? 'default', data,
+      blocked: modelTaskAccess.blocked, isGenerating, ...generationUpstream,
+      productOperation: workflowProductOperation(id) ?? null, translate: t,
     });
-
+    if (!decision.ok) {
+      for (const patch of decision.patches) updateNodeData(id, patch);
+      return {};
+    }
+    updateNodeData(id, worldGenerationStartPatch({ request: decision, data, startedAtMs: Date.now() }));
     try {
-      const ref = await submitFreezoneImageTo3GS(projectId, {
-        sourceUrl,
-        sourceKind,
-        canvasId: readUrl().canvas ?? 'default',
-        nodeId: id,
-      });
-      updateNodeData(id, { taskKey: ref.task_key, ...generationTaskDescriptor(ref) });
-      const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
-      const generatedSource = sourceFromImageTo3gsResult(completed.result, {
-        id: `generated-sog:${sourceKind}:${Date.now()}`,
-        sourceKind,
-        label:
-          sourceKind === 'pano'
-            ? t('node.threeDWorld.pano3dgsLabel')
-            : t('node.threeDWorld.image3dgsLabel'),
-      });
-      if (!generatedSource) {
-        throw new Error(t('node.threeDWorld.worldUrlMissing'));
-      }
+      const ref = await sendGenerationWireRequest<FreezoneJobRef>(decision.request);
+      updateNodeData(id, worldGenerationAcceptedPatch(ref));
+      const completed = await awaitTaskCompletion(ref.task_key, projectId!, { taskType: ref.task_type });
       const currentWorld = useCanvasStore.getState().nodes.find((node) => node.id === id);
       const currentSources = (
         (currentWorld?.data as { sources?: DirectorWorldSource[] } | undefined)?.sources ?? []
       );
-      const nextPlyUrl = generatedSource.ply_url ?? generatedSource.url ?? null;
-      const nextPanoUrl = rawPanoSource?.pano_url ?? rawPanoSource?.url ?? null;
-      updateNodeData(id, {
-        sources: mergeDirectorWorldSources(currentSources, rawPanoSource, generatedSource),
-        activeSourceId: generatedSource.id ?? null,
-        plyUrl: nextPlyUrl,
-        panoUrl: nextPanoUrl,
-        isGenerating: false,
-        taskKey: null,
-        errorMessage: null,
+      const success = worldGenerationSuccessPatch({
+        result: completed.result,
+        generatedId: `generated-sog:${decision.sourceKind}:${Date.now()}`,
+        sourceKind: decision.sourceKind, rawPanoSource: decision.rawPanoSource, currentSources,
+        labels: {
+          pano3dgs: t('node.threeDWorld.pano3dgsLabel'),
+          image3dgs: t('node.threeDWorld.image3dgsLabel'),
+          worldUrlMissing: t('node.threeDWorld.worldUrlMissing'),
+        },
       });
-      return {
-        ...(nextPlyUrl ? { plyUrl: nextPlyUrl } : {}),
-        ...(nextPanoUrl ? { panoUrl: nextPanoUrl } : {}),
-      };
+      if (success.kind === 'missing_world_url') throw new Error(success.message);
+      updateNodeData(id, success.patch);
+      return success.output;
     } catch (error) {
-      // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
-      // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
-      if (isTaskPollTimeoutError(error)) {
+      const failure = worldGenerationFailureOutcome(isTaskPollTimeoutError(error)
+        ? { kind: 'poll_timeout' }
+        : { kind: 'failed', message: error instanceof Error ? error.message : String(error) }, t);
+      if (failure.notice === 'still_running') {
         notifyTaskStillRunning(t);
         return {};
       }
-      updateNodeData(id, {
-        isGenerating: false,
-        taskKey: null,
-        errorMessage: t('node.threeDWorld.generateFailed', {
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      });
+      for (const patch of failure.patches) updateNodeData(id, patch);
       throw error;
     } finally {
       void refreshHistory();
     }
-    return {};
-  }, [
-    data.sources,
-    id,
-    isGenerating,
-    modelTaskAccess.blocked,
-    refreshHistory,
-    selectedImageSourceKind,
-    sourceNodeForGeneration,
-    t,
-    updateNodeData,
-    upstream,
-  ]);
+  }, [data, generationUpstream, id, isGenerating, modelTaskAccess.blocked, refreshHistory, t, updateNodeData]);
 
   useEffect(() => {
     return subscribeNodeAction(({ nodeId, action, requestId }) => {
@@ -1178,16 +1040,10 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
       publishNodeActionAccepted(requestId, id, action);
       void handleSubmit()
         .then((output) => {
-          const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
-          const latestData = latest?.type === CANVAS_NODE_TYPES.threeDWorld ? latest.data : null;
-          const latestPlyUrl = typeof latestData?.plyUrl === 'string' ? latestData.plyUrl : undefined;
-          const latestPanoUrl = typeof latestData?.panoUrl === 'string' ? latestData.panoUrl : undefined;
-          publishNodeActionSuccess(requestId, id, action, {
-            ...(output.plyUrl ? { plyUrl: output.plyUrl } : {}),
-            ...(output.panoUrl ? { panoUrl: output.panoUrl } : {}),
-            ...(latestPlyUrl ? { plyUrl: latestPlyUrl } : {}),
-            ...(latestPanoUrl ? { panoUrl: latestPanoUrl } : {}),
+          const result = worldGenerationActionResult({
+            output, latestNode: useCanvasStore.getState().nodes.find((node) => node.id === id),
           });
+          if (result.status === 'success') publishNodeActionSuccess(requestId, id, action, result.output);
         })
         .catch((error) => publishNodeActionError(requestId, id, action, error));
     });
@@ -1533,7 +1389,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
             errorMessage={data.errorMessage}
             sourceKind={selectedImageSourceKind}
             referenceImages={referenceImages}
-            selectedReferenceNodeId={selectedUpstreamImageRef?.nodeId ?? null}
+            selectedReferenceNodeId={selectedReferenceNodeId}
             referenceImage={
               upstream?.kind === 'image' && upstream.imageUrl
                 ? { nodeId: upstream.nodeId, url: upstream.imageUrl, displayName: upstream.displayName }

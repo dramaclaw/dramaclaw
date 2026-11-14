@@ -3,8 +3,8 @@
 import {
   submitFreezoneVideoGen,
   type FreezoneVideoAspectRatio,
-  type FreezoneVideoResolution,
 } from '@/api/ops';
+import type { FreezoneVideoResolution } from '@/features/canvas/domain/modelCatalogPayload';
 import { awaitTaskCompletion } from '@/api/tasks';
 import {
   CANVAS_NODE_TYPES,

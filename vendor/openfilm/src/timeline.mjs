@@ -2,7 +2,7 @@
 // in host.mjs); the file's own elements are the clips: an <iframe> a web page, a <video>, an <img> a still, an
 // <audio> a sound for the mix. Where each plays and sits is what film-doc.mjs reads in the file, the same reading
 // Studio plays and exports by; how each looks is the file's own CSS. Track 0, the first <section>, is on top.
-import { clipFade, clipSpan, clipTag, declarations, fadeGain, filmHead, fittedFade, kindOf, parseFilm, pictureRect, readFilmFile, sourceAt, srcHref } from './film-doc.mjs';
+import { MEDIA_RATE_MAX, MEDIA_RATE_MIN, clipFade, clipSpan, clipTag, declarations, fadeGain, filmHead, fittedFade, kindOf, mediaPlays, parseFilm, pictureRect, readFilmFile, sourceAt, srcHref } from './film-doc.mjs';
 import { override, restore } from './overrides.mjs';
 
 /* the file as written (without what the host puts in it), read as every reader reads it */
@@ -57,13 +57,32 @@ function factsOf(src) {
       m.preload = 'metadata'; m.muted = true;
       const done = (facts) => { m.removeAttribute('src'); m.load(); ok(facts); };
       m.onloadedmetadata = () => done({ duration: m.duration, w: m.videoWidth, h: m.videoHeight });
-      m.onerror = () => done(null);
+      /* a file the browser cannot read (ProRes footage, a codec it has no decoder for): what the host says it is */
+      m.onerror = () => { void hostFacts(href).then(done); };
       const facts = new URL(href);
       facts.searchParams.set('film-facts', '1');
       m.src = facts.href;
     })));
   }
   return factsBySrc.get(href);
+}
+
+/**
+ * What the host says a file is, when the browser cannot read it: ffprobe's length and picture size, asked beside the
+ * film (`__film/media-facts`, the file named from the film's folder, see host.mjs); null when it does not say.
+ * @param {string} href
+ */
+function hostFacts(href) {
+  const src = new URL(href);
+  if (src.origin !== location.origin) return Promise.resolve(null);
+  /* the file from the film's folder, `../` and all (an edit kept apart from its project names its files so) */
+  const here = new URL('.', location.href).pathname.split('/').slice(0, -1);
+  const there = src.pathname.split('/');
+  let same = 0;
+  while (same < here.length && same < there.length - 1 && here[same] === there[same]) same++;
+  const of = [...here.slice(same).map(() => '..'), ...there.slice(same)].join('/');
+  return fetch(new URL(`__film/media-facts?of=${encodeURIComponent(of)}`, location.href))
+    .then((r) => (r.ok ? r.json() : null)).then((f) => (f?.duration > 0 ? { duration: f.duration, w: f.w ?? 0, h: f.h ?? 0 } : null)).catch(() => null);
 }
 
 /**
@@ -152,7 +171,7 @@ const SEEK_TRIES = 3;
  * moment the new frame is presented. Knowing how long the video's frames last (`frame`, from the host), the frame for t
  * is told by its time: the old frame, shown again as its video turns visible, is not taken for it, even after the seek
  * is done. Not knowing, a frame presented before the seek is done is taken for the old one when it is nearer where the
- * video was.
+ * video was. Whether the frame was seen on screen (false: every try ran out).
  */
 async function showVideoAt(v, t, frame = null) {
   /* a seek still under way (the start a video was woken at, see wake): its `seeked` and its frame would be taken for
@@ -160,7 +179,7 @@ async function showVideoAt(v, t, frame = null) {
   if (v.seeking) await new Promise((done) => { v.addEventListener('seeked', done, { once: true }); setTimeout(done, 10000); });
   /* the same time again (to the microsecond the element keeps): no seek, nothing new to present (a seek there would
      present nothing, and the wait would run out) */
-  if (!v.seeking && Math.abs(v.currentTime - t) < SAME_TIME && v.readyState >= 2) return;
+  if (!v.seeking && Math.abs(v.currentTime - t) < SAME_TIME && v.readyState >= 2) return true;
   const before = v.currentTime;
   let sought = false;
   /* the frame a seek to t lands in starts at most a frame before t (and the seek goes a millisecond in, see host.mjs),
@@ -194,9 +213,12 @@ async function showVideoAt(v, t, frame = null) {
     const shown = presented ? await presented : true;
     clearTimeout(timer);
     if (handle) v.cancelVideoFrameCallback?.(handle);
-    if (shown || last) return;
+    if (shown || last) return shown;
   }
 }
+
+/** Exact frames of video clips seen on screen, and ones never seen (a host tells a browser that shows no video by it). */
+const videoSeen = { shown: 0, unshown: 0 };
 
 /**
  * Every video a page moved in its frame, until its new frame is on screen (SPEC §4: a host waits for pending seeks):
@@ -231,12 +253,22 @@ const START_LAG = 0.08;   // s: how long play() takes to get a video going
 /** Keep a playing video at `want` as the film plays at `rate`: its pace nudged when it drifts, sought when far off. */
 function roll(c, want, rate) {
   const v = c.el;
+  const speed = (c.span.speed ?? 1) * rate;
+  /* a clip × viewer rate the browser does not play (faster than 16×, slower than 1/16×): the film is followed by
+     seeking, as when autoplay is refused */
+  if (!mediaPlays(speed)) {
+    if (!v.paused) v.pause();
+    c.steer = 0; c.off = 0;
+    step(c, want);
+    return;
+  }
   const drift = v.currentTime - want;
   if (Math.abs(drift) > ROLL_SEEK || v.ended) { v.currentTime = want; c.steer = 0; c.off = 0; }
   else if (Math.abs(drift) > ROLL_STEER) { c.off = (c.off ?? 0) + 1; if (c.off >= 2) c.steer = drift > 0 ? -1 : 1; }
   else { c.off = 0; if (Math.abs(drift) < ROLL_SETTLE) c.steer = 0; }
-  /* the pace is written only when it changes: each write is work for the media pipeline */
-  const pace = (c.span.speed ?? 1) * rate * (1 + (c.steer ?? 0) * ROLL_NUDGE);
+  /* the pace is written only when it changes (each write is work for the media pipeline), and nudged within those
+     rates: a 16× clip a little behind would ask the browser for 16.48×, and it throws */
+  const pace = Math.max(MEDIA_RATE_MIN, Math.min(MEDIA_RATE_MAX, speed * (1 + (c.steer ?? 0) * ROLL_NUDGE)));
   if (Math.abs(v.playbackRate - pace) > 1e-4) v.playbackRate = pace;
   if (v.paused) v.play().catch((e) => { if (e?.name === 'NotAllowedError') c.held = true; });
   c.lastWant = want;
@@ -253,7 +285,8 @@ function step(c, want) {
 /**
  * A video on screen while a person looks at one moment or scrubs: sought, and waited for until its frame is decoded
  * (not until the compositor shows it: a seek within the frame on screen shows nothing new, and that wait would only
- * run out). The editor asks for the next moment once this one is drawn, so a scrub goes as fast as the decoder.
+ * run out). The editor asks for the next moment once this one is drawn, so a scrub goes as fast as the decoder; the
+ * frame on screen is then made sure of while the person stays there (onScreen).
  */
 async function glance(c, want) {
   const v = c.el;
@@ -269,14 +302,58 @@ async function glance(c, want) {
     if (c.lastWant !== want || !c.awake) return;
     justLoaded = true;
   }
+  follow(c);
   if (!justLoaded && !v.seeking && Math.abs(v.currentTime - want) < SAME_TIME && v.readyState >= 2) return;
   v.currentTime = want;
-  await new Promise((done) => {
-    if (!v.seeking && v.readyState >= 2) { done(); return; }
-    v.addEventListener('seeked', done, { once: true });
-    v.addEventListener('loadeddata', done, { once: true });
-    setTimeout(done, 3000);
-  });
+  await sought(v);
+  void onScreen(c, want);
+}
+
+/** A seek done: its frame decoded (`seeked`, or the file's first data), or after a time limit. */
+const sought = (v) => new Promise((done) => {
+  if (!v.seeking && v.readyState >= 2) { done(undefined); return; }
+  v.addEventListener('seeked', done, { once: true });
+  v.addEventListener('loadeddata', done, { once: true });
+  setTimeout(done, 3000);
+});
+
+/** Follow the frames a clip's video puts on screen (its frame callback): `c.presented`, the last one's time. */
+function follow(c) {
+  const v = c.el;
+  if (c.following || typeof v.requestVideoFrameCallback !== 'function') return;
+  c.following = true;
+  const note = (/** @type {number} */ _now, /** @type {{ mediaTime: number }} */ meta) => {
+    c.presented = meta.mediaTime;
+    c.onPresented?.();
+    v.requestVideoFrameCallback(note);
+  };
+  v.requestVideoFrameCallback(note);
+}
+
+/**
+ * A still moment's frame made sure of on screen while the person stays there: a frame decoded may never be presented
+ * (Chromium, see showVideoAt), and the picture keeps an older one, frames behind what an export draws at the same t.
+ * Not on screen in a moment, it is sought again, half a millisecond on (the same frame), a few times. A scrub that
+ * asks for another moment, or the film playing, leaves it; so does a video whose frames' length the host cannot say.
+ */
+async function onScreen(c, want) {
+  const v = c.el;
+  const frame = await frameOf(c);
+  if (!frame || !c.following) return;
+  /* the frame a seek to want lands in, as showVideoAt tells it */
+  const right = () => c.presented != null && c.presented <= want + 0.002 && want + 0.001 - c.presented < frame * 1.25;
+  const still = () => c.lastWant === want && v.paused && !v.seeking;
+  for (let tries = 1; ; tries++) {
+    if (right() || !still()) return;
+    const shown = await new Promise((done) => {
+      const timer = setTimeout(() => done(false), PRESENT_MS);
+      c.onPresented = () => { if (right()) { clearTimeout(timer); done(true); } };
+    });
+    c.onPresented = undefined;
+    if (shown || tries >= SEEK_TRIES || !still()) return;
+    v.currentTime = want + tries * 0.0005;
+    await sought(v);
+  }
 }
 /**
  * A video whose clip starts `lead` film seconds from now, the film playing at `rate`: sought ahead (to PREROLL before
@@ -295,7 +372,7 @@ function getReady(c, lead, rate) {
     v.currentTime = cue;
     c.cued = c.lastWant = cue;
   }
-  if (lead < rolling + START_LAG * rate && v.paused && !v.seeking && !c.held) {
+  if (mediaPlays(speed * rate) && lead < rolling + START_LAG * rate && v.paused && !v.seeking && !c.held) {
     v.playbackRate = speed * rate;
     v.play().catch((e) => { if (e?.name === 'NotAllowedError') c.held = true; });
   }
@@ -601,6 +678,15 @@ function wakePage(c) {
     c.drawn = false;
     /* its own size, when it says one (else its clip's size, or the stage's: see settle) */
     if (c.child.width > 0 && c.child.height > 0) c.own = { w: c.child.width, h: c.child.height };
+    /* opened for the first time after the film was up (see load): its own length and size, which the film had not
+       waited for, placed by now (it shows only once drawn) and told to the editor */
+    if (c.unread) {
+      c.unread = false;
+      const length = c.child.duration;
+      c.native = Number.isFinite(length) && length > 0 ? length : undefined;
+      if (c.own && (c.own.w !== c.nw || c.own.h !== c.nh)) { c.nw = c.own.w; c.nh = c.own.h; place(c, c.row.box); }
+      window.__filmEditor.learned?.();
+    }
     window.__filmEditor.stage.woke?.();
   });
   pagesAwake.add(c);
@@ -623,6 +709,33 @@ function restPage(c) {
   const close = () => { if (!c.awake && el.isConnected) el.setAttribute('src', 'about:blank'); };
   if (!el.hasAttribute('src') || el.contentDocument?.readyState === 'complete') close();
   else el.addEventListener('load', close, { once: true });
+}
+
+const PAGE_LOAD_MS = 30_000; // how long an exact frame waits for a page's pictures and fonts before it is drawn without them
+/** each page document's wait (see pageLoaded): a page opened again is a new document, waited for again */
+const pageLoads = new WeakMap();
+/**
+ * For an exact frame, wait until a page's document has loaded: its pictures (its images, its CSS backgrounds) and its
+ * fonts. Its film is ready before them unless its `ready` waits for them (SPEC §2), and a page without that showed its
+ * pictures in a preview but lost them in an export. One loaded already is drawn at once; one still loading after
+ * PAGE_LOAD_MS is drawn as it is, said once.
+ */
+function pageLoaded(c) {
+  const doc = c.win.document;
+  if (doc.readyState === 'complete' && doc.fonts.status === 'loaded') return null;
+  if (!pageLoads.has(doc)) {
+    let timer;
+    const late = new Promise((done) => { timer = setTimeout(() => done(false), PAGE_LOAD_MS); });
+    const loaded = Promise.all([
+      doc.readyState === 'complete' ? null : new Promise((done) => c.win.addEventListener('load', done, { once: true })),
+      doc.fonts.ready,
+    ]).then(() => true);
+    pageLoads.set(doc, Promise.race([loaded, late]).then((ok) => {
+      clearTimeout(timer);
+      if (!ok) console.error(`clip "${c.id}" (${c.src}): its page did not finish loading within ${PAGE_LOAD_MS / 1000} s (a picture or font): drawn without it`);
+    }));
+  }
+  return pageLoads.get(doc);
 }
 
 /**
@@ -667,26 +780,32 @@ const CUE_MS = 5000;
 const frameLengths = new Map();
 /**
  * How long a video clip's frames last, as the host that serves the film says (host.mjs, from ffprobe); null from a
- * server that cannot tell. Asked once a file.
+ * server that cannot tell, or that does not answer within 10 s (the request or its body). Asked once a file: a null
+ * stays, so a stalled lookup cannot hold this frame or the next one of the same file. The frame is drawn without it.
  */
 function frameOf(c) {
   const src = url(c.row.src);
   /* a video from another site: not the host's to say */
   if (src.origin !== location.origin) return Promise.resolve(null);
   if (!frameLengths.has(src.pathname)) {
-    frameLengths.set(src.pathname, fetch(new URL(`__film/frame-duration?of=${encodeURIComponent(src.pathname)}`, location.href))
+    frameLengths.set(src.pathname, fetch(new URL(`__film/frame-duration?of=${encodeURIComponent(src.pathname)}`, location.href), { signal: AbortSignal.timeout(10_000) })
       .then((r) => (r.ok ? r.json() : null)).then((said) => (said?.seconds > 0 ? said.seconds : null)).catch(() => null));
   }
   return frameLengths.get(src.pathname);
 }
 
-/** Wait for a video's file for an exact frame: too long is the film's error, said by the clip. */
-function loaded(c) {
+/**
+ * Wait for a video's file for an exact frame: too long, or a file this browser does not decode (one a render could
+ * not copy, see seekable.mjs), is the film's error, said by the clip. Drawn, it would show nothing: a black frame.
+ */
+async function loaded(c) {
   let timer;
   const late = new Promise((_, fail) => {
     timer = setTimeout(() => fail(new Error(`clip "${c.id}" (${c.src}): its video did not load within ${LOAD_MS / 1000} s`)), LOAD_MS);
   });
-  return Promise.race([wake(c), late]).finally(() => clearTimeout(timer));
+  await Promise.race([wake(c), late]).finally(() => clearTimeout(timer));
+  const error = c.el.error;
+  if (error) throw new Error(`clip "${c.id}" (${c.src}): this browser can't play its video${error.message ? ` (${error.message})` : ''}`);
 }
 
 /**
@@ -779,6 +898,11 @@ async function load(row, track, ti, el) {
     /* a page that is not there: its clip keeps its time, at the stage's size */
     c.missing = true;
     c.nw = stage.w; c.nh = stage.h;
+  } else if (SKIP_MISSING && row.time?.length === 2) {
+    /* an editor's preview: a page whose #t= is its length opens when the playhead comes near (see near), its own
+       length and size learned then (see wakePage); the film is up without waiting for every page of a long film */
+    c.row = row;
+    c.unread = true;
   } else {
     /* opened to read its length (the host serves it unopened, see holdPages; filmStart gives it the stage's size) */
     c.row = row;
@@ -892,7 +1016,9 @@ async function drawClip(c, t, live, play, turn, coming, going) {
        be presented, yet the picture keeps the frame it had for a second or so (Chromium, its frames sent apart from
        the page's): the same t drew two pictures */
     if (appears) await frames(2);
-    await showVideoAt(c.el, want, await frameOf(c));
+    /* one without a picture (a sound in a video clip) has no frame to show */
+    if (await showVideoAt(c.el, want, await frameOf(c))) videoSeen.shown++;
+    else if (c.el.videoWidth > 0) videoSeen.unshown++;
     return;
   }
   /* a page closed while the playhead was far (see near): opened again, then drawn; one that will not open is the
@@ -901,6 +1027,8 @@ async function drawClip(c, t, live, play, turn, coming, going) {
     try { await wake(c); } catch (e) { if (live) return; throw new Error(`clip "${c.id}" (${c.src}): ${e?.message ?? e}`); }
     if (!c.child || !c.shown) return;
   }
+  /* an exact frame shows the page's pictures: it waits for them, as a video clip's frame waits for its file */
+  if (!live) await pageLoaded(c);
   const local = sourceAt(c.span, t - c.at, c.row, c.native);
   c.win.filmHost?.time?.(local);
   /* a page's error says which clip and which of its own seconds, not only the film's t */
@@ -911,6 +1039,8 @@ async function drawClip(c, t, live, play, turn, coming, going) {
   c.drawn = true;
   override(c, c.preview ?? c.overrides);
 }
+
+window.__filmVideos = () => ({ ...videoSeen });
 
 window.film = {
   get duration() { return Math.max(0.001, ...clips.filter((c) => !c.hidden).map((c) => c.end)); },
@@ -1150,6 +1280,8 @@ window.__filmEditor = {
     updated: null,
     woke: null,
   },
+  /** Set by a host (Studio's bridge) to hear of a page's own length and size learned as it first opens (see load). */
+  learned: null,
   /**
    * The film after an edit (`look`: its file's filmHead, when the edit came from the file; another one than this film
    * was loaded with needs the page loaded again): changed in place (see change), resolving to true, or to false when

@@ -4,6 +4,7 @@
  * person (a picture from this computer, a picture of the project, or the film at a moment). It is Studio's, kept in
  * `.film/cover.<ext>` as a copy; without one, the card shows the film's poster (pageframes.mjs filmPoster).
  */
+import { TOOL_DIR } from '../../src/film-dirs.mjs';
 import { statSync } from 'node:fs';
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -34,8 +35,7 @@ export function pictureType(/** @type {Buffer} */ bytes) {
   return null;
 }
 
-/* `.film/` (projects.mjs TOOL_DIR, not imported: projects.mjs lists each project's cover with coverAt) */
-const coverPath = (/** @type {string} */ root, /** @type {string} */ ext) => join(root, '.film', `cover.${ext}`);
+const coverPath = (/** @type {string} */ root, /** @type {string} */ ext) => join(root, TOOL_DIR, `cover.${ext}`);
 
 /** When the project's cover was set (ms), for its card to ask for the new picture; null when it has none. */
 export function coverAt(/** @type {string} */ root) {

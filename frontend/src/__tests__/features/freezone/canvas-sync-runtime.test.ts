@@ -36,8 +36,8 @@ describe('remote canvas revision barrier', () => {
     const old = deferred<FreezoneCanvasPayload>();
     const fresh = deferred<FreezoneCanvasPayload>();
     vi.mocked(getFreezoneCanvas).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
-    const first = refreshRemoteFreezoneCanvas('p', 'c', { protectUnsavedLocalEdits: true });
-    const second = refreshRemoteFreezoneCanvas('p', 'c', { protectUnsavedLocalEdits: true });
+    const first = refreshRemoteFreezoneCanvas('p', 'c');
+    const second = refreshRemoteFreezoneCanvas('p', 'c');
     if (oldFirst) {
       old.resolve(snapshot(2));
       expect(await first).toBe(true);

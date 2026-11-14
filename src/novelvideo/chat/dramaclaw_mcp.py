@@ -13,6 +13,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 import time
 import types as py_types
@@ -23,6 +24,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -32,6 +34,7 @@ from novelvideo.chat.mcp_runtime import (
     _integer_string_argument_paths as _integer_string_argument_paths,
     _unexpected_argument_fields as _unexpected_argument_fields,
 )
+from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 
 logger = logging.getLogger("novelvideo.chat.dramaclaw_mcp")
 ToolIndex = mcp_runtime.ToolIndex
@@ -253,7 +256,8 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         "and generation choices are complete, call freezone_confirm_workflow_draft exactly once "
         "now with the named draft_id and revision, without asking for another confirmation. A "
         "parameter clarification card is not canvas creation; otherwise wait for confirmation. "
-        "Never prepare a replacement draft or claim success before the actual canvas write receipt. "
+        "Never prepare a replacement draft or claim success before the actual canvas "
+        "write receipt. "
     )
     instruction += (
         "Only after a later user message explicitly requests a change, call "
@@ -379,10 +383,7 @@ def _structured_tool_result(
 
 
 def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
-    if tool_name not in {
-        "freezone_prepare_workflow_plan_draft",
-        "workflow_graph_compile",
-    }:
+    if tool_name != "freezone_prepare_workflow_plan_draft":
         return None
     return (
         "WorkflowPlan 校验失败。先按 message/path 指出的字段逐项修正，不要逐个猜删其它字段。"
@@ -588,26 +589,56 @@ def _repair_tool_arguments(
     return None
 
 
-def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, Any]:
-    from novelvideo.freezone.workflow_schema import workflow_plan_schema_diagnostics
+_CANVAS_CREATE_TOOLS = frozenset({"freezone_create_canvas"})
+_CANVAS_COMMAND_TOOLS = frozenset({
+    "freezone_emit_canvas_command", "freezone_validate_canvas_commands",
+})
 
+
+_WORKFLOW_DRAFT_TOOLS = frozenset({
+    "freezone_prepare_workflow",
+    "freezone_prepare_workflow_plan_draft",
+    "freezone_request_user_clarification",
+    "freezone_prepare_workflow_draft",
+    "freezone_revise_workflow",
+    "freezone_patch_workflow_draft",
+    "freezone_get_workflow",
+    "freezone_confirm_workflow_draft",
+    "freezone_run_workflow",
+    "freezone_observe_workflow_run",
+    "freezone_cancel_workflow_run",
+})
+
+
+def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, Any]:
     payload = mcp_runtime.validation_error_payload(name, arguments, schema, exc, errors)
-    diagnostics = workflow_plan_schema_diagnostics(arguments, schema)
-    if diagnostics:
-        payload.update(
-            message="; ".join(
-                f"{issue['path']}: {issue['message']}" for issue in diagnostics
-            ),
-            path=diagnostics[0]["path"],
-            errors=diagnostics,
-        )
-    if name in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}:
-        payload.update(
-            status="workflow_validation_failed", phase="graph_compile", retryable=True
-        )
-    recovery = _workflow_schema_recovery_instruction(name)
-    if recovery:
-        payload["agent_instruction"] = recovery
+    if name in _WORKFLOW_DRAFT_TOOLS and isinstance(exc, ValidationError):
+        payload.update(workflow_argument_refusal(name, arguments, schema, exc))
+        if name == "freezone_prepare_workflow_plan_draft":
+            payload.update(status="workflow_validation_failed", phase="graph_compile")
+            recovery = _workflow_schema_recovery_instruction(name)
+            payload["agent_instruction"] += f" {recovery}"
+    if name in _CANVAS_CREATE_TOOLS and isinstance(exc, ValidationError):
+        payload.update(workflow_argument_refusal(name, arguments, schema, exc))
+        payload["agent_instruction"] += " The canvas name must be 1 to 100 characters."
+    if name in _CANVAS_COMMAND_TOOLS and isinstance(exc, ValidationError):
+        refusal = workflow_argument_refusal(name, arguments, schema, exc)
+        commands = arguments.get("commands")
+        if isinstance(commands, list) and refusal["errors"] and all(
+            (match := re.match(r"^commands\[(\d+)\]\.data(\.|$)", error["path"]))
+            and int(match[1]) < len(commands)
+            and isinstance(command := commands[int(match[1])], dict)
+            and command.get("type") in {"create_node", "add_next_node"}
+            and command.get("node_type") == "textAnnotationNode"
+            for error in refusal["errors"]
+        ):
+            if any(isinstance(c, dict) and c.get("type") == "html_artifact" for c in commands):
+                refusal.pop("example", None)
+            payload.update(refusal)
+            payload["agent_instruction"] += (
+                " A textAnnotationNode needs data.displayName (the node title; title is "
+                "accepted as an alias) and data.content (the body)."
+            )
     return payload
 
 
@@ -620,10 +651,15 @@ def _tool_call_hooks(name: str) -> mcp_runtime.ToolCallHooks:
             adapt_result=_adapt_external_agent_tool_result,
             normalize_result=_normalize_structured_result,
         )
+    validation_error = _tool_validation_error
+    if name.startswith("freezone_studio_"):
+        from novelvideo.chat.studio_tool_validation import studio_validation_error
+
+        validation_error = studio_validation_error
     return mcp_runtime.ToolCallHooks(
         normalize_arguments=_normalize_tool_arguments,
         repair_arguments=_repair_tool_arguments,
-        validation_error=_tool_validation_error,
+        validation_error=validation_error,
         collect_all_errors=lambda name: False,
         adapt_result=_adapt_external_agent_tool_result,
         normalize_result=_normalize_structured_result,
@@ -658,7 +694,8 @@ async def call_tool(
         payload = result.structuredContent or {}
         if payload.get("error") == "tool_arguments_invalid":
             logger.warning(
-                "freezone_prepare_workflow_plan_draft.validation_failed elapsed_ms=%d message=%s path=%s summary=%s",
+                "freezone_prepare_workflow_plan_draft.validation_failed "
+                "elapsed_ms=%d message=%s path=%s summary=%s",
                 int((time.monotonic() - workflow_started) * 1000),
                 payload.get("message"),
                 payload.get("path"),

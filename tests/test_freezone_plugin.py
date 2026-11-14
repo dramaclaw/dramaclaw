@@ -62,7 +62,7 @@ _MINIMAL_ECOMMERCE_RECIPES = [
 ]
 
 
-def _load_plugin_module():
+def _load_plugin_module(*, api_executor=False):
     tools_module = types.ModuleType("tools")
     registry_module = types.ModuleType("tools.registry")
     registry_module.tool_error = lambda value: value
@@ -82,6 +82,8 @@ def _load_plugin_module():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    if not api_executor:
+        module._agent_canvas_executor = lambda: "browser"
     return module
 
 
@@ -113,6 +115,11 @@ def test_product_admission_preserves_generic_result_routing(
 ):
     plugin = _load_plugin_module()
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1" if external_mcp else "0")
+    if external_mcp:
+        # In-app Codex sets the external MCP flag and always carries a chat turn.
+        monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
+    else:
+        monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
     monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
     requests = []
 
@@ -139,6 +146,623 @@ def test_product_admission_preserves_generic_result_routing(
     assert "required_next_tool" not in result
     assert "freezone_prepare_workflow_draft" not in result["agent_instruction"]
     assert "matching persisted result tool" in result["agent_instruction"]
+
+
+def _turnless_external_host(monkeypatch) -> None:
+    """An external MCP host (e.g. a key-exchanged Codex CLI) has no product chat turn."""
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
+
+
+_WORKFLOW_PREPARE_TOOLS = (
+    "freezone_prepare_workflow",
+    "freezone_prepare_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+)
+
+
+def test_turnless_external_host_does_not_open_workflow_result_operation(monkeypatch):
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a turnless external host must not open an Agent product operation"
+        ),
+    )
+
+    result = plugin._handle_begin_agent_product_generation({
+        "product_kind": "workflow_result",
+        "generation_session_id": "session-1",
+        "normalized_inputs": {"prompt": "example"},
+        "skill_id": "video-ad",
+        "skill_version": "1.0.0",
+    })
+
+    structured = _assert_real_mcp_output(
+        plugin, "freezone_begin_agent_product_generation", result
+    )
+    assert structured["ok"] is True
+    assert structured["status"] == "agent_product_operation_not_required"
+    assert structured["operation_id"] == ""
+    assert structured["product_kind"] == "workflow_result"
+    assert structured["generation_session_id"] == "session-1"
+    assert structured["confirmation_required"] is False
+    assert structured["next_action"] == "prepare_workflow_without_operation_id"
+    assert "operation_id" in structured["agent_instruction"]
+
+
+@pytest.mark.parametrize(
+    "product_kind", ["recipe_result", "workflow_generate", "recipe_generate"]
+)
+def test_turnless_external_host_still_admits_other_product_kinds(
+    monkeypatch, product_kind
+):
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    requests = []
+
+    def request(method, path, *, body):
+        requests.append((method, path, body))
+        return {"ok": True, "data": {
+            "operation_id": "op-1", "product_kind": product_kind, "status": "reserved",
+            "task_id": "task-1", "generation_session_id": "session-1",
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_begin_agent_product_generation({
+        "product_kind": product_kind,
+        "generation_session_id": "session-1",
+        "normalized_inputs": {"prompt": "example"},
+    })
+
+    assert len(requests) == 1
+    assert requests[0][0] == "POST"
+    assert requests[0][2]["product_kind"] == product_kind
+    assert result["status"] == "agent_product_generation_admitted"
+    assert result["operation_id"] == "op-1"
+
+
+def _record_draft_requests(monkeypatch, plugin) -> list[tuple[str, str, dict | None]]:
+    calls: list[tuple[str, str, dict | None]] = []
+    real_request = plugin._request
+
+    def recording_request(method, path, *, body=None, **kwargs):
+        calls.append((method, path, copy.deepcopy(body)))
+        if "/agent-product-operations" in path:
+            pytest.fail(
+                "a turnless external host must not read or open an Agent product operation"
+            )
+        return real_request(method, path, body=body, **kwargs)
+
+    monkeypatch.setattr(plugin, "_request", recording_request)
+    return calls
+
+
+@pytest.mark.parametrize("operation_id", [None, "agent_product_" + "0" * 32])
+def test_turnless_external_plan_draft_is_submitted_without_operation(
+    monkeypatch, tmp_path, operation_id
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    calls = _record_draft_requests(monkeypatch, plugin)
+    args = {
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "video-ad", "version": "1.0.0"},
+            "nodes": [{
+                "id": "brief",
+                "node_type": "textAnnotationNode",
+                "stage": "input",
+                "data": {"title": "广告", "content": "商品广告"},
+            }],
+            "edges": [],
+        },
+    }
+    if operation_id is not None:
+        args["operation_id"] = operation_id
+
+    result = plugin._handle_prepare_workflow_plan_draft(args)
+
+    assert result["ok"] is True, result
+    assert result["draft_id"]
+    posts = [call for call in calls if call[0] == "POST"]
+    assert len(posts) == 1
+    assert posts[0][1].endswith("/workflow-drafts")
+    assert not posts[0][2].get("operation_id")
+
+
+def test_turnless_external_intent_draft_is_submitted_without_operation(
+    monkeypatch, tmp_path
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    compiled = {"ok": True, "skill_id": "video-ad", "plan": {
+        "summary": "广告", "nodes": [{"id": "input", "node_type": "textAnnotationNode",
+                                     "stage": "input"}], "edges": [],
+    }}
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _: compiled)
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    calls = _record_draft_requests(monkeypatch, plugin)
+
+    result = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+    })
+
+    assert result["ok"] is True, result
+    assert result["draft_id"]
+    posts = [call for call in calls if call[0] == "POST"]
+    assert len(posts) == 1
+    assert not posts[0][2].get("operation_id")
+
+
+def test_turnless_external_unified_prepare_neither_reads_nor_forwards_operation(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+    captured = {}
+
+    def fake_request(method, path, *, body=None, **_kwargs):
+        if "/agent-product-operations" in path:
+            pytest.fail("a turnless external host must not read an Agent product operation")
+        assert method == "POST"
+        assert path.endswith("/workflow-drafts")
+        captured.update(body)
+        return {"ok": True, "data": {"ok": True, "status": "workflow_draft_ready"}}
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    result = plugin._handle_prepare_workflow({
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "operation_id": "agent_product_" + "0" * 32,
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "short-drama-quick", "version": "1"},
+            "nodes": [],
+            "edges": [],
+        },
+    })
+
+    assert result["status"] == "workflow_draft_ready"
+    assert "operation_id" not in captured
+    assert captured["plan"]["skill"] == {"id": "short-drama-quick", "version": "1"}
+
+
+def test_turnless_external_prepare_schemas_do_not_require_operation(monkeypatch):
+    _turnless_external_host(monkeypatch)
+    plugin = _load_plugin_module()
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+
+    for name in _WORKFLOW_PREPARE_TOOLS:
+        parameters = schemas[name]["parameters"]
+        assert "operation_id" in parameters["properties"], name
+        assert "operation_id" not in parameters["required"], name
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"DRAMACLAW_EXTERNAL_MCP": "1", "DRAMACLAW_TURN_ID": "turn-1"},
+        {"DRAMACLAW_EXTERNAL_MCP": None, "DRAMACLAW_TURN_ID": None},
+        {"DRAMACLAW_EXTERNAL_MCP": "0", "DRAMACLAW_TURN_ID": None},
+    ],
+)
+def test_in_product_prepare_schemas_still_require_operation(monkeypatch, env):
+    for name, value in env.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    plugin = _load_plugin_module()
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+
+    for name in _WORKFLOW_PREPARE_TOOLS:
+        assert "operation_id" in schemas[name]["parameters"]["required"], name
+
+
+def test_in_product_codex_turn_still_requires_workflow_result_operation(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: pytest.fail("missing operation must stop first"),
+    )
+    monkeypatch.setattr(
+        plugin, "_request", lambda *_args, **_kwargs: pytest.fail("must not call API")
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "plan": {"schema_version": "freezone_workflow_plan.v1"},
+    })
+
+    assert result["status"] == "workflow_result_admission_required"
+    assert result["next_action"] == "begin_workflow_result_generation"
+
+
+# What an external MCP host without a product chat turn is told about when to
+# create a canvas and which path builds a generation request. In-product hosts
+# (a chat turn, or no external MCP flag) must keep seeing exactly these texts.
+_IN_PRODUCT_CREATE_CANVAS_DESCRIPTION = (
+    "Create a new empty canvas in the project for this chat. Pass its canvas_id explicitly "
+    "on later canvas tools; calls without canvas_id keep using the bound canvas. "
+    "Only available with the server canvas executor. Does not run any generation."
+)
+_IN_PRODUCT_EMIT_DESCRIPTION = (
+    "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete "
+    "canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request "
+    "to create a downstream media node and actually generate its output is a mixed operation: "
+    "use add_next_node + run_node_action in this one batch, give add_next_node a client_id, "
+    "and use that same alias as run_node_action.node_id. When an existing node must be edited "
+    "and then generated, use update_node_data + run_node_action in this one batch so "
+    "generation reads the updated data without another model turn. Do not ask the user to "
+    "click Generate after only creating or editing the node. Do not use this tool for "
+    "registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool "
+    "instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first."
+)
+_IN_PRODUCT_NO_UI_INSTRUCTION = (
+    "Do not call freezone_request_user_clarification again for this request. Do not move "
+    "this request to another canvas. Either continue with the most reasonable reading of the "
+    "user's request and state the assumptions you made in your reply, or ask the user in "
+    "this conversation and wait for the answer. Never choose generation settings (model, "
+    "quality, resolution, duration, count) for the user and never pick a more expensive "
+    "option than the user asked for; ask the user in this conversation for missing image or "
+    "video settings, also when a later write returns generation_parameters_required. Paid "
+    "actions still return confirmation_required and need the user's explicit consent before "
+    "freezone_confirm_canvas_action."
+)
+_IN_PRODUCT_HOST_ENVS = [
+    # In-app Codex sets the external MCP flag and always carries a chat turn.
+    {"DRAMACLAW_EXTERNAL_MCP": "1", "DRAMACLAW_TURN_ID": "turn-1"},
+    # In-app Hermes never sets the external MCP flag, with or without a turn id.
+    {"DRAMACLAW_EXTERNAL_MCP": None, "DRAMACLAW_TURN_ID": "turn-1"},
+    {"DRAMACLAW_EXTERNAL_MCP": None, "DRAMACLAW_TURN_ID": None},
+    {"DRAMACLAW_EXTERNAL_MCP": "0", "DRAMACLAW_TURN_ID": None},
+]
+
+
+def _set_host_env(monkeypatch, env) -> None:
+    for name, value in env.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
+def _advertised_descriptions(plugin) -> dict[str, str]:
+    """Tool descriptions exactly as the MCP server lists them to the Agent."""
+    from novelvideo.chat import dramaclaw_mcp
+
+    tools = dramaclaw_mcp.build_mcp_tools(dramaclaw_mcp._tool_index(plugin))
+    return {tool.name: tool.description for tool in tools}
+
+
+def _added_text(description: str, in_product: str) -> str:
+    assert description.startswith(in_product), description
+    added = description[len(in_product):]
+    assert added.strip(), "the turnless host must get extra guidance"
+    return " ".join(added.split())
+
+
+def test_turnless_external_create_canvas_waits_until_the_request_is_complete(monkeypatch):
+    _turnless_external_host(monkeypatch)
+    plugin = _load_plugin_module()
+
+    added = _added_text(
+        _advertised_descriptions(plugin)["freezone_create_canvas"],
+        _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION,
+    )
+
+    for phrase in (
+        "no product chat turn",
+        "ask in this conversation first and do not create the canvas yet",
+        "immediately prepare the workflow draft or write nodes",
+        "at most one canvas per request",
+    ):
+        assert phrase in added, added
+
+
+def test_turnless_external_generation_request_prefers_the_workflow_skill(monkeypatch):
+    _turnless_external_host(monkeypatch)
+    plugin = _load_plugin_module()
+
+    added = _added_text(
+        _advertised_descriptions(plugin)["freezone_emit_canvas_command"],
+        _IN_PRODUCT_EMIT_DESCRIPTION,
+    )
+
+    for phrase in (
+        "no product chat turn",
+        "does not name the exact nodes, edges and actions",
+        "dramaclaw-workflows Skill",
+        "workflow_catalog_search",
+        "freezone_prepare_workflow",
+        # Direct commands keep this tool: exact nodes named by the user, one node,
+        # or edits and runs of nodes that already exist.
+        "names the exact nodes, edges or actions",
+        "for a single node",
+        "nodes that already exist",
+    ):
+        assert phrase in added, added
+
+
+@pytest.mark.parametrize("env", _IN_PRODUCT_HOST_ENVS)
+def test_in_product_tool_descriptions_are_unchanged(monkeypatch, env):
+    _set_host_env(monkeypatch, env)
+    plugin = _load_plugin_module()
+
+    descriptions = _advertised_descriptions(plugin)
+
+    assert descriptions["freezone_create_canvas"] == _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION
+    assert descriptions["freezone_emit_canvas_command"] == _IN_PRODUCT_EMIT_DESCRIPTION
+
+
+@pytest.mark.parametrize("chat_created", [False, True])
+def test_turnless_external_no_ui_result_asks_before_creating_a_canvas(
+    monkeypatch, chat_created
+):
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+
+    result = plugin._clarification_no_ui_result("p", "c", chat_created=chat_created)
+
+    added = _added_text(result["agent_instruction"], _IN_PRODUCT_NO_UI_INSTRUCTION)
+    for phrase in (
+        "No canvas is needed to ask the user",
+        "do not create one before they answer",
+        "right before you prepare the workflow draft or write the nodes",
+        "keep using it and do not create another",
+    ):
+        assert phrase in added, added
+    assert result["status"] == result["code"] == "clarification_ui_unavailable"
+    assert result["retryable"] is False
+    assert result["next_action"] == "continue_with_stated_assumptions_or_ask_in_conversation"
+
+
+@pytest.mark.parametrize("chat_created", [False, True])
+@pytest.mark.parametrize("env", _IN_PRODUCT_HOST_ENVS)
+def test_in_product_no_ui_result_instruction_is_unchanged(monkeypatch, env, chat_created):
+    plugin = _load_plugin_module()
+    _set_host_env(monkeypatch, env)
+
+    result = plugin._clarification_no_ui_result("p", "c", chat_created=chat_created)
+
+    assert result["agent_instruction"] == _IN_PRODUCT_NO_UI_INSTRUCTION
+
+
+# Turnless hosts that hold a session token, or run with local trust, keep these
+# texts exactly; only a host that exchanges an agent key learns about the
+# platform standard tier (ISS-156).
+_TURNLESS_CREATE_CANVAS_GUIDANCE = (
+    " This session has no product chat turn, so no interface can show clarification cards. "
+    "If the request still needs generation settings (for images or video: model, aspect ratio, "
+    "resolution, quality, count; for video also duration) or other answers from the user, ask "
+    "in this conversation first and do not create the canvas yet; create it in the turn where "
+    "you will immediately prepare the workflow draft or write nodes to it. Create at most one "
+    "canvas per request and keep using it."
+)
+_TURNLESS_NO_UI_INSTRUCTION = _IN_PRODUCT_NO_UI_INSTRUCTION + (
+    " No canvas is needed to ask the user. If you ask the user and have not created a canvas "
+    "for this request yet, do not create one before they answer: create it once the settings "
+    "are complete, right before you prepare the workflow draft or write the nodes, and only "
+    "if the request needs a new canvas. If you already created one for this request, keep "
+    "using it and do not create another."
+)
+_HOST_CREDENTIAL_ENV = ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE",
+                        "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE",
+                        "DRAMACLAW_LOCAL_AGENT_TRUST")
+_TURNLESS_NON_KEY_HOST_ENVS = [
+    pytest.param({"DRAMACLAW_AGENT_TOKEN": "test-token-not-a-secret"}, id="token"),
+    pytest.param({"DRAMACLAW_LOCAL_AGENT_TRUST": "1"}, id="local-trust"),
+    # A session token wins over a key, as in the plugin's request path.
+    pytest.param({"DRAMACLAW_AGENT_TOKEN": "test-token-not-a-secret",
+                  "DRAMACLAW_AGENT_KEY": "test-agent-key-not-a-secret"}, id="token-and-key"),
+]
+_KEY_HOST_ENV = {"DRAMACLAW_AGENT_KEY": "test-agent-key-not-a-secret"}
+
+
+def _turnless_host_with(monkeypatch, credentials) -> None:
+    _turnless_external_host(monkeypatch)
+    for name in _HOST_CREDENTIAL_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in credentials.items():
+        monkeypatch.setenv(name, value)
+
+
+@pytest.mark.parametrize("credentials", _TURNLESS_NON_KEY_HOST_ENVS)
+def test_turnless_non_key_host_texts_are_unchanged(monkeypatch, credentials):
+    _turnless_host_with(monkeypatch, credentials)
+    plugin = _load_plugin_module()
+
+    description = _advertised_descriptions(plugin)["freezone_create_canvas"]
+    no_ui = plugin._clarification_no_ui_result("p", "c", chat_created=False)
+
+    assert description == _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION + _TURNLESS_CREATE_CANVAS_GUIDANCE
+    assert no_ui["agent_instruction"] == _TURNLESS_NO_UI_INSTRUCTION
+
+
+def test_key_host_may_leave_the_tier_to_the_platform_standard(monkeypatch):
+    _turnless_host_with(monkeypatch, _KEY_HOST_ENV)
+    plugin = _load_plugin_module()
+
+    description = _advertised_descriptions(plugin)["freezone_create_canvas"]
+    no_ui = plugin._clarification_no_ui_result("p", "c", chat_created=False)
+
+    added = _added_text(description, _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION)
+    assert "resolution, quality, count" not in added, added
+    for text in (added, no_ui["agent_instruction"]):
+        assert "leave resolution and image quality unset" in text, text
+        assert "platform standard tier" in text, text
+    assert no_ui["agent_instruction"].startswith(_TURNLESS_NO_UI_INSTRUCTION)
+
+
+# A host with a chat turn answers missing generation settings through a card.
+_GENERATION_MISSING = [
+    {"node_id": "img", "node_type": "imageGenNode", "display_name": "Poster",
+     "fields": ["size", "count"]},
+    {"node_id": "vid", "node_type": "videoNode", "display_name": "Clip",
+     "fields": ["quality", "durationSec"], "interactive_story_segment": True},
+]
+_STORY_DURATION_PREFIX = (
+    "Do not ask for one shared video_duration_seconds value for interactive story segments. "
+    "Derive each missing segment duration from its dialogue, action and pacing, fit it to the "
+    "selected model capability, and write durationSec on that specific video node. "
+)
+_LISTENER_GENERATION_REQUIRED = {
+    "ok": False,
+    "status": "clarification_required",
+    "code": "generation_parameters_required",
+    "error": "image/video generation parameters require user clarification",
+    "media_types": ["image", "video"],
+    "missing_parameters": _GENERATION_MISSING,
+    "required_choices": {"image": ["resolution", "count"], "video": ["resolution"]},
+    "agent_instruction": _STORY_DURATION_PREFIX + (
+        "Stop before every canvas write. Call freezone_request_user_clarification exactly "
+        "once for the required image/video choices listed in required_choices, passing them "
+        "as generation_required_choices and every already confirmed choice (at least the "
+        "model) in answers. Do not add a duration question for interactive story segments. "
+        "After the user answers, copy each returned node_data.<node_type> field verbatim into "
+        "missing matching node fields without replacing explicit per-shot values, and retry "
+        "with the per-segment durations. For a WorkflowPlan, put them in each image/video node "
+        "data. For a workflow draft, pass its id and revision so the tool applies the choices. "
+        "Do not claim success and do not silently choose defaults."
+    ),
+    "dynamic_story_duration_node_ids": ["vid"],
+    "clarification": {"title": "确认图片和视频生成参数", "allow_skip": False},
+}
+
+
+@pytest.mark.parametrize("env", _IN_PRODUCT_HOST_ENVS)
+def test_listener_generation_parameters_result_is_unchanged(monkeypatch, env):
+    plugin = _load_plugin_module()
+    _set_host_env(monkeypatch, env)
+
+    result = plugin._generation_parameters_required_result(copy.deepcopy(_GENERATION_MISSING))
+
+    assert result == _LISTENER_GENERATION_REQUIRED
+
+
+@pytest.mark.parametrize(
+    "credentials", [*_TURNLESS_NON_KEY_HOST_ENVS, pytest.param(_KEY_HOST_ENV, id="key")],
+)
+def test_no_listener_generation_parameters_result_asks_in_conversation(
+    monkeypatch, credentials,
+):
+    plugin = _load_plugin_module()
+    _turnless_host_with(monkeypatch, credentials)
+
+    result = plugin._generation_parameters_required_result(copy.deepcopy(_GENERATION_MISSING))
+
+    assert "clarification" not in result
+    assert result["missing_parameters"] == _GENERATION_MISSING
+    # The same node data keys as missing_parameters[].fields.
+    assert result["required_choices"] == {"image": ["size", "count"], "video": ["quality"]}
+    assert result["dynamic_story_duration_node_ids"] == ["vid"]
+    instruction = result["agent_instruction"]
+    assert instruction.startswith(_STORY_DURATION_PREFIX), instruction
+    assert "Do not call freezone_request_user_clarification" in instruction
+    assert "exactly once" not in instruction
+    for phrase in (
+        "ask the user in this conversation",
+        "a videoNode keeps its resolution in quality",
+        "never pick a more expensive option than the user asked for",
+        "retry the same operation once",
+    ):
+        assert phrase in instruction, instruction
+    assert (result["status"], result["code"]) == (
+        "clarification_required", "generation_parameters_required",
+    )
+
+
+def test_workflow_adapter_no_listener_host_asks_in_conversation(monkeypatch):
+    plugin = _load_plugin_module()
+    _turnless_host_with(monkeypatch, {"DRAMACLAW_AGENT_TOKEN": "test-token-not-a-secret"})
+    monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "canvas_demo", None)
+    )
+    detail = {
+        "ok": False, "status": "clarification_required",
+        "code": "generation_parameters_required",
+        "error": "image/video generation parameters require user clarification",
+        "missing_parameters": [
+            {"node_id": "shot-1", "node_type": "videoNode", "fields": ["durationSec", "generateAudio"]},
+        ],
+        "retryable": True,
+    }
+    def request(method, _path, **_kwargs):
+        assert method == "POST"
+        return plugin._http_error_result(400, json.dumps({"detail": detail}), "Bad Request")
+
+    monkeypatch.setattr(plugin, "_request", request)
+
+    # A turnless host has no admitted operation, so the Plan names its Skill.
+    plan = {"skill": {"id": "video-ad", "version": "1"}, "nodes": [], "edges": []}
+    result = json.loads(plugin._handle_workflow_operation({"plan": plan}, action="prepare"))
+
+    assert result["code"] == "generation_parameters_required", result
+    assert "clarification" not in result
+    assert result["required_choices"] == {"video": ["durationSec", "generateAudio"]}
+    assert result["next_action"] == "ask_user_in_conversation"
+    assert "Do not call freezone_request_user_clarification" in result["agent_instruction"]
+    Draft202012Validator(plugin._output_schema("freezone_prepare_workflow")).validate(result)
+
+
+def test_workflow_skill_names_the_turnless_admission_status(monkeypatch):
+    """The published Skill's no-operation branch matches what the tool returns."""
+    plugin = _load_plugin_module()
+    _turnless_external_host(monkeypatch)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    monkeypatch.setattr(
+        plugin, "_request", lambda *_args, **_kwargs: pytest.fail("must not open an operation")
+    )
+
+    result = plugin._handle_begin_agent_product_generation({
+        "product_kind": "workflow_result",
+        "generation_session_id": "session-1",
+        "normalized_inputs": {"prompt": "example"},
+        "skill_id": "video-ad",
+        "skill_version": "1.0.0",
+    })
+
+    skill_root = (
+        Path(__file__).resolve().parents[1]
+        / "src" / "novelvideo" / "agent_skills" / "dramaclaw-workflows"
+    )
+    skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    operations = (skill_root / "references" / "workflow-operations.md").read_text(
+        encoding="utf-8"
+    )
+    assert result["status"] == "agent_product_operation_not_required"
+    assert f"`{result['status']}`" in skill
+    assert f"`{result['status']}`" in operations
 
 
 def test_workflow_result_admission_derives_versioned_skill_artifact_id(monkeypatch):
@@ -905,7 +1529,9 @@ def test_external_generation_preflight_blocks_missing_downstream_parameters(
             "fields": ["model", "size", "quality", "count"],
         }
     ]
-    assert result["clarification"]["allow_skip"] is False
+    # No chat turn means no card can be answered: ask in the conversation, by data key.
+    assert "clarification" not in result
+    assert result["required_choices"] == {"image": ["model", "size", "quality", "count"]}
 
 
 def test_generation_preflight_models_add_next_alias_before_running_media(monkeypatch):
@@ -1356,7 +1982,6 @@ def test_external_canvas_write_resolves_recommended_model_from_live_catalog(
         "_external_generation_parameter_preflight",
         lambda *_args: None,
     )
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
         "ok": True, "data": [{
             "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
@@ -1416,7 +2041,6 @@ def test_existing_media_node_update_resolves_recommendations_before_dispatch(mon
         }]},
     )
     monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(
         plugin, "_dispatch_mcp_approved_frontend_commands",
         lambda **kwargs: captured.update(kwargs) or "dispatched",
@@ -1513,9 +2137,17 @@ def test_recommended_model_switch_replaces_stale_options_before_generation(monke
         lambda project, canvas: (project, canvas, None),
     )
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
 
-    def request(_method, path, **_kwargs):
+    def request(method, path, **kwargs):
+        if path.endswith("/confirmations"):
+            assert method == "POST"
+            captured.update(kwargs["body"])
+            return {"ok": True, "data": {
+                "confirmation_id": "cc_" + "a" * 32, "kinds": ["paid_generation"],
+                "targets": [{"node_id": "existing-image", "title": "Portrait",
+                             "node_type": "imageGenNode", "action": "generate_image"}],
+                "expires_at": 1900001800.0, "browser_open": False,
+            }}
         if "/canvases/" in path:
             return {"ok": True, "data": {"nodes": [existing], "edges": []}}
         return {"ok": True, "data": [catalog]}
@@ -1523,7 +2155,7 @@ def test_recommended_model_switch_replaces_stale_options_before_generation(monke
     monkeypatch.setattr(plugin, "_request", request)
     monkeypatch.setattr(
         plugin, "_dispatch_mcp_approved_frontend_commands",
-        lambda **kwargs: captured.update(kwargs) or "dispatched",
+        lambda **_kwargs: pytest.fail("paid generation must wait for confirmation"),
     )
     commands = [
         {"type": "update_node_data", "node_id": "existing-image",
@@ -1536,7 +2168,7 @@ def test_recommended_model_switch_replaces_stale_options_before_generation(monke
         "project-a", "canvas-a", commands, allow_dynamic_workflow_batch=True,
     )
 
-    assert result == "dispatched"
+    assert result["status"] == "confirmation_required"
     assert captured["commands"][0]["data"] == {
         "model": "LingShan-G2", "aspectRatio": "9:16",
         "size": "1K", "quality": "medium",
@@ -1633,7 +2265,6 @@ def test_hermes_canvas_write_resolves_recommended_model(monkeypatch):
         "_external_generation_parameter_preflight",
         lambda *_args: None,
     )
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
         "ok": True, "data": [{
             "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
@@ -2372,6 +3003,73 @@ def test_workflow_draft_timeout_is_persisted_without_duplicate_submission(
     assert repeated["status"] == "workflow_draft_confirmation_in_progress"
     assert len(emitted) == 1
     assert built_instance_ids == [prepared["draft_id"]]
+
+
+def test_workflow_draft_paid_confirmation_waits_without_duplicate_submission(monkeypatch, tmp_path):
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    compiled = {
+        "ok": True,
+        "skill_id": "video-ad",
+        "edge_count": 0,
+        "plan": {
+            "summary": "Ad",
+            "inputs": {},
+            "phases": [],
+            "nodes": [{
+                "id": "input", "name": "Input", "node_type": "textAnnotationNode",
+                "stage": "input",
+            }],
+            "edges": [],
+        },
+    }
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _intent: compiled)
+    monkeypatch.setattr(plugin, "build_workflow_graph_commands", lambda args: {
+        "ok": True,
+        "commands": [
+            {"type": "create_node", "client_id": "input", "node_type": "textAnnotationNode"},
+            {"type": "run_workflow", "node_ids": ["input"], "scope": "selection"},
+        ],
+        "workflow_instance_id": args["workflow_instance_id"],
+    })
+    emitted = []
+    confirmation_id = "cc_" + "a" * 32
+
+    def fake_emit(*args, **kwargs):
+        emitted.append((args, kwargs))
+        return {
+            "ok": True, "status": "confirmation_required", "applied": False,
+            "confirmation_id": confirmation_id,
+        }
+
+    monkeypatch.setattr(plugin, "_emit_canvas_commands", fake_emit)
+    prepared = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "Create an ad"},
+        "run_after_create": True,
+    })
+    assert prepared["ok"] is True
+    confirm_args = {"draft_id": prepared["draft_id"], "revision": 1}
+
+    first = plugin._handle_confirm_workflow_draft(confirm_args)
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"],
+    )
+
+    assert first["status"] == "confirmation_required"
+    assert first["confirmation_id"] == confirmation_id
+    assert first["applied"] is False
+    assert error is None
+    assert stored is not None and stored["status"] == "submitted"
+    assert stored["task_id"]
+    assert stored["run_after_create"] is True
+    repeated = plugin._handle_confirm_workflow_draft(confirm_args)
+    assert repeated["status"] == "workflow_draft_confirmation_in_progress"
+    assert len(emitted) == 1
+    assert read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"],
+    ) == (stored, None)
 
 
 def test_workflow_draft_patch_rejects_skill_replacement(monkeypatch, tmp_path):
@@ -3326,7 +4024,6 @@ def test_canvas_write_rejects_canvas_outside_bound_session(monkeypatch):
     plugin = _load_plugin_module()
     _bind_session(monkeypatch, plugin)
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(
         plugin, "_dispatch_mcp_approved_frontend_commands",
         lambda **_kw: pytest.fail("mismatched scope must not dispatch"),
@@ -3369,7 +4066,6 @@ def test_public_create_node_handler_rejects_scope_mismatch_on_external_mcp(monke
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args, **_kw: None)
     monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
     monkeypatch.setattr(
         plugin, "_request", lambda *_a, **_kw: pytest.fail("no API call is needed to reject scope"),
     )
@@ -3998,6 +4694,8 @@ def test_external_generation_clarification_rejects_bundled_settings(monkeypatch)
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    # In-app Codex: its MCP server is external but a product chat turn listens.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     emitted = []
     monkeypatch.setattr(
         plugin,
@@ -4036,12 +4734,68 @@ def test_external_generation_clarification_rejects_bundled_settings(monkeypatch)
     assert emitted == []
 
 
+def test_external_generation_clarification_without_interface_does_not_pick_settings(
+    monkeypatch,
+):
+    """An external host has no card to show: return at once and choose nothing."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.delenv("DRAMACLAW_TURN_ID", raising=False)
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    called = []
+    for name in (
+        "_emit_clarification_event",
+        "_request",
+        "put_pending_clarification_event",
+        "wait_clarification_result",
+        "read_clarification_turn_context",
+        "_resume_clarification",
+    ):
+        monkeypatch.setattr(
+            plugin,
+            name,
+            lambda *_args, _name=name, **_kwargs: called.append(_name),
+            raising=False,
+        )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "generation_media_types": ["image", "video"],
+            "generation_preferences": {"image_variants_per_node": 1},
+            "questions": [
+                {"id": "image_quality", "title": "图片画质", "options": [{"id": "low"}]},
+            ],
+        }
+    )
+
+    assert called == []
+    assert result["ok"] is False
+    assert result["status"] == result["code"] == "clarification_ui_unavailable"
+    assert result["clarification_status"] == "not_shown"
+    assert result["canvas_id"] == "canvas-a"
+    for key in (
+        "answers",
+        "recommended_answers",
+        "node_data",
+        "generation_choices",
+        "bridge_key",
+    ):
+        assert key not in result
+    assert "Never choose generation settings" in result["agent_instruction"]
+    assert "more expensive" in result["agent_instruction"]
+    assert "confirmation_required" in result["agent_instruction"]
+
+
 def test_external_generation_clarification_filters_server_managed_thinking_question(
     monkeypatch,
 ):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    # In-app Codex: its MCP server is external but a product chat turn listens.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     emitted = []
     monkeypatch.setattr(
         plugin,
@@ -7251,6 +8005,8 @@ def test_external_generation_clarification_accepts_separate_resolution_question(
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    # In-app Codex: its MCP server is external but a product chat turn listens.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     captured = {}
 
     def fake_emit(project, canvas, event):
@@ -9506,7 +10262,7 @@ def test_freezone_run_workflow_output_schema_accepts_background_bridge_receipt()
     assert structured["canvas_apply_status"] == "accepted"
 
 
-def test_freezone_run_workflow_output_schema_accepts_direct_apply_receipt():
+def test_freezone_run_workflow_output_schema_accepts_server_receipt():
     plugin = _load_plugin_module()
     structured = _assert_real_mcp_output(
         plugin,
@@ -9517,7 +10273,7 @@ def test_freezone_run_workflow_output_schema_accepts_direct_apply_receipt():
             "project_id": "project-a",
             "canvas_id": "canvas-a",
             "tool_call_status": "completed",
-            "canvas_apply_status": "direct_applied",
+            "canvas_apply_status": "applied",
             "applied": True,
             "cancelled": False,
             "errors": [],
@@ -9863,10 +10619,19 @@ def test_canvas_command_tools_expose_discriminated_minimal_schema():
     ]
     assert create_annotation["properties"]["data"]["required"] == ["content"]
     assert create_annotation["properties"]["data"]["anyOf"] == [
-        {"required": ["title"]},
         {"required": ["displayName"]},
+        {"required": ["title"]},
     ]
     assert "textAnnotationNode" not in create_other["properties"]["node_type"]["enum"]
+    # add_next_node may also create a text node; the write check holds it to the same
+    # displayName (title alias) + content rule, so the published data says so too.
+    add_next_data = by_type["add_next_node"][0]["properties"]["data"]
+    single_add_next_data = schemas["freezone_add_next_node"]["parameters"]["properties"]["data"]
+    for data_schema in (add_next_data, single_add_next_data):
+        assert data_schema["type"] == "object"
+        assert "textAnnotationNode needs displayName" in data_schema["description"]
+        assert "title is accepted as an alias" in data_schema["description"]
+        assert "content" in data_schema["description"]
     assert [set(item["properties"]) for item in by_type["delete_edges"]] == [
         {"type", "edge_ids"},
         {"type", "pairs"},
@@ -10147,7 +10912,6 @@ def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):
     )
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-create-node")
-    monkeypatch.delenv("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", raising=False)
 
     def fake_bridge_key(*, project_id, canvas_id, commands):
         assert project_id == "project-a"
@@ -10204,7 +10968,6 @@ def test_freezone_hermes_bridge_does_not_auto_apply_mcp_marker(monkeypatch):
     pending_commands = []
 
     monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)
-    monkeypatch.delenv("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", raising=False)
 
     def fake_bridge_key(*, project_id, canvas_id, commands):
         assert project_id == "project-a"
@@ -10490,7 +11253,7 @@ def test_confirm_draft_revision_conflict_requires_fresh_user_confirmation(monkey
     def request(method, path, **kwargs):
         calls.append(method)
         assert method == "GET", "Revision conflict must fail before claim or dispatch"
-        return {"ok": True, "data": {"revision": 2, "run_after_create": True}}
+        return {"ok": True, "data": {"revision": 2, "status": "ready", "run_after_create": True}}
 
     monkeypatch.setattr(plugin, "_request", request)
     result = plugin._handle_confirm_workflow_draft(
@@ -10512,111 +11275,7 @@ def test_confirm_draft_revision_conflict_requires_fresh_user_confirmation(monkey
     )
     Draft202012Validator(schema["output_schema"]).validate(result)
 
-
-def test_workflow_requires_browser_receipt_even_in_direct_apply_mode(monkeypatch):
-    plugin = _load_plugin_module()
-    monkeypatch.setattr(
-        plugin, "_resolve_canvas_scope_for_write", lambda *_: ("p", "c", None)
-    )
-    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_: None)
-    monkeypatch.setattr(
-        plugin, "_external_generation_parameter_preflight", lambda *_: None
-    )
-    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: True)
-    monkeypatch.setattr(plugin, "_external_mcp_agent_enabled", lambda: True)
-    monkeypatch.setattr(
-        plugin, "_dispatch_mcp_approved_frontend_commands", lambda **_: "browser"
-    )
-    monkeypatch.setattr(
-        plugin,
-        "_direct_apply_canvas_commands",
-        lambda *_, **__: pytest.fail("direct write"),
-    )
-    result = plugin._emit_canvas_commands(
-        "p",
-        "c",
-        [{"type": "create_node"}],
-        require_canvas_receipt=True,
-    )
-    assert result == "browser"
-
-
-def test_direct_apply_resolves_add_next_client_alias_for_later_commands(monkeypatch):
-    plugin = _load_plugin_module()
-    saved = []
-
-    def request(method, _path, **kwargs):
-        if method == "GET":
-            return {
-                "ok": True,
-                "data": {
-                    "revision": 4,
-                    "nodes": [
-                        {
-                            "id": "selected-image",
-                            "type": "uploadNode",
-                            "position": {"x": 0, "y": 0},
-                            "data": {"imageUrl": "/static/source.png"},
-                        }
-                    ],
-                    "edges": [],
-                },
-            }
-        saved.append(kwargs["body"])
-        return {"ok": True, "data": {"revision": 5}}
-
-    monkeypatch.setattr(plugin, "_request", request)
-    result = plugin._direct_apply_canvas_commands(
-        "project-a",
-        "canvas-a",
-        [
-            {
-                "type": "add_next_node",
-                "source_node_id": "selected-image",
-                "client_id": "watercolor-result",
-                "node_type": "imageGenNode",
-                "data": {"prompt": "水彩"},
-            },
-            {
-                "type": "update_node_data",
-                "node_id": "watercolor-result",
-                "data": {"count": 1},
-            },
-        ],
-        slim_result=False,
-    )
-
-    assert result["ok"] is True
-    assert len(saved) == 1
-    created = next(
-        node for node in saved[0]["nodes"] if node["type"] == "imageGenNode"
-    )
-    assert created["data"] == {"prompt": "水彩", "count": 1}
-
-
-def test_direct_apply_conflict_reports_no_persisted_commands(monkeypatch):
-    plugin = _load_plugin_module()
-    calls = []
-
-    def request(method, _path, **_kwargs):
-        calls.append(method)
-        if method == "GET":
-            return {"ok": True, "data": {"revision": 4, "nodes": [], "edges": []}}
-        return {"ok": False, "code": "canvas_revision_conflict",
-                "current_revision": 5, "error": "Conflict"}
-
-    monkeypatch.setattr(plugin, "_request", request)
-    result = plugin._direct_apply_canvas_commands(
-        "project-a", "canvas-a",
-        [{"type": "create_node", "client_id": "image-a",
-          "node_type": "imageGenNode", "data": {"prompt": "开场"}}],
-        slim_result=False,
-    )
-    assert calls == ["GET", "PUT"]
-    assert result["code"] == "canvas_revision_conflict"
-    assert result["current_revision"] == 5
-    assert result["command_results"][0]["status"] == "not_applied"
-    assert result.get("created_node_ids") is None
+    assert plugin._revision_conflict_write_error("p", "c") is not None
 
 
 def test_canvas_http_revision_conflict_preserves_current_revision():
@@ -11353,6 +12012,46 @@ def test_studio_get_film_reads_the_bound_canvas_scope(monkeypatch):
     assert "status_code" not in result
 
 
+def test_studio_get_film_passes_export_outcome_through(monkeypatch):
+    plugin, _requests = _studio_plugin(monkeypatch)
+    handler = {name: handler for name, _schema, handler in plugin.TOOLS}[
+        "freezone_studio_get_film"
+    ]
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "status_code": 200, "ok": True, "status": "studio_film",
+            "rev": "r1", "film": {"tracks": []},
+            "export": {
+                "status": "failed", "job_id": "export-1", "task_key": "export-task-key",
+                "error": "执行该任务的服务进程已退出,任务已中断,请重新发起",
+                "video_url": None,
+            },
+        },
+    )
+
+    result = _assert_real_mcp_output(
+        plugin, "freezone_studio_get_film", _as_result(handler({"node_id": "node-1"}))
+    )
+
+    assert result["export"] == {
+        "status": "failed", "job_id": "export-1", "task_key": "export-task-key",
+        "error": "执行该任务的服务进程已退出,任务已中断,请重新发起",
+        "video_url": None,
+    }
+
+
+def test_studio_export_description_explains_how_to_read_the_outcome(monkeypatch):
+    plugin, _requests = _studio_plugin(monkeypatch)
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    description = schemas["freezone_studio_export_film"]["description"]
+
+    assert "do not poll." not in description
+    assert "freezone_studio_get_film" in description
+    assert "export" in schemas["freezone_studio_get_film"]["description"]
+
+
 def test_studio_tools_refuse_a_canvas_outside_the_bound_scope(monkeypatch):
     plugin, requests = _studio_plugin(monkeypatch)
     handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
@@ -11409,11 +12108,18 @@ def test_studio_import_and_export_bodies(monkeypatch):
 def test_studio_tools_explain_a_missing_film(monkeypatch):
     plugin, _requests = _studio_plugin(monkeypatch)
     handler = dict((name, handler) for name, _schema, handler in plugin.TOOLS)["freezone_studio_get_film"]
-    monkeypatch.setattr(
-        plugin,
-        "_request",
-        lambda *_a, **_k: {"ok": False, "status": "failed", "status_code": 404, "error": "no film"},
-    )
+    def missing_film(*_args, **_kwargs):
+        return plugin._http_error_result(
+            404,
+            json.dumps({"detail": {
+                "code": "studio_film_missing",
+                "message": "this compose node has no Studio film yet: "
+                "open its compose workspace once so the timeline becomes a film",
+            }}),
+            "Not Found",
+        )
+
+    monkeypatch.setattr(plugin, "_request", missing_film)
 
     result = _as_result(handler({"node_id": "node-1"}))
 
@@ -11665,3 +12371,197 @@ def test_expired_existing_card_does_not_consume_new_preflight_proof(preflight_mo
     assert result["clarification_status"] == "pending_user_input"
     assert len(messages) == 1
     assert not plugin._PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS
+
+
+@pytest.mark.parametrize(
+    "draft_status,requested_revision,expected_status",
+    [
+        ("confirmed", 1, "workflow_draft_already_confirmed"),
+        ("confirmed", 2, "workflow_draft_already_confirmed"),
+        ("submitted", 2, "workflow_draft_confirmation_in_progress"),
+        ("confirming", 1, "workflow_draft_confirmation_in_progress"),
+    ],
+)
+def test_confirm_settled_draft_reports_state_without_write_fence(
+    monkeypatch, draft_status, requested_revision, expected_status,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET", "A settled draft must not be claimed again"
+        return {"ok": True, "data": {
+            "draft_id": "workflow_draft_example", "revision": 1,
+            "status": draft_status, "run_after_create": False,
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_confirm_workflow_draft(
+        {"draft_id": "workflow_draft_example", "revision": requested_revision},
+    )
+    assert result["status"] == expected_status
+    assert calls == ["GET"]
+    assert result["ok"] is False
+    assert result["retryable"] is False
+    assert result["draft_id"] == "workflow_draft_example"
+    assert result["revision"] == requested_revision
+    assert result["current_revision"] == 1
+    assert result["error"]
+    assert result["user_message"]
+    assert "Do not call freezone_confirm_workflow_draft again" in result["agent_instruction"]
+    assert "freezone_run_workflow" in result["agent_instruction"]
+    assert plugin._revision_conflict_write_error("p", "c") is None
+    schema = next(
+        schema for name, schema, _handler in plugin.TOOLS
+        if name == "freezone_confirm_workflow_draft"
+    )
+    Draft202012Validator(schema["output_schema"]).validate(result)
+
+
+def test_confirm_unknown_revision_reports_current_revision_without_write_fence(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET", "An unknown revision must not be claimed"
+        return {"ok": True, "data": {
+            "revision": 1, "status": "ready", "run_after_create": False,
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_confirm_workflow_draft(
+        {"draft_id": "workflow_draft_example", "revision": 2},
+    )
+    assert result["status"] == "workflow_draft_revision_not_found"
+    assert result["ok"] is False
+    assert result["draft_id"] == "workflow_draft_example"
+    assert result["revision"] == 2
+    assert result["current_revision"] == 1
+    assert result["retryable"] is False
+    assert result["error"]
+    assert result["user_message"]
+    assert calls == ["GET"]
+    assert "does not exist" in result["agent_instruction"]
+    assert "Never invent" in result["agent_instruction"]
+    assert plugin._revision_conflict_write_error("p", "c") is None
+    schema = next(
+        schema for name, schema, _handler in plugin.TOOLS
+        if name == "freezone_confirm_workflow_draft"
+    )
+    Draft202012Validator(schema["output_schema"]).validate(result)
+
+
+@pytest.mark.parametrize("requested_revision", [1, 2])
+def test_confirm_cancelled_draft_reports_state_without_write_fence(
+    monkeypatch, requested_revision,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET", "A cancelled draft must not be claimed"
+        return {"ok": True, "data": {
+            "draft_id": "workflow_draft_example", "revision": 1,
+            "status": "cancelled", "run_after_create": False,
+        }}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_confirm_workflow_draft(
+        {"draft_id": "workflow_draft_example", "revision": requested_revision},
+    )
+    assert result == {
+        "ok": False,
+        "status": "workflow_draft_not_confirmable",
+        "retryable": False,
+        "draft_id": "workflow_draft_example",
+        "revision": requested_revision,
+        "current_revision": 1,
+        "error": "Workflow draft was cancelled.",
+        "user_message": "该工作流方案已取消，本次未创建任何节点。",
+        "agent_instruction": (
+            "Do not call freezone_confirm_workflow_draft again for this draft. It was cancelled "
+            "and nothing was created. If the user still wants this workflow, prepare a new draft "
+            "with freezone_prepare_workflow and confirm it only after the user reviews it."
+        ),
+    }
+    assert calls == ["GET"]
+    assert plugin._revision_conflict_write_error("p", "c") is None
+    schema = next(
+        schema for name, schema, _handler in plugin.TOOLS
+        if name == "freezone_confirm_workflow_draft"
+    )
+    Draft202012Validator(schema["output_schema"]).validate(result)
+
+
+def test_confirm_wrong_revision_after_real_confirmation_keeps_canvas_writable(
+    monkeypatch, tmp_path,
+):
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+    )
+
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    draft = create_workflow_draft(
+        project_dir=tmp_path, project_id="project-a", canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "ad"},
+        compiled={
+            "ok": True, "skill_id": "video-ad", "edge_count": 0,
+            "plan": {"summary": "ad", "nodes": [], "edges": [], "phases": []},
+        },
+    )
+    draft_id = draft["draft_id"]
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft_id, revision=1,
+    )
+    assert error is None
+    assert claimed is not None
+    bound = bind_workflow_draft_task(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft_id,
+        task_id="task-1", root_task_id="task-1",
+    )
+    assert bound is not None
+    finished = finish_workflow_draft_confirmation(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=draft_id,
+        outcome="confirmed", expected_task_id="task-1",
+    )
+    assert finished["status"] == "confirmed"
+
+    result = plugin._handle_confirm_workflow_draft({"draft_id": draft_id, "revision": 2})
+    assert result["status"] == "workflow_draft_already_confirmed"
+    assert result["current_revision"] == 1
+    assert plugin._revision_conflict_write_error("project-a", "canvas-a") is None
+
+
+def test_command_catalog_typed_tools_are_registered_plugin_tools():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "frontend/src/__tests__/features/canvas-core/__parity__/context-reads.json"
+    )
+
+    def typed_tools(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "typed_tool" and isinstance(child, str):
+                    yield child
+                yield from typed_tools(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from typed_tools(child)
+
+    advertised = set(typed_tools(json.loads(path.read_text())))
+    registered = {name for name, _schema, _handler in _load_plugin_module().TOOLS}
+    assert advertised <= registered, f"Unregistered typed tools: {sorted(advertised - registered)}"

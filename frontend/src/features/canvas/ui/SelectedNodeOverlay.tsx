@@ -11,19 +11,13 @@ import { useTranslation } from 'react-i18next';
 
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
-  DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO,
   fetchFreezoneJobResult,
-  submitFreezoneOutpaint,
-  submitFreezoneScene360,
-  submitFreezoneTemplateEdit,
-  submitFreezoneUpscale,
-  type FreezoneOutpaintAspectRatio,
-  type FreezoneTemplateEditMode,
+  sendGenerationWireRequest,
+  type FreezoneJobRef,
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { selectNodeExclusively } from '@/features/canvas/application/nodeSelection';
-import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   publishNodeActionAccepted,
   publishNodeActionError,
@@ -32,10 +26,7 @@ import {
 } from '@/features/canvas/application/nodeActionResult';
 import {
   CANVAS_NODE_TYPES,
-  DEFAULT_ASPECT_RATIO,
   DEFAULT_NODE_WIDTH,
-  EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-  EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   hasInlineMediaReplaceButton,
   isExportImageNode,
   isImageEditNode,
@@ -65,19 +56,17 @@ import { Scene360Overlay } from './Scene360Overlay';
 import { UpscaleEditorOverlay } from './UpscaleEditorOverlay';
 import { VideoUpscaleEditorOverlay } from './VideoUpscaleEditorOverlay';
 import { getFreezoneImageModelsSnapshot } from '@/features/canvas/hooks/useFreezoneImageModels';
-import {
-  DEFAULT_SHARED_MODEL_ID,
-  DEFAULT_UPSCALE_MODEL_ID,
-  SHARED_MODELS,
-} from '@/features/canvas/ui/ProviderModelPicker';
 import { OutpaintEditorOverlay } from './OutpaintEditorOverlay';
 import { RotateEditorOverlay } from './RotateEditorOverlay';
 import { ImageResizeOverlay } from './ImageResizeOverlay';
-import type { GridActionKey } from '@/features/canvas/application/gridTemplateAction';
+import { buildImageToolRequest, GRID_RUN_ACTIONS, type ImageToolAction } from '@/features/canvas/application/generationRequests/imageToolRequest';
+import {
+  imageToolAcceptedPatch, imageToolOutputResolution, imageToolSuccessPatch,
+  imageToolFailurePatch, imageToolActionResult, imageToolViewerPlan,
+} from '@/features/canvas/application/generationRequests/imageToolResult';
 import type { GridActionRequest } from './NodeActionToolbar';
 import { spawnAssetBoardImageOpNode } from '@/features/canvas/application/assetBoardImageOps';
 import { readUrl } from '@/lib/url-params';
-import { inheritMainlineFields } from '../domain/inheritMainlineFields';
 import { NODE_TOOLBAR_OFFSET } from './nodeToolbarConfig';
 import {
   NODE_FLOATING_TOOLBAR_GAP,
@@ -162,70 +151,9 @@ function nodeHasActionToolbar(node: CanvasNode): boolean {
 const SCENE_360_FOCUS_ZOOM = 1.2;
 const SCENE_360_FOCUS_DURATION = 320;
 const SCENE_360_DEFAULT_NODE_HEIGHT = 320;
-const PANO_VIEWER_LAYOUT_WIDTH = 720;
-const PANO_VIEWER_LAYOUT_HEIGHT = 420;
 const NODE_ID_BADGE_OFFSET_WITH_ACTIONS =
   NODE_TOOLBAR_OFFSET + NODE_FLOATING_TOOLBAR_HEIGHT + NODE_FLOATING_TOOLBAR_GAP;
 const NODE_ID_BADGE_OFFSET = NODE_TOOLBAR_OFFSET;
-const DEFAULT_OUTPAINT_ASPECT_RATIO: FreezoneOutpaintAspectRatio = 'original';
-const DEFAULT_OUTPAINT_IMAGE_SIZE = '2K';
-
-const GRID_RUN_ACTIONS: Record<string, {
-  key: GridActionKey;
-  i18nKey: string;
-  mode: FreezoneTemplateEditMode;
-}> = {
-  run_grid_multi_camera: {
-    key: 'multiCameraGrid',
-    i18nKey: 'nodeToolbar.gridMenu.multiCameraGrid',
-    mode: 'multi_camera_nine_grid',
-  },
-  run_grid_plot_four: {
-    key: 'plotFourGrid',
-    i18nKey: 'nodeToolbar.gridMenu.plotFourGrid',
-    mode: 'story_pitch_four_grid',
-  },
-  run_grid_face_three_view: {
-    key: 'faceThreeView',
-    i18nKey: 'nodeToolbar.gridMenu.faceThreeView',
-    mode: 'character_face_three_view',
-  },
-  run_grid_product_three_view: {
-    key: 'productThreeView',
-    i18nKey: 'nodeToolbar.gridMenu.productThreeView',
-    mode: 'product_three_view',
-  },
-  run_grid_serial_storyboard_25: {
-    key: 'serialStoryboard25',
-    i18nKey: 'nodeToolbar.gridMenu.serialStoryboard25',
-    mode: 'storyboard_25_grid',
-  },
-  run_grid_cinematic_light_correction: {
-    key: 'cinematicLightCorrection',
-    i18nKey: 'nodeToolbar.gridMenu.cinematicLightCorrection',
-    mode: 'cinematic_light_correction',
-  },
-  run_grid_character_three_view: {
-    key: 'characterThreeView',
-    i18nKey: 'nodeToolbar.gridMenu.characterThreeView',
-    mode: 'character_three_view_generation',
-  },
-  run_grid_scene_setting_sheet: {
-    key: 'sceneSettingSheet',
-    i18nKey: 'nodeToolbar.gridMenu.sceneSettingSheet',
-    mode: 'scene_setting_sheet',
-  },
-  run_grid_frame_projection_3s_later: {
-    key: 'frameProjection3sLater',
-    i18nKey: 'nodeToolbar.gridMenu.frameProjection3sLater',
-    mode: 'image_projection_after_3s',
-  },
-  run_grid_frame_projection_5s_earlier: {
-    key: 'frameProjection5sEarlier',
-    i18nKey: 'nodeToolbar.gridMenu.frameProjection5sEarlier',
-    mode: 'image_projection_before_5s',
-  },
-};
 
 const NODE_TOOL_DIALOG_ACTIONS: Record<string, NodeToolType> = {
   open_crop_tool: NODE_TOOL_TYPES.crop,
@@ -640,346 +568,74 @@ export const SelectedNodeOverlay = memo(() => {
 
   useEffect(() => {
     return subscribeNodeAction(({ nodeId, action, requestId }) => {
-      if (action === 'run_outpaint_tool') {
-        const sourceNode = nodes.find((node) => node.id === nodeId) ?? null;
-        const imageSource = resolveNodeSourceImageUrl(sourceNode);
-        if (!sourceNode || !imageSource) {
-          publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于扩图的图片");
-          return;
-        }
-        const project = readUrl().project;
-        if (!project) {
-          publishNodeActionError(requestId, nodeId, action, "当前 URL 缺少 project，无法提交生成");
-          return;
-        }
+      if (action !== 'run_outpaint_tool' && action !== 'run_upscale_tool' && action !== 'run_scene360_tool' && !GRID_RUN_ACTIONS[action]) return;
 
-        publishNodeActionAccepted(requestId, nodeId, action);
-        const sourceAspectRatio =
-          typeof (sourceNode.data as { aspectRatio?: unknown }).aspectRatio === 'string'
-            ? ((sourceNode.data as { aspectRatio?: string }).aspectRatio ?? DEFAULT_ASPECT_RATIO)
-            : DEFAULT_ASPECT_RATIO;
-        const position = findNodePosition(
-          sourceNode.id,
-          EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-          EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
-        );
-        const initialData = inheritMainlineFields(
-          { data: sourceNode.data as Record<string, unknown> },
-          {
-            displayName: t('outpaintEditor.title'),
-            imageUrl: null,
-            previewImageUrl: null,
-            aspectRatio: sourceAspectRatio,
-            resultKind: 'generic',
-            isGenerating: true,
-            generationStartedAt: Date.now(),
-          },
-        );
-        const nextNodeId = addNode(
-          CANVAS_NODE_TYPES.exportImage,
-          position,
-          initialData as unknown as Parameters<typeof addNode>[2],
-        );
-        addEdge(sourceNode.id, nextNodeId);
-        selectAndFocusCanvasNode(nextNodeId);
-
-        void (async () => {
-          try {
-            const imageModels = getFreezoneImageModelsSnapshot(project).models;
-            const selectedModel =
-              imageModels.find((model) => model.id === DEFAULT_SHARED_MODEL_ID)
-              ?? imageModels[0]
-              ?? SHARED_MODELS.find((model) => model.id === DEFAULT_SHARED_MODEL_ID);
-            const ref = await submitFreezoneOutpaint(project, {
-              sourceUrl: imageSource.split('?')[0],
-              targetAspectRatio: DEFAULT_OUTPAINT_ASPECT_RATIO,
-              numImages: 1,
-              imageSize: DEFAULT_OUTPAINT_IMAGE_SIZE,
-              model: selectedModel?.apiModel ?? DEFAULT_SHARED_MODEL_ID,
-            });
-            useCanvasStore.getState().updateNodeData(nextNodeId, generationTaskDescriptor(ref));
-            const completed = await awaitTaskCompletion(ref.task_key, project);
-            const directUrl = completed.result?.['output_url'] as string | undefined;
-            const url = directUrl
-              ?? (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
-            useCanvasStore.getState().updateNodeData(nextNodeId, {
-              imageUrl: url,
-              previewImageUrl: url,
-              isGenerating: false,
-              generationStartedAt: null,
-              generationError: null,
-            });
-            publishNodeActionSuccess(requestId, nodeId, action, {
-              nodeId: nextNodeId,
-              imageUrl: url,
-              previewImageUrl: url,
-              task_key: ref.task_key,
-              job_id: ref.job_id,
-            });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            useCanvasStore.getState().updateNodeData(nextNodeId, {
-              isGenerating: false,
-              generationStartedAt: null,
-              generationError: message,
-            });
-            publishNodeActionError(requestId, nodeId, action, error);
-          }
-        })();
-        return;
-      }
-
-      if (action === 'run_upscale_tool') {
-        const sourceNode = nodes.find((node) => node.id === nodeId) ?? null;
-        const imageSource = resolveNodeSourceImageUrl(sourceNode);
-        if (!sourceNode || !imageSource) {
-          publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于高清放大的图片");
-          return;
-        }
-        const project = readUrl().project;
-        if (!project) {
-          publishNodeActionError(requestId, nodeId, action, "当前 URL 缺少 project，无法提交生成");
-          return;
-        }
-
-        publishNodeActionAccepted(requestId, nodeId, action);
-        const sourceAspectRatio =
-          typeof (sourceNode.data as { aspectRatio?: unknown }).aspectRatio === 'string'
-            ? ((sourceNode.data as { aspectRatio?: string }).aspectRatio ?? DEFAULT_ASPECT_RATIO)
-            : DEFAULT_ASPECT_RATIO;
-        const position = findNodePosition(
-          sourceNode.id,
-          EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-          EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
-        );
-        const nextNodeId = addNode(
-          CANVAS_NODE_TYPES.exportImage,
-          position,
-          {
-            displayName: t('upscaleEditor.title'),
-            imageUrl: null,
-            previewImageUrl: imageSource,
-            aspectRatio: sourceAspectRatio,
-            resultKind: 'upscale',
-            isGenerating: true,
-            generationStartedAt: Date.now(),
-            upscaleSourceUrl: imageSource,
-            upscaleModelId: DEFAULT_UPSCALE_MODEL_ID,
-            upscaleImageSize: '2K',
-            upscaleScaleFactor: 2,
-          },
-        );
-        addEdge(sourceNode.id, nextNodeId);
-        selectAndFocusCanvasNode(nextNodeId);
-
-        void (async () => {
-          try {
-            const imageModels = getFreezoneImageModelsSnapshot(project).models;
-            const selectedModel =
-              imageModels.find((model) => model.id === DEFAULT_UPSCALE_MODEL_ID)
-              ?? imageModels[0];
-            const ref = await submitFreezoneUpscale(project, {
-              sourceUrl: imageSource.split('?')[0],
-              scaleFactor: 2,
-              imageSize: '2K',
-              model: selectedModel?.apiModel ?? DEFAULT_UPSCALE_MODEL_ID,
-            });
-            useCanvasStore.getState().updateNodeData(nextNodeId, generationTaskDescriptor(ref));
-            const completed = await awaitTaskCompletion(ref.task_key, project);
-            const directUrl = completed.result?.['output_url'] as string | undefined;
-            const url = directUrl
-              ?? (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
-            useCanvasStore.getState().updateNodeData(nextNodeId, {
-              imageUrl: url,
-              previewImageUrl: url,
-              isGenerating: false,
-              generationStartedAt: null,
-              generationError: null,
-            });
-            publishNodeActionSuccess(requestId, nodeId, action, {
-              nodeId: nextNodeId,
-              imageUrl: url,
-              previewImageUrl: url,
-              task_key: ref.task_key,
-              job_id: ref.job_id,
-            });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            useCanvasStore.getState().updateNodeData(nextNodeId, {
-              isGenerating: false,
-              generationStartedAt: null,
-              generationError: message,
-            });
-            publishNodeActionError(requestId, nodeId, action, error);
-          }
-        })();
-        return;
-      }
-
-      if (action === 'run_scene360_tool') {
-        const sourceNode = nodes.find((node) => node.id === nodeId) ?? null;
-        const imageSource = resolveNodeSourceImageUrl(sourceNode);
-        if (!sourceNode || !imageSource) {
-          publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于生成的图片");
-          return;
-        }
-        const project = readUrl().project;
-        if (!project) {
-          publishNodeActionError(requestId, nodeId, action, "当前 URL 缺少 project，无法提交生成");
-          return;
-        }
-
-        publishNodeActionAccepted(requestId, nodeId, action);
-        const aspectRatio = DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO;
-        const position = findNodePosition(
-          sourceNode.id,
-          EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-          EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
-        );
-        const nextNodeId = addNode(
-          CANVAS_NODE_TYPES.exportImage,
-          position,
-          {
-            displayName: t('scene360.label'),
-            imageUrl: null,
-            previewImageUrl: null,
-            aspectRatio,
-            resultKind: 'generic',
-            output_role: 'scene_360_candidate',
-            media_kind: 'pano360',
-            isGenerating: true,
-            generationStartedAt: Date.now(),
-          },
-        );
-        addEdge(sourceNode.id, nextNodeId);
-        selectAndFocusCanvasNode(nextNodeId);
-
-        void (async () => {
-          try {
-            const ref = await submitFreezoneScene360(project, {
-              referenceUrl: imageSource.split('?')[0],
-              aspectRatio,
-            });
-            useCanvasStore.getState().updateNodeData(nextNodeId, generationTaskDescriptor(ref));
-            const completed = await awaitTaskCompletion(ref.task_key, project);
-            const directUrl = completed.result?.['output_url'] as string | undefined;
-            const url = directUrl
-              ?? (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
-            useCanvasStore.getState().updateNodeData(nextNodeId, {
-              imageUrl: url,
-              previewImageUrl: url,
-              aspectRatio,
-              output_role: 'scene_360_candidate',
-              media_kind: 'pano360',
-              isGenerating: false,
-              generationStartedAt: null,
-              generationError: null,
-            });
-
-            const viewerPosition = findNodePosition(
-              nextNodeId,
-              PANO_VIEWER_LAYOUT_WIDTH,
-              PANO_VIEWER_LAYOUT_HEIGHT,
-            );
-            const viewerNodeId = addNode(CANVAS_NODE_TYPES.pano360Viewer, viewerPosition);
-            addEdge(nextNodeId, viewerNodeId);
-            selectAndFocusCanvasNode(viewerNodeId);
-            publishNodeActionSuccess(requestId, nodeId, action, {
-              nodeId: nextNodeId,
-              viewerNodeId,
-              imageUrl: url,
-              previewImageUrl: url,
-              task_key: ref.task_key,
-              job_id: ref.job_id,
-            });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            useCanvasStore.getState().updateNodeData(nextNodeId, {
-              isGenerating: false,
-              generationStartedAt: null,
-              generationError: message,
-            });
-            publishNodeActionError(requestId, nodeId, action, error);
-          }
-        })();
-        return;
-      }
-
-      const runAction = GRID_RUN_ACTIONS[action];
-      if (!runAction) return;
-
-      const sourceNode = nodes.find((node) => node.id === nodeId) ?? null;
-      const imageSource = resolveNodeSourceImageUrl(sourceNode);
-      if (!sourceNode || !imageSource) {
-        publishNodeActionError(requestId, nodeId, action, "目标节点没有可用于生成的图片");
-        return;
-      }
       const project = readUrl().project;
-      if (!project) {
-        publishNodeActionError(requestId, nodeId, action, "当前 URL 缺少 project，无法提交生成");
+      const decision = buildImageToolRequest({
+        action: action as ImageToolAction,
+        nodes, nodeId, projectId: project,
+        imageModels: project && (action === 'run_outpaint_tool' || action === 'run_upscale_tool')
+          ? getFreezoneImageModelsSnapshot(project).models : [],
+        translate: t, nowMs: Date.now(),
+      });
+      if (!decision.ok) {
+        publishNodeActionError(requestId, nodeId, action, decision.message);
         return;
       }
 
       publishNodeActionAccepted(requestId, nodeId, action);
-      const label = t(runAction.i18nKey);
-      const sourceAspectRatio =
-        typeof (sourceNode.data as { aspectRatio?: unknown }).aspectRatio === 'string'
-          ? ((sourceNode.data as { aspectRatio?: string }).aspectRatio ?? DEFAULT_ASPECT_RATIO)
-          : DEFAULT_ASPECT_RATIO;
       const position = findNodePosition(
-        sourceNode.id,
-        EXPORT_RESULT_NODE_DEFAULT_WIDTH,
-        EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
+        decision.child.layout.anchorNodeId,
+        decision.child.layout.width,
+        decision.child.layout.height,
       );
       const nextNodeId = addNode(
-        CANVAS_NODE_TYPES.exportImage,
-        position,
-        {
-          displayName: label,
-          imageUrl: null,
-          previewImageUrl: null,
-          aspectRatio: sourceAspectRatio,
-          resultKind: 'generic',
-          isGenerating: true,
-          generationStartedAt: Date.now(),
-        },
+        decision.child.type, position,
+        decision.child.data as Parameters<typeof addNode>[2],
       );
-      addEdge(sourceNode.id, nextNodeId);
+      addEdge(decision.edge.source, nextNodeId);
       selectAndFocusCanvasNode(nextNodeId);
 
       void (async () => {
         try {
-          const ref = await submitFreezoneTemplateEdit(project, {
-            sourceUrl: imageSource.split('?')[0],
-            mode: runAction.mode,
-            prompt: label,
+          const ref = await sendGenerationWireRequest<FreezoneJobRef>({
+            method: 'POST', path: decision.route, body: decision.body,
           });
-          useCanvasStore.getState().updateNodeData(nextNodeId, generationTaskDescriptor(ref));
-          const completed = await awaitTaskCompletion(ref.task_key, project);
-          const directUrl = completed.result?.['output_url'] as string | undefined;
-          const url = directUrl
-            ?? (await fetchFreezoneJobResult(project, ref.task_type, ref.job_id)).url;
-          useCanvasStore.getState().updateNodeData(nextNodeId, {
-            imageUrl: url,
-            previewImageUrl: url,
-            isGenerating: false,
-            generationStartedAt: null,
-            generationError: null,
+          useCanvasStore.getState().updateNodeData(nextNodeId, imageToolAcceptedPatch(ref));
+          const completed = await awaitTaskCompletion(ref.task_key, project as string);
+          const resolution = imageToolOutputResolution({
+            result: completed.result as { output_url?: string | null } | null, task: ref,
           });
-          publishNodeActionSuccess(requestId, nodeId, action, {
-            nodeId: nextNodeId,
-            imageUrl: url,
-            previewImageUrl: url,
-            task_key: ref.task_key,
-            job_id: ref.job_id,
-          });
+          const url = resolution.kind === 'resolved' ? resolution.url
+            : (await fetchFreezoneJobResult(project as string, resolution.task_type as FreezoneJobRef['task_type'], resolution.job_id)).url;
+          useCanvasStore.getState().updateNodeData(nextNodeId, imageToolSuccessPatch({
+            action: action as ImageToolAction, url,
+          }));
+          const viewerPlan = imageToolViewerPlan({ action: action as ImageToolAction, childNodeId: nextNodeId });
+          let result;
+          if (viewerPlan) {
+            const viewerPosition = findNodePosition(
+              viewerPlan.node.layout.anchorNodeId,
+              viewerPlan.node.layout.width,
+              viewerPlan.node.layout.height,
+            );
+            const viewerNodeId = addNode(viewerPlan.node.type, viewerPosition);
+            addEdge(viewerPlan.edge.source, viewerNodeId);
+            selectAndFocusCanvasNode(viewerNodeId);
+            result = imageToolActionResult({
+              action: 'run_scene360_tool', childNodeId: nextNodeId, viewerNodeId, url, task: ref,
+            });
+          } else {
+            result = imageToolActionResult({
+              action: action as Exclude<ImageToolAction, 'run_scene360_tool'>,
+              childNodeId: nextNodeId, url, task: ref,
+            });
+          }
+          publishNodeActionSuccess(requestId, nodeId, action, result.output);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          useCanvasStore.getState().updateNodeData(nextNodeId, {
-            isGenerating: false,
-            generationStartedAt: null,
-            generationError: message,
-          });
+          useCanvasStore.getState().updateNodeData(nextNodeId, imageToolFailurePatch(
+            error instanceof Error ? error.message : String(error),
+          ));
           publishNodeActionError(requestId, nodeId, action, error);
         }
       })();

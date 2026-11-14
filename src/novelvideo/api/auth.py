@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Mapping
 from typing import Callable, Optional
 from urllib.parse import unquote
 
@@ -156,6 +157,18 @@ def _reject_unsupported_credential_classes(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unsupported credential")
     if any(name in request.query_params for name in UNSUPPORTED_QUERY_CREDENTIALS):
         raise HTTPException(status_code=401, detail="Unsupported credential")
+
+
+def is_external_agent_key_session(user: object) -> bool:
+    """Recognize agent sessions using only the server-written external key marker.
+
+    The marker comes only from the verified session returned by the auth session
+    port; client input cannot establish an external agent key session.
+    """
+    if not isinstance(user, Mapping) or user.get("credential_kind") != "agent_session":
+        return False
+    key_id = user.get("external_agent_key_id")
+    return isinstance(key_id, str) and bool(key_id.strip())
 
 
 def _enforce_agent_request_boundary(request: Request, user: dict) -> None:

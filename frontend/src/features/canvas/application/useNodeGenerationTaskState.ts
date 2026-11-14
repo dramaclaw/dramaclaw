@@ -48,6 +48,6 @@ export function useNodeGenerationTaskState(data: unknown): NodeGenerationTaskSta
     taskIsActive,
     waitingForTaskRecord,
     optimisticOnly,
-    isGenerating: taskIsActive || waitingForTaskRecord || optimisticOnly,
+    isGenerating: record.generationOwner === 'server' || taskIsActive || waitingForTaskRecord || optimisticOnly,
   };
 }

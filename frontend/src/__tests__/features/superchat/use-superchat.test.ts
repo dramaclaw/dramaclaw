@@ -10,11 +10,11 @@ import {
 } from "@/features/freezone/canvasChatCommands";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeMessage } from "@/features/superchat/message";
-import { buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandToolResult";
+import { buildCanvasCommandToolResultPayload as buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandReceipt";
+import i18next from "i18next";
 import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
   abortTerminalGraceMsForTest,
-  approvalOptionIdForTest,
   canvasContextToolResultFrameForTest,
   cancelAssistantClarificationsForTurnForTest,
   dedupeMessagesByIdForTest,
@@ -29,11 +29,8 @@ import {
   resolveUiEventTurnIdForTest,
   sanitizeMessagesForCache,
   shouldKeepActiveTurnAfterScopeSync,
-  shouldRenderAgentToolStatusPart,
-  shouldRenderToolStatusPart,
   scopeForProjectForTest,
   scopeSessionKeyForTest,
-  toolStatusPartForTest,
   updateAssistantUiEventsForTest,
   upsertRuntimePartInMessagesForTest,
   upsertAssistantMessageForTest,
@@ -50,7 +47,6 @@ import {
   CanvasCommandApprovalCardForTest,
   buildAssistantClarificationResponseForTest,
   activeAssistantClarificationIsSkillStudioRevisionForTest,
-  buildPersistedAssistantClarificationEventForTest,
   buildAssistantClarificationToolResultForTest,
   buildAssistantInteractionFlowItemsForTest,
   collapseRepeatedCanvasStatusFlowItemsForTest,
@@ -122,7 +118,129 @@ import type { ChatMessage, ChatMessagePart, ChatRole } from "@/features/supercha
 
 const MESSAGE_CACHE_PREFIX = "superchat:messages:v2:";
 const DAY_MS = 24 * 60 * 60 * 1000;
-const apiPostMock = vi.hoisted(() => vi.fn(() => Promise.resolve({})));
+const apiPostMock = vi.hoisted(() => vi.fn((_url: string, _options?: unknown) => Promise.resolve({})));
+
+it("keeps keyed notifications local and replaces a repeated message", async () => {
+  apiPostMock.mockClear();
+  localStorage.clear();
+  const { result, unmount } = renderHook(() => useSuperChat({
+    project: "local-notices", displayName: "Tester",
+  }));
+  const appended: boolean[] = [];
+  try {
+    await act(async () => {
+      appended.push(await result.current.appendNotification("✅ 分镜图已完成。", "batch:b1"));
+      appended.push(await result.current.appendNotification("✅ 分镜图已完成。", "batch:b1"));
+    });
+    expect(apiPostMock.mock.calls.map(([url]) => url))
+      .not.toContain("api/v1/chat/notifications");
+    expect(appended).toEqual([true, true]);
+    expect(result.current.messages.map(({ id, role, text }) => ({ id, role, text }))).toEqual([
+      { id: "task-notification:batch:b1", role: "assistant", text: "✅ 分镜图已完成。" },
+    ]);
+  } finally {
+    unmount();
+  }
+});
+
+it("adds an unkeyed notification locally with a generated id", async () => {
+  apiPostMock.mockClear();
+  localStorage.clear();
+  const { result, unmount } = renderHook(() => useSuperChat({
+    project: "local-notices", displayName: "Tester",
+  }));
+  let appended = false;
+  try {
+    await act(async () => {
+      appended = await result.current.appendNotification("  ✅ 分镜图已完成。  ");
+    });
+    expect(apiPostMock.mock.calls.map(([url]) => url))
+      .not.toContain("api/v1/chat/notifications");
+    expect(appended).toBe(true);
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      id: expect.stringMatching(/^task-notification-/),
+      role: "assistant",
+      text: "✅ 分镜图已完成。",
+    });
+  } finally {
+    unmount();
+  }
+});
+
+it("does not POST chat history during a full live turn or its history snapshot", async () => {
+  apiPostMock.mockClear();
+  localStorage.clear();
+  const sockets: TestSocket[] = [];
+  const sent: Record<string, unknown>[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(JSON.parse(frame)); }
+    close() {}
+  }
+  vi.stubGlobal("WebSocket", TestSocket);
+  const hook = renderHook(() => useSuperChat({ project: "live-history", displayName: "Tester" }));
+  const scope = { kind: "project", id: "live-history", surface: "director" };
+  const frame = async (payload: Record<string, unknown>) => {
+    await act(async () => {
+      sockets[0].onmessage?.({ data: JSON.stringify({ scope, ...payload }) } as MessageEvent);
+    });
+  };
+  try {
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => { sockets[0].onopen?.(); });
+    await frame({ type: "scope.changed", history: [], busy: false });
+    act(() => { expect(hook.result.current.send("Read the file")).toBe(true); });
+    const turnId = sent.find(message => message.type === "chat.message")?.turn_id;
+    const target = { turn_id: turnId, message_id: "assistant:live-history" };
+    const reasoning = {
+      id: "reason-1", seq: 5, type: "agent_thought",
+      event: { type: "agent.thought", turn_id: turnId, text: "Check", status: "running",
+        truncated: false },
+    };
+    const tool = (status: string) => ({
+      id: "tool-1", seq: 7, type: "tool_status", event: {
+        id: "agent-tool-tool-1", role: "tool", text: "read_file", turnId, timestamp: 7,
+        raw: { type: "agent.tool.updated", turn_id: turnId, call_id: "tool-1", name: "read_file",
+          status, input: null, text: "", error: null, result_json: null, duration_ms: null },
+      },
+    });
+    const text = { id: "msg-1", seq: 10, type: "text", text: "Hello" };
+    await frame({ type: "chat.item", ...target, item_id: "reason-1", card: reasoning });
+    await frame({ type: "chat.item.delta", ...target, item_id: "reason-1",
+      kind: "reasoning", offset: 5, text: "ed" });
+    await frame({ type: "chat.item", ...target, item_id: "tool-1", card: tool("in_progress") });
+    await frame({ type: "chat.item", ...target, item_id: "msg-1", card: { ...text, text: "" } });
+    await frame({ type: "chat.item.delta", ...target, item_id: "msg-1",
+      kind: "text", offset: 0, text: "Hel" });
+    await frame({ type: "chat.item.delta", ...target, item_id: "msg-1",
+      kind: "text", offset: 3, text: "lo" });
+    const completedReasoning = { ...reasoning,
+      event: { ...reasoning.event, text: "Checked", status: "completed" } };
+    await frame({ type: "chat.item", ...target, item_id: "reason-1", card: completedReasoning });
+    await frame({ type: "chat.item", ...target, item_id: "tool-1", card: tool("completed") });
+    expect(hook.result.current.messages.find(message => message.role === "assistant")?.text)
+      .toBe("Hello");
+    await frame({ type: "chat.done", ...target, message: null });
+    await frame({ type: "scope.changed", busy: false, history: [{
+      id: "assistant:live-history", role: "assistant", turn_id: turnId, content: "Hello",
+      parts: [completedReasoning, tool("completed"), text],
+    }] });
+    expect(hook.result.current.busy).toBe(false);
+    expect(hook.result.current.messages.find(message => message.role === "assistant")?.parts)
+      .toEqual([completedReasoning, tool("completed"), text]);
+    expect(apiPostMock.mock.calls.map(([url]) => url)).not.toContain("api/v1/chat/ui-events");
+  } finally {
+    hook.unmount();
+    vi.unstubAllGlobals();
+  }
+});
 
 describe("scope sync active turn recovery", () => {
   const pendingMessages: ChatMessage[] = [
@@ -2061,50 +2179,6 @@ describe("Skill Studio question response", () => {
     expect(text).not.toContain("继续生成 Skill / Recipe 草稿");
   });
 
-  it("builds a persisted submitted assistant clarification event", () => {
-    const event = {
-      type: "assistant.clarification.request" as const,
-      bridge_key: "clarify-key-1",
-      project_id: "project-a",
-      canvas_id: "canvas-a",
-      agent_id: "agent-1",
-      turn_id: "turn-a",
-      anchor_text_prefix: "先确认方向",
-      clarification_id: "home-culture-poster-skill-setup",
-      title: "家乡文化海报 Skill 设置",
-      description: "选完后生成草稿",
-      questions: [
-        {
-          id: "poster_count",
-          title: "海报数量",
-          options: [{ id: "single", label: "单张主视觉海报" }],
-        },
-      ],
-      allow_skip: true,
-    };
-
-    expect(buildPersistedAssistantClarificationEventForTest(event, {
-      action: "submit",
-      answers: { poster_count: "single" },
-      clarificationStatus: "answered",
-      skipped: false,
-      usedRecommended: false,
-      receivedAt: 123,
-    })).toMatchObject({
-      type: "assistant.clarification.request",
-      bridge_key: "clarify-key-1",
-      clarification_id: "home-culture-poster-skill-setup",
-      received_at: 123,
-      submitted: true,
-      action: "submit",
-      clarification_status: "answered",
-      answers: { poster_count: "single" },
-      skipped: false,
-      used_recommended: false,
-      questions: event.questions,
-    });
-  });
-
   it("keeps unanswered questions visible when partially submitted", () => {
     const text = buildSkillStudioQuestionResponseForTest(
       {
@@ -2349,6 +2423,7 @@ describe("Skill Studio question response", () => {
 
   it("summarizes canvas command failures without exposing protocol details to users", () => {
     const payload = buildCanvasCommandToolResultPayloadForTest({
+      translate: (key, options) => i18next.t(key, options),
       bridgeKey: "bridge-a",
       projectId: "project-a",
       canvasId: "canvas-a",
@@ -2385,6 +2460,7 @@ describe("Skill Studio question response", () => {
   it("marks a workflow persistence failure as failed even after parameter updates applied", () => {
     const persistenceError = "无法创建持久化工作流记录，未启动节点动作：database unavailable";
     const payload = buildCanvasCommandToolResultPayloadForTest({
+      translate: (key, options) => i18next.t(key, options),
       bridgeKey: "bridge-workflow-persistence",
       projectId: "project-a",
       canvasId: "canvas-a",
@@ -2422,6 +2498,7 @@ describe("Skill Studio question response", () => {
 
   it("keeps non-workflow partial command batches distinguishable from terminal workflow failure", () => {
     const payload = buildCanvasCommandToolResultPayloadForTest({
+      translate: (key, options) => i18next.t(key, options),
       bridgeKey: "bridge-partial-edit",
       result: {
         applied: 1,
@@ -2438,6 +2515,7 @@ describe("Skill Studio question response", () => {
     expect(payload).toMatchObject({
       tool_call_status: "completed",
       canvas_apply_status: "partially_applied",
+      message: "Canvas command finished; see canvas_apply_status for the outcome.",
       applied: true,
       applied_count: 1,
     });
@@ -5750,6 +5828,17 @@ describe("useSuperChat websocket lifecycle", () => {
     expect(closeCalls).toEqual([]);
     expect(sockets[0]?.readyState).toBe(1);
 
+    const historyRequestsBefore = sentFrames.map(raw => JSON.parse(raw))
+      .filter(frame => frame.type === "scope.set").length;
+    await act(async () => {
+      sockets[0]?.onmessage?.({ data: JSON.stringify({ type: "chat.item", scope, turn_id: turnId,
+        message_id: "assistant:cancelled", item_id: "msg-cancelled",
+        card: { id: "msg-cancelled", type: "text", text: "Late reply" } }) } as MessageEvent);
+      sockets[0]?.onmessage?.({ data: JSON.stringify({ type: "chat.item.delta", scope, turn_id: turnId,
+        message_id: "assistant:cancelled", item_id: "msg-cancelled", kind: "text", offset: 0,
+        text: "Late delta" }) } as MessageEvent);
+    });
+    expect(hook.result.current.messages.some(message => message.text === "Late reply")).toBe(false);
     await act(async () => {
       sockets[0]?.onmessage?.({
         data: JSON.stringify({
@@ -5769,6 +5858,8 @@ describe("useSuperChat websocket lifecycle", () => {
     expect(closeCalls).toEqual([]);
     expect(sockets).toHaveLength(1);
     expect(hook.result.current.busy).toBe(false);
+    expect(sentFrames.map(raw => JSON.parse(raw)).filter(frame => frame.type === "scope.set"))
+      .toHaveLength(historyRequestsBefore + 1);
   });
 
   it("closes the websocket when no terminal frame arrives within the abort grace window", async () => {
@@ -5848,6 +5939,97 @@ describe("useSuperChat websocket lifecycle", () => {
     expect(freezoneCanvasCommandExecutionModeForTest()).toBe("manual_confirm");
   });
 
+  it("ignores legacy reply and thought deltas without creating messages", async () => {
+    const sockets: TestSocket[] = [];
+    class TestSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror = null;
+      onclose = null;
+      constructor() { sockets.push(this); }
+      send() {}
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", TestSocket);
+    const hook = renderHook(() => useSuperChat({ project: "legacy-ignored", displayName: "Tester" }));
+    try {
+      await waitFor(() => expect(sockets).toHaveLength(1));
+      await act(async () => {
+        sockets[0].onopen?.();
+        for (const frame of [
+          { type: "assistant.delta", turn_id: "legacy", offset: 0, text: "Obsolete reply" },
+          { type: "agent.thought.delta", turn_id: "legacy", text: "Obsolete thought" },
+        ]) sockets[0].onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+      });
+      expect(hook.result.current.messages).toEqual([]);
+    } finally {
+      hook.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("renders server text items and deltas by message and item id", async () => {
+    class TestWebSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor() {
+        sockets.push(this);
+      }
+
+      send() {}
+      close() {}
+    }
+    const sockets: TestWebSocket[] = [];
+    Object.defineProperty(globalThis, "WebSocket", {
+      value: TestWebSocket,
+      writable: true,
+      configurable: true,
+    });
+
+    const hook = renderHook(() =>
+      useSuperChat({ project: "project-delta-patch", displayName: "Tester" }),
+    );
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0];
+    const scope = { kind: "project", id: "project-delta-patch" };
+    const frame = async (payload: Record<string, unknown>) => {
+      await act(async () => { socket.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent); });
+    };
+    await act(async () => { socket.onopen?.(); });
+    await frame({ type: "scope.changed", scope, history: [] });
+    const target = { scope, turn_id: "turn-1", message_id: "assistant:codex-turn-1", item_id: "msg-1" };
+    await frame({ type: "chat.item", ...target, card: { id: "msg-1", seq: 10, type: "text", text: "" } });
+    await frame({ type: "chat.item.delta", ...target, kind: "text", offset: 0, text: "Hel" });
+    expect(hook.result.current.messages[0]?.text).toBe("Hel");
+    await frame({ type: "chat.item.delta", ...target, kind: "text", offset: 3, text: "lo" });
+    await frame({ type: "chat.item", ...target, card: { id: "msg-1", seq: 10, type: "text", text: "Hello" } });
+    expect(hook.result.current.messages).toEqual([expect.objectContaining({
+      id: "assistant:codex-turn-1", role: "assistant", turnId: "turn-1", text: "Hello",
+      parts: [{ id: "msg-1", seq: 10, type: "text", text: "Hello" }],
+    })]);
+    const before = hook.result.current.messages;
+    await frame({ type: "assistant.delta", scope, turn_id: "turn-1", offset: 0, text: "Obsolete reply" });
+    await frame({ type: "agent.thought.delta", scope, turn_id: "turn-1", text: "Obsolete thought" });
+    expect(hook.result.current.messages).toEqual(before);
+    await frame({ type: "assistant.delta", scope, turn_id: "obsolete-turn", offset: 0, text: "Obsolete reply" });
+    await frame({ type: "agent.thought.delta", scope, turn_id: "obsolete-turn", text: "Obsolete thought" });
+    expect(hook.result.current.messages).toEqual(before);
+    await frame({ type: "assistant.clarification.event", scope, turn_id: "turn-1", bridge_key: "bk-1",
+      event: { type: "assistant.clarification.request", questions: [] } });
+    const assistants = hook.result.current.messages.filter(message => message.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].id).toBe("assistant:codex-turn-1");
+    expect(assistants[0].uiEvents).toEqual([expect.objectContaining({ anchor_text_prefix: "Hello" })]);
+    hook.unmount();
+  });
+
   it("reconciles a partial stream from the final message carried by chat.done", async () => {
     const sentFrames: string[] = [];
     class TestWebSocket {
@@ -5888,11 +6070,12 @@ describe("useSuperChat websocket lifecycle", () => {
       } as MessageEvent);
       socket.onmessage?.({
         data: JSON.stringify({
-          type: "assistant.delta",
+          type: "chat.item",
           scope,
           turn_id: "turn-identity",
-          text: "身份规划已完成，可直",
-          accumulated: true,
+          message_id: "assistant:identity",
+          item_id: "msg-identity",
+          card: { id: "msg-identity", type: "text", text: "Partial reply" },
         }),
       } as MessageEvent);
       socket.onmessage?.({
@@ -5922,7 +6105,7 @@ describe("useSuperChat websocket lifecycle", () => {
     ).toHaveLength(2);
   });
 
-  it("persists merged assistant parts after the final assistant message arrives", async () => {
+  it("keeps merged assistant parts after the final assistant message arrives", async () => {
     apiPostMock.mockClear();
     class TestWebSocket {
       static OPEN = 1;
@@ -5993,21 +6176,6 @@ describe("useSuperChat websocket lifecycle", () => {
       )).toBe(true);
     });
 
-    await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-1",
-          event: expect.objectContaining({
-            type: "assistant.message_parts",
-            parts: expect.arrayContaining([
-              expect.objectContaining({ type: "clarification" }),
-            ]),
-          }),
-        }),
-      })),
-    );
-    apiPostMock.mockClear();
-
     await act(async () => {
       socket.onmessage?.({
         data: JSON.stringify({
@@ -6037,145 +6205,12 @@ describe("useSuperChat websocket lifecycle", () => {
       } as MessageEvent);
     });
 
-    await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-1",
-          event: expect.objectContaining({
-            type: "assistant.message_parts",
-            parts: expect.arrayContaining([
-              expect.objectContaining({ type: "clarification" }),
-              expect.objectContaining({ type: "skill_studio" }),
-              expect.objectContaining({ type: "text", text: "草稿已生成。" }),
-            ]),
-          }),
-        }),
-      })),
-    );
-  });
-
-  it("closes an active thought part before a canvas command card arrives", async () => {
-    apiPostMock.mockClear();
-    class TestWebSocket {
-      static OPEN = 1;
-      readyState = 1;
-      onopen: (() => void) | null = null;
-      onmessage: ((event: MessageEvent) => void) | null = null;
-      onerror: (() => void) | null = null;
-      onclose: ((event: CloseEvent) => void) | null = null;
-
-      constructor() {
-        sockets.push(this);
-      }
-
-      send() {}
-      close() {}
-    }
-    const sockets: TestWebSocket[] = [];
-    Object.defineProperty(globalThis, "WebSocket", {
-      value: TestWebSocket,
-      writable: true,
-      configurable: true,
-    });
-
-    const hook = renderHook(() =>
-      useSuperChat({
-        project: "project-a",
-        displayName: "Tester",
-        surface: "freezone",
-        freezoneCanvasId: "canvas-a",
-        freezoneAgentId: "agent-2",
-      }),
-    );
-
-    await waitFor(() => expect(sockets).toHaveLength(1));
-    const socket = sockets[0];
-    await waitFor(() => expect(socket.onmessage).toBeTypeOf("function"));
-    await act(async () => {
-      socket.onopen?.();
-    });
-    const scope = {
-      kind: "project",
-      id: "project-a",
-      surface: "freezone",
-      canvasId: "canvas-a",
-      agentId: "agent-2",
-    };
-
-    await act(async () => {
-      socket.onmessage?.({
-        data: JSON.stringify({
-          type: "agent.thought.delta",
-          scope,
-          turn_id: "turn-1",
-          text: "I should inspect the canvas first.",
-        }),
-      } as MessageEvent);
-    });
-
-    await waitFor(() => {
-      const assistant = hook.result.current.messages.find((item) => item.turnId === "turn-1");
-      const thoughtPart = assistant?.parts?.find((part) => part.type === "agent_thought") as
-        | { event: unknown }
-        | undefined;
-      expect(thoughtPart?.event)
-        .toMatchObject({ status: "running" });
-    });
-    await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-1",
-          event: expect.objectContaining({
-            type: "assistant.message_parts",
-            parts: expect.arrayContaining([
-              expect.objectContaining({
-                type: "agent_thought",
-                event: expect.objectContaining({ status: "running" }),
-              }),
-            ]),
-          }),
-        }),
-      })),
-    );
-    apiPostMock.mockClear();
-
-    await act(async () => {
-      socket.onmessage?.({
-        data: JSON.stringify({
-          type: "canvas.command",
-          scope,
-          turn_id: "turn-1",
-          bridge_key: "bridge-1",
-          canvas_id: "canvas-a",
-          envelope: { schema_version: "canvas_chat_commands.v1", commands: [] },
-        }),
-      } as MessageEvent);
-    });
-
-    await waitFor(() => {
-      const assistant = hook.result.current.messages.find((item) => item.turnId === "turn-1");
-      const thoughtPart = assistant?.parts?.find((part) => part.type === "agent_thought") as
-        | { event: unknown }
-        | undefined;
-      expect(thoughtPart?.event)
-        .toMatchObject({ status: "completed" });
-    });
-    await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-1",
-          event: expect.objectContaining({
-            type: "assistant.message_parts",
-            parts: expect.arrayContaining([
-              expect.objectContaining({
-                type: "agent_thought",
-                event: expect.objectContaining({ status: "completed" }),
-              }),
-            ]),
-          }),
-        }),
-      })),
-    );
+    expect(hook.result.current.messages.find(message => message.turnId === "turn-1")?.parts)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "clarification" }),
+        expect.objectContaining({ type: "skill_studio" }),
+        expect.objectContaining({ type: "text", text: "草稿已生成。" }),
+      ]));
   });
 
   it("keeps an active thought running across hidden catalog draft tools", async () => {
@@ -6228,10 +6263,12 @@ describe("useSuperChat websocket lifecycle", () => {
     await act(async () => {
       socket.onmessage?.({
         data: JSON.stringify({
-          type: "agent.thought.delta",
-          scope,
-          turn_id: "turn-1",
-          text: "I should submit the draft chunks.",
+          type: "chat.item", scope, turn_id: "turn-1",
+          message_id: "assistant:codex-turn-1", item_id: "reason-1",
+          card: { id: "reason-1", type: "agent_thought", event: {
+            type: "agent.thought", turn_id: "turn-1", text: "I should submit the draft chunks.",
+            status: "running", truncated: false,
+          } },
         }),
       } as MessageEvent);
       socket.onmessage?.({
@@ -6257,7 +6294,7 @@ describe("useSuperChat websocket lifecycle", () => {
     });
   });
 
-  it("persists updated draft part state after confirming a Skill Studio draft", async () => {
+  it("updates local draft part state after confirming a Skill Studio draft", async () => {
     apiPostMock.mockClear();
     class TestWebSocket {
       static OPEN = 1;
@@ -6384,29 +6421,17 @@ describe("useSuperChat websocket lifecycle", () => {
       expect(draft?.type).toBe("skill_studio.draft");
     });
 
-    await waitFor(() =>
-      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/ui-events", expect.objectContaining({
-        json: expect.objectContaining({
-          turn_id: "turn-1",
-          event: expect.objectContaining({
-            type: "assistant.message_parts",
-            parts: expect.arrayContaining([
-              expect.objectContaining({
-                type: "skill_studio",
-                event: expect.objectContaining({
-                  type: "skill_studio.draft",
-                  submitted: true,
-                  saved_to_catalog: true,
-                  saved_skill_ids: ["saved-skill"],
-                  saved_recipe_ids: ["saved-recipe"],
-                }),
-              }),
-              expect.objectContaining({ type: "text", text: "草稿已生成。" }),
-            ]),
-          }),
-        }),
-      })),
-    );
+    expect(hook.result.current.messages.find(message => message.turnId === "turn-1")?.parts)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "skill_studio", event: expect.objectContaining({
+          type: "skill_studio.draft",
+          submitted: true,
+          saved_to_catalog: true,
+          saved_skill_ids: ["saved-skill"],
+          saved_recipe_ids: ["saved-recipe"],
+        }) }),
+        expect.objectContaining({ type: "text", text: "草稿已生成。" }),
+      ]));
   });
 });
 
@@ -6495,10 +6520,12 @@ describe("canvas command bridge events", () => {
     await act(async () => {
       socket.onmessage?.({
         data: JSON.stringify({
-          type: "agent.thought.delta",
-          scope,
-          turn_id: "turn-1",
-          text: "Let me submit recipe 1.",
+          type: "chat.item", scope, turn_id: "turn-1",
+          message_id: "assistant:codex-turn-1", item_id: "reason-1",
+          card: { id: "reason-1", type: "agent_thought", event: {
+            type: "agent.thought", turn_id: "turn-1", text: "Let me submit recipe 1.",
+            status: "running", truncated: false,
+          } },
         }),
       } as MessageEvent);
       socket.onmessage?.({
@@ -6516,10 +6543,9 @@ describe("canvas command bridge events", () => {
       } as MessageEvent);
       socket.onmessage?.({
         data: JSON.stringify({
-          type: "agent.thought.delta",
-          scope,
-          turn_id: "turn-1",
-          text: " Let me submit recipe 2 now.",
+          type: "chat.item.delta", scope, turn_id: "turn-1",
+          message_id: "assistant:codex-turn-1", item_id: "reason-1",
+          kind: "reasoning", offset: 23, text: " Let me submit recipe 2 now.",
         }),
       } as MessageEvent);
     });
@@ -6542,6 +6568,21 @@ describe("canvas command bridge events", () => {
     });
   });
 });
+
+// Server card shape shared by the runtime presentation cases below.
+function toolCard(payload: {
+  turn_id: string; call_id: string; name: string; status?: string;
+  input?: unknown; text?: string; result_json?: unknown; error?: unknown;
+}): ChatMessagePart {
+  return { id: payload.call_id, type: "tool_status", event: {
+    id: `agent-tool-${payload.call_id}`, role: "tool", text: payload.text ?? payload.name,
+    turnId: payload.turn_id, timestamp: 1,
+    raw: { type: "agent.tool.updated", turn_id: payload.turn_id, call_id: payload.call_id,
+      name: payload.name, status: payload.status ?? "in_progress",
+      input: payload.input ?? null, text: payload.text ?? "", error: payload.error ?? null,
+      result_json: payload.result_json ?? null, duration_ms: null },
+  } };
+}
 
 describe("tool status parts", () => {
   it("attaches freezone thinking state to the active runtime-only assistant message", () => {
@@ -6580,13 +6621,12 @@ describe("tool status parts", () => {
   it("does not force assistant messages wide for runtime-only status parts", () => {
     expect(assistantPartsPreferWideLayoutForTest([
       { id: "usage", type: "agent_usage", event: { usage: { used: 10 } } },
-      toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      toolCard({
         turn_id: "turn-a",
         call_id: "call-1",
         name: "freezone_skill_list",
         status: "completed",
-      }, "turn-a"),
+      }),
       { id: "text", type: "text", text: "你好，这是一段普通回复。" },
     ])).toBe(false);
   });
@@ -6598,59 +6638,7 @@ describe("tool status parts", () => {
     ])).toBe(true);
   });
 
-  it("uses the ACP call id to update one tool lifecycle card", () => {
-    const started = toolStatusPartForTest("agent.tool.started", {
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      call_id: "call-1",
-      name: "read_file",
-      status: "pending",
-    }, "turn-a");
-    const completed = toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
-      turn_id: "turn-a",
-      call_id: "call-1",
-      name: "read_file",
-      status: "completed",
-    }, "turn-a");
 
-    expect(started.id).toBe("tool_status:turn-a:call-1");
-    expect(completed.id).toBe(started.id);
-
-    const messages = upsertRuntimePartInMessagesForTest([], "turn-a", started);
-    const updated = upsertRuntimePartInMessagesForTest(messages, "turn-a", completed);
-    expect(updated).toHaveLength(1);
-    expect(updated[0]?.parts).toHaveLength(1);
-    expect(updated[0]?.parts?.[0]).toEqual(completed);
-  });
-
-  it("preserves runtime part ordering when a tool lifecycle card updates", () => {
-    const started = {
-      ...toolStatusPartForTest("agent.tool.started", {
-        type: "agent.tool.started",
-        turn_id: "turn-a",
-        call_id: "call-1",
-        name: "read_file",
-        status: "pending",
-      }, "turn-a"),
-      seq: 7,
-    };
-    const completed = toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
-      turn_id: "turn-a",
-      call_id: "call-1",
-      name: "read_file",
-      status: "completed",
-    }, "turn-a");
-
-    const messages = upsertRuntimePartInMessagesForTest([], "turn-a", started);
-    const updated = upsertRuntimePartInMessagesForTest(messages, "turn-a", completed);
-
-    expect(updated[0]?.parts?.[0]).toMatchObject({
-      id: started.id,
-      seq: 7,
-    });
-  });
 
   it("merges adjacent agent thought parts into one runtime item", () => {
     const merged = mergeAdjacentAgentThoughtPartsForTest([
@@ -6666,13 +6654,12 @@ describe("tool status parts", () => {
         seq: 2,
         event: { text: "再检查画布状态。", status: "running" },
       },
-      toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      toolCard({
         turn_id: "turn-a",
         call_id: "call-1",
         name: "freezone_run_node_action",
         status: "completed",
-      }, "turn-a"),
+      }),
       {
         id: "thought-3",
         type: "agent_thought",
@@ -6696,61 +6683,56 @@ describe("tool status parts", () => {
 
   it("merges adjacent tool status parts with the same display into one runtime item", () => {
     const merged = mergeAdjacentToolStatusPartsForTest([
-      toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      toolCard({
         turn_id: "turn-a",
         call_id: "call-1",
         name: "freezone_get_saved_recipe",
         status: "completed",
-      }, "turn-a"),
-      toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      }),
+      toolCard({
         turn_id: "turn-a",
         call_id: "call-2",
         name: "freezone_get_saved_recipe",
         status: "completed",
-      }, "turn-a"),
-      toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      }),
+      toolCard({
         turn_id: "turn-a",
         call_id: "call-3",
         name: "freezone_list_agent_catalog",
         status: "completed",
-      }, "turn-a"),
+      }),
     ]);
 
     expect(merged).toHaveLength(2);
     expect(merged[0]).toMatchObject({
-      id: "tool_status:turn-a:call-1+tool_status:turn-a:call-2",
+      id: "call-1+call-2",
       type: "tool_status",
       repeatCount: 2,
     });
     expect(merged[1]).toMatchObject({
-      id: "tool_status:turn-a:call-3",
+      id: "call-3",
     });
     expect("repeatCount" in (merged[1] ?? {})).toBe(false);
   });
 
   it("uses friendly labels for Skill Studio catalog draft tools", () => {
-    const part = toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
+    const part = toolCard({
       turn_id: "turn-a",
       call_id: "call-1",
       name: "freezone_put_agent_catalog_draft_outline",
       status: "completed",
-    }, "turn-a");
+    });
 
     expect(genericToolTitleForTest((part as { event: ChatMessage }).event)).toBe("整理 Skill 方案");
   });
 
   it("uses a lightweight retry label for failed Skill Studio outline status", () => {
-    const part = toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
+    const part = toolCard({
       turn_id: "turn-a",
       call_id: "call-1",
       name: "freezone_put_agent_catalog_draft_outline",
       status: "failed",
-    }, "turn-a");
+    });
     const toolMessage = (part as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
@@ -6762,27 +6744,24 @@ describe("tool status parts", () => {
   });
 
   it("uses friendly labels for Workflow Skill draft tool status", () => {
-    const prepareCompleted = (toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
+    const prepareCompleted = (toolCard({
       turn_id: "turn-a",
       call_id: "call-prepare",
       name: "freezone_prepare_workflow_draft",
       status: "completed",
-    }, "turn-a") as { event: ChatMessage }).event;
-    const prepareFailed = (toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
+    }) as { event: ChatMessage }).event;
+    const prepareFailed = (toolCard({
       turn_id: "turn-a",
       call_id: "call-prepare-failed",
       name: "freezone_prepare_workflow_draft",
       status: "failed",
-    }, "turn-a") as { event: ChatMessage }).event;
-    const confirmCompleted = (toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
+    }) as { event: ChatMessage }).event;
+    const confirmCompleted = (toolCard({
       turn_id: "turn-a",
       call_id: "call-confirm",
       name: "freezone_confirm_workflow_draft",
       status: "completed",
-    }, "turn-a") as { event: ChatMessage }).event;
+    }) as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
       t: zhT,
@@ -6805,19 +6784,18 @@ describe("tool status parts", () => {
   });
 
   it("renders workflow parameter handoff as waiting instead of failed", () => {
-    const waiting = (toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
+    const waiting = (toolCard({
       turn_id: "turn-a",
       call_id: "call-waiting",
       name: "freezone_prepare_workflow_draft",
       status: "failed",
       input: { operation_id: "operation-a" },
-      result: {
+      result_json: {
         ok: false,
         status: "clarification_required",
         code: "generation_parameters_required",
       },
-    }, "turn-a") as { event: ChatMessage }).event;
+    }) as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
       t: zhT,
@@ -6827,18 +6805,61 @@ describe("tool status parts", () => {
     })).toBe("等待选择生成参数");
   });
 
+  it("renders canvas confirmation as waiting for user confirmation", () => {
+    const card = (toolCard({
+      turn_id: "turn-a",
+      call_id: "call-confirmation",
+      name: "freezone_emit_canvas_command",
+      status: "completed",
+      result_json: {
+        ok: true,
+        status: "confirmation_required",
+        code: "canvas_confirmation_required",
+        applied: false,
+      },
+    }) as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: zhT,
+      status: "done",
+      title: genericToolTitleForTest(card),
+      toolMessage: card,
+    })).toBe("等待你确认");
+  });
+
+  it("translates confirmation_required in the English interface", () => {
+    const card = (toolCard({
+      turn_id: "turn-a",
+      call_id: "call-confirmation",
+      name: "freezone_emit_canvas_command",
+      status: "completed",
+      result_json: {
+        ok: true,
+        status: "confirmation_required",
+        code: "canvas_confirmation_required",
+        applied: false,
+      },
+    }) as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: enT,
+      status: "done",
+      title: genericToolTitleForTest(card),
+      toolMessage: card,
+    })).toBe("Waiting for your confirmation");
+  });
+
   it.each([
     ["clarification_required", "Waiting for generation parameters"],
     ["clarification_frontend_timeout", "Waiting for an answer is paused"],
   ])("translates %s in the English interface", (businessStatus, expected) => {
-    const toolMessage = (toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
+    const toolMessage = (toolCard({
       turn_id: "turn-a",
       call_id: "call-clarification",
       name: "freezone_prepare_workflow_draft",
       status: "failed",
-      result: { ok: false, status: businessStatus },
-    }, "turn-a") as { event: ChatMessage }).event;
+      result_json: { ok: false, status: businessStatus },
+    }) as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
       t: enT,
@@ -6850,69 +6871,64 @@ describe("tool status parts", () => {
 
   it("hides a superseded parameter handoff after the same draft operation succeeds", () => {
     const waiting = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-waiting",
         name: "freezone_prepare_workflow_draft",
         status: "failed",
         input: { operation_id: "operation-a" },
-        result: {
+        result_json: {
           ok: false,
           status: "clarification_required",
           code: "generation_parameters_required",
         },
-      }, "turn-a"),
+      }),
       seq: 1,
     };
     const ready = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-ready",
         name: "freezone_prepare_workflow_draft",
         status: "completed",
         input: { operation_id: "operation-a" },
-        result: { ok: true, status: "workflow_draft_ready", draft_id: "draft-a" },
-      }, "turn-a"),
+        result_json: { ok: true, status: "workflow_draft_ready", draft_id: "draft-a" },
+      }),
       seq: 2,
     };
 
     const visible = agentRuntimeDisplayPartsForTest([waiting, ready], { streaming: false });
 
-    expect(visible.map((part) => part.id)).toEqual(["tool_status:turn-a:call-ready"]);
+    expect(visible.map((part) => part.id)).toEqual(["call-ready"]);
   });
 
-  it("hides non-failed tool status parts when replaying historical runtime activity", () => {
+  it("hides settled tool cards in history and keeps running cards distinct while streaming", () => {
     const runningTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-running",
         name: "freezone_put_agent_catalog_recipe",
-        status: "running",
-      }, "turn-a"),
+        status: "in_progress",
+      }),
       seq: 1,
     };
     const completedTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-completed",
         name: "freezone_put_agent_catalog_recipe",
         status: "completed",
-      }, "turn-a"),
+      }),
       seq: 2,
     };
     const failedTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-failed",
         name: "freezone_put_agent_catalog_recipe",
         status: "failed",
         error: "提交失败",
-      }, "turn-a"),
+      }),
       seq: 3,
     };
     const thought: ChatMessagePart = {
@@ -6931,43 +6947,41 @@ describe("tool status parts", () => {
       { streaming: true },
     );
 
-    expect(historical.map((part) => part.id)).toEqual(["tool_status:turn-a:call-failed", "thought-a"]);
+    expect(historical.map((part) => part.id)).toEqual(["call-failed", "thought-a"]);
     expect(streaming.map((part) => part.id)).toEqual([
-      "tool_status:turn-a:call-running+tool_status:turn-a:call-completed",
-      "tool_status:turn-a:call-failed",
+      "call-running",
+      "call-completed",
+      "call-failed",
       "thought-a",
     ]);
   });
 
   it("keeps settled Skill Studio catalog tool status visible after the response completes", () => {
     const regularCompletedTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-regular",
         name: "read_file",
         status: "completed",
-      }, "turn-a"),
+      }),
       seq: 1,
     };
     const catalogCompletedTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-catalog",
         name: "freezone_list_agent_catalog",
         status: "completed",
-      }, "turn-a"),
+      }),
       seq: 2,
     };
     const outlineCompletedTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-outline",
         name: "freezone_put_agent_catalog_draft_outline",
         status: "completed",
-      }, "turn-a"),
+      }),
       seq: 3,
     };
 
@@ -6975,50 +6989,46 @@ describe("tool status parts", () => {
       [regularCompletedTool, catalogCompletedTool, outlineCompletedTool],
       { streaming: false },
     ).map((part) => part.id)).toEqual([
-      "tool_status:turn-a:call-catalog",
-      "tool_status:turn-a:call-outline",
+      "call-catalog",
+      "call-outline",
     ]);
   });
 
   it("keeps settled Workflow Skill tool status visible after the response completes", () => {
     const nativeSkillTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-native-skill",
         name: "skill",
         status: "completed",
-      }, "turn-a"),
+      }),
       seq: 1,
     };
     const workflowSkillTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-skill",
         name: "freezone_get_workflow_skill",
         status: "completed",
-      }, "turn-a"),
+      }),
       seq: 2,
     };
     const prepareWorkflowTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-prepare",
         name: "freezone_prepare_workflow_draft",
         status: "completed",
-      }, "turn-a"),
+      }),
       seq: 3,
     };
     const confirmWorkflowTool = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-confirm",
         name: "freezone_confirm_workflow_draft",
         status: "completed",
-      }, "turn-a"),
+      }),
       seq: 4,
     };
 
@@ -7026,36 +7036,34 @@ describe("tool status parts", () => {
       [nativeSkillTool, workflowSkillTool, prepareWorkflowTool, confirmWorkflowTool],
       { streaming: false },
     ).map((part) => part.id)).toEqual([
-      "tool_status:turn-a:call-native-skill",
-      "tool_status:turn-a:call-skill",
-      "tool_status:turn-a:call-prepare",
-      "tool_status:turn-a:call-confirm",
+      "call-native-skill",
+      "call-skill",
+      "call-prepare",
+      "call-confirm",
     ]);
   });
 
   it("shows the delivered plan draft and hides a duplicate failure for the same operation", () => {
     const failedDuplicate = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-failed",
         name: "dramaclaw.freezone_prepare_workflow_plan_draft",
         status: "failed",
         input: { operation_id: "operation-a" },
         error: "aggregate workflow planning text exceeds 4000 characters",
-      }, "turn-a"),
+      }),
       seq: 1,
     };
     const deliveredDraft = {
-      ...toolStatusPartForTest("agent.tool.updated", {
-        type: "agent.tool.updated",
+      ...toolCard({
         turn_id: "turn-a",
         call_id: "call-completed",
         name: "dramaclaw.freezone_prepare_workflow_plan_draft",
         status: "completed",
         input: { operation_id: "operation-a" },
-        output: { ok: true, status: "workflow_draft_ready", draft_id: "draft-a" },
-      }, "turn-a"),
+        result_json: { ok: true, status: "workflow_draft_ready", draft_id: "draft-a" },
+      }),
       seq: 2,
     };
 
@@ -7063,7 +7071,7 @@ describe("tool status parts", () => {
       [failedDuplicate, deliveredDraft],
       { streaming: false },
     ).map((part) => part.id)).toEqual([
-      "tool_status:turn-a:call-completed",
+      "call-completed",
     ]);
   });
 
@@ -7076,13 +7084,12 @@ describe("tool status parts", () => {
         skill_studio_session_id: "studio-1",
       },
     };
-    const completedTool = toolStatusPartForTest("agent.tool.updated", {
-      type: "agent.tool.updated",
+    const completedTool = toolCard({
       turn_id: "turn-a",
       call_id: "call-completed",
       name: "freezone_put_agent_catalog_recipe",
       status: "completed",
-    }, "turn-a");
+    });
 
     const hideWithoutSkillStudio = assistantRuntimeShouldHideSettledToolStatusForTest([completedTool]);
     const hideWithSkillStudio = assistantRuntimeShouldHideSettledToolStatusForTest([completedTool, skillStudioPart]);
@@ -7263,147 +7270,7 @@ describe("tool status parts", () => {
     });
   });
 
-  it("keeps repeated calls to the same tool separate", () => {
-    const first = toolStatusPartForTest("agent.tool.started", {
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      call_id: "call-1",
-      name: "read_file",
-    }, "turn-a");
-    const second = toolStatusPartForTest("agent.tool.started", {
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      call_id: "call-2",
-      name: "read_file",
-    }, "turn-a");
 
-    const messages = upsertRuntimePartInMessagesForTest(
-      upsertRuntimePartInMessagesForTest([], "turn-a", first),
-      "turn-a",
-      second,
-    );
-    expect(messages[0]?.parts?.map((part) => part.id)).toEqual([
-      "tool_status:turn-a:call-1",
-      "tool_status:turn-a:call-2",
-    ]);
-  });
-
-  it("does not render hidden canvas write tool calls as assistant status parts", () => {
-    expect(shouldRenderToolStatusPart({
-      type: "tool.call",
-      turn_id: "turn-a",
-      name: "freezone_create_node",
-      arguments: { node_type: "imageGenNode" },
-    })).toBe(false);
-  });
-
-  it("does not render direct hidden canvas write tool results as assistant status parts", () => {
-    expect(shouldRenderToolStatusPart({
-      type: "tool.result",
-      turn_id: "turn-a",
-      name: "freezone_create_node",
-      result: "已创建节点",
-    })).toBe(false);
-  });
-
-  it("does not render clarification request tools as assistant status parts", () => {
-    expect(shouldRenderAgentToolStatusPart({
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      name: "freezone_request_user_clarification",
-      status: "running",
-    })).toBe(false);
-  });
-
-  it("does not render node detail reads as assistant status parts", () => {
-    expect(shouldRenderAgentToolStatusPart({
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      name: "freezone_get_node_detail",
-      status: "running",
-    })).toBe(false);
-  });
-
-  it("does not render bridged canvas ontology reads as assistant status parts", () => {
-    expect(shouldRenderAgentToolStatusPart({
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      name: "freezone_get_canvas_ontology",
-      status: "running",
-    })).toBe(false);
-  });
-
-  it.each([
-    "tool_search",
-    "Tool Search",
-    "tool-describe",
-    "ToolDescribe",
-  ])("does not render internal %s tool status parts", (name) => {
-    expect(shouldRenderAgentToolStatusPart({
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      name,
-      status: "running",
-    })).toBe(false);
-  });
-
-  it.each([
-    "freezone_begin_agent_catalog_draft",
-    "freezone_put_agent_catalog_skill",
-    "freezone_put_agent_catalog_recipe",
-    "freezone_finish_agent_catalog_draft",
-  ])("does not render %s as assistant status parts", (name) => {
-    expect(shouldRenderAgentToolStatusPart({
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      name,
-      status: "running",
-    })).toBe(false);
-  });
-
-  it.each([
-    "freezone_list_agent_catalog",
-    "freezone_get_saved_skill",
-    "freezone_get_saved_recipe",
-  ])("renders %s as readable assistant status parts", (name) => {
-    expect(shouldRenderAgentToolStatusPart({
-      type: "agent.tool.started",
-      turn_id: "turn-a",
-      name,
-      status: "running",
-    })).toBe(true);
-  });
-
-  it("does not render canvas command result payloads as assistant status parts", () => {
-    expect(shouldRenderToolStatusPart({
-      type: "tool.result",
-      turn_id: "turn-a",
-      name: "freezone_emit_canvas_command",
-      result: JSON.stringify({
-        envelope: { schema_version: "canvas_chat_commands.v1", commands: [] },
-      }),
-    })).toBe(false);
-  });
-});
-
-describe("agent permission options", () => {
-  const approval = {
-    id: "permission-a",
-    kind: "agent" as const,
-    title: "运行命令",
-    options: [
-      { optionId: "allow_once", kind: "allow_once", name: "Allow once" },
-      { optionId: "allow_session", kind: "allow_always", name: "Allow for session" },
-      { optionId: "allow_always", kind: "allow_always", name: "Allow always" },
-      { optionId: "deny", kind: "reject_once", name: "Deny" },
-    ],
-  };
-
-  it("does not confuse session access with permanent access", () => {
-    expect(approvalOptionIdForTest(approval, "allow-always")).toBe("allow_always");
-    expect(approvalOptionIdForTest(approval, { optionId: "allow_session" })).toBe("allow_session");
-    expect(approvalOptionIdForTest(approval, { optionId: "unknown" })).toBe("");
-  });
 });
 
 describe("canvas context bridge results", () => {
@@ -7611,8 +7478,315 @@ describe("story approval continuity translations", () => {
   });
 });
 
-it("does not write replayed history but saves live edits after reconnect", async () => {
-  apiPostMock.mockClear();
+describe("older chat history pages", () => {
+  const scope = { kind: "project", id: "history-pages", surface: "director", canvasId: null };
+  const turn = (number: number) => ["user", "assistant"].map((role, index) => ({
+    id: `turn-${number}-${role}`,
+    role,
+    content: `Turn ${number} ${role}`,
+    turn_id: `turn-${number}`,
+    created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, number * 2 + index)).toISOString(),
+    parts: [],
+  }));
+  const allIds = [
+    "turn-1-user", "turn-1-assistant", "turn-2-user", "turn-2-assistant",
+    "turn-3-user", "turn-3-assistant", "turn-4-user", "turn-4-assistant",
+  ];
+  const sockets: TestSocket[] = [];
+  const sent: unknown[] = [];
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose: ((event: CloseEvent) => void) | null = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(JSON.parse(frame)); }
+    close() {}
+  }
+  const frame = async (payload: Record<string, unknown>) => {
+    await act(async () => {
+      sockets[0].onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+    });
+  };
+  const snapshot = (history = turn(3), before: string | null = "c3", hasMore = true) =>
+    frame({ type: "scope.changed", scope, history, before, has_more: hasMore, busy: false });
+  const page = (history = [...turn(1), ...turn(2)], before: string | null = "c1", hasMore = true) =>
+    frame({ type: "history.page", scope, history, before, has_more: hasMore });
+  const setup = async () => {
+    const hook = renderHook(({ project }) => useSuperChat({ project, displayName: "Tester" }), {
+      initialProps: { project: "history-pages" },
+    });
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => { sockets[0].onopen?.(); });
+    await snapshot();
+    sent.length = 0;
+    return hook;
+  };
+  const loadFirstPage = async (hook: Awaited<ReturnType<typeof setup>>) => {
+    expect(hook.result.current.hasOlderHistory).toBe(true);
+    act(() => { hook.result.current.loadOlderHistory(); });
+    await page();
+    expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+    sent.length = 0;
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    sockets.length = 0;
+    sent.length = 0;
+    vi.stubGlobal("WebSocket", TestSocket);
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("P1 loads older pages once per request and stops at an empty final page", async () => {
+    const hook = await setup();
+    try {
+      expect(hook.result.current.hasOlderHistory).toBe(true);
+      expect(hook.result.current.loadingOlderHistory).toBe(false);
+      act(() => {
+        hook.result.current.loadOlderHistory();
+        hook.result.current.loadOlderHistory();
+      });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c3" }]);
+      expect(hook.result.current.loadingOlderHistory).toBe(true);
+      // Repeated page entries must not create repeated messages.
+      await page([...turn(1), ...turn(2), ...turn(2)]);
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+      expect(hook.result.current.loadingOlderHistory).toBe(false);
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([
+        { type: "scope.set", scope, history_before: "c3" },
+        { type: "scope.set", scope, history_before: "c1" },
+      ]);
+      await page([], null, false);
+      expect(hook.result.current.hasOlderHistory).toBe(false);
+      expect(hook.result.current.loadingOlderHistory).toBe(false);
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+      sent.length = 0;
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([]);
+    } finally { hook.unmount(); }
+  });
+
+  it("guards repeated short-page loads while pending and after has_more is false", async () => {
+    const hook = await setup();
+    try {
+      act(() => {
+        hook.result.current.loadOlderHistory();
+        hook.result.current.loadOlderHistory();
+      });
+      // Also retry after React has rendered the loading state.
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c3" }]);
+      // Keep a cursor to prove has_more alone stops further requests.
+      await page(turn(2), "c2", false);
+      expect(hook.result.current.hasOlderHistory).toBe(false);
+      act(() => {
+        hook.result.current.loadOlderHistory();
+        hook.result.current.loadOlderHistory();
+      });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c3" }]);
+    } finally { hook.unmount(); }
+  });
+
+  it("P2 keeps loaded pages, turns displaced by snapshots, and the older cursor", async () => {
+    const hook = await setup();
+    try {
+      await loadFirstPage(hook);
+      await snapshot(turn(4), "c4");
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds);
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([{ type: "scope.set", scope, history_before: "c1" }]);
+    } finally { hook.unmount(); }
+  });
+
+  it("P3 replaces loaded pages with a complete authoritative snapshot", async () => {
+    const hook = await setup();
+    try {
+      await loadFirstPage(hook);
+      const history = [...turn(1), ...turn(2), ...turn(3), ...turn(4)]
+        .map(message => ({ ...message, content: `Snapshot ${message.id}` }));
+      await snapshot(history, null, false);
+      expect(hook.result.current.messages.map(message => [message.id, message.text])).toEqual([
+        ["turn-1-user", "Snapshot turn-1-user"],
+        ["turn-1-assistant", "Snapshot turn-1-assistant"],
+        ["turn-2-user", "Snapshot turn-2-user"],
+        ["turn-2-assistant", "Snapshot turn-2-assistant"],
+        ["turn-3-user", "Snapshot turn-3-user"],
+        ["turn-3-assistant", "Snapshot turn-3-assistant"],
+        ["turn-4-user", "Snapshot turn-4-user"],
+        ["turn-4-assistant", "Snapshot turn-4-assistant"],
+      ]);
+      expect(hook.result.current.hasOlderHistory).toBe(false);
+      act(() => { hook.result.current.loadOlderHistory(); });
+      expect(sent).toEqual([]);
+    } finally { hook.unmount(); }
+  });
+
+  it("P4 ignores unsolicited pages and other scopes while a request is pending", async () => {
+    const hook = await setup();
+    try {
+      await page();
+      expect(hook.result.current.messages.map(message => message.id)).toEqual([
+        "turn-3-user", "turn-3-assistant",
+      ]);
+      expect(hook.result.current.hasOlderHistory).toBe(true);
+      act(() => { hook.result.current.loadOlderHistory(); });
+      await frame({ type: "history.page", scope: { ...scope, id: "other-project" },
+        history: turn(1), before: null, has_more: false });
+      expect(hook.result.current.messages.map(message => message.id)).toEqual([
+        "turn-3-user", "turn-3-assistant",
+      ]);
+      expect(hook.result.current.loadingOlderHistory).toBe(true);
+      await page();
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+      await page(turn(4), null, false);
+      expect(hook.result.current.messages.map(message => message.id)).toEqual(allIds.slice(0, 6));
+      expect(hook.result.current.hasOlderHistory).toBe(true);
+    } finally { hook.unmount(); }
+  });
+});
+
+describe("server-owned running turns", () => {
+  const sockets: TestSocket[] = [];
+  const sent: Record<string, unknown>[] = [];
+  const scope = { kind: "project", id: "running-turn", surface: "director", canvasId: null };
+  class TestSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror = null;
+    onclose = null;
+    constructor() { sockets.push(this); }
+    send(frame: string) { sent.push(JSON.parse(frame)); }
+    close() {}
+  }
+  const frame = async (payload: Record<string, unknown>) => {
+    await act(async () => {
+      sockets[0].onmessage?.({ data: JSON.stringify({ scope, ...payload }) } as MessageEvent);
+    });
+  };
+  const setup = async () => {
+    const hook = renderHook(() => useSuperChat({ project: "running-turn", displayName: "Tester" }));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => { sockets[0].onopen?.(); });
+    sent.length = 0;
+    return hook;
+  };
+  beforeEach(() => {
+    localStorage.clear();
+    apiPostMock.mockClear();
+    sockets.length = 0;
+    sent.length = 0;
+    vi.stubGlobal("WebSocket", TestSocket);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not poll history after a busy scope sync", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "scope.changed", history: [], busy: false });
+      act(() => { expect(hook.result.current.send("Continue")).toBe(true); });
+      const localTurnId = hook.result.current.activeTurnId;
+      sent.length = 0;
+      vi.useFakeTimers();
+      await frame({ type: "scope.changed", history: [], busy: true });
+      expect(hook.result.current.busy).toBe(true);
+      expect(hook.result.current.activeTurnId).toBe(localTurnId);
+      await act(async () => { vi.advanceTimersByTime(6000); });
+      expect(sent.filter(message => message.type === "scope.set")).toEqual([]);
+    } finally { hook.unmount(); }
+  });
+
+  it("stays busy without a turn id until the server reports idle", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "scope.changed", history: [], busy: true });
+      expect(hook.result.current.busy).toBe(true);
+      expect(hook.result.current.activeTurnId).toBeNull();
+      await frame({ type: "scope.changed", history: [], busy: false });
+      expect(hook.result.current.busy).toBe(false);
+    } finally { hook.unmount(); }
+  });
+
+  it("follows a reconnected turn into one assistant message until its done frame", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "scope.changed", history: [], busy: true, turn_id: "t-remote" });
+      expect(hook.result.current.busy).toBe(true);
+      expect(hook.result.current.activeTurnId).toBe("t-remote");
+      const target = { turn_id: "t-remote", message_id: "assistant:remote" };
+      await frame({ type: "chat.item", ...target, item_id: "msg-1",
+        card: { id: "msg-1", type: "text", text: "Hello" } });
+      await frame({ type: "chat.item.delta", ...target, item_id: "msg-1",
+        kind: "text", offset: 5, text: " world" });
+      await frame({ type: "chat.item", ...target, item_id: "msg-2",
+        card: { id: "msg-2", type: "text", text: "Still here" } });
+      expect(hook.result.current.messages.filter(message => message.role === "assistant")
+        .map(message => ({ id: message.id, turnId: message.turnId, text: message.text })))
+        .toEqual([{ id: "assistant:remote", turnId: "t-remote", text: "Hello world\n\nStill here" }]);
+      expect(hook.result.current.busy).toBe(true);
+      await frame({ type: "chat.done", turn_id: "t-remote" });
+      expect(hook.result.current.busy).toBe(false);
+      expect(hook.result.current.activeTurnId).toBeNull();
+    } finally { hook.unmount(); }
+  });
+
+  it.each([false, true])("keeps t-active running when another turn finishes (cancelled=%s)",
+    async (cancelled) => {
+      const hook = await setup();
+      try {
+        await frame({ type: "chat.busy", turn_id: "t-other" });
+        if (cancelled) act(() => { hook.result.current.abort(); });
+        await frame({ type: "chat.item", turn_id: "t-active", message_id: "assistant:active",
+          item_id: "msg-active", card: { id: "msg-active", type: "text", text: "Working" } });
+        await frame({ type: "chat.done", turn_id: "t-other", message: {
+          id: "assistant:other", role: "assistant", content: "Other reply", turn_id: "t-other",
+        } });
+        expect(hook.result.current.busy).toBe(true);
+        expect(hook.result.current.activeTurnId).toBe("t-active");
+        expect(hook.result.current.messages.filter(message => message.role === "assistant")
+          .map(message => ({ turnId: message.turnId, text: message.text })))
+          .toEqual([
+            { turnId: "t-active", text: "Working" },
+            { turnId: "t-other", text: "Other reply" },
+          ]);
+      } finally { hook.unmount(); }
+    });
+
+  it("cancels the server turn after reconnect", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "scope.changed", history: [], busy: true, turn_id: "t-remote" });
+      act(() => { hook.result.current.abort(); });
+      expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/cancel", {
+        json: { scope, turn_id: "t-remote" },
+      });
+    } finally { hook.unmount(); }
+  });
+
+  it("keeps its own active turn when chat.busy names a different turn", async () => {
+    const hook = await setup();
+    try {
+      await frame({ type: "chat.busy", turn_id: "t-active" });
+      expect(hook.result.current.activeTurnId).toBe("t-active");
+      await frame({ type: "chat.busy", turn_id: "t-other" });
+      expect(hook.result.current.activeTurnId).toBe("t-active");
+      expect(hook.result.current.busy).toBe(true);
+      await frame({ type: "chat.done" });
+      expect(hook.result.current.activeTurnId).toBeNull();
+      expect(hook.result.current.busy).toBe(false);
+    } finally { hook.unmount(); }
+  });
+});
+
+it("updates server items for a reply that keeps streaming while the user switches canvas", async () => {
   const sockets: TestSocket[] = [];
   class TestSocket {
     static OPEN = 1;
@@ -7627,130 +7801,36 @@ it("does not write replayed history but saves live edits after reconnect", async
   }
   vi.stubGlobal("WebSocket", TestSocket);
   const hook = renderHook(({ canvas }) => useSuperChat({
-    project: "origin-test", surface: "freezone", freezoneCanvasId: canvas,
+    project: "switch-live", surface: "freezone", freezoneCanvasId: canvas,
     freezoneAgentId: "main", displayName: "Tester",
   }), { initialProps: { canvas: "first" } });
-  await waitFor(() => expect(sockets.length).toBe(1));
-  const scope = (canvas: string) => ({ kind: "project", id: "origin-test", surface: "freezone", canvasId: canvas, agentId: "main" });
-  const history = [{ id: "assistant-origin", role: "assistant", turn_id: "origin-turn", content: "saved", parts: [
-    { id: "thought-origin", type: "agent_thought", event: { type: "agent.thought", text: "historical thought" } },
-  ] }];
-  const replay = async (canvas: string) => {
-    await act(async () => {
-      sockets[0].onopen?.();
-      sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope: scope(canvas), history, busy: false }) } as MessageEvent);
-    });
-  };
-  const writes = () => (apiPostMock.mock.calls as unknown[][]).filter(call => call[0] === "api/v1/chat/ui-events");
-  await replay("first");
-  await replay("first");
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 550)); });
-  expect(writes()).toHaveLength(0);
-  await act(async () => {
-    hook.result.current.upsertAssistantMessagePart({ turnId: "origin-turn" }, {
-      id: "thought-origin", type: "agent_thought", event: { type: "agent.thought", text: "live after reconnect" },
-    });
-  });
-  await waitFor(() => expect(writes()).toHaveLength(1));
-  expect(writes()[0]).toEqual(["api/v1/chat/ui-events", expect.objectContaining({
-    json: expect.objectContaining({ scope: scope("first"), turn_id: "origin-turn" }),
-  })]);
-  await replay("first");
-  hook.rerender({ canvas: "second" });
-  await replay("second");
-  hook.rerender({ canvas: "first" });
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 550)); });
-  expect(writes()).toHaveLength(1);
-  hook.unmount();
-  vi.unstubAllGlobals();
-});
-
-it("tags snapshots from callbacks memoized before a scope switch with the current scope", async () => {
-  apiPostMock.mockClear();
-  const sockets: TestSocket[] = [];
-  class TestSocket {
-    static OPEN = 1;
-    readyState = 1;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onerror = null;
-    onclose = null;
-    constructor() { sockets.push(this); }
-    send() {}
-    close() {}
-  }
-  vi.stubGlobal("WebSocket", TestSocket);
-  const hook = renderHook(({ canvas }) => useSuperChat({
-    project: "scope-switch-test", surface: "freezone", freezoneCanvasId: canvas,
-    freezoneAgentId: "main", displayName: "Tester",
-  }), { initialProps: { canvas: "first" } });
-  await waitFor(() => expect(sockets.length).toBe(1));
-  const scope = (canvas: string) => ({ kind: "project", id: "scope-switch-test", surface: "freezone", canvasId: canvas, agentId: "main" });
-  const history = [{ id: "assistant-switch", role: "assistant", turn_id: "switch-turn", content: "saved", parts: [
-    { id: "thought-switch", type: "agent_thought", event: { type: "agent.thought", text: "before" } },
-  ] }];
-  const replay = async (canvas: string) => {
-    await act(async () => {
-      sockets[0].onopen?.();
-      sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope: scope(canvas), history, busy: false }) } as MessageEvent);
-    });
-  };
-  const writes = () => (apiPostMock.mock.calls as unknown[][]).filter(call => call[0] === "api/v1/chat/ui-events");
-  await replay("first");
-  hook.rerender({ canvas: "second" });
-  await replay("second");
-  await act(async () => {
-    hook.result.current.updateUiEvent(
-      "switch-turn",
-      event => (event as { type?: string } | undefined)?.type === "agent.thought",
-      event => ({ ...(event as object), text: "after switch" }),
-    );
-  });
-  await waitFor(() => expect(writes()).toHaveLength(1));
-  expect(writes()[0]).toEqual(["api/v1/chat/ui-events", expect.objectContaining({
-    json: expect.objectContaining({ scope: scope("second"), turn_id: "switch-turn" }),
-  })]);
-  hook.unmount();
-  vi.unstubAllGlobals();
-});
-
-it("rechecks busy recovery until the old connection has finished cancelling", async () => {
-  const sockets: TestSocket[] = [];
-  const sent: string[] = [];
-  class TestSocket {
-    static OPEN = 1;
-    readyState = 1;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onerror = null;
-    onclose = null;
-    constructor() { sockets.push(this); }
-    send(frame: string) { sent.push(frame); }
-    close() {}
-  }
-  vi.stubGlobal("WebSocket", TestSocket);
-  const hook = renderHook(() => useSuperChat({ project: "recovery-race", displayName: "Tester" }));
   try {
     await waitFor(() => expect(sockets).toHaveLength(1));
-    const scope = { kind: "project", id: "recovery-race", surface: "director" };
-    const sync = async (busy: boolean) => {
-      await act(async () => {
-        sockets[0].onmessage?.({ data: JSON.stringify({ type: "scope.changed", scope, history: [], busy }) } as MessageEvent);
-      });
+    const scope = (canvas: string) => ({ kind: "project", id: "switch-live", surface: "freezone", canvasId: canvas, agentId: "main" });
+    const frame = async (payload: Record<string, unknown>) => {
+      await act(async () => { sockets[0].onmessage?.({ data: JSON.stringify(payload) } as MessageEvent); });
     };
+    const sync = (canvas: string, busy: boolean, history: unknown[] = []) =>
+      frame({ type: "scope.changed", scope: scope(canvas), history, busy });
     await act(async () => { sockets[0].onopen?.(); });
-    await sync(false);
-    act(() => { hook.result.current.send("test recovery"); });
-    await sync(true);
-    expect(hook.result.current.busy).toBe(true);
-    const before = sent.length;
-    await waitFor(() => expect(sent.length).toBeGreaterThan(before), { timeout: 3500 });
-    expect(JSON.parse(sent[sent.length - 1]).type).toBe("scope.set");
-    await sync(false);
-    expect(hook.result.current.busy).toBe(false);
-    const after = sent.length;
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
-    expect(sent).toHaveLength(after);
+    await sync("first", false);
+    act(() => { hook.result.current.send("go"); });
+    const turnId = hook.result.current.activeTurnId;
+    const reply = () => hook.result.current.messages.find((m) => m.role === "assistant")?.text;
+    await frame({ type: "chat.item", scope: scope("first"), turn_id: turnId,
+      message_id: "assistant:live", item_id: "msg-live",
+      card: { id: "msg-live", type: "text", text: "Hello wor" } });
+    expect(reply()).toBe("Hello wor");
+    hook.rerender({ canvas: "second" });
+    await sync("second", false);
+    await frame({ type: "chat.item.delta", scope: scope("first"), turn_id: turnId,
+      message_id: "assistant:live", item_id: "msg-live", kind: "text", offset: 9, text: "ld, how are" });
+    hook.rerender({ canvas: "first" });
+    const history = [{ id: "user-live", role: "user", turn_id: turnId, content: "go", created_at: new Date().toISOString() }];
+    await sync("first", true, history);
+    await frame({ type: "chat.item.delta", scope: scope("first"), turn_id: turnId,
+      message_id: "assistant:live", item_id: "msg-live", kind: "text", offset: 20, text: " you" });
+    expect(reply()).toBe("Hello world, how are you");
   } finally {
     hook.unmount();
     vi.unstubAllGlobals();
@@ -7759,7 +7839,6 @@ it("rechecks busy recovery until the old connection has finished cancelling", as
 
 it("keeps a turn that is still streaming on this connection busy across recovery syncs", async () => {
   const sockets: TestSocket[] = [];
-  const sent: string[] = [];
   class TestSocket {
     static OPEN = 1;
     readyState = 1;
@@ -7768,7 +7847,7 @@ it("keeps a turn that is still streaming on this connection busy across recovery
     onerror = null;
     onclose = null;
     constructor() { sockets.push(this); }
-    send(frame: string) { sent.push(frame); }
+    send() {}
     close() {}
   }
   vi.stubGlobal("WebSocket", TestSocket);
@@ -7795,15 +7874,13 @@ it("keeps a turn that is still streaming on this connection busy across recovery
     const history = [{ id: "user-live", role: "user", turn_id: turnId, content: "keep running",
       created_at: new Date().toISOString() }];
     await sync("first", true, history);
-    await frame({ type: "assistant.delta", scope: scope("first"), turn_id: turnId, text: "partial reply" });
+    await frame({ type: "chat.item", scope: scope("first"), turn_id: turnId,
+      message_id: "assistant:live", item_id: "msg-live",
+      card: { id: "msg-live", type: "text", text: "partial reply" } });
     await frame({ type: "assistant.clarification.event", scope: scope("first"), turn_id: turnId,
       bridge_key: "live-clarify", event: { type: "assistant.clarification.request",
         bridge_key: "live-clarify", clarification_id: "live", questions: [] } });
     expect(hook.result.current.busy).toBe(true);
-    // Live frames on this connection stop recovery polling.
-    const before = sent.length;
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2100)); });
-    expect(sent.slice(before).map(raw => JSON.parse(raw).type)).not.toContain("scope.set");
     // A busy=true sync already in flight must not end the live turn.
     await sync("first", true, history);
     expect(hook.result.current.busy).toBe(true);

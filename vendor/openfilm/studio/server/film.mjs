@@ -7,13 +7,17 @@
  * index move whenever the agent rewrites the file); every operation names the clip by its id. An edit carries the
  * revision it was made against; when the file changed since, the operations are replayed on the newer file, and any
  * that names a clip no longer there fails the whole edit instead of landing on another clip.
+ *
+ * The agent writes with its own tools, often the whole file from a copy it read earlier: a write that is not Studio's
+ * is merged with the person's edits made since (person-edits.mjs) before Studio reads it for anything
+ * (settleProjectFilm), so the person's edits stay.
  */
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FILM_FILE, filmHtml, readFilm, readFilmFile } from '../../src/film-doc.mjs';
 import { EditError, applyOps } from './ops.mjs';
-import { writeAtomic } from './atomic.mjs';
+import { filmMerged, filmToMerge, filmWritten, keepAside, mergeFilmWrite, replaceIfStill } from './person-edits.mjs';
 
 export { EditError };
 
@@ -60,32 +64,101 @@ export async function pageClipLook(root, id) {
   return null;
 }
 
+/** @type {Map<string, Promise<unknown>>} each project's reads and writes of film.html, one at a time */
+const queues = new Map();
+/** @template T @param {string} root @param {() => Promise<T>} job @returns {Promise<T>} */
+function serial(root, job) {
+  const next = (queues.get(root) ?? Promise.resolve()).then(job);
+  const settled = next.catch(() => {});
+  queues.set(root, settled);
+  void settled.then(() => { if (queues.get(root) === settled) queues.delete(root); });
+  return next;
+}
+
+/** How long an outside write of film.html must stay the same bytes to be taken as finished. */
+const STABLE_MS = 150;
+/** A text cut off inside a tag: a write still on its way. */
+const insideTag = (/** @type {string} */ text) => text.lastIndexOf('<') > text.lastIndexOf('>');
+
 /**
- * film.html as Studio writes it: over `before` (its text as read), so what did not change stays as it was, through a
- * temporary file so no reader sees half.
- * @param {string} root @param {FilmValue} value @param {string} [before]
+ * The film as the folder has it, once a write of someone else's (the agent's) is merged with the person's edits made
+ * since (person-edits.mjs): what Studio reads the film as. A file that does not read, or is cut off inside a tag (the
+ * agent is writing it), is left alone and merged once it is whole. `stable` (the folder watcher's): a write to merge is
+ * first left to settle, the same bytes read twice STABLE_MS apart, since a file cut off between two clips still reads
+ * as a film; reads and edits never wait. Before the merge is written, the agent's text and the merge are kept aside in
+ * the project's history, so a merge can always be undone by hand; it is written only over the text it was made from.
+ * @param {string} root @param {{ stable?: boolean }} [o] @returns {ReturnType<typeof readProjectFilm>}
  */
-export async function writeProjectFilm(root, value, before = '') {
-  const text = filmHtml(value, before);
-  const path = join(root, FILM_FILE);
-  await writeAtomic(path, text);
-  return { text, rev: revOf(text) };
+export function settleProjectFilm(root, { stable = false } = {}) {
+  return serial(root, () => settle(root, stable));
+}
+
+/** @returns {ReturnType<typeof readProjectFilm>} */
+async function settle(/** @type {string} */ root, stable = false, tries = 0) {
+  const current = await readProjectFilm(root);
+  if (!current.value || insideTag(current.text)) return current;
+  if (stable && tries < 20 && filmToMerge(root, current.rev)) {
+    await new Promise((done) => setTimeout(done, STABLE_MS));
+    const again = await readFile(join(root, FILM_FILE), 'utf8').catch(() => null);
+    if (again !== current.text) return settle(root, stable, tries + 1);
+  }
+  const merge = await mergeFilmWrite(root, { rev: current.rev, value: current.value });
+  if (!merge || !readFilm(merge.value).doc) return current;
+  const text = filmHtml(merge.value, current.text);
+  await keepAside(root, { 'agent.html': current.text, 'merged.html': text }, `Kept the person's edits over a write of film.html: ${merge.kept.map((k) => k.words).join('; ')}`);
+  /* written again meanwhile: that write is the one to merge */
+  if (!(await replaceIfStill(join(root, FILM_FILE), current.text, text))) return settle(root, stable, tries + 1);
+  const rev = revOf(text);
+  filmMerged(root, merge.value, rev, merge.kept);
+  const { doc, problems } = readFilm(merge.value);
+  /* the merged value is what the file reads as (it is written from it): not read again, which takes long in a long film */
+  return { text, rev, value: /** @type {typeof current.value} */ (/** @type {unknown} */ (merge.value)), doc, problems };
+}
+
+/**
+ * Change the film on disk as Studio does for the person, once any write of someone else's is merged: `change` gets
+ * its value to change (a copy) and returns whether it changed it. Written only over the text it was read as (else it
+ * is done again on the newer file), and recorded as the person's edit (person-edits.mjs) with the edit's `ops` when
+ * there are some; an `undo` is done with the edits it puts back. Null when nothing changed.
+ * @template {{ value: FilmValue }} R
+ * @param {string} root @param {(value: FilmValue, current: Awaited<ReturnType<typeof readProjectFilm>>) => R | null} change
+ * @param {{ ops?: Op[], undo?: boolean }} [edit]
+ * @returns {Promise<(R & { text: string, rev: string, current: Awaited<ReturnType<typeof readProjectFilm>> }) | null>}
+ */
+export function changeProjectFilm(root, change, edit = {}) {
+  return serial(root, async () => {
+    for (let tries = 0; ; tries++) {
+      const current = await settle(root);
+      const made = change(/** @type {FilmValue} */ (structuredClone(current.value ?? EMPTY_FILM)), current);
+      if (!made) return null;
+      const text = filmHtml(made.value, current.text);
+      if (await replaceIfStill(join(root, FILM_FILE), current.text, text)) {
+        const rev = revOf(text);
+        filmWritten(root, current.value, made.value, rev, edit);
+        return { ...made, text, rev, current };
+      }
+      if (tries >= 10) throw new EditError(`${FILM_FILE} keeps changing: try again`, 'conflict');
+    }
+  });
 }
 
 /**
  * Apply an edit to the film on disk. `base` is the revision the edit was made against; a newer file gets the same
  * operations by clip id. Returns the new text, revision, the value written and the checked edit. Throws EditError:
- * `conflict` when an operation names a clip that is gone, `invalid` when the result is not a film.
- * @param {string} root @param {string | null} base @param {Op[]} ops
+ * `conflict` when an operation names a clip that is gone, `invalid` when the result is not a film. `undo`: the edit
+ * puts back an earlier one of the person's.
+ * @param {string} root @param {string | null} base @param {Op[]} ops @param {{ undo?: boolean }} [o]
  */
-export async function editProjectFilm(root, base, ops) {
-  const current = await readProjectFilm(root);
-  /* a film.html that does not read is the agent's to fix: Studio never writes over it */
-  if (!current.value && current.text.trim()) throw new EditError(current.problems.join('\n'), 'invalid');
-  const value = applyOps(/** @type {FilmValue} */ (structuredClone(current.value ?? EMPTY_FILM)), ops);
-  const { doc, problems } = readFilm(value);
-  if (!doc) throw new EditError(problems.join('\n'), 'invalid');
-  const written = await writeProjectFilm(root, /** @type {FilmValue} */ (value), current.text);
-  return { ...written, value, doc, rebased: base != null && base !== current.rev };
+export async function editProjectFilm(root, base, ops, { undo = false } = {}) {
+  const done = await changeProjectFilm(root, (start, current) => {
+    /* a film.html that does not read is the agent's to fix: Studio never writes over it */
+    if (!current.value && current.text.trim()) throw new EditError(current.problems.join('\n'), 'invalid');
+    const value = applyOps(start, ops);
+    const { doc, problems } = readFilm(value);
+    if (!doc) throw new EditError(problems.join('\n'), 'invalid');
+    return { value, doc };
+  }, { ops, undo });
+  if (!done) throw new EditError('nothing to edit', 'invalid');
+  return { text: done.text, rev: done.rev, value: done.value, doc: done.doc, rebased: base != null && base !== done.current.rev };
 }
 

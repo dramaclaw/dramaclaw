@@ -43,6 +43,8 @@ _BASE_FILTER_RULES = (
     "- *.snapshot.tmp",
     "- *.tmp",
     "- **/freezone/canvases/_locks/**",
+    "- **/freezone/canvas_changes/**",
+    "- **/freezone/canvas_presence/**",
     *(
         f"- {home}/{path}"
         for home in _HERMES_HOME_FILTER_GLOBS

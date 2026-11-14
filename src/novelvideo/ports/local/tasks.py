@@ -6,7 +6,6 @@ import asyncio
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from functools import partial
 import logging
 import random
 import threading
@@ -30,11 +29,21 @@ from novelvideo.task_backend.limits import (
     project_lane_effective_active_limit,
 )
 from novelvideo.task_backend.queues import QUEUE_KINDS, normalize_queue_kind
-from novelvideo.task_backend.run_core import run_project_task_core_sync
+from novelvideo.task_backend.run_core import (
+    run_project_task_core_sync,
+    signed_billing_feature_key,
+)
 from novelvideo.task_backend.subprocesses import kill_task_processes
-from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
+from novelvideo.task_owner import current_owner
+from novelvideo.task_state import (
+    ACTIVE_PROJECT_TASK_STATUSES,
+    LANE_EXEMPT_TASK_TYPES,
+    get_task_manager,
+)
 
 logger = logging.getLogger(__name__)
+_LANE_THREAD = threading.local()
+_ORCHESTRATION_POOL = "orchestration"
 
 _AUTHZ_RETRY_MAX_RETRIES = 5
 _AUTHZ_RETRY_BASE_DELAY = 2.0
@@ -69,6 +78,7 @@ class _InlineLane:
 
 class InlineTaskBackend:
     def __init__(self, *, producer=None, consumer=None) -> None:
+        self._home_loop: asyncio.AbstractEventLoop | None = None
         self._producer = producer
         self._consumer = consumer
         self._background_tasks: set[asyncio.Task] = set()
@@ -84,6 +94,27 @@ class InlineTaskBackend:
             )
             for lane in sorted(QUEUE_KINDS)
         }
+        # Orchestrations wait for child tasks without occupying their execution lanes.
+        # A separate bounded pool keeps those children able to run when parents fill it.
+        self._lanes[_ORCHESTRATION_POOL] = _InlineLane(
+            name=_ORCHESTRATION_POOL,
+            concurrency=global_lane_concurrency("default"),
+            queue_limit=global_lane_queue_limit("default"),
+            executor=ThreadPoolExecutor(
+                max_workers=global_lane_concurrency("default"),
+                thread_name_prefix="inline-orchestration",
+            ),
+        )
+
+    def _forward_loop(self) -> asyncio.AbstractEventLoop | None:
+        loop = asyncio.get_running_loop()
+        if (
+            self._home_loop is None or self._home_loop.is_closed()
+        ) and not getattr(_LANE_THREAD, "active", False):
+            self._home_loop = loop
+        if self._home_loop is not None and self._home_loop is not loop:
+            return self._home_loop
+        return None
 
     async def enqueue_project_task(
         self,
@@ -97,17 +128,30 @@ class InlineTaskBackend:
         scope: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> QueuedTask:
+        home_loop = self._forward_loop()
+        if home_loop is not None:
+            return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
+                self.enqueue_project_task(
+                    ctx, task_type=task_type, product_surface=product_surface,
+                    queue_kind=queue_kind, episode=episode, beat_num=beat_num,
+                    scope=scope, payload=payload,
+                ), home_loop,
+            ))
         require_project_home_node(ctx, operation="enqueue project task")
         manager = get_task_manager()
         payload = payload or {}
         lane_name = normalize_queue_kind(queue_kind)
         metadata = {
             "backend": "inline",
+            "owner": current_owner(),
             "queue_kind": lane_name,
             "project_id": ctx.project_id,
             "product_surface": product_surface,
             **display_metadata_for_task(task_type, payload),
         }
+        feature_key = signed_billing_feature_key(payload)
+        if feature_key:
+            metadata["billing_feature_key"] = feature_key
         project_lane_limit = project_lane_effective_active_limit(
             lane_name,
             eligible_user_count=1,
@@ -118,7 +162,7 @@ class InlineTaskBackend:
             episode,
             beat_num=beat_num,
             scope=scope,
-            metadata={},
+            metadata=metadata,
             queue_kind=lane_name,
             project_lane_limit=project_lane_limit,
         )
@@ -222,7 +266,13 @@ class InlineTaskBackend:
         }
 
     def _submit_lane_job(self, job: _InlineLaneJob) -> None:
-        lane = self._lanes[normalize_queue_kind(job.envelope.get("queue_kind"))]
+        queue_kind = normalize_queue_kind(job.envelope.get("queue_kind"))
+        pool_name = (
+            _ORCHESTRATION_POOL
+            if job.envelope["task_type"] in LANE_EXEMPT_TASK_TYPES
+            else queue_kind
+        )
+        lane = self._lanes[pool_name]
         if lane.active < lane.concurrency:
             self._start_lane_job(lane, job)
             return
@@ -233,13 +283,13 @@ class InlineTaskBackend:
                 int(job.envelope.get("episode") or 0),
                 beat_num=job.envelope.get("beat_num"),
                 scope=job.envelope.get("scope"),
-                error=f"{lane.name} lane queue is full",
+                error=f"{queue_kind} lane queue is full",
                 metadata=job.metadata,
                 expected_task_id=job.run_task_id,
             )
             raise GlobalLaneQueueLimitExceeded(
                 project_id=job.project_id,
-                queue_kind=lane.name,
+                queue_kind=queue_kind,
                 limit=lane.queue_limit,
                 queued=len(lane.queued),
             )
@@ -328,18 +378,17 @@ class InlineTaskBackend:
             )
             return
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            lane.executor,
-            partial(
-                run_project_task_core_sync,
-                verified,
-                job.ctx,
-                job.manager,
-                run_task_id=job.run_task_id,
-                metadata=job.metadata,
-            ),
-        )
+        def run_in_lane_thread():
+            _LANE_THREAD.active = True
+            try:
+                return run_project_task_core_sync(
+                    verified, job.ctx, job.manager,
+                    run_task_id=job.run_task_id, metadata=job.metadata,
+                )
+            finally:
+                _LANE_THREAD.active = False
+
+        await asyncio.get_running_loop().run_in_executor(lane.executor, run_in_lane_thread)
 
     def _on_background_task_done(self, task: asyncio.Task, lane_name: str) -> None:
         self._background_tasks.discard(task)
@@ -368,6 +417,13 @@ class InlineTaskBackend:
         force: bool = False,
         acknowledge_no_refund: bool = False,
     ) -> dict:
+        home_loop = self._forward_loop()
+        if home_loop is not None:
+            return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
+                self.cancel_project_task(
+                    ctx, task_state, force=force, acknowledge_no_refund=acknowledge_no_refund,
+                ), home_loop,
+            ))
         del force, acknowledge_no_refund
         await get_cancellation_store().request_cancel(
             project_id=ctx.project_id,

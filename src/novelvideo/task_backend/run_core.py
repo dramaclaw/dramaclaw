@@ -48,7 +48,7 @@ from novelvideo.task_backend.registry import (
 )
 from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS, read_projection
 from novelvideo.task_backend.subprocesses import project_task_subprocess_context
-from novelvideo.task_state import project_task_run_context
+from novelvideo.task_state import TaskState, project_task_run_context
 from novelvideo.utils.document_parsers import count_billable_text_chars
 
 logger = logging.getLogger(__name__)
@@ -275,6 +275,17 @@ def _without_settlement_handles(metadata: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def signed_billing_feature_key(payload: Any) -> str:
+    """Extract the feature key carried by the signed task payload."""
+    payload = payload if type(payload) is dict else {}
+    billing = payload.get("billing")
+    return (
+        str(billing.get("feature_key") or "").strip()
+        if type(billing) is dict and type(billing.get("feature_key")) is str
+        else ""
+    )
+
+
 async def _resolve_feature_reservation_id(
     delivery: VerifiedTaskDelivery,
     *,
@@ -283,13 +294,6 @@ async def _resolve_feature_reservation_id(
     beat_num: Any,
     scope: Any,
 ) -> FeatureSettlementResolution:
-    payload = delivery.payload if type(delivery.payload) is dict else {}
-    billing = payload.get("billing")
-    signed_feature_key = (
-        str(billing.get("feature_key") or "").strip()
-        if type(billing) is dict and type(billing.get("feature_key")) is str
-        else ""
-    )
     identity = VerifiedTaskSettlementIdentity(
         root_task_id=delivery.admission.root_task_id,
         project_id=delivery.project_id,
@@ -298,7 +302,7 @@ async def _resolve_feature_reservation_id(
         episode=episode,
         beat_num=beat_num if type(beat_num) is int else None,
         scope=scope if type(scope) is str else None,
-        feature_key=signed_feature_key,
+        feature_key=signed_billing_feature_key(delivery.payload),
     )
     resolution = await get_usage_meter().resolve_feature_credit_reservation(identity)
     if resolution.outcome == "resolved":
@@ -498,6 +502,39 @@ async def refund_undelivered_feature_credit_reservation(
         )
         return SettlementIntentResult(accepted=False, retryable=True)
     return SettlementIntentResult(accepted=True, retryable=False)
+
+
+async def release_interrupted_inline_task_reservation(task: TaskState) -> None:
+    """Refund an interrupted inline task whose owner cannot settle it anymore."""
+    feature_key = (task.metadata or {}).get("billing_feature_key")
+    identity = VerifiedTaskSettlementIdentity(
+        root_task_id=task.task_id,
+        project_id=task.project_id,
+        requester_user_id=task.requester_user_id,
+        task_type=task.task_type,
+        episode=task.episode,
+        beat_num=task.beat_num if type(task.beat_num) is int else None,
+        scope=task.scope if type(task.scope) is str else None,
+        feature_key=feature_key if type(feature_key) is str else "",
+    )
+    try:
+        resolution = await get_usage_meter().resolve_feature_credit_reservation(identity)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "feature_credit_settlement_adapter_failure",
+            extra={
+                "settlement_action": "refund",
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
+        )
+        return
+    if resolution.outcome == "resolved":
+        await refund_undelivered_feature_credit_reservation(
+            resolution.reservation_id, metadata={"source": "task_owner_exited"},
+        )
+    elif resolution.outcome != "not_applicable":
+        logger.warning("interrupted inline task reservation resolution rejected")
 
 
 _refund_undelivered_feature_credit_reservation = (

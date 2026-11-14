@@ -6,9 +6,11 @@ import { apiCall, apiCallEnvelope } from "@/api/client";
 import {
   buildProjectionFromPreset,
   admitFreezoneRecipeResult,
-  createBlankFreezoneCanvas,
+  createFreezoneCanvas,
   getFreezoneCanvas,
   getProjectionStatuses,
+  generateClientSaveId,
+  isOwnClientSaveId,
   listFreezoneWorkflowRuns,
   putFreezoneCanvas,
 } from "@/api/canvas";
@@ -18,6 +20,28 @@ vi.mock("@/api/client", () => ({
   // 画布详情走整信封:`foreign_media` 挂在 `data` 同级,只解一层的 apiCall 会丢掉它。
   apiCallEnvelope: vi.fn(),
 }));
+
+describe("canvas client save ids", () => {
+  it("recognizes generated ids and rejects other values", () => {
+    const id = generateClientSaveId();
+    expect(isOwnClientSaveId(id)).toBe(true);
+    expect(isOwnClientSaveId("another-tab-save")).toBe(false);
+    expect(isOwnClientSaveId(null)).toBe(false);
+    expect(isOwnClientSaveId(undefined)).toBe(false);
+    expect(isOwnClientSaveId(1)).toBe(false);
+    expect(isOwnClientSaveId({ id })).toBe(false);
+  });
+
+  it("forgets an id only after 100 newer ids", () => {
+    const oldest = generateClientSaveId();
+    const newer = Array.from({ length: 99 }, () => generateClientSaveId());
+    expect(isOwnClientSaveId(oldest)).toBe(true);
+    const newest = generateClientSaveId();
+    expect(isOwnClientSaveId(oldest)).toBe(false);
+    expect(newer.every(isOwnClientSaveId)).toBe(true);
+    expect(isOwnClientSaveId(newest)).toBe(true);
+  });
+});
 
 describe("canvas projection api", () => {
   beforeEach(() => {
@@ -141,40 +165,25 @@ describe("canvas projection api", () => {
     ]);
   });
 
-  it("creates a named blank canvas with creator metadata", async () => {
-    vi.mocked(apiCall).mockResolvedValueOnce({
-      saved: true,
+  it("creates a canvas through the server create route", async () => {
+    const response = {
+      status: "created",
+      canvas_id: "canvas_story_lab_abc123",
+      display_name: "Story lab",
       revision: 1,
-    });
+    };
+    vi.mocked(apiCall).mockResolvedValueOnce(response);
 
-    await createBlankFreezoneCanvas("project-a", {
-      canvasId: "canvas_story_lab_abc123",
-      name: "故事实验",
-      creatorUsername: "alice",
+    const result = await createFreezoneCanvas("project a", {
+      name: "Story lab", request_id: "req-1", locale: "en",
     });
 
     expect(apiCall).toHaveBeenCalledTimes(1);
     expect(vi.mocked(apiCall).mock.calls[0]).toEqual([
-      "projects/project-a/freezone/canvases/canvas_story_lab_abc123",
-      {
-        method: "PUT",
-        json: expect.objectContaining({
-          schema_version: 2,
-          canvas_id: "canvas_story_lab_abc123",
-          project_id: "project-a",
-          base_revision: null,
-          save_source: "manual_save",
-          nodes: [],
-          edges: [],
-          viewport: null,
-          metadata: {
-            canvas_origin: "user_created",
-            display_name: "故事实验",
-            creator_username: "alice",
-          },
-        }),
-      },
+      "projects/project%20a/freezone/canvases:create",
+      { method: "POST", json: { name: "Story lab", request_id: "req-1", locale: "en" } },
     ]);
+    expect(result).toBe(response);
   });
 
   it("coalesces concurrent workflow-run polling for the same canvas", async () => {

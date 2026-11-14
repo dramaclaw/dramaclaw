@@ -137,9 +137,7 @@ export function PendingOutlineCard({
   }, [dismissalStorageKey, dismissalToken]);
 
   const refreshCanvas = useCallback(async () => {
-    return await refreshRemoteFreezoneCanvas(projectId, canvasId, {
-      protectUnsavedLocalEdits: true,
-    });
+    return await refreshRemoteFreezoneCanvas(projectId, canvasId);
   }, [canvasId, projectId]);
 
   const attempt = useCallback(

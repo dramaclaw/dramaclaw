@@ -1,5 +1,5 @@
 diff --git a/packages/openfilm/studio/ui/src/App.tsx b/packages/openfilm/studio/ui/src/App.tsx
-index bb1e431..9578f15 100644
+index bb1e431..bc9df07 100644
 --- a/packages/openfilm/studio/ui/src/App.tsx
 +++ b/packages/openfilm/studio/ui/src/App.tsx
 @@ -25,10 +25,16 @@ import { LIST_WAIT_MS, within } from './lib/projects-page';

@@ -175,38 +175,40 @@ function hydrateMessagePartEvents(
   return changed ? nextParts : parts;
 }
 
+export function normalizeMessagePart(part: unknown, index = 0): ChatMessagePart | null {
+  if (!part || typeof part !== "object" || Array.isArray(part)) return null;
+  const raw = part as Record<string, unknown>;
+  const type = raw.type;
+  const id = normalizeId(raw.id) ?? `part-${index}`;
+  const seq = typeof raw.seq === "number" && Number.isFinite(raw.seq) ? raw.seq : undefined;
+  if (type === "tool_status" && isHiddenCanvasWriteToolStatusPart(raw.event)) return null;
+  if (type === "text") {
+    const text = typeof raw.text === "string" ? raw.text : "";
+    return { id, type: "text", text, ...(seq == null ? {} : { seq }) };
+  }
+  if (
+    type === "skill_studio" ||
+    type === "clarification" ||
+    type === "canvas_approval" ||
+    type === "canvas_feedback" ||
+    type === "canvas_context" ||
+    type === "tool_status" ||
+    type === "agent_plan" ||
+    type === "agent_thought" ||
+    type === "agent_usage" ||
+    type === "context_compaction"
+  ) {
+    return { id, type, event: raw.event, ...(seq == null ? {} : { seq }) };
+  }
+  return null;
+}
+
 function normalizeMessageParts(value: Record<string, unknown>): ChatMessagePart[] | undefined {
-  const rawParts = Array.isArray(value.parts)
-    ? value.parts
-    : Array.isArray(value.message_parts)
-      ? value.message_parts
-      : undefined;
+  const rawParts = Array.isArray(value.parts) ? value.parts : undefined;
   if (!rawParts) return undefined;
-  const parts = rawParts.flatMap((part, index): ChatMessagePart[] => {
-    if (!part || typeof part !== "object" || Array.isArray(part)) return [];
-    const raw = part as Record<string, unknown>;
-    const type = raw.type;
-    const id = normalizeId(raw.id) ?? `part-${index}`;
-    const seq = typeof raw.seq === "number" && Number.isFinite(raw.seq) ? raw.seq : undefined;
-    if (type === "tool_status" && isHiddenCanvasWriteToolStatusPart(raw.event)) return [];
-    if (type === "text") {
-      const text = typeof raw.text === "string" ? raw.text : "";
-      return text ? [{ id, type: "text", text, ...(seq == null ? {} : { seq }) }] : [];
-    }
-    if (
-      type === "skill_studio" ||
-      type === "clarification" ||
-      type === "canvas_approval" ||
-      type === "canvas_feedback" ||
-      type === "canvas_context" ||
-      type === "tool_status" ||
-      type === "agent_plan" ||
-      type === "agent_thought" ||
-      type === "agent_usage"
-    ) {
-      return [{ id, type, event: raw.event, ...(seq == null ? {} : { seq }) }];
-    }
-    return [];
+  const parts = rawParts.flatMap((part, index) => {
+    const normalized = normalizeMessagePart(part, index);
+    return normalized ? [normalized] : [];
   });
   return parts.length > 0 ? parts : undefined;
 }
@@ -292,7 +294,20 @@ export function normalizeMessage(message: unknown, fallbackRole: ChatRole = "ass
   return { id, role, text, turnId, displayName, attachments, parts, uiEvents, timestamp, raw: message };
 }
 
+const INLINE_DATA_RE = /^\s*data:/i;
+
+/**
+ * History attachments carry addresses only. A stored `data:` value is dropped
+ * here, and only the count is logged, never the payload.
+ */
 function extractAttachments(value: Record<string, unknown>): ChatAttachment[] {
+  let droppedInlineData = 0;
+  const addressOrUndefined = (candidate: unknown): string | undefined => {
+    if (typeof candidate !== "string") return undefined;
+    if (!INLINE_DATA_RE.test(candidate)) return candidate;
+    droppedInlineData += 1;
+    return undefined;
+  };
   const contentAttachments = Array.isArray(value.content)
     ? value.content
     .filter((block) => block && typeof block === "object")
@@ -308,13 +323,11 @@ function extractAttachments(value: Record<string, unknown>): ChatAttachment[] {
           : typeof source.media_type === "string"
             ? source.media_type
             : undefined;
-      const data = typeof source.data === "string" ? source.data : undefined;
       return {
         id: typeof block.id === "string" ? block.id : undefined,
         type: typeof block.type === "string" ? block.type : undefined,
         mimeType,
         fileName: typeof block.fileName === "string" ? block.fileName : undefined,
-        content: data,
       };
     })
     : [];
@@ -324,8 +337,8 @@ function extractAttachments(value: Record<string, unknown>): ChatAttachment[] {
         .filter((item) => item && typeof item === "object")
         .map((item) => item as Record<string, unknown>)
         .map((item): ChatAttachment => {
-          const url = typeof item.url === "string" ? item.url : undefined;
-          const path = typeof item.path === "string" ? item.path : undefined;
+          const url = addressOrUndefined(item.url);
+          const path = addressOrUndefined(item.path);
           const label = typeof item.label === "string" ? item.label : undefined;
           const kind = mediaKindToType(item.kind) ?? "file";
           return {
@@ -341,6 +354,9 @@ function extractAttachments(value: Record<string, unknown>): ChatAttachment[] {
         })
     : [];
 
+  if (droppedInlineData > 0) {
+    console.warn("[superchat] dropped %d inline data value(s) from chat history", droppedInlineData);
+  }
   return [...contentAttachments, ...mediaAttachments];
 }
 

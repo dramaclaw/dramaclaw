@@ -9,16 +9,30 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import logging
 import time
 import uuid
+from collections.abc import Coroutine
 from dataclasses import replace
-from typing import Any
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import AliasChoices, BaseModel, Field
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import FileResponse
+from pydantic import AliasChoices, BaseModel, Field, field_validator
+from sse_starlette.sse import AppStatus
 
 from novelvideo.api.auth import (
     AGENT_WRITE_SCOPES,
@@ -31,7 +45,12 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.chat import service as chat_service
-from novelvideo.chat.backend_sdk import CodexThreadBusyError
+from novelvideo.chat.backend_sdk import (
+    CODEX_MALFORMED_TOOL_CALL_MESSAGE,
+    CodexMalformedToolCallError,
+    CodexThreadBusyError,
+    _is_malformed_tool_call_error,
+)
 from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.hermes_egress import EgressBoundaryError
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
@@ -41,15 +60,27 @@ from novelvideo.chat.live_events import (
     register_chat_websocket,
     unregister_chat_websocket,
 )
+from novelvideo.chat.home_uploads import resolve_home_upload, save_home_upload
+from novelvideo.chat.history_page import HistoryPage, read_history_page
 from novelvideo.chat.hermes_workspace import (
     ensure_user_hermes_workspace,
     sync_freezone_hermes_workflow_skills,
 )
-from novelvideo.chat.store import ChatScope, ChatUiEventRejected, chat_store
-from novelvideo.chat.turn_images import referenced_image_paths
+from novelvideo.chat.store import ChatScope, chat_store
+from novelvideo.chat.stream_delta import AssistantDeltaEncoder
+from novelvideo.chat.turn_images import CANVAS_NODE_REFERENCE_TYPE, referenced_image_paths
+from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
+from novelvideo.freezone.workflow_draft_delivery import (
+    record_workflow_draft_delivery,
+    release_unapplied_workflow_draft,
+    workflow_draft_identity,
+)
+from novelvideo.freezone.canvas_change_watch import canvas_change_watch_hub
+from novelvideo.freezone.canvas_changes import canvas_changes_dir, read_canvas_changes
 from novelvideo.freezone.canvas_command_bridge import (
     BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
+    canvas_command_idempotency_key,
     claim_legacy_bridge_message,
     expire_bridge_messages,
     list_pending_bridge_messages,
@@ -61,7 +92,21 @@ from novelvideo.freezone.canvas_command_bridge import (
     resolve_canvas_context,
     resolve_skill_studio_result,
 )
+from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
+from novelvideo.freezone.agent_canvas_metrics import observe as observe_canvas_metric
+from novelvideo.freezone.canvas_confirmations import (
+    CONFIRMATIONS_DIRNAME,
+    CanvasConfirmationError,
+    command_hash,
+    confirmation_kinds,
+    finish_confirmation,
+    verify_confirmed,
+    void_confirmation,
+)
 from novelvideo.freezone.canvas_command_watch import bridge_watch_hub
+from novelvideo.freezone.canvas_presence import remove_canvas_presence, touch_canvas_presence
+from novelvideo.freezone.canvas_store import read_canvas
+from novelvideo.freezone.canvas_ui_locale import record_ui_locale
 from novelvideo.freezone.agent_config_store import save_user_agent_config_item
 from novelvideo.freezone.agent_product_operations import AGENT_PRODUCT_PRICE_REFERENCE
 from novelvideo.ports import get_product_surface_access, get_usage_meter
@@ -83,12 +128,14 @@ from novelvideo.shared.billing_errors import (
     insufficient_credits_payload,
 )
 from novelvideo.utils.error_redaction import safe_exception_message
+from novelvideo.utils.upload_safety import UploadTooLargeError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 AI_ASSISTANT_CHAT_FEATURE_KEY = "assistant.chat"
 EMPTY_AGENT_REPLY_MESSAGE = "这轮操作没有收到虾导的有效回复，请稍后重试。"
+_SHUTDOWN_POLL_INTERVAL_SECONDS = 0.5
 
 # 出网台账里这条链路的 capability 口径。取自
 # `chat/hermes_egress.py:131` 的 `capability="agent.hermes.text"`，与 EG-07 对齐；
@@ -111,6 +158,8 @@ def _user_facing_chat_error(exc: BaseException) -> str:
         return "本地助手运行时不可用：请重启应用；若仍失败，请更新应用并导出诊断日志。"
 
     raw = safe_exception_message(exc).strip()
+    if isinstance(exc, CodexMalformedToolCallError) or _is_malformed_tool_call_error(raw):
+        return CODEX_MALFORMED_TOOL_CALL_MESSAGE
     lowered = raw.lower()
     if "reasoning is mandatory" in lowered and "cannot be disabled" in lowered:
         return _REASONING_REQUIRED_ERROR_MESSAGE
@@ -158,7 +207,6 @@ async def cancel_chat_turn(
     """
     username = str(user["username"])
     backend_name: str | None = None
-    safe_to_recover_home_lock = False
     try:
         backend_name = chat_service.get_chat_backend_name()
     except Exception:
@@ -198,21 +246,8 @@ async def cancel_chat_turn(
             from novelvideo.chat.hermes_pool import pool as hermes_pool
 
             cancelled = await hermes_pool.close_user(username)
-        safe_to_recover_home_lock = backend_name == "hermes" and not bool(cancelled)
     except Exception:
         cancelled = False
-        # Preserve staging's Hermes recovery behavior when close_user itself
-        # fails. Codex interrupt failures leave the active-turn state unknown,
-        # so releasing its lock here could race a turn that is still settling.
-        safe_to_recover_home_lock = backend_name == "hermes"
-    if safe_to_recover_home_lock:
-        try:
-            # No backend turn remains to own the lock. Preserve staging's
-            # explicit recovery path for a stranded Home lock without racing
-            # an interrupt that is still settling in its stream finally block.
-            chat_service.force_release_chat_run_lock(username, "")
-        except Exception:
-            pass
     return {"ok": True, "data": {"cancelled": cancelled}}
 
 
@@ -225,7 +260,7 @@ async def clear_chat_scope(
     body: ClearChatRequest,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    """Clear one conversation and start a fresh Codex context for that scope."""
+    """Clear one conversation and empty its Codex thread history; the thread id stays."""
     try:
         scope = ChatScope.from_payload(body.scope)
     except ValueError as exc:
@@ -252,17 +287,16 @@ async def clear_chat_scope(
             409, "当前对话仍在进行，请等待完成或先停止后再清空"
         ) from exc
 
-    heartbeat_task = asyncio.create_task(
-        chat_service._chat_run_lock_heartbeat_loop(username, lock_project, lock_id)
-    )
     try:
+        if await chat_service.active_chat_turn(username, lock_project, start_lock=lock_id):
+            raise HTTPException(409, "当前对话仍在进行，请等待完成或先停止后再清空")
         project_state_dir = project_ctx.state_dir if project_ctx is not None else None
         execution_context = (
             AgentExecutionContext.from_project_scope(scope=scope, project=project_ctx)
             if project_ctx is not None
             else None
         )
-        archived_threads = await chat_service.archive_codex_scope_thread(
+        reverted_threads = await chat_service.clear_codex_scope_thread(
             username,
             project,
             agent_profile=(
@@ -271,20 +305,15 @@ async def clear_chat_scope(
             canvas_id=execution_context.canvas_id if execution_context else None,
             project_state_dir=project_state_dir,
         )
-        if not chat_service._heartbeat_chat_run_lock(username, lock_project, lock_id):
-            raise HTTPException(409, "清空操作已失去对话锁，请刷新后重试")
         storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)
         if project_ctx is not None and not _is_freezone_scope(scope):
             storage_scope = replace(storage_scope, state_dir=str(project_state_dir))
         cleared = await chat_store.clear_messages_async(username, storage_scope)
     finally:
-        heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
         chat_service._release_chat_run_lock(username, lock_project, lock_id)
     logger.info(
         "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s "
-        "messages=%d archived_threads=%d",
+        "messages=%d reverted_threads=%d",
         username,
         scope.kind,
         project or "<home>",
@@ -292,13 +321,13 @@ async def clear_chat_scope(
         scope.canvas_id or "-",
         scope.agent_id or "-",
         cleared,
-        archived_threads,
+        reverted_threads,
     )
     return {
         "ok": True,
         "data": {
             "cleared_messages": cleared,
-            "archived_threads": archived_threads,
+            "reverted_threads": reverted_threads,
         },
     }
 
@@ -315,6 +344,16 @@ class ChatAttachmentIn(BaseModel):
     path: str | None = None
     label: str | None = None
 
+    @field_validator("url", "path")
+    @classmethod
+    def _address_only(cls, value: str | None) -> str | None:
+        # An inline data: URL is content, not an address; it would reach the
+        # Codex thread through the attachment context block and the history.
+        if value is not None and value.lstrip()[:5].lower() == "data:":
+            logger.warning("dropped inline data from a chat attachment address")
+            return None
+        return value
+
 
 class ChatMessageIn(BaseModel):
     type: str
@@ -330,18 +369,7 @@ class ChatMessageIn(BaseModel):
 class ScopeSetIn(BaseModel):
     type: str
     scope: ChatScopePayload
-
-
-class ChatUiEventIn(BaseModel):
-    scope: ChatScopePayload
-    turn_id: str
-    event: dict[str, Any]
-
-
-class AgentPermissionResultIn(BaseModel):
-    scope: ChatScopePayload | None = None
-    request_id: str | int
-    option_id: str
+    history_before: str | None = None
 
 
 class FreezoneCanvasAgentsIn(BaseModel):
@@ -445,12 +473,6 @@ class ClarificationToolResultIn(BaseModel):
     used_recommended: bool = False
     errors: list[str] = []
     message: str | None = None
-
-
-class ChatNotificationIn(BaseModel):
-    scope: ChatScopePayload | None = None
-    text: str
-    idempotency_key: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class DirectorAutoStartIn(BaseModel):
@@ -563,109 +585,36 @@ async def resume_director_auto_run(
     return {"ok": True, "data": _director_auto_payload(run)}
 
 
-@router.post("/chat/notifications")
-async def append_chat_notification(
-    payload: ChatNotificationIn,
+@router.post("/chat/uploads")
+async def upload_home_chat_file(
+    file: Annotated[UploadFile, File()],
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
-    username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
-    text = payload.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
-    if len(text) > 4000:
-        raise HTTPException(status_code=400, detail="text is too long")
-
-    if _is_freezone_scope(scope):
-        project_ctx = await _project_context_for_scope(user, scope)
-        message = await chat_store.append_message_async(
-            username,
-            _chat_store_scope_for_project_context(scope, project_ctx),
-            "assistant",
-            text,
-            idempotency_key=(
-                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
-            ),
-        )
-    elif scope.kind == "project":
-        project_ctx = await _project_context_for_scope(user, scope)
-        if not scope.id:
-            raise HTTPException(status_code=400, detail="project scope id is required")
-        message = await asyncio.to_thread(
-            chat_service.add_assistant_message,
-            username,
-            str(scope.id),
-            text,
-            project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=(
-                project_ctx.state_dir if project_ctx is not None else None
-            ),
-        )
-    else:
-        message = await chat_store.append_message_async(
-            username, scope, "assistant", text,
-            idempotency_key=(
-                f"chat-notification:{payload.idempotency_key}" if payload.idempotency_key else None
-            ),
-        )
-    return {"ok": True, "data": message}
-
-
-@router.post("/chat/ui-events")
-async def append_chat_ui_event(
-    payload: ChatUiEventIn,
-    user: dict = Depends(get_api_user),
-) -> dict[str, Any]:
-    username = str(user["username"])
-    scope = _scope_from_model(payload.scope)
-    project_ctx = None
-    if scope.kind == "project":
-        project_ctx = await _project_context_for_scope(user, scope)
-    turn_id = payload.turn_id.strip()
-    if not turn_id:
-        raise HTTPException(status_code=400, detail="turn_id is required")
+    """Store a home chat attachment for this user and return its address."""
+    _enforce_agent_chat_scope(user, ChatScope(kind="home"), require_write=True)
     try:
-        event = await chat_store.append_ui_event_async(
-            username,
-            _chat_store_scope_for_project_context(scope, project_ctx),
-            turn_id,
-            payload.event,
+        record = await asyncio.to_thread(
+            save_home_upload, str(user["username"]), file.file, file.filename
         )
-    except ChatUiEventRejected as exc:
-        # Permanent for this turn: the client should stop retrying, not report on every flush.
+    except UploadTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "data": event}
+    return {"ok": True, "data": record}
 
 
-@router.post("/chat/permission-result")
-async def resolve_agent_permission(
-    payload: AgentPermissionResultIn,
-    user: dict = Depends(get_api_user),
-) -> dict[str, Any]:
-    scope = _scope_from_model(payload.scope)
-    if scope.kind in {"project", "freezone"}:
-        await _project_context_for_scope(user, scope)
-    option_id = payload.option_id.strip()
-    if not option_id:
-        raise HTTPException(status_code=400, detail="option_id is required")
-    from novelvideo.chat.hermes_pool import pool as hermes_pool
-
-    agent_profile = (
-        _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
+@router.get("/chat/uploads/{name}")
+async def read_home_chat_file(name: str, user: dict = Depends(get_api_user)) -> FileResponse:
+    """Serve one of this user's home chat attachments; other users' files are not found."""
+    _enforce_agent_chat_scope(user, ChatScope(kind="home"), require_write=False)
+    path = resolve_home_upload(str(user["username"]), name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="upload not found")
+    inline = path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    return FileResponse(
+        path,
+        filename=None if inline else path.name,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
     )
-    resolved = await hermes_pool.resolve_permission(
-        str(user["username"]),
-        agent_profile,
-        payload.request_id,
-        option_id,
-    )
-    if not resolved:
-        raise HTTPException(
-            status_code=404, detail="permission request is no longer pending"
-        )
-    return {"ok": True, "data": {"resolved": True}}
 
 
 @router.post("/chat/freezone-canvas-agents")
@@ -731,7 +680,7 @@ def _chat_turn_busy_message(exc: BaseException) -> str | None:
     frontend shows them through the same ``chat.busy`` frame.
     """
 
-    if isinstance(exc, CodexThreadBusyError):
+    if isinstance(exc, (CodexThreadBusyError, chat_service.ChatTurnBusyError)):
         return CHAT_RUN_BUSY_MESSAGE
     message = str(exc)
     if "当前用户已有 AI 对话正在处理中" in message:
@@ -762,6 +711,19 @@ def _chat_store_scope_for_project_context(
     )
 
 
+def _history_store_scope(
+    scope: ChatScope,
+    project_ctx: ProjectContext | None,
+) -> ChatScope:
+    if _is_freezone_scope(scope):
+        return _chat_store_scope_for_project_context(scope, project_ctx)
+    if scope.kind == "project" and project_ctx is not None:
+        return replace(
+            scope, id=project_ctx.project_name, state_dir=str(project_ctx.state_dir)
+        )
+    return scope
+
+
 async def _persist_chat_turn_error(
     *,
     user: dict[str, Any],
@@ -779,35 +741,19 @@ async def _persist_chat_turn_error(
             if scope.kind in {"project", "freezone"}
             else None
         )
-        storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)
-        if (
-            scope.kind == "project"
-            and not _is_freezone_scope(scope)
-            and project_ctx is not None
-        ):
-            storage_scope = replace(
-                scope,
-                id=project_ctx.project_name,
-                state_dir=str(project_ctx.state_dir),
-            )
+        storage_scope = _history_store_scope(scope, project_ctx)
 
-        existing_messages = await chat_store.list_messages_async(
-            username, storage_scope
-        )
-        for existing in reversed(existing_messages):
-            if (
-                str(existing.get("turn_id") or "") == turn_id
-                and existing.get("chat_error") is True
-            ):
-                return existing
-        return await chat_store.append_message_async(
+        message = await chat_store.append_message_async(
             username,
             storage_scope,
             "assistant",
             content,
             turn_id=turn_id,
             metadata={"chat_error": True},
+            idempotency_key=f"chat-error:{turn_id}",
         )
+        message.update(message.pop("metadata", {}))
+        return message
     except Exception:  # noqa: BLE001
         logger.exception(
             "failed to persist chat turn error username=%s turn_id=%s scope=%s",
@@ -952,33 +898,7 @@ def _pending_workflow_draft_receipt(
         if isinstance(pending, dict)
         else None
     )
-    if not isinstance(commands, list):
-        return None
-    identities = set()
-    for command in commands:
-        if not isinstance(command, dict) or command.get("type") != "create_node":
-            continue
-        data = command.get("data")
-        if not isinstance(data, dict):
-            return None
-        draft_id = data.get("workflowInstanceId")
-        revision = data.get("workflowDraftRevision")
-        task_id = data.get("workflowConfirmationTaskId")
-        if (
-            not isinstance(draft_id, str)
-            or not draft_id.startswith("workflow_draft_")
-            or isinstance(revision, bool)
-            or not isinstance(revision, int)
-            or revision <= 0
-            or not isinstance(task_id, str)
-            or not task_id.strip()
-        ):
-            return None
-        identities.add((draft_id, revision, task_id))
-    if len(identities) != 1:
-        return None
-    draft_id, revision, task_id = identities.pop()
-    return {"draft_id": draft_id, "revision": revision, "task_id": task_id}
+    return workflow_draft_identity(commands)
 
 
 async def _record_workflow_draft_canvas_result(
@@ -987,6 +907,7 @@ async def _record_workflow_draft_canvas_result(
     payload: CanvasCommandToolResultIn,
     draft_receipt: dict[str, Any] | None,
     resolved: dict[str, Any],
+    release_unapplied: bool = False,
 ) -> None:
     if not draft_receipt:
         return
@@ -996,12 +917,6 @@ async def _record_workflow_draft_canvas_result(
     if not project_id or not canvas_id:
         return
     try:
-        from novelvideo.freezone.workflow_drafts import (
-            finish_workflow_draft_confirmation,
-            read_workflow_draft,
-        )
-        from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
-
         scope = ChatScope(
             kind="project",
             id=project_id,
@@ -1012,62 +927,23 @@ async def _record_workflow_draft_canvas_result(
         project_ctx = await _project_context_for_scope(user, scope)
         if project_ctx is None:
             raise RuntimeError("workflow draft project context is unavailable")
-        draft, _error = await asyncio.to_thread(
-            read_workflow_draft,
-            project_dir=project_ctx.state_dir,
-            canvas_id=canvas_id,
-            draft_id=draft_id,
-        )
-        if draft is None:
-            return
-        task_id = str(draft.get("task_id") or "")
-        revision = int(draft.get("revision") or 0)
-        attempt_started_at = draft.get("confirmation_started_at")
-        if task_id != draft_receipt["task_id"] or revision != draft_receipt["revision"]:
-            return
-        if attempt_started_at is None:
-            return
-        task_manager = get_task_manager()
-        task_state = None
-        for task_scope in (
-            f"{canvas_id}:{draft_id}:{revision}:{attempt_started_at}",
-            f"{canvas_id}:{draft_id}:{revision}",
-        ):
-            task_state = await asyncio.to_thread(
-                task_manager.get_task_for_project,
-                project_ctx,
-                "freezone_workflow_confirm",
-                0,
-                beat_num=None,
-                scope=task_scope,
-            )
-            if task_state is not None:
-                break
-        if (
-            task_state is None
-            or str(task_state.task_id) != task_id
-            or task_state.status not in ACTIVE_PROJECT_TASK_STATUSES
-        ):
-            logger.info(
-                "ignored late workflow canvas result without active task draft_id=%s",
-                draft_id,
-            )
-            return
-        await asyncio.to_thread(
-            finish_workflow_draft_confirmation,
-            project_dir=project_ctx.state_dir,
-            canvas_id=canvas_id,
-            draft_id=draft_id,
-            outcome="confirmed" if resolved.get("ok") else "ready",
-            expected_task_id=task_id,
-            expected_revision=revision,
-            expected_confirmation_started_at=attempt_started_at,
-        )
     except Exception:
         logger.exception(
             "failed to record durable workflow canvas outcome draft_id=%s",
             draft_id,
         )
+        return
+    if release_unapplied:
+        await release_unapplied_workflow_draft(
+            project_dir=project_ctx.state_dir, canvas_id=canvas_id, identity=draft_receipt,
+        )
+        return
+    await record_workflow_draft_delivery(
+        project_ctx=project_ctx,
+        canvas_id=canvas_id,
+        identity=draft_receipt,
+        delivered=bool(resolved.get("ok")),
+    )
 
 
 async def _close_freezone_agent_worker(username: str, agent_id: str | None) -> bool:
@@ -1685,15 +1561,14 @@ async def _persist_clarification_result_ui_event(
         return
     project_ctx = await _project_context_for_interaction_result(user, scope)
     store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
-    turns = {turn_id}
-    for message in await chat_store.list_messages_async(username, store_scope):
-        if message.get("turn_id") and any(
-            event.get("type") == "assistant.clarification.request"
-            and event.get("bridge_key") == payload.bridge_key
-            for event in message.get("ui_events", [])
-            if isinstance(event, dict)
-        ):
-            turns.add(message["turn_id"])
+    turns = {turn_id} | set(
+        await chat_store.ui_event_turn_ids_async(
+            username,
+            store_scope,
+            event_type="assistant.clarification.request",
+            bridge_key=payload.bridge_key,
+        )
+    )
     for target_turn in turns:
         await chat_store.append_ui_event_async(
             username,
@@ -1733,6 +1608,22 @@ def _clarification_result_accepted(resolved: dict[str, Any]) -> bool:
     )
 
 
+def _canvas_context_response_refs(responses: Any) -> list[dict[str, str]]:
+    """Name what the agent read; the node details stay in the agent's session."""
+    refs: list[dict[str, str]] = []
+    for response in responses if isinstance(responses, list) else []:
+        if not isinstance(response, dict):
+            continue
+        ref = {
+            field: response[field]
+            for field in ("type", "node_id")
+            if isinstance(response.get(field), str)
+        }
+        if ref:
+            refs.append(ref)
+    return refs
+
+
 def _canvas_context_ui_event(
     payload: CanvasContextToolResultIn,
     resolved: dict[str, Any],
@@ -1746,12 +1637,79 @@ def _canvas_context_ui_event(
             "ok": resolved.get("ok"),
             "tool_call_status": resolved.get("tool_call_status"),
             "canvas_context_status": resolved.get("canvas_context_status"),
-            "responses": resolved.get("responses") or [],
+            "responses": _canvas_context_response_refs(resolved.get("responses")),
             "errors": resolved.get("errors") or [],
             "message": resolved.get("message"),
         },
         "anchor_text_prefix": payload.anchor_text_prefix,
     }
+
+
+async def append_canvas_confirmation_notice(
+    user: dict, record: dict, status: str, detail: str = "",
+) -> None:
+    if record["turn_id"] is None:
+        return
+    scope = ChatScope(
+        kind="project", id=record["project_id"], surface="freezone",
+        canvas_id=record["canvas_id"], agent_id=record["agent_id"],
+    )
+    project_ctx = await _project_context_for_scope(user, scope)
+    store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
+    confirmation_id = record["id"]
+    kinds = ",".join(record["kinds"])
+    texts = {
+        "refused": (
+            f"The user refused canvas confirmation {confirmation_id} ({kinds}). "
+            "Nothing was executed. Do not retry unless the user asks again."
+        ),
+        "expired": (
+            f"Canvas confirmation {confirmation_id} ({kinds}) expired after 30 minutes "
+            "without a decision. Nothing was executed. "
+            "Ask the user again only if it is still wanted."
+        ),
+        "voided": (
+            f"Canvas confirmation {confirmation_id} ({kinds}) was voided because its "
+            f"target nodes changed ({detail}). Nothing was executed. "
+            "Read the canvas again before asking."
+        ),
+        "reported": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
+            f"the open canvas ran it and reported status {detail}. "
+            "Check the canvas or the run status before reporting the outcome."
+        ),
+        "executed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}) "
+            f"and the server applied it with status {detail}. "
+            "Check the current canvas before reporting."
+        ),
+        "running": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
+            f"the server started workflow run {detail}. "
+            "Observe it with freezone_observe_workflow_run using that run_id before reporting. "
+            "Do not run it again."
+        ),
+        "already_completed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
+            "there is nothing to run because every target already has a current result."
+        ),
+        **{f"run_{outcome}": (
+            f"Workflow run {detail} for canvas confirmation {confirmation_id} "
+            f"finished with status {outcome}. "
+            "Read the canvas or observe the run before reporting."
+        ) for outcome in ("completed", "failed", "cancelled")},
+        "failed": (
+            f"The user confirmed canvas confirmation {confirmation_id} ({kinds}), "
+            f"but the server could not apply it ({detail}). The confirmation is void. "
+            "Read the canvas before reporting the outcome or asking again."
+        ),
+    }
+    await chat_store.append_message_async(
+        str(user["username"]), store_scope, "agent_notification",
+        f"[CANVAS_BACKGROUND_RESULT] {texts[status]} [/CANVAS_BACKGROUND_RESULT]",
+        turn_id=record["turn_id"],
+        idempotency_key=f"canvas-confirmation:{confirmation_id}:{status}",
+    )
 
 
 @router.post("/chat/canvas-command-tool-result")
@@ -1824,14 +1782,51 @@ async def resolve_canvas_command_tool_result(
     workflow_draft_receipt = _pending_workflow_draft_receipt(
         username, payload, project_state_dir=project_state_dir
     )
+    key = payload.bridge_key.strip()
+    bridge_dir = _bridge_dir_for_pending_key(
+        username, payload, project_state_dir=project_state_dir
+    )
+    pending = _load_pending_canvas_command(bridge_dir / f"{key}.pending.json")
+    if pending is None:
+        pending = read_bridge_message(key, bridge_dir=bridge_dir)
+    envelope = pending.get("envelope", {}) if isinstance(pending, dict) else {}
+    confirmation_id = str(envelope.get("confirmation_id") or "")
+    if key != canvas_command_idempotency_key(
+        project_id=str(envelope.get("project_id") or ""),
+        canvas_id=str(envelope.get("canvas_id") or ""),
+        commands=[{"canvas_confirmation": confirmation_id}],
+    ):
+        confirmation_id = ""
     resolved = _resolve_canvas_command_tool_result_payload(
         payload, username=username, project_state_dir=project_state_dir
     )
+    unapplied_confirmation = (
+        bool(confirmation_id) and not resolved.get("ok") and not payload.applied
+        and payload.applied_count == 0 and not payload.created_node_ids
+    )
+    if confirmation_id:
+        status = str(
+            payload.canvas_apply_status or resolved.get("canvas_apply_status") or "unknown"
+        )
+        try:
+            record = finish_confirmation(
+                Path(bridge_dir) / CONFIRMATIONS_DIRNAME, confirmation_id,
+                outcome={"status": status, "bridge_key": key}, now=time.time(),
+            )
+        except CanvasConfirmationError:
+            pass
+        else:
+            count_canvas_metric("canvas_confirmation.reported")
+            logger.info(
+                "canvas_confirmation result=reported id=%s status=%s", confirmation_id, status,
+            )
+            await append_canvas_confirmation_notice(user, record, "reported", status)
     await _record_workflow_draft_canvas_result(
         user=user,
         payload=payload,
         draft_receipt=workflow_draft_receipt,
         resolved=resolved,
+        release_unapplied=unapplied_confirmation,
     )
     if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
         await _close_canvas_command_worker(username, payload)
@@ -2184,13 +2179,70 @@ def _text_with_attachment_context(
     return f"{text}\n\n{block}" if block else text
 
 
+# What history keeps of a referenced canvas node: identity and media addresses.
+_STORED_CANVAS_NODE_FIELDS = (
+    "node_id",
+    "node_type",
+    "label",
+    "media_type",
+    "source_url",
+    "preview_url",
+)
+
+
+def _stored_canvas_reference(content: str | None) -> str | None:
+    try:
+        payload = json.loads(content or "")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    record = {
+        key: payload[key] for key in ("schema_version", "project", "canvas_id") if key in payload
+    }
+    for key in ("display_nodes", "nodes"):
+        nodes = payload.get(key)
+        if isinstance(nodes, list):
+            record[key] = [
+                {field: node.get(field) for field in _STORED_CANVAS_NODE_FIELDS}
+                for node in nodes
+                if isinstance(node, dict)
+            ]
+    return json.dumps(record, ensure_ascii=False)
+
+
 def _attachment_payloads(attachments: list[ChatAttachmentIn]) -> list[dict[str, Any]]:
+    """Attachment records as chat history stores them: addresses, never file content."""
+
     payloads: list[dict[str, Any]] = []
     for attachment in attachments:
-        payload = attachment.model_dump(exclude_none=True)
+        payload = attachment.model_dump(exclude_none=True, exclude={"content"})
+        if CANVAS_NODE_REFERENCE_TYPE in {attachment.type, attachment.kind}:
+            reference = _stored_canvas_reference(attachment.content)
+            if reference is not None:
+                payload["content"] = reference
         if payload:
             payloads.append(payload)
     return payloads
+
+
+async def _send_assistant_delta(
+    websocket: WebSocket,
+    encoder: AssistantDeltaEncoder,
+    scope: ChatScope,
+    turn_id: str,
+    text: str,
+    send_lock: asyncio.Lock,
+) -> None:
+    """Send the `{offset, text}` patch that brings the client to ``text``."""
+    patch = encoder.encode(text)
+    if patch is None:
+        return
+    await _send_json_best_effort(
+        websocket,
+        {"type": "assistant.delta", "scope": scope.to_dict(), "turn_id": turn_id, **patch},
+        send_lock,
+    )
 
 
 def _should_emit_final_text(final_text: str, last_sent_text: str) -> bool:
@@ -2332,23 +2384,33 @@ async def _history(
     scope: ChatScope,
     *,
     project_ctx: ProjectContext | None = None,
-) -> list[dict[str, Any]]:
-    if scope.kind == "project" and (scope.surface or "director") == "director":
-        return await asyncio.to_thread(
-            chat_service.list_messages,
-            username,
-            str(scope.id),
+    before: str | None = None,
+) -> HistoryPage:
+    project = str(scope.id or "")
+    execution_context = (
+        AgentExecutionContext.from_project_scope(scope=scope, project=project_ctx)
+        if project_ctx is not None else None
+    )
+
+    async def read_codex(codex_before: str | None):
+        return await chat_service.read_codex_scope_history(
+            username, project,
+            agent_profile=execution_context.agent_profile if execution_context else "main",
+            canvas_id=execution_context.canvas_id if execution_context else None,
+            project_state_dir=project_ctx.state_dir if project_ctx is not None else None,
+            before=codex_before,
+        )
+
+    def extract_media(content: str):
+        return chat_service._extract_media(
+            content, username, project,
             project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=(
-                project_ctx.state_dir if project_ctx is not None else None
-            ),
         )
-    if _is_freezone_scope(scope):
-        return await chat_store.list_messages_async(
-            username,
-            _chat_store_scope_for_project_context(scope, project_ctx),
-        )
-    return await chat_store.list_messages_async(username, scope)
+
+    return await read_history_page(
+        username=username, store_scope=_history_store_scope(scope, project_ctx),
+        before=before, read_codex=read_codex, extract_media=extract_media,
+    )
 
 
 async def _send_scope_changed(
@@ -2356,6 +2418,7 @@ async def _send_scope_changed(
     user: dict[str, Any],
     username: str,
     scope: ChatScope,
+    send_lock: asyncio.Lock | None = None,
 ) -> ChatScope | None:
     try:
         project_ctx = await _project_context_for_scope(user, scope)
@@ -2367,21 +2430,60 @@ async def _send_scope_changed(
         if not await _send_json_best_effort(
             websocket,
             {"type": "error", "message": "项目不存在或已删除，已切回首页聊天。"},
+            send_lock,
         ):
             return None
+    active_turn = await chat_service.active_chat_turn(
+        username, _chat_run_lock_project_for_scope(scope)
+    )
+    page = await _history(username, scope, project_ctx=project_ctx)
     if not await _send_json_best_effort(
         websocket,
         {
             "type": "scope.changed",
             "scope": scope.to_dict(),
-            "history": await _history(username, scope, project_ctx=project_ctx),
-            "busy": chat_service.chat_run_lock_is_active(
-                username, _chat_run_lock_project_for_scope(scope)
-            ),
+            "history": page.history,
+            "before": page.before,
+            "has_more": page.has_more,
+            "busy": active_turn is not None,
+            "turn_id": active_turn.turn_id if active_turn else None,
         },
+        send_lock,
     ):
         return None
     return scope
+
+
+async def _send_history_page(
+    websocket: WebSocket,
+    user: dict[str, Any],
+    username: str,
+    scope: ChatScope,
+    history_before: str,
+    send_lock: asyncio.Lock | None = None,
+) -> bool:
+    page = HistoryPage([], None, False)
+    try:
+        project_ctx = await _project_context_for_scope(user, scope)
+    except HTTPException as exc:
+        if scope.kind not in {"project", "freezone"} or exc.status_code != 404:
+            raise
+    else:
+        try:
+            page = await _history(
+                username, scope, project_ctx=project_ctx, before=history_before
+            )
+        except ValueError:
+            logger.warning(
+                "Invalid history cursor scope=%s cursor_length=%d", scope.kind, len(history_before)
+            )
+    return await _send_json_best_effort(websocket, {
+        "type": "history.page",
+        "scope": {key: value for key, value in scope.to_dict().items() if value is not None},
+        "history": page.history,
+        "before": page.before,
+        "has_more": page.has_more,
+    }, send_lock)
 
 
 async def _send_json_best_effort(
@@ -2416,7 +2518,6 @@ async def _chat_heartbeat(
     scope: ChatScope,
     turn_id: str,
     send_lock: asyncio.Lock,
-    disconnected: asyncio.Event | None = None,
     interval_seconds: float = 10.0,
 ) -> None:
     while True:
@@ -2427,51 +2528,7 @@ async def _chat_heartbeat(
             send_lock,
         )
         if not sent:
-            if disconnected is not None:
-                disconnected.set()
             return
-
-
-async def _interrupt_agent_on_disconnect(
-    disconnected: asyncio.Event,
-    *,
-    runtime_backend: str,
-    username: str,
-    project: str,
-    agent_profile: str,
-    runtime_ids: dict[str, str | None],
-) -> None:
-    await disconnected.wait()
-    # A socket can disappear while the runtime is still starting. Give the
-    # matching turn a short window to publish its IDs, but never fall back to
-    # a username-wide shutdown.
-    for _attempt in range(100):
-        thread_id = str(runtime_ids.get("thread_id") or "").strip()
-        turn_id = str(runtime_ids.get("turn_id") or "").strip()
-        if thread_id and (runtime_backend == "hermes" or turn_id):
-            break
-        await asyncio.sleep(0.05)
-    else:
-        return
-    try:
-        if runtime_backend == "hermes":
-            from novelvideo.chat.hermes_pool import pool as hermes_pool
-
-            await hermes_pool.close_user_thread(
-                username,
-                agent_profile,
-                thread_id,
-            )
-        else:
-            await chat_service.interrupt_chat_turn(
-                username,
-                project,
-                thread_id,
-                turn_id,
-                backend=runtime_backend,
-            )
-    except Exception:
-        logger.warning("failed to interrupt disconnected chat turn", exc_info=True)
 
 
 async def _sync_running_agent_scope(username: str, scope: ChatScope) -> None:
@@ -2549,6 +2606,97 @@ async def list_pending_canvas_commands(
     )
 
 
+def _admit_canvas_command_frame(*, key: str, envelope: dict, bridge_dir) -> bool:
+    project_id = str(envelope.get("project_id") or "")
+    canvas_id = str(envelope.get("canvas_id") or "")
+    commands = envelope.get("commands")
+    turn_id = envelope.get("turn_id")
+    kinds = []
+    try:
+        if not isinstance(commands, list) or not commands:
+            raise ValueError("Canvas commands must be a non-empty list")
+        kinds = confirmation_kinds(commands)
+    except (ValueError, KeyError, TypeError):
+        reason = "invalid_canvas_command"
+    else:
+        if not kinds:
+            return True
+        confirmation_id = str(envelope.get("confirmation_id") or "")
+        if not confirmation_id or key != canvas_command_idempotency_key(
+            project_id=project_id, canvas_id=canvas_id,
+            commands=[{"canvas_confirmation": confirmation_id}],
+        ):
+            reason = "missing_confirmation"
+        else:
+            try:
+                record = verify_confirmed(
+                    Path(bridge_dir) / CONFIRMATIONS_DIRNAME, confirmation_id,
+                    command_hash=command_hash(project_id, canvas_id, commands), turn_id=turn_id,
+                )
+            except CanvasConfirmationError as exc:
+                reason = exc.code
+            else:
+                if time.time() >= float(record["expires_at"]):
+                    try:
+                        void_confirmation(
+                            Path(bridge_dir) / CONFIRMATIONS_DIRNAME, confirmation_id,
+                            reason="delivery_expired", now=time.time(),
+                        )
+                    except CanvasConfirmationError:
+                        pass
+                    reason = "expired"
+                else:
+                    return True
+    invalid = reason == "invalid_canvas_command"
+    expired = reason == "expired"
+    if expired:
+        code = "canvas_confirmation_expired"
+        message = "Canvas command was not executed because its confirmation expired."
+    else:
+        code = "invalid_canvas_command" if invalid else "canvas_confirmation_required"
+        message = (
+            "Canvas command type is not allowed." if invalid
+            else "Canvas command was not executed because it needs a user confirmation."
+        )
+    resolve_canvas_command(key, {
+        "ok": False,
+        "turn_id": str(turn_id or "") or f"external-agent:{key}",
+        "tool_call_status": "failed",
+        "canvas_apply_status": "not_applied",
+        "applied": False,
+        "cancelled": True,
+        "code": code,
+        "errors": [message],
+        "applied_count": 0,
+        "opened_ui_actions": [],
+        "created_node_ids": [],
+        "command_results": [],
+        "project_id": project_id,
+        "canvas_id": canvas_id,
+        "message": message,
+        "user_message": (
+            "确认已过期，画布操作未执行。" if expired  # i18n-exempt
+            else "画布命令无效，未执行。" if invalid  # i18n-exempt
+            else "该画布操作需要用户确认，未执行。"  # i18n-exempt
+        ),
+        "agent_instruction": (
+            "Do not claim success. The user confirmed this canvas command, but no canvas page "
+            "received it before the confirmation expired, so nothing was executed. "
+            "Ask the user again before retrying."
+            if expired else
+            "Do not claim success. Deleting nodes, clearing the canvas and paid generation run "
+            "only after the user confirms. Call the canvas tool again so DramaClaw creates a "
+            "confirmation, then follow the instruction it returns."
+        ),
+    }, bridge_dir=bridge_dir)
+    count_canvas_metric("canvas_confirmation.frame_refused")
+    logger.warning(
+        "canvas_confirmation result=frame_refused bridge_key=%s reason=%s kinds=%s",
+        key, reason, ",".join(kinds),
+    )
+    return False
+
+
 def _collect_pending_canvas_commands(
     payload, username, project_state_dir, consumer_id=None, hub=None
 ):
@@ -2579,6 +2727,9 @@ def _collect_pending_canvas_commands(
                 continue
             seen_bridge_dirs.add(marker)
             bridge_targets.append((agent_id, bridge_dir))
+    if project_state_dir is not None and consumer_id is None:
+        subscriber_id = "poll-" + hashlib.sha256(username.encode("utf-8")).hexdigest()[:16]
+        touch_canvas_presence(project_state_dir, canvas_id, subscriber_id)
     for agent_id, bridge_dir in bridge_targets:
         try:
             if hub is None:
@@ -2611,6 +2762,10 @@ def _collect_pending_canvas_commands(
                 continue
             if not _pending_canvas_command_allows_external_poll(envelope):
                 continue
+            if not _admit_canvas_command_frame(
+                key=key, envelope=envelope, bridge_dir=bridge_dir,
+            ):
+                continue
             if not mark_bridge_message_delivered(
                 key,
                 consumer_id=consumer_id or f"poll:{username}:{agent_id}",
@@ -2621,6 +2776,7 @@ def _collect_pending_canvas_commands(
             frames.append(
                 {
                     "type": "canvas.command",
+                    "server_approved": True,
                     "turn_id": str(envelope.get("turn_id") or "").strip()
                     or f"external-agent:{key}",
                     "canvas_id": envelope.get("canvas_id") or canvas_id,
@@ -2680,6 +2836,10 @@ def _collect_pending_canvas_commands(
                 scope=legacy_scope, turn_id=str(envelope.get("turn_id") or f"external-agent:{key}"),
             ):
                 continue
+            if not _admit_canvas_command_frame(
+                key=key, envelope=envelope, bridge_dir=bridge_dir,
+            ):
+                continue
             if not claim_legacy_bridge_message(
                 key, {**pending, "project_id": project_id, "canvas_id": canvas_id},
                 kind="canvas_command", consumer_id=consumer_id or f"poll:{username}:{agent_id}",
@@ -2689,6 +2849,7 @@ def _collect_pending_canvas_commands(
             frames.append(
                 {
                     "type": "canvas.command",
+                    "server_approved": True,
                     "turn_id": str(envelope.get("turn_id") or "").strip()
                     or f"external-agent:{key}",
                     "canvas_id": envelope.get("canvas_id") or canvas_id,
@@ -2703,15 +2864,36 @@ def _collect_pending_canvas_commands(
     return {"ok": True, "data": {"frames": frames}}
 
 
+CANVAS_STREAM_IDLE_SECONDS = 20
+
+
+def _canvas_stream_start_revision(state_dir: Path, canvas_id: str) -> int:
+    replay = read_canvas_changes(state_dir, canvas_id, 0)
+    if replay.reset_revision is not None:
+        return replay.reset_revision
+    if replay.entries:
+        return replay.entries[-1]["revision"]
+    canvas = read_canvas(state_dir, canvas_id)
+    return canvas.get("revision", 0) if canvas else 0
+
+
+def _push_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @router.get("/chat/canvas-commands/stream")
 async def stream_canvas_commands(
     project_id: str,
     canvas_id: str,
     agent_ids: str = "main",
     user: dict = Depends(get_api_user),
+    last_revision: int | None = None,
+    locale: str | None = None,
 ):
     from sse_starlette.sse import EventSourceResponse
 
+    if last_revision is not None and last_revision < 0:
+        raise HTTPException(status_code=400, detail="Invalid canvas revision")
     project_id, canvas_id = project_id.strip(), canvas_id.strip()
     agents = list(
         dict.fromkeys(value.strip() for value in agent_ids.split(",") if value.strip())
@@ -2733,7 +2915,18 @@ async def stream_canvas_commands(
         project_id=project_id, canvas_id=canvas_id, agent_ids=agents
     )
     state_dir = await _bridge_project_state_dir(user, payload)
+    if state_dir is not None:
+        await asyncio.to_thread(record_ui_locale, state_dir, locale)
     hub = bridge_watch_hub()
+    change_hub = (
+        canvas_change_watch_hub()
+        if canvas_patch_push_enabled() and state_dir is not None
+        else None
+    )
+    cursor = last_revision
+    cursor_replay = last_revision is not None
+    if change_hub is not None and cursor is None:
+        cursor = await hub.run(_canvas_stream_start_revision, state_dir, canvas_id)
     username = str(user["username"])
 
     def directories():
@@ -2751,17 +2944,98 @@ async def stream_canvas_commands(
         return result
 
     targets = await hub.run(directories)
-    consumer = f"sse:{username}:{uuid.uuid4().hex}"
+    subscriber_id = "sse-" + uuid.uuid4().hex
+    consumer = f"sse:{username}:{subscriber_id}"
+
+    def touch_presence():
+        if state_dir is not None:
+            touch_canvas_presence(state_dir, canvas_id, subscriber_id)
+
+    async def change_frames():
+        nonlocal cursor, cursor_replay
+        if change_hub is None:
+            return
+        replay = await hub.run(read_canvas_changes, state_dir, canvas_id, cursor)
+        is_replay = cursor_replay and bool(replay.entries)
+        cursor_replay = False
+        frames = 0
+        patch_frames = 0
+        max_delivery_ms = 0.0
+        reset = replay.reset_revision is not None
+        try:
+            if reset:
+                cursor = replay.reset_revision
+                change_hub.metrics["canvas_reset_frames"] += 1
+                count_canvas_metric("canvas_push.reset")
+                frames += 1
+                payload = {"type": "canvas.reset", "canvas_id": canvas_id, "revision": cursor}
+                yield {"data": json.dumps(payload)}
+            for entry in replay.entries:
+                cursor = entry["revision"]
+                change_hub.metrics["canvas_patch_frames"] += 1
+                try:
+                    written_at = datetime.fromisoformat(entry.get("written_at"))
+                    delivery_ms = max(0.0, (_push_now() - written_at).total_seconds() * 1000)
+                except (TypeError, ValueError, OverflowError):
+                    pass
+                else:
+                    observe_canvas_metric(
+                        "canvas_push.replay_age_ms" if is_replay else "canvas_push.delivery_ms",
+                        delivery_ms,
+                    )
+                    max_delivery_ms = max(max_delivery_ms, delivery_ms)
+                frames += 1
+                patch_frames += 1
+                patch = {key: value for key, value in entry.items() if key != "written_at"}
+                yield {"data": json.dumps(patch)}
+        finally:
+            if is_replay and patch_frames:
+                count_canvas_metric("canvas_push.cursor_replay")
+                observe_canvas_metric("canvas_push.cursor_replay_frames", patch_frames)
+            if frames:
+                logger.info(
+                    "canvas_push canvas=%s frames=%d reset=%s replay=%s max_delivery_ms=%d",
+                    canvas_id, frames, reset, is_replay, max_delivery_ms,
+                )
 
     async def events():
         hub.metrics["sse_connections"] = hub.metrics.get("sse_connections", 0) + 1
         try:
-            async with hub.subscribe(targets) as wake:
+            async with contextlib.AsyncExitStack() as stack:
+                wake = await stack.enter_async_context(hub.subscribe(targets))
+                change_wake = None
+                if change_hub is not None:
+                    change_wake = await stack.enter_async_context(
+                        change_hub.subscribe(canvas_changes_dir(state_dir, canvas_id))
+                    )
+                await hub.run(touch_presence)
                 # Flush an initial body chunk through development/reverse proxies
                 # so an idle stream opens before the first 25-second heartbeat.
                 yield {"comment": "connected"}
+                async for frame in change_frames():
+                    yield frame
                 while True:
-                    await wake.wait()
+                    wakes = [wake] if change_wake is None else [wake, change_wake]
+                    tasks = [asyncio.create_task(event.wait()) for event in wakes]
+                    try:
+                        done, _ = await asyncio.wait_for(
+                            asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED),
+                            timeout=CANVAS_STREAM_IDLE_SECONDS,
+                        )
+                    except TimeoutError:
+                        done = set()
+                    finally:
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    if not done:
+                        await hub.run(touch_presence)
+                    if change_wake is not None and (not done or change_wake.is_set()):
+                        change_wake.clear()
+                        async for frame in change_frames():
+                            yield frame
+                    if not wake.is_set():
+                        continue
                     wake.clear()
                     result = await hub.run(
                         _collect_pending_canvas_commands,
@@ -2775,6 +3049,8 @@ async def stream_canvas_commands(
                         yield {"id": frame["bridge_key"], "data": json.dumps(frame)}
         finally:
             hub.metrics["sse_connections"] -= 1
+            if state_dir is not None:
+                await hub.run(remove_canvas_presence, state_dir, canvas_id, subscriber_id)
 
     return EventSourceResponse(
         events(),
@@ -3030,6 +3306,10 @@ def _collect_session_canvas_commands(
             if not key or not isinstance(envelope, dict):
                 continue
             # Durable leases, rather than historical keys, govern redelivery.
+            if not _admit_canvas_command_frame(
+                key=key, envelope=envelope, bridge_dir=bridge_dir,
+            ):
+                continue
             if not mark_bridge_message_delivered(
                 key,
                 consumer_id=f"websocket:{username}:{turn_id}",
@@ -3040,6 +3320,7 @@ def _collect_session_canvas_commands(
             frames.append(
                 {
                     "type": "canvas.command",
+                    "server_approved": True,
                     "turn_id": turn_id,
                     "canvas_id": envelope.get("canvas_id"),
                     "agent_id": scope.agent_id or "main",
@@ -3091,6 +3372,10 @@ def _collect_session_canvas_commands(
             continue
         if key in emitted_bridge_keys:
             continue
+        if not _admit_canvas_command_frame(
+            key=key, envelope=pending["envelope"], bridge_dir=bridge_dir,
+        ):
+            continue
         if not claim_legacy_bridge_message(
             key, {**pending, "project_id": scope.id, "canvas_id": scope.canvas_id},
             kind="canvas_command", consumer_id=f"websocket:{username}:{turn_id}", bridge_dir=bridge_dir,
@@ -3100,6 +3385,7 @@ def _collect_session_canvas_commands(
         frames.append(
             {
                 "type": "canvas.command",
+                "server_approved": True,
                 "turn_id": turn_id,
                 "canvas_id": pending["envelope"].get("canvas_id"),
                 "agent_id": scope.agent_id or "main",
@@ -3333,6 +3619,257 @@ def _skill_studio_status_frame(
     }
 
 
+def _start_turn_watchers(
+    *, websocket, username, scope, turn_id, send_lock, started_at, store_scope=None,
+) -> list[asyncio.Task]:
+    shared = {
+        "websocket": websocket, "username": username, "scope": scope,
+        "turn_id": turn_id, "send_lock": send_lock,
+        "emitted_bridge_keys": set(), "started_at": started_at,
+    }
+    return [
+        asyncio.create_task(_chat_heartbeat(
+            websocket, scope=scope, turn_id=turn_id, send_lock=send_lock,
+        )),
+        asyncio.create_task(_watch_pending_canvas_commands(**shared)),
+        asyncio.create_task(_watch_pending_canvas_context_requests(**shared)),
+        asyncio.create_task(_watch_pending_skill_studio_events(**shared, store_scope=store_scope)),
+        asyncio.create_task(_watch_pending_clarification_events(**shared, store_scope=store_scope)),
+    ]
+
+
+async def _stop_turn_tasks(tasks) -> None:
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _follow_scope_turn(*, websocket, user, username, scope, send_lock) -> None:
+    entry = chat_service.active_codex_turn_for_scope(username, scope)
+    if entry is None:
+        return
+    project_ctx = await _project_context_for_scope(user, scope)
+    if project_ctx is not None:
+        scope = replace(scope, state_dir=str(project_ctx.state_dir))
+    turn_id = entry["business_turn_id"]
+    on_event = _ChatFrameSender(websocket, scope, turn_id, send_lock)
+    tasks = _start_turn_watchers(
+        websocket=websocket, username=username, scope=scope, turn_id=turn_id,
+        send_lock=send_lock, started_at=entry["started_at"],
+        store_scope=_history_store_scope(scope, project_ctx),
+    )
+    try:
+        await chat_service.follow_active_codex_turn(username, scope, on_event)
+    except Exception:
+        logger.exception("failed to follow Codex turn")
+        await _send_json_best_effort(
+            websocket,
+            {
+                "type": "error",
+                "turn_id": turn_id,
+                "message": "无法跟随当前对话，请重新连接。",  # i18n-exempt
+            },
+            send_lock,
+        )
+    finally:
+        await _stop_turn_tasks(tasks)
+
+
+class _ChatFrameSender:
+    """One event-to-WebSocket mapping for starters and reconnecting followers."""
+
+    def __init__(self, websocket, scope, turn_id, send_lock):
+        self.websocket = websocket
+        self.scope = scope
+        self.turn_id = turn_id
+        self.send_lock = send_lock
+        self.done_sent = False
+        self.assistant_sent_text = ""
+        self.delta_encoder = AssistantDeltaEncoder()
+
+    async def __call__(self, event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        if event_type == "thread_started":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "thread.started",
+                    "scope": self.scope.to_dict(),
+                    "thread_id": event.get("thread_id"),
+                    "turn_id": event.get("turn_id") or self.turn_id,
+                },
+                self.send_lock,
+            )
+        elif event_type in {"turn_started", "turn_completed"}:
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": (
+                        "agent.turn.started"
+                        if event_type == "turn_started"
+                        else "agent.turn.completed"
+                    ),
+                    "scope": self.scope.to_dict(),
+                    "thread_id": event.get("thread_id"),
+                    "turn_id": event.get("turn_id") or self.turn_id,
+                    "status": event.get("status"),
+                    "disposition": event.get("disposition"),
+                    "error": event.get("error"),
+                },
+                self.send_lock,
+            )
+        elif event_type in {"item", "item_delta"}:
+            fields = (
+                ("message_id", "item_id", "card")
+                if event_type == "item"
+                else ("message_id", "item_id", "kind", "offset", "text")
+            )
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "chat.item" if event_type == "item" else "chat.item.delta",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    **{key: event[key] for key in fields},
+                },
+                self.send_lock,
+            )
+        elif event_type == "assistant_delta":
+            self.assistant_sent_text = str(event.get("text") or "")
+            await _send_assistant_delta(
+                self.websocket, self.delta_encoder, self.scope, self.turn_id,
+                self.assistant_sent_text, self.send_lock
+            )
+        elif event_type == "thought_delta":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "agent.thought.delta",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "text": str(event.get("text") or ""),
+                    "source": event.get("source"),
+                },
+                self.send_lock,
+            )
+        elif event_type == "plan_update":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "agent.plan.update",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "text": str(event.get("text") or ""),
+                    "entries": event.get("entries") or [],
+                },
+                self.send_lock,
+            )
+        elif event_type == "usage_update":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "agent.usage.update",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "usage": event.get("usage") or {},
+                },
+                self.send_lock,
+            )
+        elif event_type in {"tool_started", "tool_updated", "tool_update"}:
+            tool_name, tool_body = _tool_display_payload(
+                event.get("text"), event.get("name")
+            )
+            status = str(
+                event.get("status")
+                or ("pending" if event_type == "tool_started" else "completed")
+            )
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": (
+                        "agent.tool.started"
+                        if event_type == "tool_started"
+                        else "agent.tool.updated"
+                    ),
+                    "scope": self.scope.to_dict(),
+                    "turn_id": self.turn_id,
+                    "call_id": event.get("call_id"),
+                    "name": tool_name,
+                    "status": status,
+                    "text": tool_body,
+                    "input": event.get("input"),
+                    "output": event.get("output"),
+                    "error": event.get("error"),
+                    "result_json": event.get("result_json"),
+                },
+                self.send_lock,
+            )
+        elif event_type == "skill_studio.event":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "skill_studio.event",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": event.get("turn_id") or self.turn_id,
+                    "event": event.get("event"),
+                },
+                self.send_lock,
+            )
+        elif event_type == "assistant.clarification.event":
+            await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "assistant.clarification.event",
+                    "scope": self.scope.to_dict(),
+                    "turn_id": event.get("turn_id") or self.turn_id,
+                    "event": event.get("event"),
+                },
+                self.send_lock,
+            )
+        elif event_type == "assistant_message":
+            message = event.get("message")
+            if isinstance(message, dict):
+                self.assistant_sent_text = _message_content(message)
+                await _send_json_best_effort(
+                    self.websocket,
+                    {
+                        "type": "assistant.message",
+                        "scope": self.scope.to_dict(),
+                        "turn_id": self.turn_id,
+                        "message": message,
+                    },
+                    self.send_lock,
+                )
+        elif event_type == "done":
+            final_message = event.get("message")
+            final_text = _message_content(final_message)
+            if _should_emit_final_text(final_text, self.assistant_sent_text):
+                self.assistant_sent_text = final_text
+                await _send_assistant_delta(
+                    self.websocket, self.delta_encoder, self.scope, self.turn_id,
+                    final_text, self.send_lock
+                )
+            if self.scope.kind == "home" and isinstance(final_message, dict):
+                await _send_json_best_effort(
+                    self.websocket,
+                    {"type": "assistant.message", "scope": self.scope.to_dict(),
+                     "turn_id": self.turn_id, "message": final_message},
+                    self.send_lock,
+                )
+            self.done_sent = await _send_json_best_effort(
+                self.websocket,
+                {
+                    "type": "chat.done",
+                    "turn_id": self.turn_id,
+                    "scope": self.scope.to_dict(),
+                    "message": (
+                        final_message if isinstance(final_message, dict) else None
+                    ),
+                },
+                self.send_lock,
+            )
+
+
 async def _stream_project_turn(
     *,
     websocket: WebSocket,
@@ -3346,6 +3883,7 @@ async def _stream_project_turn(
     surface: str | None = None,
     surface_context: dict[str, Any] | None = None,
     store_scope: ChatScope | None = None,
+    send_lock: asyncio.Lock | None = None,
 ) -> None:
     project = str(scope.id)
     project_ctx = await _project_context_for_scope(user, scope)
@@ -3369,100 +3907,23 @@ async def _stream_project_turn(
     )
     agent_text = _text_with_attachment_context(text, attachments)
     display_text = str(user_text or text).strip()
-    if storage_scope is not None:
-        await chat_store.append_message_async(
-            username,
-            storage_scope,
-            "user",
-            display_text,
-            media=_attachment_payloads(attachments),
-            turn_id=turn_id,
-        )
-    else:
-        await asyncio.to_thread(
-            chat_service.add_user_message,
-            username,
-            project,
-            display_text,
-            project_dir=project_dir,
-            project_state_dir=project_state_dir,
-        )
-    send_lock = asyncio.Lock()
-    disconnected = asyncio.Event()
+    await chat_store.append_message_async(
+        username,
+        storage_scope if storage_scope is not None else _history_store_scope(scope, project_ctx),
+        "user",
+        display_text,
+        media=_attachment_payloads(attachments),
+        turn_id=turn_id,
+    )
+    send_lock = send_lock or asyncio.Lock()
     runtime_backend = chat_service.get_chat_backend_name()
-    runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
-    agent_profile = execution_context.agent_profile
-    heartbeat_task = asyncio.create_task(
-        _chat_heartbeat(
-            websocket,
-            scope=scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            disconnected=disconnected,
-        )
+    tasks = _start_turn_watchers(
+        websocket=websocket, username=username, scope=scope, turn_id=turn_id,
+        send_lock=send_lock, started_at=time.time(), store_scope=storage_scope,
     )
-    disconnect_task = asyncio.create_task(
-        _interrupt_agent_on_disconnect(
-            disconnected,
-            runtime_backend=runtime_backend,
-            username=username,
-            project=project,
-            agent_profile=agent_profile,
-            runtime_ids=runtime_ids,
-        )
-    )
-    bridge_result_receive_task = asyncio.create_task(
-        _receive_bridge_results_during_turn(
-            websocket=websocket, user=user, username=username
-        )
-    )
-    emitted_bridge_keys: set[str] = set()
-    pending_canvas_task = asyncio.create_task(
-        _watch_pending_canvas_commands(
-            websocket=websocket,
-            username=username,
-            scope=scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            emitted_bridge_keys=emitted_bridge_keys,
-            started_at=time.time(),
-        )
-    )
-    pending_canvas_context_task = asyncio.create_task(
-        _watch_pending_canvas_context_requests(
-            websocket=websocket,
-            username=username,
-            scope=scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            emitted_bridge_keys=emitted_bridge_keys,
-            started_at=time.time(),
-        )
-    )
-    pending_skill_studio_task = asyncio.create_task(
-        _watch_pending_skill_studio_events(
-            websocket=websocket,
-            username=username,
-            scope=scope,
-            store_scope=storage_scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            emitted_bridge_keys=emitted_bridge_keys,
-            started_at=time.time(),
-        )
-    )
-    pending_clarification_task = asyncio.create_task(
-        _watch_pending_clarification_events(
-            websocket=websocket,
-            username=username,
-            scope=scope,
-            store_scope=storage_scope,
-            turn_id=turn_id,
-            send_lock=send_lock,
-            emitted_bridge_keys=emitted_bridge_keys,
-            started_at=time.time(),
-        )
-    )
+    tasks.append(asyncio.create_task(_receive_bridge_results_during_turn(
+        websocket=websocket, user=user, username=username,
+    )))
     skill_studio_status = _skill_studio_status_frame(
         scope=scope,
         turn_id=turn_id,
@@ -3471,198 +3932,7 @@ async def _stream_project_turn(
     )
     if skill_studio_status is not None:
         await _send_json_best_effort(websocket, skill_studio_status, send_lock)
-    done_sent = False
-    assistant_sent_text = ""
-
-    async def on_event(event: dict[str, Any]) -> None:
-        nonlocal assistant_sent_text, done_sent
-        event_type = event.get("type")
-        if event_type == "thread_started":
-            runtime_ids["thread_id"] = str(event.get("thread_id") or "").strip() or None
-            runtime_ids["turn_id"] = str(event.get("turn_id") or "").strip() or None
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "thread.started",
-                    "scope": scope.to_dict(),
-                    "thread_id": event.get("thread_id"),
-                    "turn_id": event.get("turn_id") or turn_id,
-                },
-                send_lock,
-            )
-        elif event_type in {"turn_started", "turn_completed"}:
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": (
-                        "agent.turn.started"
-                        if event_type == "turn_started"
-                        else "agent.turn.completed"
-                    ),
-                    "scope": scope.to_dict(),
-                    "thread_id": event.get("thread_id"),
-                    "turn_id": event.get("turn_id") or turn_id,
-                    "status": event.get("status"),
-                    "disposition": event.get("disposition"),
-                    "error": event.get("error"),
-                },
-                send_lock,
-            )
-        elif event_type == "assistant_delta":
-            assistant_sent_text = str(event.get("text") or "")
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_sent_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
-            )
-        elif event_type == "thought_delta":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "agent.thought.delta",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "text": str(event.get("text") or ""),
-                    "source": event.get("source"),
-                },
-                send_lock,
-            )
-        elif event_type == "plan_update":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "agent.plan.update",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "text": str(event.get("text") or ""),
-                    "entries": event.get("entries") or [],
-                },
-                send_lock,
-            )
-        elif event_type == "usage_update":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "agent.usage.update",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "usage": event.get("usage") or {},
-                },
-                send_lock,
-            )
-        elif event_type == "permission_requested":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "agent.permission.requested",
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "request_id": event.get("request_id"),
-                    "text": str(event.get("text") or "需要操作授权"),
-                    "options": event.get("options") or [],
-                    "tool_call": event.get("tool_call") or {},
-                },
-                send_lock,
-            )
-        elif event_type in {"tool_started", "tool_updated", "tool_update"}:
-            tool_name, tool_body = _tool_display_payload(
-                event.get("text"), event.get("name")
-            )
-            status = str(
-                event.get("status")
-                or ("pending" if event_type == "tool_started" else "completed")
-            )
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": (
-                        "agent.tool.started"
-                        if event_type == "tool_started"
-                        else "agent.tool.updated"
-                    ),
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "call_id": event.get("call_id"),
-                    "name": tool_name,
-                    "status": status,
-                    "text": tool_body,
-                    "input": event.get("input"),
-                    "output": event.get("output"),
-                    "error": event.get("error"),
-                    "result_json": event.get("result_json"),
-                },
-                send_lock,
-            )
-        elif event_type == "skill_studio.event":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "skill_studio.event",
-                    "scope": scope.to_dict(),
-                    "turn_id": event.get("turn_id") or turn_id,
-                    "event": event.get("event"),
-                },
-                send_lock,
-            )
-        elif event_type == "assistant.clarification.event":
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.clarification.event",
-                    "scope": scope.to_dict(),
-                    "turn_id": event.get("turn_id") or turn_id,
-                    "event": event.get("event"),
-                },
-                send_lock,
-            )
-        elif event_type == "assistant_message":
-            message = event.get("message")
-            if isinstance(message, dict):
-                assistant_sent_text = _message_content(message)
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.message",
-                        "scope": scope.to_dict(),
-                        "turn_id": turn_id,
-                        "message": message,
-                    },
-                    send_lock,
-                )
-        elif event_type == "done":
-            final_message = event.get("message")
-            final_text = _message_content(final_message)
-            if _should_emit_final_text(final_text, assistant_sent_text):
-                assistant_sent_text = final_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": final_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
-                )
-            done_sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "chat.done",
-                    "turn_id": turn_id,
-                    "scope": scope.to_dict(),
-                    "message": (
-                        final_message if isinstance(final_message, dict) else None
-                    ),
-                },
-                send_lock,
-            )
+    on_event = _ChatFrameSender(websocket, scope, turn_id, send_lock)
 
     try:
         # 请求路径上唯一的出网身份绑定点。放在这里而不是分发块，是为了复用
@@ -3700,28 +3970,9 @@ async def _stream_project_turn(
                 ),
             )
     finally:
-        heartbeat_task.cancel()
-        disconnect_task.cancel()
-        bridge_result_receive_task.cancel()
-        pending_canvas_task.cancel()
-        pending_canvas_context_task.cancel()
-        pending_skill_studio_task.cancel()
-        pending_clarification_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await disconnect_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await bridge_result_receive_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await pending_canvas_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await pending_canvas_context_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await pending_skill_studio_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await pending_clarification_task
-        if not done_sent:
+        await _stop_turn_tasks(tasks)
+        current_task = asyncio.current_task()
+        if not on_event.done_sent and not (current_task is not None and current_task.cancelling()):
             await _send_json_best_effort(
                 websocket,
                 {"type": "chat.done", "turn_id": turn_id, "scope": scope.to_dict()},
@@ -3738,6 +3989,7 @@ async def _stream_home_turn_codex(
     text: str,
     attachments: list[ChatAttachmentIn],
     turn_id: str,
+    send_lock: asyncio.Lock | None = None,
 ) -> None:
     """Run home chat through the same backend-neutral service as projects."""
 
@@ -3753,162 +4005,16 @@ async def _stream_home_turn_codex(
         media=_attachment_payloads(attachments),
         turn_id=turn_id,
     )
-    send_lock = asyncio.Lock()
-    disconnected = asyncio.Event()
-    runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
+    send_lock = send_lock or asyncio.Lock()
     heartbeat_task = asyncio.create_task(
         _chat_heartbeat(
             websocket,
             scope=scope,
             turn_id=turn_id,
             send_lock=send_lock,
-            disconnected=disconnected,
         )
     )
-    disconnect_task = asyncio.create_task(
-        _interrupt_agent_on_disconnect(
-            disconnected,
-            runtime_backend="codex",
-            username=username,
-            project="",
-            agent_profile="main",
-            runtime_ids=runtime_ids,
-        )
-    )
-    done_sent = False
-    assistant_sent_text = ""
-
-    async def on_event(event: dict[str, Any]) -> None:
-        nonlocal assistant_sent_text, done_sent
-        event_type = str(event.get("type") or "")
-        if event_type == "thread_started":
-            runtime_ids["thread_id"] = str(event.get("thread_id") or "").strip() or None
-            runtime_ids["turn_id"] = str(event.get("turn_id") or "").strip() or None
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "thread.started",
-                    "scope": scope.to_dict(),
-                    "thread_id": event.get("thread_id"),
-                    "turn_id": event.get("turn_id") or turn_id,
-                },
-                send_lock,
-            )
-        elif event_type in {"turn_started", "turn_completed"}:
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": (
-                        "agent.turn.started"
-                        if event_type == "turn_started"
-                        else "agent.turn.completed"
-                    ),
-                    "scope": scope.to_dict(),
-                    "thread_id": event.get("thread_id"),
-                    "turn_id": event.get("turn_id") or turn_id,
-                    "status": event.get("status"),
-                    "disposition": event.get("disposition"),
-                    "error": event.get("error"),
-                },
-                send_lock,
-            )
-        elif event_type == "assistant_delta":
-            assistant_sent_text = str(event.get("text") or "")
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_sent_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
-            )
-        elif event_type in {"thought_delta", "plan_update", "usage_update"}:
-            payload = {
-                "thought_delta": {
-                    "type": "agent.thought.delta",
-                    "text": str(event.get("text") or ""),
-                    "source": event.get("source"),
-                },
-                "plan_update": {
-                    "type": "agent.plan.update",
-                    "text": str(event.get("text") or ""),
-                    "entries": event.get("entries") or [],
-                },
-                "usage_update": {
-                    "type": "agent.usage.update",
-                    "usage": event.get("usage") or {},
-                },
-            }[event_type]
-            await _send_json_best_effort(
-                websocket,
-                {**payload, "scope": scope.to_dict(), "turn_id": turn_id},
-                send_lock,
-            )
-        elif event_type in {"tool_started", "tool_updated", "tool_update"}:
-            tool_name, tool_body = _tool_display_payload(
-                event.get("text"), event.get("name")
-            )
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": (
-                        "agent.tool.started"
-                        if event_type == "tool_started"
-                        else "agent.tool.updated"
-                    ),
-                    "scope": scope.to_dict(),
-                    "turn_id": turn_id,
-                    "call_id": event.get("call_id"),
-                    "name": tool_name,
-                    "status": event.get("status") or "completed",
-                    "text": tool_body,
-                    "input": event.get("input"),
-                    "output": event.get("output"),
-                    "error": event.get("error"),
-                    "result_json": event.get("result_json"),
-                },
-                send_lock,
-            )
-        elif event_type == "done":
-            message = event.get("message")
-            final_text = _message_content(message)
-            if _should_emit_final_text(final_text, assistant_sent_text):
-                assistant_sent_text = final_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": final_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
-                )
-            if isinstance(message, dict):
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.message",
-                        "scope": scope.to_dict(),
-                        "turn_id": turn_id,
-                        "message": message,
-                    },
-                    send_lock,
-                )
-            done_sent = await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "chat.done",
-                    "turn_id": turn_id,
-                    "scope": scope.to_dict(),
-                    "message": message if isinstance(message, dict) else None,
-                },
-                send_lock,
-            )
+    on_event = _ChatFrameSender(websocket, scope, turn_id, send_lock)
 
     try:
         requester_user_id = await _requester_user_id_for_chat(user, scope)
@@ -3945,12 +4051,10 @@ async def _stream_home_turn_codex(
             )
     finally:
         heartbeat_task.cancel()
-        disconnect_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await disconnect_task
-        if not done_sent:
+        current_task = asyncio.current_task()
+        if not on_event.done_sent and not (current_task is not None and current_task.cancelling()):
             await _send_json_best_effort(
                 websocket,
                 {"type": "chat.done", "turn_id": turn_id, "scope": scope.to_dict()},
@@ -3967,6 +4071,7 @@ async def _stream_home_turn(
     text: str,
     attachments: list[ChatAttachmentIn],
     turn_id: str,
+    send_lock: asyncio.Lock | None = None,
 ) -> None:
     if chat_service.get_chat_backend_name() == "codex":
         await _stream_home_turn_codex(
@@ -3977,6 +4082,7 @@ async def _stream_home_turn(
             text=text,
             attachments=attachments,
             turn_id=turn_id,
+            send_lock=send_lock,
         )
         return
 
@@ -4046,32 +4152,17 @@ async def _stream_home_turn(
 
     assistant_text = ""
     assistant_sent_text = ""
+    delta_encoder = AssistantDeltaEncoder()
     tool_text = ""
     tool_name = ""
     persisted = False
-    send_lock = asyncio.Lock()
-    disconnected = asyncio.Event()
-    runtime_ids: dict[str, str | None] = {
-        "thread_id": str(getattr(thread, "id", "") or "").strip() or None,
-        "turn_id": None,
-    }
+    send_lock = send_lock or asyncio.Lock()
     heartbeat_task = asyncio.create_task(
         _chat_heartbeat(
             websocket,
             scope=scope,
             turn_id=turn_id,
             send_lock=send_lock,
-            disconnected=disconnected,
-        )
-    )
-    disconnect_task = asyncio.create_task(
-        _interrupt_agent_on_disconnect(
-            disconnected,
-            runtime_backend="hermes",
-            username=username,
-            project="",
-            agent_profile="main",
-            runtime_ids=runtime_ids,
         )
     )
     done_sent = False
@@ -4173,8 +4264,6 @@ async def _stream_home_turn(
     try:
         async for event in hermes_events_with_session_retry():
             if event.type == "thread_started":
-                runtime_ids["thread_id"] = str(event.thread_id or "").strip() or None
-                runtime_ids["turn_id"] = str(event.turn_id or "").strip() or None
                 await _send_json_best_effort(
                     websocket,
                     {
@@ -4220,16 +4309,8 @@ async def _stream_home_turn(
                     ),
                 )
                 assistant_sent_text = display_text
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "assistant.delta",
-                        "scope": scope.to_dict(),
-                        "text": display_text,
-                        "turn_id": turn_id,
-                        "accumulated": True,
-                    },
-                    send_lock,
+                await _send_assistant_delta(
+                    websocket, delta_encoder, scope, turn_id, display_text, send_lock
                 )
             elif event.type == "thought_delta":
                 await _send_json_best_effort(
@@ -4263,20 +4344,6 @@ async def _stream_home_turn(
                         "scope": scope.to_dict(),
                         "turn_id": turn_id,
                         "usage": event.usage or {},
-                    },
-                    send_lock,
-                )
-            elif event.type == "permission_requested":
-                await _send_json_best_effort(
-                    websocket,
-                    {
-                        "type": "agent.permission.requested",
-                        "scope": scope.to_dict(),
-                        "turn_id": turn_id,
-                        "request_id": event.request_id,
-                        "text": str(event.text or "需要操作授权"),
-                        "options": event.options or [],
-                        "tool_call": event.raw or {},
                     },
                     send_lock,
                 )
@@ -4344,16 +4411,8 @@ async def _stream_home_turn(
         assistant_sent_text = _message_content(message)
         if _should_emit_final_text(assistant_text, assistant_sent_text):
             assistant_sent_text = assistant_text
-            await _send_json_best_effort(
-                websocket,
-                {
-                    "type": "assistant.delta",
-                    "scope": scope.to_dict(),
-                    "text": assistant_text,
-                    "turn_id": turn_id,
-                    "accumulated": True,
-                },
-                send_lock,
+            await _send_assistant_delta(
+                websocket, delta_encoder, scope, turn_id, assistant_text, send_lock
             )
 
         after_projects = set(list_user_projects(username))
@@ -4383,18 +4442,34 @@ async def _stream_home_turn(
         )
     finally:
         heartbeat_task.cancel()
-        disconnect_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await disconnect_task
         await persist_partial_reply()
-        if not done_sent:
+        current_task = asyncio.current_task()
+        if not done_sent and not (current_task is not None and current_task.cancelling()):
             await _send_json_best_effort(
                 websocket,
                 {"type": "chat.done", "turn_id": turn_id, "scope": scope.to_dict()},
                 send_lock,
             )
+
+
+async def _run_turn_until_shutdown(turn: Coroutine[Any, Any, Any]) -> tuple[bool, Any]:
+    """Return (server_exiting, result), waiting for cancellation to detach the turn."""
+    task = asyncio.create_task(turn)
+    try:
+        while not task.done():
+            if AppStatus.should_exit:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                return True, None
+            await asyncio.wait({task}, timeout=_SHUTDOWN_POLL_INTERVAL_SECONDS)
+        return False, task.result()
+    except asyncio.CancelledError:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
 
 
 @router.websocket("/chat/ws")
@@ -4410,12 +4485,13 @@ async def chat_ws(websocket: WebSocket) -> None:
         await _close_ws_unauthorized(websocket)
         return
 
+    send_lock = asyncio.Lock()
     username = str(user["username"])
     try:
         current_scope = _scope_for_authenticated_user(user)
         _enforce_agent_chat_scope(user, current_scope, require_write=False)
         current_scope = await _send_scope_changed(
-            websocket, user, username, current_scope
+            websocket, user, username, current_scope, send_lock
         )
     except Exception:
         await _close_ws_unauthorized(websocket)
@@ -4439,6 +4515,9 @@ async def chat_ws(websocket: WebSocket) -> None:
             scope=current_scope,
         )
 
+    follower = asyncio.create_task(_follow_scope_turn(
+        websocket=websocket, user=user, username=username, scope=current_scope, send_lock=send_lock,
+    ))
     try:
         while True:
             try:
@@ -4464,11 +4543,22 @@ async def chat_ws(websocket: WebSocket) -> None:
                 except Exception:
                     await _close_ws_unauthorized(websocket)
                     return
+                if msg.history_before is not None:
+                    if not await _send_history_page(
+                        websocket, user, username, requested_scope, msg.history_before, send_lock
+                    ):
+                        return
+                    continue
+                await _stop_turn_tasks([follower])
                 current_scope = await _send_scope_changed(
-                    websocket, user, username, requested_scope
+                    websocket, user, username, requested_scope, send_lock
                 )
                 if current_scope is None:
                     return
+                follower = asyncio.create_task(_follow_scope_turn(
+                    websocket=websocket, user=user, username=username, scope=current_scope,
+                    send_lock=send_lock,
+                ))
                 await register_chat_websocket(
                     websocket,
                     username=username,
@@ -4546,7 +4636,7 @@ async def chat_ws(websocket: WebSocket) -> None:
             if event_type != "chat.message":
                 await _send_json_best_effort(
                     websocket,
-                    {"type": "error", "message": f"unsupported event: {event_type}"},
+                    {"type": "error", "message": f"unsupported event: {event_type}"}, send_lock,
                 )
                 continue
 
@@ -4566,7 +4656,7 @@ async def chat_ws(websocket: WebSocket) -> None:
             if not text:
                 await _send_json_best_effort(
                     websocket,
-                    {"type": "error", "turn_id": turn_id, "message": "empty message"},
+                    {"type": "error", "turn_id": turn_id, "message": "empty message"}, send_lock,
                 )
                 continue
 
@@ -4582,9 +4672,14 @@ async def chat_ws(websocket: WebSocket) -> None:
                 return
 
             try:
+                active_codex_turn = chat_service.active_codex_turn_for_scope(username, scope)
+                if active_codex_turn is not None:
+                    raise chat_service.ChatTurnBusyError(
+                        turn_id=active_codex_turn["business_turn_id"],
+                    )
                 await _require_ai_assistant_access(user=user, scope=scope)
                 if scope.kind in {"project", "freezone"}:
-                    await _stream_project_turn(
+                    turn = _stream_project_turn(
                         websocket=websocket,
                         user=user,
                         username=username,
@@ -4592,6 +4687,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         text=text,
                         attachments=msg.attachments,
                         turn_id=turn_id,
+                        send_lock=send_lock,
                         user_text=user_text,
                         surface=("freezone" if _is_freezone_scope(scope) else None),
                         surface_context=(
@@ -4600,7 +4696,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         store_scope=scope if _is_freezone_scope(scope) else None,
                     )
                 elif scope.kind == "home":
-                    await _stream_home_turn(
+                    turn = _stream_home_turn(
                         websocket=websocket,
                         user=user,
                         username=username,
@@ -4608,6 +4704,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         text=text,
                         attachments=msg.attachments,
                         turn_id=turn_id,
+                        send_lock=send_lock,
                     )
                 else:
                     await _send_json_best_effort(
@@ -4616,28 +4713,37 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "type": "error",
                             "turn_id": turn_id,
                             "message": f"scope not implemented: {scope.kind}",
-                        },
+                        }, send_lock,
                     )
+                    continue
+                server_exiting, _ = await _run_turn_until_shutdown(turn)
+                if server_exiting:
+                    return
             except Exception as exc:  # noqa: BLE001
                 busy_message = _chat_turn_busy_message(exc)
                 message = busy_message or str(exc)
+                if busy_message is not None:
+                    logger.info("chat turn busy username=%s turn_id=%s", username, turn_id)
+                    await _send_json_best_effort(
+                        websocket,
+                        {
+                            "type": "chat.busy",
+                            "turn_id": turn_id,
+                            "active_turn_id": (
+                                exc.turn_id if isinstance(exc, chat_service.ChatTurnBusyError)
+                                else None
+                            ),
+                            "scope": scope.to_dict(),
+                            "message": message,
+                        }, send_lock,
+                    )
+                    continue
                 logger.exception(
                     "chat turn failed username=%s turn_id=%s error_type=%s",
                     username,
                     turn_id,
                     type(exc).__name__,
                 )
-                if busy_message is not None:
-                    await _send_json_best_effort(
-                        websocket,
-                        {
-                            "type": "chat.busy",
-                            "turn_id": turn_id,
-                            "scope": scope.to_dict(),
-                            "message": message,
-                        },
-                    )
-                    continue
                 billing_rule_error = find_billing_rule_not_configured_error(exc)
                 if billing_rule_error is not None:
                     await _send_json_best_effort(
@@ -4649,7 +4755,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "data": billing_rule_not_configured_payload(
                                 billing_rule_error
                             ),
-                        },
+                        }, send_lock,
                     )
                     continue
                 insufficient_error = find_insufficient_credits_error(exc)
@@ -4661,7 +4767,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "turn_id": turn_id,
                             "message": INSUFFICIENT_CREDITS_MESSAGE,
                             "data": insufficient_credits_payload(insufficient_error),
-                        },
+                        }, send_lock,
                     )
                     continue
                 billing_error = find_billing_error(exc)
@@ -4673,7 +4779,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "turn_id": turn_id,
                             "message": billing_error.user_message,
                             "data": billing_error_payload(billing_error),
-                        },
+                        }, send_lock,
                     )
                     continue
                 logger.error(
@@ -4704,14 +4810,15 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "scope": scope.to_dict(),
                             "turn_id": turn_id,
                             "message": persisted_error,
-                        },
+                        }, send_lock,
                     )
                 await _send_json_best_effort(
                     websocket,
-                    {"type": "error", "turn_id": turn_id, "message": user_message},
+                    {"type": "error", "turn_id": turn_id, "message": user_message}, send_lock,
                 )
     except WebSocketDisconnect:
         logger.info("chat websocket disconnected username=%s", username)
         pass
     finally:
+        await _stop_turn_tasks([follower])
         await unregister_chat_websocket(websocket)

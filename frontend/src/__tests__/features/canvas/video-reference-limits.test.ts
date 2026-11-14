@@ -15,7 +15,7 @@ import {
   videoReferenceEnvelopeForModel,
 } from "@/features/canvas/domain/videoReferenceLimits";
 import { videoReferenceEnvelopeForNode } from "@/features/canvas/application/videoReferenceEnvelope";
-import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
+import type { ModelOption } from "@/features/canvas/domain/modelOptions";
 
 function node(
   id: string,

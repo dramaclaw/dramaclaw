@@ -31,15 +31,24 @@ def test_native_file_and_command_surfaces_remain_disabled():
     assert 'web_search="disabled"' in overrides
 
 
-def test_native_command_and_file_approval_requests_fail_closed():
-    assert codex_app_server._deny_unexpected_approval(
-        "item/commandExecution/requestApproval",
-        {"command": "cat /etc/passwd"},
-    ) == {"decision": "decline"}
-    assert codex_app_server._deny_unexpected_approval(
-        "item/fileChange/requestApproval",
-        {"changes": [{"path": "outside.txt"}]},
-    ) == {"decision": "decline"}
+@pytest.mark.parametrize("params", [None, {"command": "echo unsafe", "changes": []}])
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("item/commandExecution/requestApproval", {"decision": "decline"}),
+        ("item/fileChange/requestApproval", {"decision": "decline"}),
+        (
+            "execCommandApproval",
+            {"decision": {"denied": {"rejection": "DramaClaw does not use Codex approvals."}}},
+        ),
+        (
+            "applyPatchApproval",
+            {"decision": {"denied": {"rejection": "DramaClaw does not use Codex approvals."}}},
+        ),
+    ],
+)
+def test_native_command_and_file_approval_requests_fail_closed(method, params, expected):
+    assert codex_app_server._refuse_server_request(method, params) == expected
 
 
 def test_shared_node_process_does_not_receive_project_or_provider_secrets():
