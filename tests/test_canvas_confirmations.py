@@ -2,12 +2,15 @@
 # Copyright (c) 2026 ClaymoreLab
 """Exercise canvas confirmation policy and durable decisions with an injected clock."""
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import re
 from threading import Barrier
+import time
 
 import pytest
 
+from novelvideo.freezone import canvas_confirmations
 from novelvideo.freezone.canvas_confirmations import (
     CONFIRMATIONS_DIRNAME,
     CONFIRMATION_TTL_SECONDS,
@@ -468,3 +471,67 @@ def test_changed_targets_ignores_nodes_created_in_the_same_batch(canvas, create)
     assert changed_targets(canvas, record) == []
     canvas["nodes"] = [node for node in canvas["nodes"] if node["id"] != "n1"]
     assert changed_targets(canvas, record) == ["n1"]
+
+
+BATCH_HASH = "ab" * 32
+OTHER_HASH = "cd" * 32
+
+
+async def test_split_lock_serializes_holders_and_releases_on_error(tmp_path):
+    order = []
+
+    async def hold(name, fail):
+        async with canvas_confirmations.split_lock(tmp_path, BATCH_HASH):
+            order.append(name)
+            await asyncio.sleep(0.05)
+            order.append(name)
+            if fail:
+                raise RuntimeError("write failed")
+
+    first, second = await asyncio.gather(
+        hold("a", True), hold("b", False), return_exceptions=True,
+    )
+    assert isinstance(first, RuntimeError)
+    assert second is None
+    assert order in (["a", "a", "b", "b"], ["b", "b", "a", "a"])
+
+
+async def test_split_lock_wait_is_bounded_without_blocking_the_loop(tmp_path, monkeypatch):
+    monkeypatch.setattr(canvas_confirmations, "SPLIT_LOCK_WAIT_SECONDS", 0.2)
+    ticks = []
+
+    async def tick():
+        while True:
+            ticks.append(time.monotonic())
+            await asyncio.sleep(0.01)
+
+    async with canvas_confirmations.split_lock(tmp_path, BATCH_HASH):
+        ticker = asyncio.create_task(tick())
+        started = time.monotonic()
+        with pytest.raises(CanvasConfirmationError) as error:
+            async with canvas_confirmations.split_lock(tmp_path, BATCH_HASH):
+                pass
+        waited = time.monotonic() - started
+        ticker.cancel()
+    assert error.value.code == "busy"
+    assert 0.2 <= waited < 5
+    assert len(ticks) >= 5
+
+
+async def test_split_lock_hold_is_bounded_and_then_released(tmp_path, monkeypatch):
+    monkeypatch.setattr(canvas_confirmations, "SPLIT_LOCK_HOLD_SECONDS", 0.1)
+    monkeypatch.setattr(canvas_confirmations, "SPLIT_LOCK_WAIT_SECONDS", 0.2)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        async with canvas_confirmations.split_lock(tmp_path, BATCH_HASH):
+            await asyncio.sleep(5)
+    assert time.monotonic() - started < 2
+    async with canvas_confirmations.split_lock(tmp_path, BATCH_HASH):
+        pass
+
+
+async def test_split_lock_does_not_hold_up_other_batches(tmp_path, monkeypatch):
+    monkeypatch.setattr(canvas_confirmations, "SPLIT_LOCK_WAIT_SECONDS", 0.2)
+    async with canvas_confirmations.split_lock(tmp_path / "new", BATCH_HASH):
+        async with canvas_confirmations.split_lock(tmp_path / "new", OTHER_HASH):
+            pass

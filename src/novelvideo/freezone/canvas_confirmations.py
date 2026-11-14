@@ -4,20 +4,24 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import asyncio
+from contextlib import asynccontextmanager, contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Iterator, Literal
+from typing import AsyncIterator, Iterator, Literal
 from uuid import uuid4
 
 import portalocker
 
 CONFIRMATION_TTL_SECONDS = 30 * 60
 CONFIRMATIONS_DIRNAME = "mcp_canvas_approvals"
+SPLIT_LOCK_WAIT_SECONDS = 30.0
+SPLIT_LOCK_HOLD_SECONDS = 90.0
+SPLIT_REUSE_SECONDS = 24 * 3600
 
 _ID_PATTERN = re.compile(r"cc_[0-9a-f]{32}")
 _KIND_ORDER = ("delete_nodes", "clear_canvas", "paid_generation")
@@ -188,17 +192,103 @@ def _directory_lock(directory: Path) -> Iterator[None]:
             portalocker.unlock(lock_file)
 
 
-def _save(directory: Path, record: dict) -> None:
+@asynccontextmanager
+async def split_lock(directory: str | Path, source_command_hash: str) -> AsyncIterator[None]:
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    deadline = asyncio.get_running_loop().time() + SPLIT_LOCK_WAIT_SECONDS
+    with (directory / f".split-{source_command_hash[:2]}.lock").open("a+") as lock_file:
+        while True:
+            try:
+                portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                break
+            except portalocker.exceptions.AlreadyLocked as exc:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise CanvasConfirmationError(
+                        "busy", "Canvas confirmation is busy; retry the request"
+                    ) from exc
+                await asyncio.sleep(0.02)
+        try:
+            async with asyncio.timeout(SPLIT_LOCK_HOLD_SECONDS):
+                yield
+        finally:
+            portalocker.unlock(lock_file)
+
+
+def _save_json(path: Path, record: dict) -> None:
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=directory, delete=False,
+        mode="w", encoding="utf-8", dir=path.parent, delete=False,
     ) as tmp:
         temporary_path = Path(tmp.name)
         try:
             json.dump(record, tmp, ensure_ascii=False)
             tmp.close()
-            os.replace(temporary_path, directory / f"{record['id']}.json")
+            os.replace(temporary_path, path)
         finally:
             temporary_path.unlink(missing_ok=True)
+
+
+def _save(directory: Path, record: dict) -> None:
+    _save_json(directory / f"{record['id']}.json", record)
+
+
+def save_split(
+    directory: str | Path, *, project_id: str, canvas_id: str, source_command_hash: str,
+    written: dict, commands: list[dict], canvas: dict, now: float,
+) -> None:
+    nodes = {node["id"]: node for node in canvas.get("nodes", [])}
+    edges = {edge["id"]: edge for edge in canvas.get("edges", [])}
+    marker = {
+        "source_command_hash": source_command_hash, "project_id": project_id,
+        "canvas_id": canvas_id, "created_at": now, "written": written, "commands": commands,
+        "nodes": [
+            {"id": node_id, "type": nodes[node_id]["type"], "data": nodes[node_id].get("data", {})}
+            for node_id in written["created_node_ids"]
+        ],
+        "edges": [
+            {key: edges[edge_id][key] for key in ("id", "source", "target")}
+            for edge_id in written["created_edge_ids"]
+        ],
+    }
+    _save_json(Path(directory) / f"split_{source_command_hash}.json", marker)
+
+
+def find_reusable_split(
+    directory: str | Path, *, project_id: str, canvas_id: str, source_command_hash: str,
+    canvas: dict, now: float,
+) -> dict | None:
+    try:
+        marker = json.loads(
+            (Path(directory) / f"split_{source_command_hash}.json").read_text(encoding="utf-8")
+        )
+        if (
+            marker["project_id"] != project_id or marker["canvas_id"] != canvas_id
+            or marker["source_command_hash"] != source_command_hash
+            or not now < marker["created_at"] + SPLIT_REUSE_SECONDS
+            or not isinstance(marker["written"], dict)
+            or not isinstance(marker["commands"], list)
+        ):
+            return None
+        nodes = {node["id"]: node for node in canvas.get("nodes", [])}
+        edges = {edge["id"]: edge for edge in canvas.get("edges", [])}
+        for snapshot in marker["nodes"]:
+            node = nodes.get(snapshot["id"])
+            if node is None or node["type"] != snapshot["type"]:
+                return None
+            if not isinstance(snapshot["data"], dict):
+                return None
+            data = node.get("data", {})
+            if any(
+                key not in data or data[key] != value for key, value in snapshot["data"].items()
+            ):
+                return None
+        for snapshot in marker["edges"]:
+            edge = edges.get(snapshot["id"])
+            if edge is None or any(edge[key] != snapshot[key] for key in ("source", "target")):
+                return None
+        return marker
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def create_confirmation(
@@ -370,6 +460,14 @@ def expire_due(directory: str | Path, *, now: float) -> list[dict]:
                     expired.append(record)
             elif record["updated_at"] < now - 24 * 3600:
                 path.unlink()
+        for path in directory.glob("split_*.json"):
+            try:
+                marker = json.loads(path.read_text(encoding="utf-8"))
+                if now < marker["created_at"] + SPLIT_REUSE_SECONDS:
+                    continue
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            path.unlink(missing_ok=True)
     return expired
 
 

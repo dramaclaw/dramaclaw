@@ -3,10 +3,17 @@
 """Canvas confirmation HTTP policy, durable decisions, notices, and bridge payloads."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
 import logging
+import multiprocessing
+import os
+from pathlib import Path
+from threading import Barrier
+import time
 from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException
@@ -51,6 +58,8 @@ class CorePool:
         self.plan_inputs = []
         self.apply_calls = []
         self.apply_fails = False
+        self.apply_delay = 0.0
+        self.id_prefix = ""
         self.node_count = 0
         self.edge_count = 0
 
@@ -62,6 +71,8 @@ class CorePool:
             return deepcopy(self.plan(payload) if callable(self.plan) else self.plan)
         assert op == "apply_commands"
         self.apply_calls.append(deepcopy(payload))
+        if self.apply_delay:
+            time.sleep(self.apply_delay)
         canvas = deepcopy(payload["canvas"])
         if self.apply_fails:
             return {"status": "validation_failed", "canvas": canvas, "changes": {},
@@ -77,7 +88,7 @@ class CorePool:
                 result = {"commandIndex": len(results), "type": kind, "status": "success"}
                 if kind == "create_node":
                     self.node_count += 1
-                    node_id = f"node-{self.node_count}"
+                    node_id = f"{self.id_prefix}node-{self.node_count}"
                     canvas["nodes"].append({
                         "id": node_id, "type": command["node_type"],
                         "position": deepcopy(command.get("position") or {"x": 0, "y": 0}),
@@ -88,7 +99,7 @@ class CorePool:
                     result.update(nodeId=command["client_id"], createdNodeId=node_id)
                 elif kind == "create_edge":
                     self.edge_count += 1
-                    edge_id = f"edge-{self.edge_count}"
+                    edge_id = f"{self.id_prefix}edge-{self.edge_count}"
                     canvas["edges"].append({
                         "id": edge_id,
                         "source": client_ids.get(command["source"], command["source"]),
@@ -127,19 +138,19 @@ class CorePool:
         }
 
 
-@pytest.fixture
-def setup(monkeypatch, tmp_path):
-    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "server")
-    monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "1")
-    ctx = SimpleNamespace(project_id="proj", project_name="demo", state_dir=tmp_path,
+def _harness(root, patch, setenv, *, seed=True):
+    """Install the route doubles; the fixture and spawned API processes share this."""
+    setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "server")
+    setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "1")
+    ctx = SimpleNamespace(project_id="proj", project_name="demo", state_dir=root,
                           requester_user_id="owner", requester_username="owner",
-                          output_dir=tmp_path)
+                          output_dir=root)
     clock = [1000]
-    monkeypatch.setattr(routes, "_confirmation_now", lambda: clock[0], raising=False)
+    patch(routes, "_confirmation_now", lambda: clock[0])
 
     async def resolve(project, user, **kwargs):
         assert kwargs["require_home_node"] is False
-        return ctx, user["username"], "demo", tmp_path, str(tmp_path)
+        return ctx, user["username"], "demo", root, str(root)
 
     async def project_context(user, scope):
         return ctx
@@ -147,43 +158,51 @@ def setup(monkeypatch, tmp_path):
     async def catalog(_requester_user_id):
         return []
 
-    monkeypatch.setattr(routes, "_resolve_freezone_project", resolve)
-    monkeypatch.setattr(chat, "_project_context_for_scope", project_context)
-    monkeypatch.setattr(routes, "_freezone_image_models_data", catalog)
-    monkeypatch.setattr(routes, "_freezone_video_models_data", catalog)
+    patch(routes, "_resolve_freezone_project", resolve)
+    patch(chat, "_project_context_for_scope", project_context)
+    patch(routes, "_freezone_image_models_data", catalog)
+    patch(routes, "_freezone_video_models_data", catalog)
     pool = CorePool()
-    monkeypatch.setattr(agent_canvas, "get_canvas_core_pool", lambda: pool)
-    monkeypatch.setattr(canvas_core_pool, "get_canvas_core_pool", lambda: pool)
+    patch(agent_canvas, "get_canvas_core_pool", lambda: pool)
+    patch(canvas_core_pool, "get_canvas_core_pool", lambda: pool)
     from novelvideo.api import freezone_server_workflow_start as start
-    monkeypatch.setattr(start, "get_canvas_core_pool", lambda: pool)
-    monkeypatch.setattr(config, "STATE_DIR", tmp_path / "index")
+    patch(start, "get_canvas_core_pool", lambda: pool)
+    patch(config, "STATE_DIR", root / "index")
     queued = []
 
     async def enqueue(context, **kwargs):
         assert context is ctx
         queued.append(kwargs)
 
-    monkeypatch.setattr(task_client, "enqueue_project_task", enqueue)
+    patch(task_client, "enqueue_project_task", enqueue)
     store = ChatStore()
-    monkeypatch.setattr(chat, "chat_store", store)
-    canvas_store.save_canvas(tmp_path, "default", base_revision=None, build_payload=lambda _: {
-        "project_id": "proj", "revision": 1,
-        "nodes": [
-            {"id": "n1", "type": "imageGenNode", "data": {"label": "海报"},
-             "position": {"x": 0, "y": 0}},
-            {"id": "n2", "type": "videoNode", "data": {"displayName": "片头"},
-             "position": {"x": 100, "y": 0}},
-            {"id": "n3", "type": "textNode", "data": {}, "position": {"x": 200, "y": 0}},
-        ],
-        "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
-    })
+    patch(chat, "chat_store", store)
+    if seed:
+        canvas_store.save_canvas(root, "default", base_revision=None, build_payload=lambda _: {
+            "project_id": "proj", "revision": 1,
+            "nodes": [
+                {"id": "n1", "type": "imageGenNode", "data": {"label": "海报"},
+                 "position": {"x": 0, "y": 0}},
+                {"id": "n2", "type": "videoNode", "data": {"displayName": "片头"},
+                 "position": {"x": 100, "y": 0}},
+                {"id": "n3", "type": "textNode", "data": {}, "position": {"x": 200, "y": 0}},
+            ],
+            "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
+        })
     app = FastAPI()
     app.include_router(routes.router)
     user = [USER]
     app.dependency_overrides[get_api_user] = lambda: user[0]
-    with TestClient(app) as client:
-        yield SimpleNamespace(client=client, root=tmp_path, clock=clock, user=user, store=store,
-                              pool=pool, queued=queued, ctx=ctx)
+    return SimpleNamespace(app=app, root=root, clock=clock, user=user, store=store,
+                           pool=pool, queued=queued, ctx=ctx)
+
+
+@pytest.fixture
+def setup(monkeypatch, tmp_path):
+    harness = _harness(tmp_path, monkeypatch.setattr, monkeypatch.setenv)
+    with TestClient(harness.app) as client:
+        harness.client = client
+        yield harness
 
 
 def create(setup, *, commands=DELETE, turn_id="t1", agent_id="main", canvas="default"):
@@ -1526,6 +1545,299 @@ def test_browser_executor_keeps_external_key_batches_whole(setup, monkeypatch):
     assert "written" not in confirmation
     assert nodes(setup) == ["n1", "n2", "n3"]
     assert record(setup, confirmation)["commands"] == SPLIT
+
+
+# External agent key sessions: concurrent and repeated identical batches write one set.
+
+
+def external_post(setup, commands=SPLIT):
+    return setup.client.post(BASE + "/confirmations", json={
+        "commands": commands, "turn_id": None, "agent_id": "main",
+    })
+
+
+def concurrent_external_posts(setup, batches):
+    setup.user[0] = EXTERNAL
+    ready = Barrier(len(batches))
+
+    def post(commands):
+        ready.wait(timeout=30)
+        return external_post(setup, commands)
+
+    with ThreadPoolExecutor(len(batches)) as executor:
+        return list(executor.map(post, batches))
+
+
+def stored_records(setup):
+    return [confirmations.read_confirmation(directory(setup), path.stem)
+            for path in directory(setup).glob("cc_*.json")]
+
+
+def edit_canvas(setup, change):
+    canvas_store.save_canvas(setup.root, "default", base_revision=canvas_store.read_canvas(
+        setup.root, "default")["revision"], build_payload=lambda old: change(deepcopy(old)))
+
+
+def assert_one_written_set(setup, confirmation_ids):
+    real, = created(setup)
+    stored, = stored_records(setup)
+    assert set(confirmation_ids) == {stored["id"]}
+    assert stored["status"] == "pending"
+    assert referenced_node_ids(stored) == {real}
+    edges = canvas_store.read_canvas(setup.root, "default")["edges"]
+    assert [(edge["source"], edge["target"]) for edge in edges] == [("n1", "n2"), ("n3", real)]
+    return real
+
+
+@pytest.mark.parametrize("workers", [2, 8])
+def test_external_key_concurrent_identical_batches_write_one_set(setup, workers):
+    setup.pool.plan = mixed_plan()
+    setup.pool.apply_delay = 0.2
+    responses = concurrent_external_posts(setup, [SPLIT] * workers)
+    assert [response.status_code for response in responses] == [200] * workers, [
+        response.text for response in responses]
+    data = [response.json()["data"] for response in responses]
+    assert all(item == data[0] for item in data)
+    assert_one_written_set(setup, [item["confirmation_id"] for item in data])
+
+
+def _run_processes(processes) -> None:
+    started = []
+    try:
+        for process in processes:
+            process.start()
+            started.append(process)
+        for process in started:
+            process.join(timeout=120)
+        for process in started:
+            assert not process.is_alive()
+            assert process.exitcode == 0
+    finally:
+        for process in started:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=10)
+
+
+def _external_create_in_process(root: str, prefix: str, ready, result_path: str) -> None:
+    try:
+        harness = _harness(Path(root), setattr, os.environ.__setitem__, seed=False)
+        harness.pool.plan = mixed_plan()
+        harness.pool.id_prefix = prefix
+        harness.pool.apply_delay = 0.3
+        harness.user[0] = EXTERNAL
+        with TestClient(harness.app) as client:
+            ready.wait(timeout=60)
+            response = client.post(BASE + "/confirmations", json={
+                "commands": SPLIT, "turn_id": None, "agent_id": "main",
+            })
+        outcome = {"status": response.status_code, "body": response.json()}
+    except Exception as exc:  # reported to the parent test as data
+        outcome = {"status": "error", "error": repr(exc)}
+    Path(result_path).write_text(json.dumps(outcome), encoding="utf-8")
+
+
+@pytest.mark.parametrize("workers", [2, 8])
+def test_external_key_identical_batches_across_processes_write_one_set(
+    monkeypatch, tmp_path, workers,
+):
+    harness = _harness(tmp_path, monkeypatch.setattr, monkeypatch.setenv)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Barrier(workers)
+    results = [tmp_path / f"result-{index}.json" for index in range(workers)]
+    _run_processes([
+        context.Process(
+            target=_external_create_in_process,
+            args=(str(tmp_path), f"p{index}-", ready, str(path)),
+        )
+        for index, path in enumerate(results)
+    ])
+    outcomes = [json.loads(path.read_text(encoding="utf-8")) for path in results]
+    assert [outcome["status"] for outcome in outcomes] == [200] * workers, outcomes
+    assert_one_written_set(
+        harness, [outcome["body"]["data"]["confirmation_id"] for outcome in outcomes],
+    )
+
+
+def test_external_key_concurrent_distinct_batches_each_get_their_own_set(setup):
+    setup.pool.plan = mixed_plan()
+    setup.pool.apply_delay = 0.2
+    other = deepcopy(SPLIT)
+    other[0]["position"] = {"x": 600, "y": 0}
+    other[0]["data"] = {**SETTINGS_IMAGE, "label": "另一张海报"}
+    responses = concurrent_external_posts(setup, [SPLIT, other])
+    assert [response.status_code for response in responses] == [200, 200], [
+        response.text for response in responses]
+    ids = [response.json()["data"]["confirmation_id"] for response in responses]
+    assert len(set(ids)) == 2
+    written = set(created(setup))
+    assert len(written) == 2
+    stored = stored_records(setup)
+    assert sorted(item["id"] for item in stored) == sorted(ids)
+    assert set().union(*(referenced_node_ids(item) for item in stored)) == written
+
+
+@pytest.mark.parametrize("error", [
+    HTTPException(409, {"code": "canvas_revision_conflict"}),
+    CanvasCoreError("canvas_core_timeout", "Canvas core call timed out"),
+], ids=["http", "core"])
+def test_external_key_write_failure_releases_the_batch_lock(setup, monkeypatch, error):
+    setup.pool.plan = mixed_plan()
+    monkeypatch.setattr(confirmations, "SPLIT_LOCK_WAIT_SECONDS", 0.5)
+    real_execute = routes.execute_agent_canvas_envelopes
+    calls = []
+
+    async def fail_once(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise error
+        return await real_execute(**kwargs)
+
+    monkeypatch.setattr(routes, "execute_agent_canvas_envelopes", fail_once)
+    setup.user[0] = EXTERNAL
+    failed = external_post(setup)
+    assert failed.status_code in {409, 503}, failed.text
+    assert stored_records(setup) == []
+    confirmation = external_create(setup)
+    assert len(calls) == 2
+    assert_one_written_set(setup, [confirmation["confirmation_id"]])
+
+
+def test_external_key_stuck_write_gives_up_the_lock_after_the_hold_limit(setup, monkeypatch):
+    setup.pool.plan = mixed_plan()
+    monkeypatch.setattr(confirmations, "SPLIT_LOCK_HOLD_SECONDS", 0.2)
+    setup.pool.apply_delay = 1.0
+    setup.user[0] = EXTERNAL
+    stuck = external_post(setup)
+    assert stuck.status_code == 503, stuck.text
+    assert stuck.json()["detail"]["code"] == "canvas_confirmation_timeout"
+    setup.pool.apply_delay = 0.0
+    confirmation = external_create(setup)
+    assert_one_written_set(setup, [confirmation["confirmation_id"]])
+
+
+def test_external_key_retry_after_record_failure_reuses_the_written_nodes(setup, monkeypatch):
+    setup.pool.plan = mixed_plan()
+    real_create = confirmations.create_confirmation
+
+    def disk_full(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(confirmations, "create_confirmation", disk_full)
+    setup.user[0] = EXTERNAL
+    with pytest.raises(OSError, match="disk full"):
+        external_post(setup)
+    written, = created(setup)
+    before = canvas_store.read_canvas(setup.root, "default")
+    monkeypatch.setattr(confirmations, "create_confirmation", real_create)
+    confirmation = external_create(setup)
+    after = canvas_store.read_canvas(setup.root, "default")
+    assert (after["revision"], after["nodes"], after["edges"]) == (
+        before["revision"], before["nodes"], before["edges"],
+    )
+    assert assert_one_written_set(setup, [confirmation["confirmation_id"]]) == written
+    assert [node["node_id"] for node in confirmation["written"]["nodes"]] == [written]
+    assert record(setup, confirmation)["commands"] == [
+        {"type": "run_workflow", "node_ids": [written], "scope": "selection"},
+    ]
+
+
+def _end_confirmation(setup, confirmation, how):
+    if how == "refused":
+        response = decide(setup, confirmation, decision="refused", via="conversation",
+                          turn_id=None)
+        assert response.status_code == 200, response.text
+    elif how == "expired":
+        setup.clock[0] = confirmation["expires_at"]
+    else:
+        response = decide(setup, confirmation, via="conversation", turn_id=None)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["status"] == "running"
+
+
+@pytest.mark.parametrize("how", ["refused", "expired", "confirmed"])
+def test_external_key_resubmit_after_the_confirmation_ended_reuses_the_written_nodes(
+    setup, how,
+):
+    setup.pool.plan = mixed_plan()
+    first = external_create(setup)
+    real, = created(setup)
+    _end_confirmation(setup, first, how)
+    before = canvas_store.read_canvas(setup.root, "default")
+    second = external_create(setup)
+    assert second["confirmation_id"] != first["confirmation_id"]
+    assert second["written"] == first["written"]
+    assert second["targets"] == first["targets"]
+    assert created(setup) == [real]
+    after = canvas_store.read_canvas(setup.root, "default")
+    assert (after["nodes"], after["edges"]) == (before["nodes"], before["edges"])
+    stored = record(setup, second)
+    assert stored["status"] == "pending"
+    assert stored["commands"] == [
+        {"type": "run_workflow", "node_ids": [real], "scope": "selection"},
+    ]
+    assert [item["id"] for item in stored_records(setup)
+            if item["status"] == "pending" and setup.clock[0] < item["expires_at"]] == [
+        second["confirmation_id"]]
+
+
+def _rename_written_node(real):
+    def change(canvas):
+        node = next(node for node in canvas["nodes"] if node["id"] == real)
+        node["data"]["label"] = "用户改过的标题"
+        return {**canvas, "revision": canvas["revision"] + 1}
+    return change
+
+
+def _delete_written_node(real):
+    def change(canvas):
+        return {**canvas, "revision": canvas["revision"] + 1,
+                "nodes": [node for node in canvas["nodes"] if node["id"] != real],
+                "edges": [edge for edge in canvas["edges"] if real not in {
+                    edge["source"], edge["target"]}]}
+    return change
+
+
+def _delete_written_edge(real):
+    def change(canvas):
+        return {**canvas, "revision": canvas["revision"] + 1,
+                "edges": [edge for edge in canvas["edges"] if edge["target"] != real]}
+    return change
+
+
+@pytest.mark.parametrize("change", [
+    "node_edited", "node_deleted", "edge_deleted", "window_passed",
+])
+def test_external_key_resubmit_after_changes_writes_a_new_set(setup, change):
+    setup.pool.plan = mixed_plan()
+    first = external_create(setup)
+    real, = created(setup)
+    _end_confirmation(setup, first, "refused")
+    if change == "window_passed":
+        setup.clock[0] += 24 * 3600 + 1
+    else:
+        edit_canvas(setup, {
+            "node_edited": _rename_written_node, "node_deleted": _delete_written_node,
+            "edge_deleted": _delete_written_edge,
+        }[change](real))
+    second = external_create(setup)
+    newer = [node_id for node_id in created(setup) if node_id != real]
+    assert len(newer) == 1
+    assert [node["node_id"] for node in second["written"]["nodes"]] == newer
+    assert record(setup, second)["commands"] == [
+        {"type": "run_workflow", "node_ids": newer, "scope": "selection"},
+    ]
+
+
+def test_external_key_written_batch_markers_are_cleaned_after_the_reuse_window(setup):
+    setup.pool.plan = mixed_plan()
+    first = external_create(setup)
+    _end_confirmation(setup, first, "refused")
+    assert len(list(directory(setup).glob("split_*.json"))) == 1
+    confirmations.expire_due(directory(setup), now=1000 + 24 * 3600 - 1)
+    assert len(list(directory(setup).glob("split_*.json"))) == 1
+    confirmations.expire_due(directory(setup), now=1000 + 24 * 3600 + 1)
+    assert list(directory(setup).glob("split_*.json")) == []
 
 
 # Workflow draft delivery through paid canvas confirmations.

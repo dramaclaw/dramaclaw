@@ -18320,6 +18320,8 @@ async def create_canvas_confirmation(
     body: CanvasConfirmationRequest,
     user: dict = Depends(require_project_scope("projects:write")),
 ):
+    from contextlib import AsyncExitStack
+
     from novelvideo.api.freezone_server_workflow_start import (
         canvas_open_required_detail,
         check_server_workflow,
@@ -18354,83 +18356,110 @@ async def create_canvas_confirmation(
             and bool(structural) and bool(run_commands)
             and len(structural) + len(run_commands) == len(body.commands)
         )
-        if split:
-            source_hash = canvas_confirmations.command_hash(project, canvas_id, body.commands)
-            directory = await asyncio.to_thread(
-                canvas_confirmations.confirmations_dir, str(user["username"]),
-                body.agent_id, state_dir,
-            )
-            record = await asyncio.to_thread(
-                canvas_confirmations.find_pre_applied, directory, project_id=project,
-                canvas_id=canvas_id, source_command_hash=source_hash, now=now,
-            )
-            if record is not None:
-                canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
-                node_ids = {node["id"] for node in (canvas or {}).get("nodes", [])}
-                if any(target["node_id"] not in node_ids for target in record["targets"]):
-                    record = None
-        pre_applied = None
-        commands = body.commands
-        if record is None and executor == "server":
-            check = await check_server_workflow(
-                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=body.commands,
-            )
-            if check["status"] == "invalid":
-                raise HTTPException(409, {
-                    "code": "workflow_plan_invalid", "message": check["message"],
-                })
-            if check["status"] == "blocked" and not await asyncio.to_thread(
-                canvas_browser_open, state_dir, canvas_id, now=now,
-            ):
-                raise HTTPException(409, canvas_open_required_detail(check))
-            if split and check["status"] == "runnable":
-                envelope = {
-                    "schema_version": "canvas_chat_commands.v1", "project_id": project,
-                    "canvas_id": canvas_id, "commands": structural, "agent_id": body.agent_id,
-                }
-                data = await execute_agent_canvas_envelopes(
-                    project=project, canvas_id=canvas_id, user=user, ctx=ctx,
-                    canvas_project_dir=state_dir, envelopes=[envelope], locale=None,
+        async with AsyncExitStack() as stack:
+            if split:
+                source_hash = canvas_confirmations.command_hash(project, canvas_id, body.commands)
+                directory = await asyncio.to_thread(
+                    canvas_confirmations.confirmations_dir, str(user["username"]),
+                    body.agent_id, state_dir,
                 )
-                if data["status"] != "applied":
-                    raise HTTPException(422, {
-                        "code": "invalid_agent_canvas_request",
-                        "message": "; ".join(data["receipt"].get("errors", []))
-                        or "Canvas structural commands were not applied.",
+                await stack.enter_async_context(
+                    canvas_confirmations.split_lock(directory, source_hash)
+                )
+                record = await asyncio.to_thread(
+                    canvas_confirmations.find_pre_applied, directory, project_id=project,
+                    canvas_id=canvas_id, source_command_hash=source_hash, now=now,
+                )
+                if record is not None:
+                    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+                    node_ids = {node["id"] for node in (canvas or {}).get("nodes", [])}
+                    if any(target["node_id"] not in node_ids for target in record["targets"]):
+                        record = None
+            pre_applied = None
+            commands = body.commands
+            if split and record is None:
+                canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+                marker = await asyncio.to_thread(
+                    canvas_confirmations.find_reusable_split, directory, project_id=project,
+                    canvas_id=canvas_id, source_command_hash=source_hash,
+                    canvas=canvas or {}, now=now,
+                )
+                if marker is not None:
+                    commands = marker["commands"]
+                    pre_applied = {"source_command_hash": source_hash, "written": marker["written"]}
+            if record is None and executor == "server":
+                check = await check_server_workflow(
+                    ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands,
+                )
+                if check["status"] == "invalid":
+                    raise HTTPException(409, {
+                        "code": "workflow_plan_invalid", "message": check["message"],
                     })
-                mapping = created_node_mapping(data["receipt"], structural)
-                commands = rewrite_run_commands(run_commands, mapping)
-                created = {
-                    result["commandIndex"]: result["createdNodeId"]
-                    for result in data["receipt"].get("command_results", [])
-                    if result.get("type") in {"create_node", "add_next_node"}
-                    and result.get("createdNodeId")
-                }
-                written = {
-                    "revision": data["revision"],
-                    "nodes": [{
-                        "client_id": command.get("client_id"),
-                        "node_id": created[index],
-                        "node_type": command.get("node_type") or "",
-                        "title": canvas_confirmations.node_title(command.get("data") or {}),
-                    } for index, command in enumerate(structural) if index in created],
-                    "created_node_ids": data["changes"]["created_node_ids"],
-                    "created_edge_ids": data["changes"]["created_edge_ids"],
-                }
-                pre_applied = {"source_command_hash": source_hash, "written": written}
-        if record is None:
-            record = await asyncio.to_thread(
-                canvas_confirmations.request_confirmation,
-                username=str(user["username"]), agent_id=body.agent_id, project_id=project,
-                canvas_id=canvas_id, project_state_dir=state_dir, turn_id=body.turn_id,
-                commands=commands, now=now,
-                **({"pre_applied": pre_applied} if pre_applied is not None else {}),
-            )
-            count_canvas_metric("canvas_confirmation.created")
-            logger.info(
-                "canvas_confirmation result=created id=%s kinds=%s turn=%s",
-                record["id"], ",".join(record["kinds"]), record["turn_id"],
-            )
+                if check["status"] == "blocked" and not await asyncio.to_thread(
+                    canvas_browser_open, state_dir, canvas_id, now=now,
+                ):
+                    raise HTTPException(409, canvas_open_required_detail(check))
+                if split and pre_applied is None and check["status"] == "runnable":
+                    envelope = {
+                        "schema_version": "canvas_chat_commands.v1", "project_id": project,
+                        "canvas_id": canvas_id, "commands": structural, "agent_id": body.agent_id,
+                    }
+                    data = await execute_agent_canvas_envelopes(
+                        project=project, canvas_id=canvas_id, user=user, ctx=ctx,
+                        canvas_project_dir=state_dir, envelopes=[envelope], locale=None,
+                    )
+                    if data["status"] != "applied":
+                        raise HTTPException(422, {
+                            "code": "invalid_agent_canvas_request",
+                            "message": "; ".join(data["receipt"].get("errors", []))
+                            or "Canvas structural commands were not applied.",
+                        })
+                    mapping = created_node_mapping(data["receipt"], structural)
+                    commands = rewrite_run_commands(run_commands, mapping)
+                    created = {
+                        result["commandIndex"]: result["createdNodeId"]
+                        for result in data["receipt"].get("command_results", [])
+                        if result.get("type") in {"create_node", "add_next_node"}
+                        and result.get("createdNodeId")
+                    }
+                    written = {
+                        "revision": data["revision"],
+                        "nodes": [{
+                            "client_id": command.get("client_id"),
+                            "node_id": created[index],
+                            "node_type": command.get("node_type") or "",
+                            "title": canvas_confirmations.node_title(command.get("data") or {}),
+                        } for index, command in enumerate(structural) if index in created],
+                        "created_node_ids": data["changes"]["created_node_ids"],
+                        "created_edge_ids": data["changes"]["created_edge_ids"],
+                    }
+                    pre_applied = {"source_command_hash": source_hash, "written": written}
+                    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+                    await asyncio.to_thread(
+                        canvas_confirmations.save_split, directory, project_id=project,
+                        canvas_id=canvas_id, source_command_hash=source_hash,
+                        written=written, commands=commands, canvas=canvas or {}, now=now,
+                    )
+            if record is None:
+                record = await asyncio.to_thread(
+                    canvas_confirmations.request_confirmation,
+                    username=str(user["username"]), agent_id=body.agent_id, project_id=project,
+                    canvas_id=canvas_id, project_state_dir=state_dir, turn_id=body.turn_id,
+                    commands=commands, now=now,
+                    **({"pre_applied": pre_applied} if pre_applied is not None else {}),
+                )
+                count_canvas_metric("canvas_confirmation.created")
+                logger.info(
+                    "canvas_confirmation result=created id=%s kinds=%s turn=%s",
+                    record["id"], ",".join(record["kinds"]), record["turn_id"],
+                )
+    except TimeoutError as exc:
+        if not split:
+            raise
+        raise HTTPException(503, {
+            "code": "canvas_confirmation_timeout",
+            "message": "Canvas confirmation timed out; retry the request",
+        }) from exc
     except CanvasCoreError as exc:
         if exc.code == "invalid_request":
             raise HTTPException(422, {
