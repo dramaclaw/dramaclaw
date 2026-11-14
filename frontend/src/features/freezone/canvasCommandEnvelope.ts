@@ -99,6 +99,10 @@ const RUN_NODE_ACTIONS = new Set([
   "start_video_breakdown",
 ]);
 
+export function agentRunnableNodeActions(): string[] {
+  return [...RUN_NODE_ACTIONS].filter(isAgentExecutableNodeAction);
+}
+
 export function isCanvasChatRunNodeAction(action: string): boolean {
   return RUN_NODE_ACTIONS.has(action);
 }

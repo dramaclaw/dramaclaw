@@ -557,6 +557,139 @@ def test_in_product_no_ui_result_instruction_is_unchanged(monkeypatch, env, chat
     assert result["agent_instruction"] == _IN_PRODUCT_NO_UI_INSTRUCTION
 
 
+_HOST_CREDENTIAL_ENV = ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE",
+                        "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE",
+                        "DRAMACLAW_LOCAL_AGENT_TRUST")
+_TURNLESS_NON_KEY_HOST_ENVS = [
+    pytest.param({"DRAMACLAW_AGENT_TOKEN": "test-token-not-a-secret"}, id="token"),
+    pytest.param({"DRAMACLAW_LOCAL_AGENT_TRUST": "1"}, id="local-trust"),
+    # A session token wins over a key, as in the plugin's request path.
+    pytest.param({"DRAMACLAW_AGENT_TOKEN": "test-token-not-a-secret",
+                  "DRAMACLAW_AGENT_KEY": "test-agent-key-not-a-secret"}, id="token-and-key"),
+]
+_KEY_HOST_ENV = {"DRAMACLAW_AGENT_KEY": "test-agent-key-not-a-secret"}
+
+
+def _turnless_host_with(monkeypatch, credentials) -> None:
+    _turnless_external_host(monkeypatch)
+    for name in _HOST_CREDENTIAL_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in credentials.items():
+        monkeypatch.setenv(name, value)
+
+
+# A host with a chat turn answers missing generation settings through a card.
+_GENERATION_MISSING = [
+    {"node_id": "img", "node_type": "imageGenNode", "display_name": "Poster",
+     "fields": ["size", "count"]},
+    {"node_id": "vid", "node_type": "videoNode", "display_name": "Clip",
+     "fields": ["quality", "durationSec"], "interactive_story_segment": True},
+]
+_STORY_DURATION_PREFIX = (
+    "Do not ask for one shared video_duration_seconds value for interactive story segments. "
+    "Derive each missing segment duration from its dialogue, action and pacing, fit it to the "
+    "selected model capability, and write durationSec on that specific video node. "
+)
+_LISTENER_GENERATION_REQUIRED = {
+    "ok": False,
+    "status": "clarification_required",
+    "code": "generation_parameters_required",
+    "error": "image/video generation parameters require user clarification",
+    "media_types": ["image", "video"],
+    "missing_parameters": _GENERATION_MISSING,
+    "required_choices": {"image": ["resolution", "count"], "video": ["resolution"]},
+    "agent_instruction": _STORY_DURATION_PREFIX + (
+        "Stop before every canvas write. Call freezone_request_user_clarification exactly "
+        "once for the required image/video choices listed in required_choices, passing them "
+        "as generation_required_choices and every already confirmed choice (at least the "
+        "model) in answers. Do not add a duration question for interactive story segments. "
+        "After the user answers, copy each returned node_data.<node_type> field verbatim into "
+        "missing matching node fields without replacing explicit per-shot values, and retry "
+        "with the per-segment durations. For a WorkflowPlan, put them in each image/video node "
+        "data. For a workflow draft, pass its id and revision so the tool applies the choices. "
+        "Do not claim success and do not silently choose defaults."
+    ),
+    "dynamic_story_duration_node_ids": ["vid"],
+    "clarification": {"title": "确认图片和视频生成参数", "allow_skip": False},
+}
+
+
+@pytest.mark.parametrize("env", _IN_PRODUCT_HOST_ENVS)
+def test_listener_generation_parameters_result_is_unchanged(monkeypatch, env):
+    plugin = _load_plugin_module()
+    _set_host_env(monkeypatch, env)
+
+    result = plugin._generation_parameters_required_result(copy.deepcopy(_GENERATION_MISSING))
+
+    assert result == _LISTENER_GENERATION_REQUIRED
+
+
+@pytest.mark.parametrize(
+    "credentials", [*_TURNLESS_NON_KEY_HOST_ENVS, pytest.param(_KEY_HOST_ENV, id="key")],
+)
+def test_no_listener_generation_parameters_result_asks_in_conversation(
+    monkeypatch, credentials,
+):
+    plugin = _load_plugin_module()
+    _turnless_host_with(monkeypatch, credentials)
+
+    result = plugin._generation_parameters_required_result(copy.deepcopy(_GENERATION_MISSING))
+
+    assert "clarification" not in result
+    assert result["missing_parameters"] == _GENERATION_MISSING
+    # The same node data keys as missing_parameters[].fields.
+    assert result["required_choices"] == {"image": ["size", "count"], "video": ["quality"]}
+    assert result["dynamic_story_duration_node_ids"] == ["vid"]
+    instruction = result["agent_instruction"]
+    assert instruction.startswith(_STORY_DURATION_PREFIX), instruction
+    assert "Do not call freezone_request_user_clarification" in instruction
+    assert "exactly once" not in instruction
+    for phrase in (
+        "ask the user in this conversation",
+        "a videoNode keeps its resolution in quality",
+        "never pick a more expensive option than the user asked for",
+        "retry the same operation once",
+    ):
+        assert phrase in instruction, instruction
+    assert (result["status"], result["code"]) == (
+        "clarification_required", "generation_parameters_required",
+    )
+
+
+def test_workflow_adapter_no_listener_host_asks_in_conversation(monkeypatch):
+    plugin = _load_plugin_module()
+    _turnless_host_with(monkeypatch, {"DRAMACLAW_AGENT_TOKEN": "test-token-not-a-secret"})
+    monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "canvas_demo", None)
+    )
+    detail = {
+        "ok": False, "status": "clarification_required",
+        "code": "generation_parameters_required",
+        "error": "image/video generation parameters require user clarification",
+        "missing_parameters": [
+            {"node_id": "shot-1", "node_type": "videoNode", "fields": ["durationSec", "generateAudio"]},
+        ],
+        "retryable": True,
+    }
+    def request(method, _path, **_kwargs):
+        assert method == "POST"
+        return plugin._http_error_result(400, json.dumps({"detail": detail}), "Bad Request")
+
+    monkeypatch.setattr(plugin, "_request", request)
+
+    # A turnless host has no admitted operation, so the Plan names its Skill.
+    plan = {"skill": {"id": "video-ad", "version": "1"}, "nodes": [], "edges": []}
+    result = json.loads(plugin._handle_workflow_operation({"plan": plan}, action="prepare"))
+
+    assert result["code"] == "generation_parameters_required", result
+    assert "clarification" not in result
+    assert result["required_choices"] == {"video": ["durationSec", "generateAudio"]}
+    assert result["next_action"] == "ask_user_in_conversation"
+    assert "Do not call freezone_request_user_clarification" in result["agent_instruction"]
+    Draft202012Validator(plugin._output_schema("freezone_prepare_workflow")).validate(result)
+
+
 def test_workflow_skill_names_the_turnless_admission_status(monkeypatch):
     """The published Skill's no-operation branch matches what the tool returns."""
     plugin = _load_plugin_module()
@@ -1351,7 +1484,9 @@ def test_external_generation_preflight_blocks_missing_downstream_parameters(
             "fields": ["model", "size", "quality", "count"],
         }
     ]
-    assert result["clarification"]["allow_skip"] is False
+    # No chat turn means no card can be answered: ask in the conversation, by data key.
+    assert "clarification" not in result
+    assert result["required_choices"] == {"image": ["model", "size", "quality", "count"]}
 
 
 def test_generation_preflight_models_add_next_alias_before_running_media(monkeypatch):

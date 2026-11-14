@@ -669,6 +669,13 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
     if _SHARED_API_ERRORS is None:
         return {"ok": False, "status": "failed", "status_code": status_code, "error": "HTTP request failed"}
     result = _SHARED_API_ERRORS._http_error_result(status_code, text, reason)
+    if status_code == 422 and result.get("code") == "invalid_agent_canvas_request":
+        data = _maybe_json(text) if len(text) <= 65536 else None
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if isinstance(detail, dict):
+            message = _SHARED_API_ERRORS._safe_error_string(detail.get("message"), 8192)
+            if message:
+                result["message"] = message
     if status_code == 409 and result.get("code") in {
         "canvas_open_required", "workflow_already_running",
     }:
@@ -5505,6 +5512,7 @@ def _workflow_generation_mode_clarification(
 def _generation_parameters_required_result(
     missing: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    listener = _clarification_listener_available()
     media_types = sorted(
         {
             "image" if item["node_type"] == "imageGenNode" else "video"
@@ -5527,6 +5535,8 @@ def _generation_parameters_required_result(
             # Video stores its resolution in data.quality.
             if media_type == "video" and field == "quality":
                 portable = "resolution"
+            if not listener:
+                portable = str(field)
             if portable not in choices:
                 choices.append(portable)
     requires_user_choices = any(required_choices.values())
@@ -5569,7 +5579,21 @@ def _generation_parameters_required_result(
                 "put them in each image/video node data. For a workflow draft, pass its id and "
                 "revision so the tool applies the choices. Do not claim success and do not "
                 "silently choose defaults."
-                if requires_user_choices
+                if requires_user_choices and listener
+                else (
+                    "Stop before every canvas write. No interface in this session can show a "
+                    "clarification card. Do not call freezone_request_user_clarification for "
+                    "these settings; ask the user in this conversation for every field listed "
+                    "in required_choices (the node data keys in missing_parameters[].fields; "
+                    "a videoNode keeps its resolution in quality) in one message and wait for "
+                    "the answer. Never choose these settings for the user and never pick a more "
+                    "expensive option than the user asked for. Do not add a duration question "
+                    "for interactive story segments. After the user answers, write each answer "
+                    "into the matching field of each listed node without replacing explicit "
+                    "per-shot values, and retry the same operation once with the completed "
+                    "settings. For a WorkflowPlan, put them in each image/video node data. "
+                    "Do not claim success."
+                ) if requires_user_choices
                 else "Retry the same operation only after every listed story segment has its "
                 "own durationSec; no user clarification card is needed for duration."
             )
@@ -5577,7 +5601,7 @@ def _generation_parameters_required_result(
     }
     if dynamic_story_duration_nodes:
         result["dynamic_story_duration_node_ids"] = dynamic_story_duration_nodes
-    if requires_user_choices:
+    if requires_user_choices and listener:
         result["clarification"] = {
             "title": "确认图片和视频生成参数",
             "allow_skip": False,
@@ -6506,6 +6530,14 @@ def _dispatch_server_host_commands(
     return dispatch(project=project, canvas=canvas, commands=commands, slim_result=slim_result)
 
 
+_INVALID_CANVAS_REQUEST_INSTRUCTION = (
+    "The canvas rejected this batch as invalid. The message names the failing command "
+    "(commands[N] is the command at zero-based position N in the batch you sent) and its field, "
+    "with the accepted values or shape when it can. Fix that command and retry the corrected "
+    "batch once; do not resend it unchanged. If it fails again, tell the user the error."
+)
+
+
 def _canvas_executor_failure(response: dict[str, Any], *, context: bool = False) -> dict[str, Any]:
     message = response.get("message") or response.get("error") or "Canvas API request failed"
     return {
@@ -6514,6 +6546,10 @@ def _canvas_executor_failure(response: dict[str, Any], *, context: bool = False)
         **({"canvas_context_status": "failed"} if context else {
             "canvas_apply_status": "failed", "applied": False,
         }),
+        **({
+            "retryable": True,
+            "agent_instruction": _INVALID_CANVAS_REQUEST_INSTRUCTION,
+        } if response.get("code") == "invalid_agent_canvas_request" and not context else {}),
         "errors": [message],
         "message": message,
         **{key: response[key] for key in ("code", "current_revision") if key in response},
@@ -7826,10 +7862,16 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
                 "error": standard["error"],
                 "media_types": standard["media_types"],
                 "required_choices": standard["required_choices"],
-                "clarification": standard["clarification"],
+                **(
+                    {"clarification": standard["clarification"]}
+                    if "clarification" in standard else {}
+                ),
                 "agent_instruction": standard["agent_instruction"],
                 "retryable": True,
-                "next_action": "request_user_clarification",
+                "next_action": (
+                    "request_user_clarification" if _clarification_listener_available()
+                    else "ask_user_in_conversation"
+                ),
             }
         elif action == "prepare" and error.get("code") == "no_compatible_video_model":
             from novelvideo.freezone.workflow_preflight import (
@@ -10013,6 +10055,11 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
 }
 
 _CANVAS_RESULT_FIELDS = (
+    "media_types",
+    "missing_parameters",
+    "required_choices",
+    "clarification",
+    "dynamic_story_duration_node_ids",
     "blocked",
     "run_id",
     "actions",
@@ -10076,6 +10123,7 @@ _WORKFLOW_RESULT_FIELDS = (
 
 _RESULT_ARRAY_FIELDS = frozenset(
     {
+        "dynamic_story_duration_node_ids",
         "blocked",
         "issues",
         "progress",

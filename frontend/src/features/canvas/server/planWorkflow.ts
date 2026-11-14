@@ -9,7 +9,7 @@ import { SHARED_MODELS, VIDEO_MODELS } from '../domain/modelOptions';
 import { imageModelOptionsFromPayload, videoModelOptionsFromPayload } from '../domain/modelCatalogPayload';
 import { withCanvasModelCatalogsAsync } from '../domain/canvasModelCatalogs';
 import { planCanvasNodeActions } from '@/features/freezone/workflowActionPlan';
-import { isRecord } from '@/features/freezone/canvasCommandEnvelope';
+import { agentRunnableNodeActions, isRecord } from '@/features/freezone/canvasCommandEnvelope';
 import type { CanvasChatCommand } from '../core/commands/types';
 import { isSystemManagedNodeData } from '../domain/mainlineNodeFlags';
 import { invalidRequest, parseCanvasPayload } from './requestPayload';
@@ -19,11 +19,40 @@ import { runServerRequest } from './requestScope';
 export async function servePlanWorkflow(payload: unknown) {
   if (!isRecord(payload) || !Array.isArray(payload.commands)) invalidRequest('commands must be an array');
   const input = parseCanvasPayload({ ...payload, envelopes: [] });
+  const actions = agentRunnableNodeActions();
+  const acceptedActions = actions.join(', ');
+  const issues: string[] = [];
+  payload.commands.forEach((command, index) => {
+    const path = `envelopes[0].commands[${index}]`;
+    if (!isRecord(command)) {
+      issues.push(`${path}: expected a command object`);
+    } else if (command.type !== 'run_workflow' && command.type !== 'run_node_action') {
+      issues.push(`${path}.type: ${JSON.stringify(command.type ?? null)} is not accepted; only run_workflow and run_node_action commands are accepted`);
+    } else if (command.type === 'run_node_action') {
+      if (typeof command.node_id !== 'string' || !command.node_id.trim()) {
+        issues.push(`${path}.node_id: expected a non-empty node id string`);
+      }
+      if (typeof command.action !== 'string' || !command.action.trim()) {
+        issues.push(`${path}.action: expected a non-empty action string; use one of: ${acceptedActions}`);
+      } else if (!actions.includes(command.action.trim())) {
+        issues.push(`${path}.action: ${JSON.stringify(command.action)} is not a runnable node action; use one of: ${acceptedActions}`);
+      }
+    }
+  });
+  if (issues.length) invalidRequest('Invalid workflow commands: ' + issues.join('; '));
   const envelopes = extractCanvasChatCommandEnvelopes([{
     schema_version: 'canvas_chat_commands.v1', commands: payload.commands,
   }]);
   if (envelopes.length !== 1 || envelopes[0].commands.length !== payload.commands.length) {
-    invalidRequest('Invalid workflow commands');
+    const dropped = payload.commands.flatMap((command, index) => {
+      const parsed = extractCanvasChatCommandEnvelopes([{
+        schema_version: 'canvas_chat_commands.v1', commands: [command],
+      }]);
+      return parsed[0]?.commands.length ? [] : [
+        `envelopes[0].commands[${index}]: invalid ${isRecord(command) ? command.type : null} command`,
+      ];
+    });
+    invalidRequest('Invalid workflow commands: ' + dropped.join('; '));
   }
   const commands: Extract<CanvasChatCommand, { type: 'run_workflow' | 'run_node_action' }>[] = [];
   for (const command of envelopes[0].commands) {

@@ -1347,3 +1347,62 @@ def test_external_host_without_a_key_marker_keeps_the_batch_whole(external):
     for key in ("written", "generation_settings", "generation_summary"):
         assert key not in paid, paid
     assert _node_ids(external.root, b) == []
+
+
+def _cat_batch(**image_data):
+    """CAT_BATCH with the image node's data replaced field by field (None drops a field)."""
+    data = {**CAT_BATCH[1]["data"], **image_data}
+    data = {key: value for key, value in data.items() if value is not None}
+    return [CAT_BATCH[0], {**CAT_BATCH[1], "data": data}, *CAT_BATCH[2:]]
+
+
+# --- agent-facing errors name the field and agree with each other (ISS-159) ---
+
+
+def test_unknown_run_action_names_the_command_field_and_the_valid_actions(agent):
+    image = agent.call("freezone_create_node", {"node_type": "imageGenNode", "data": IMAGE})
+    (node_id,) = image["created_node_ids"]
+
+    result = agent.call("freezone_emit_canvas_command", {"commands": [
+        {"type": "select_nodes", "node_ids": [node_id]},
+        {"type": "run_node_action", "node_id": node_id, "action": "generate"},
+    ]})
+
+    assert result["ok"] is False, result
+    assert result["code"] == "invalid_agent_canvas_request"
+    for part in ("commands[1].action", '"generate"', "generate_image"):
+        assert part in result["message"], result["message"]
+    assert result["retryable"] is True
+    assert "retry" in result["agent_instruction"]
+
+
+def test_missing_settings_reach_the_agent_through_the_typed_result(agent):
+    """The instruction points at required_choices, so the typed result must carry it."""
+    result = agent.call("freezone_emit_canvas_command", {
+        "commands": _cat_batch(size=None, count=None),
+    })
+
+    assert result["code"] == "generation_parameters_required", result
+    assert [item["fields"] for item in result["missing_parameters"]] == [["size", "count"]]
+    assert result["required_choices"] == {"image": ["resolution", "count"]}
+    assert result["clarification"] == {"title": "确认图片和视频生成参数", "allow_skip": False}
+    assert "exactly once" in result["agent_instruction"]
+    assert _node_ids(agent.root, "default") == []
+
+
+def test_external_host_missing_settings_are_asked_in_conversation_by_data_key(external):
+    b = _created(external, "Cat")["canvas_id"]
+
+    result = external.call("freezone_emit_canvas_command", {
+        "canvas_id": b, "commands": _cat_batch(size=None, count=None),
+    })
+
+    assert result["code"] == "generation_parameters_required", result
+    assert "clarification" not in result
+    assert [item["fields"] for item in result["missing_parameters"]] == [["size", "count"]]
+    assert result["required_choices"] == {"image": ["size", "count"]}
+    instruction = result["agent_instruction"]
+    assert "Do not call freezone_request_user_clarification" in instruction
+    assert "exactly once" not in instruction
+    assert "ask the user in this conversation" in instruction
+    assert _node_ids(external.root, b) == []

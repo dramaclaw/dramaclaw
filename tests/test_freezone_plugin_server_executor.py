@@ -331,7 +331,11 @@ def test_actual_http_errors_reach_canvas_tools(agent, monkeypatch, read, status,
               if read else plugin._server_apply_canvas_commands("p", "c", CREATE, slim_result=False))
     assert not result["ok"] and result["tool_call_status"] == "failed"
     assert result["message"] == detail["message"]
-    if status == 422:
+    if status == 422 and detail["code"] == "invalid_agent_canvas_request" and not read:
+        # The message names the command and field, so a corrected batch may be sent once.
+        assert result["retryable"] is True
+        assert "do not resend it unchanged" in result["agent_instruction"]
+    elif status == 422:
         assert not result.get("retryable")
         assert "retry" not in result.get("agent_instruction", "").lower()
     assert result["code"] == detail["code"]
@@ -748,9 +752,14 @@ def test_confirmation_create_failure_preserves_server_error(agent, monkeypatch, 
         "ok": False, "status_code": 422, "code": code, "message": "Create failed",
     })
     result = _tool(plugin, "freezone_emit_canvas_command", {"commands": DELETE})
+    # Only an invalid batch is correctable by the agent, so only it invites one corrected retry.
+    fixable = {
+        "retryable": True, "agent_instruction": plugin._INVALID_CANVAS_REQUEST_INSTRUCTION,
+    } if code == "invalid_agent_canvas_request" else {}
     assert result == {
         "ok": False, "tool_call_status": "failed", "canvas_apply_status": "failed",
         "applied": False, "errors": ["Create failed"], "message": "Create failed", "code": code,
+        **fixable,
     }
     assert [call for call in calls if call[0] == "POST"] == [
         ("POST", CONFIRMATION_PATH, {"agent_id": "main", "turn_id": None, "commands": DELETE}),

@@ -39,3 +39,27 @@ it.each([
   expect(result.actions[0]).toEqual(expect.objectContaining(expected ? { auto_commit: true } : { action: 'generate_image' }));
   if (!expected) expect(result.actions[0]).not.toHaveProperty('auto_commit');
 });
+
+it('names the command, the field and the runnable actions for an unknown action', async () => {
+  const payload = { canvas, commands: [
+    { type: 'run_workflow', node_ids: ['video'] },
+    { type: 'run_node_action', node_id: 'image', action: 'generate' },
+  ] };
+  const error = await servePlanWorkflow(payload).catch(caught => caught);
+  expect(error).toBeInstanceOf(InvalidRequest);
+  expect(error.message).toContain('envelopes[0].commands[1].action');
+  expect(error.message).toContain('"generate"');
+  expect(error.message).toContain('generate_image');
+  expect(error.message).not.toContain('commands[0]');
+});
+
+it.each([
+  [{ type: 'run_node_action', action: 'generate_image' }, 'envelopes[0].commands[0].node_id'],
+  [{ type: 'run_node_action', node_id: 'image' }, 'envelopes[0].commands[0].action'],
+  [{ type: 'create_node', node_type: 'imageGenNode' }, 'envelopes[0].commands[0].type'],
+  ['run', 'envelopes[0].commands[0]'],
+])('names the field of a malformed run command %#', async (command, path) => {
+  const error = await servePlanWorkflow({ canvas, commands: [command] }).catch(caught => caught);
+  expect(error).toBeInstanceOf(InvalidRequest);
+  expect(error.message).toContain(path);
+});

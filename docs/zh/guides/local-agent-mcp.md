@@ -154,16 +154,20 @@ Authorization: Bearer xxx
 
 当外部 Agent 真正运行图片或视频节点时，授权 MCP 会在审批和画布写入前执行参数预检。
 如果模型、比例、分辨率/质量、时长、声音开关或数量仍有缺项，会返回
-`generation_parameters_required`。有产品聊天监听时，Agent 应使用
-`freezone_request_user_clarification` 一次询问全部缺项，再以同一个工作流草稿或计划重试。
+`generation_parameters_required`，`missing_parameters[].fields` 列出每个节点缺少的字段。
+有产品聊天监听时，Agent 应使用 `freezone_request_user_clarification` 一次询问全部缺项，
+再以同一个工作流草稿或计划重试。
 外部 Agent（`DRAMACLAW_EXTERNAL_MCP=1` 且无 `DRAMACLAW_TURN_ID`）没有可回答澄清卡的界面：
-工具立即返回 `clarification_ui_unavailable`，不创建卡片。Agent 不得重试或换画布；
-可明示合理假设后继续，或在自己的对话中询问用户。缺失的图片、视频生成参数必须在对话中
-询问，不得替用户选择或升级到更贵的设置。付费操作仍需用户明确同意后调用
+澄清工具立即返回 `clarification_ui_unavailable`，不创建卡片。Agent 不得重试或换画布；
+可明示合理假设后继续，或在自己的对话中询问用户。此时缺参数结果不带澄清卡，
+`required_choices` 直接使用节点数据字段名（与 `missing_parameters[].fields` 一致，视频分辨率在
+`quality`）；Agent 在自己的对话中一次问齐这些字段，不得替用户选择或升级到更贵的设置，
+拿到回答后用补全的参数重试一次。付费操作仍需用户明确同意后调用
 `freezone_confirm_canvas_action`，不得静默采用默认值。普通空节点创建、连线、
 归组、布局、文案及独立音频设置不受该预检影响。
 
-对同一对节点、同一组连接点、同一种连线语义再次
+运行命令无效时，错误信息会点名第几条命令（`commands[N]`）、哪个字段，以及可用的取值或形状；
+Agent 应改正该命令后重试一次，不要原样重发。对同一对节点、同一组连接点、同一种连线语义再次
 `create_edge`（例如 `add_next_node` 已自带连线）时，画布只保留一条边，`create_edge` 按成功处理并在
 结果里返回已有边的 id；连接点或连线语义不同的边照常新建。
 
