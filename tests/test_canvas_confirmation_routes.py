@@ -1404,6 +1404,8 @@ def test_external_key_paid_batch_writes_structure_before_confirmation(setup):
         "node_id": real, "title": "新海报", "node_type": "imageGenNode",
         "action": "run_workflow", "model": "image-model", "aspect_ratio": "16:9",
         "resolution": "2K", "quality": "high", "count": 2,
+        "sources": {"model": "agent", "aspect_ratio": "agent", "resolution": "agent",
+                    "quality": "agent", "count": "agent"},
     }]
     stored = record(setup, confirmation)
     assert stored["status"] == "pending"
@@ -1520,7 +1522,7 @@ def test_external_key_paid_run_on_existing_node_lists_its_settings(setup):
     assert "written" not in confirmation
     assert confirmation["generation_settings"] == [
         {"node_id": "n1", "title": "海报", "node_type": "imageGenNode",
-         "action": "generate_image"},
+         "action": "generate_image", "sources": {}},
     ]
     assert record(setup, confirmation)["commands"] == PAID
 
@@ -1537,6 +1539,7 @@ def test_in_product_paid_batches_still_wait_whole(setup, user, turn_id):
     stored = record(setup, confirmation)
     assert stored["commands"] == SPLIT
     assert "pre_applied" not in stored
+    assert "generation_sources" not in stored
 
 
 def test_browser_executor_keeps_external_key_batches_whole(setup, monkeypatch):
@@ -2084,3 +2087,214 @@ def test_paid_confirmation_browser_receipt_updates_workflow_draft(
     assert result["data"]["canvas_apply_status"] == receipt["canvas_apply_status"]
     assert record(setup, confirmation)["status"] == "executed"
     assert _read_confirmation_draft(setup, draft)["status"] == expected_status
+
+
+# External agent key sessions: generation tiers the agent left unset get the platform's
+# standard tier, and the confirmation names which values were defaulted.
+
+TIER_IMAGE = {"id": "image-model", "apiModel": "image-model", "ratioOptions": ["1:1", "16:9"],
+              "resolutionOptions": ["4K", "2K", "1K"],
+              "qualityOptions": ["high", "low", "medium"]}
+TIER_VIDEO = {"id": "video-model", "apiModel": "video-model", "ratioOptions": ["16:9"],
+              "resolutionOptions": ["1080P", "720P", "480P"], "minDuration": 2,
+              "maxDuration": 10}
+UNSET_IMAGE = {"label": "新海报", "model": "image-model", "aspectRatio": "16:9", "count": 1}
+UNSET_SPLIT = [{**SPLIT[0], "data": UNSET_IMAGE}, *SPLIT[1:]]
+AGENT_IMAGE_SOURCES = {"model": "agent", "aspect_ratio": "agent", "count": "agent"}
+
+
+@pytest.fixture
+def tiers(setup, monkeypatch):
+    catalogs = {"image": [TIER_IMAGE], "video": [TIER_VIDEO]}
+
+    async def image_catalog(_requester_user_id):
+        return deepcopy(catalogs["image"])
+
+    async def video_catalog(_requester_user_id):
+        return deepcopy(catalogs["video"])
+
+    monkeypatch.setattr(routes, "_freezone_image_models_data", image_catalog)
+    monkeypatch.setattr(routes, "_freezone_video_models_data", video_catalog)
+    setup.pool.plan = mixed_plan()
+    setup.catalogs = catalogs
+    return setup
+
+
+def tier_post(setup, commands=UNSET_SPLIT, *, fill=("c1",), turn_id=None, user=EXTERNAL):
+    setup.user[0] = user
+    body = {"commands": commands, "turn_id": turn_id, "agent_id": "main"}
+    if fill is not None:
+        body["fill_standard_tiers"] = list(fill)
+    return setup.client.post(BASE + "/confirmations", json=body)
+
+
+def written_data(setup, real):
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    return next(node for node in canvas["nodes"] if node["id"] == real)["data"]
+
+
+def test_external_key_unset_tiers_get_the_platform_standard_tier(tiers):
+    response = tier_post(tiers)
+    assert response.status_code == 200, response.text
+    confirmation = response.json()["data"]
+    real, = created(tiers)
+    assert written_data(tiers, real) == {**UNSET_IMAGE, "size": "1K", "quality": "medium"}
+    assert confirmation["generation_settings"] == [{
+        "node_id": real, "title": "新海报", "node_type": "imageGenNode",
+        "action": "run_workflow", "model": "image-model", "aspect_ratio": "16:9",
+        "resolution": "1K", "quality": "medium", "count": 1,
+        "sources": {**AGENT_IMAGE_SOURCES, "resolution": "server_default",
+                    "quality": "server_default"},
+    }]
+    stored = record(tiers, confirmation)
+    assert stored["status"] == "pending"
+    assert stored["kinds"] == ["paid_generation"]
+    assert stored["commands"] == [
+        {"type": "run_workflow", "node_ids": [real], "scope": "selection"},
+    ]
+    assert runs(tiers) == []
+    assert tiers.queued == []
+
+
+def test_external_key_filled_resubmit_returns_the_same_confirmation(tiers):
+    first = tier_post(tiers)
+    assert first.status_code == 200, first.text
+    applies = len(tiers.pool.apply_calls)
+    second = tier_post(tiers)
+    assert second.status_code == 200, second.text
+    assert second.json()["data"] == first.json()["data"]
+    assert len(tiers.pool.apply_calls) == applies
+    assert len(created(tiers)) == 1
+    assert len(list(directory(tiers).glob("cc_*.json"))) == 1
+
+
+def test_external_key_explicit_higher_tiers_pass_through(tiers):
+    response = tier_post(tiers, SPLIT)
+    assert response.status_code == 200, response.text
+    real, = created(tiers)
+    assert written_data(tiers, real) == SETTINGS_IMAGE
+    assert response.json()["data"]["generation_settings"][0]["sources"] == {
+        **AGENT_IMAGE_SOURCES, "resolution": "agent", "quality": "agent",
+    }
+
+
+def test_external_key_tier_set_later_in_the_batch_is_kept(tiers):
+    commands = [
+        UNSET_SPLIT[0],
+        {"type": "update_node_data", "node_id": "c1", "data": {"size": "2K"}},
+        *UNSET_SPLIT[1:],
+    ]
+    response = tier_post(tiers, commands)
+    assert response.status_code == 200, response.text
+    real, = created(tiers)
+    assert written_data(tiers, real) == {**UNSET_IMAGE, "size": "2K", "quality": "medium"}
+    assert response.json()["data"]["generation_settings"][0]["sources"] == {
+        **AGENT_IMAGE_SOURCES, "resolution": "agent", "quality": "server_default",
+    }
+
+
+def test_external_key_unset_video_resolution_gets_the_standard_tier(tiers):
+    def plan(payload):
+        node_id = payload["commands"][0]["node_ids"][0]
+        return {"ok": True, "actions": [{"command_index": 0, "node_id": node_id,
+                                         "action": "generate_video", "execution_mode": "task",
+                                         "label": "片段"}],
+                "levels": [[0]], "dependencies": {}, "already_completed": False}
+
+    tiers.pool.plan = plan
+    video = {"label": "片段", "model": "video-model", "aspectRatio": "16:9",
+             "durationSec": 5, "count": 1}
+    commands = [
+        {"type": "create_node", "client_id": "v1", "node_type": "videoNode",
+         "position": {"x": 300, "y": 0}, "data": video},
+        {"type": "run_workflow", "node_ids": ["v1"], "scope": "selection"},
+    ]
+    response = tier_post(tiers, commands, fill=("v1",))
+    assert response.status_code == 200, response.text
+    real, = created(tiers)
+    assert written_data(tiers, real) == {**video, "quality": "720P"}
+    settings, = response.json()["data"]["generation_settings"]
+    assert settings["quality"] == "720P"
+    assert "resolution" not in settings
+    assert settings["sources"] == {
+        "model": "agent", "aspect_ratio": "agent", "duration_seconds": "agent",
+        "count": "agent", "quality": "server_default",
+    }
+
+
+def test_external_key_model_without_quality_options_gets_no_quality(tiers):
+    tiers.catalogs["image"] = [
+        {key: value for key, value in TIER_IMAGE.items() if key != "qualityOptions"},
+    ]
+    response = tier_post(tiers)
+    assert response.status_code == 200, response.text
+    real, = created(tiers)
+    assert written_data(tiers, real) == {**UNSET_IMAGE, "size": "1K"}
+    assert response.json()["data"]["generation_settings"][0]["sources"] == {
+        **AGENT_IMAGE_SOURCES, "resolution": "server_default",
+    }
+
+
+def test_external_key_tiers_are_not_filled_unless_asked(tiers):
+    response = tier_post(tiers, fill=None)
+    assert response.status_code == 200, response.text
+    real, = created(tiers)
+    assert written_data(tiers, real) == UNSET_IMAGE
+    assert response.json()["data"]["generation_settings"][0]["sources"] == AGENT_IMAGE_SOURCES
+
+
+@pytest.mark.parametrize("user,turn_id", [
+    (USER, "t1"), (AGENT, "t1"), (AGENT, None), (EXTERNAL, "t1"),
+], ids=["browser", "agent-turn", "agent-turnless", "external-key-turn"])
+def test_only_turnless_external_key_sessions_get_standard_tiers(tiers, user, turn_id):
+    response = tier_post(tiers, user=user, turn_id=turn_id)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "generation_parameters_required"
+    assert nodes(tiers) == ["n1", "n2", "n3"]
+    assert list(directory(tiers).glob("cc_*.json")) == []
+
+
+@pytest.mark.parametrize("image_catalog,fields", [
+    ([], ["size", "quality"]),
+    ([{**TIER_IMAGE, "resolutionOptions": ["3K", "5K"]}], ["size"]),
+], ids=["model-not-listed", "no-standard-resolution"])
+def test_external_key_unresolvable_standard_tier_writes_nothing(tiers, image_catalog, fields):
+    tiers.catalogs["image"] = image_catalog
+    response = tier_post(tiers)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "generation_parameters_required"
+    assert detail["missing_parameters"] == [
+        {"node_id": "c1", "node_type": "imageGenNode", "fields": fields},
+    ]
+    assert nodes(tiers) == ["n1", "n2", "n3"]
+    assert list(directory(tiers).glob("cc_*.json")) == []
+
+
+@pytest.mark.parametrize("fill", [["n1"], ["c9"]], ids=["existing-node", "unknown-node"])
+def test_external_key_standard_tiers_only_fill_new_media_nodes(tiers, fill):
+    response = tier_post(tiers, fill=fill)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "invalid_agent_canvas_request"
+    assert "fill_standard_tiers[0]" in detail["message"]
+    assert nodes(tiers) == ["n1", "n2", "n3"]
+    assert list(directory(tiers).glob("cc_*.json")) == []
+
+
+def test_browser_executor_stores_the_filled_external_key_batch(tiers, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "browser")
+    response = tier_post(tiers)
+    assert response.status_code == 200, response.text
+    confirmation = response.json()["data"]
+    assert "written" not in confirmation
+    assert nodes(tiers) == ["n1", "n2", "n3"]
+    filled_sources = {**AGENT_IMAGE_SOURCES, "resolution": "server_default",
+                      "quality": "server_default"}
+    stored = record(tiers, confirmation)
+    assert stored["commands"] == [
+        {**UNSET_SPLIT[0], "data": {**UNSET_IMAGE, "size": "1K", "quality": "medium"}},
+        *UNSET_SPLIT[1:],
+    ]
+    assert stored["generation_sources"]["c1"] == filled_sources
+    assert confirmation["generation_settings"][0]["sources"] == filled_sources

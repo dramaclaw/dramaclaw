@@ -18341,20 +18341,54 @@ async def create_canvas_confirmation(
     executor = agent_canvas_executor()
     record = None
     try:
+        commands_in = body.commands
+        fill_sources = {}
+        if body.fill_standard_tiers and not external_turnless:
+            raise HTTPException(422, {
+                "code": "generation_parameters_required",
+                "message": "Only external agent key sessions without a chat turn get the "
+                "platform standard tier; ask the user for these settings.",
+                "missing_parameters": canvas_confirmations.fill_standard_tiers(
+                    body.commands, body.fill_standard_tiers, image_catalog=[], video_catalog=[],
+                )[2],
+            })
+        if external_turnless and body.fill_standard_tiers:
+            image_catalog, video_catalog = await asyncio.gather(
+                _freezone_image_models_data(ctx.requester_user_id),
+                _freezone_video_models_data(ctx.requester_user_id),
+            )
+            commands_in, fill_sources, unresolved = canvas_confirmations.fill_standard_tiers(
+                body.commands, body.fill_standard_tiers,
+                image_catalog=image_catalog if isinstance(image_catalog, list) else [],
+                video_catalog=video_catalog if isinstance(video_catalog, list) else [],
+            )
+            if unresolved:
+                raise HTTPException(422, {
+                    "code": "generation_parameters_required",
+                    "message": "The platform has no standard tier for these settings of the "
+                    "selected model; ask the user for them.",
+                    "missing_parameters": unresolved,
+                })
+        sources = (
+            canvas_confirmations.generation_sources(body.commands) if external_turnless else None
+        )
+        if sources is not None:
+            for node_id, values in fill_sources.items():
+                sources.setdefault(node_id, {}).update(values)
         structural_types = {
             "create_node", "add_next_node", "create_edge", "delete_edges", "update_node_data",
             "move_nodes", "layout_nodes", "group_nodes", "select_nodes",
         }
         structural = [
-            command for command in body.commands if command.get("type") in structural_types
+            command for command in commands_in if command.get("type") in structural_types
         ]
-        run_commands = [command for command in body.commands if is_run_command(command)]
+        run_commands = [command for command in commands_in if is_run_command(command)]
         split = (
             executor == "server" and external_turnless
-            and canvas_confirmations.confirmation_kinds(body.commands) == ["paid_generation"]
-            and workflow_draft_identity(body.commands) is None
+            and canvas_confirmations.confirmation_kinds(commands_in) == ["paid_generation"]
+            and workflow_draft_identity(commands_in) is None
             and bool(structural) and bool(run_commands)
-            and len(structural) + len(run_commands) == len(body.commands)
+            and len(structural) + len(run_commands) == len(commands_in)
         )
         async with AsyncExitStack() as stack:
             if split:
@@ -18376,7 +18410,7 @@ async def create_canvas_confirmation(
                     if any(target["node_id"] not in node_ids for target in record["targets"]):
                         record = None
             pre_applied = None
-            commands = body.commands
+            commands = commands_in
             if split and record is None:
                 canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
                 marker = await asyncio.to_thread(
@@ -18387,6 +18421,13 @@ async def create_canvas_confirmation(
                 if marker is not None:
                     commands = marker["commands"]
                     pre_applied = {"source_command_hash": source_hash, "written": marker["written"]}
+                    if sources is not None:
+                        mapping = {
+                            node["client_id"]: node["node_id"]
+                            for node in marker["written"]["nodes"]
+                            if node.get("client_id")
+                        }
+                        sources = {mapping.get(key, key): value for key, value in sources.items()}
             if record is None and executor == "server":
                 check = await check_server_workflow(
                     ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands,
@@ -18415,6 +18456,8 @@ async def create_canvas_confirmation(
                             or "Canvas structural commands were not applied.",
                         })
                     mapping = created_node_mapping(data["receipt"], structural)
+                    if sources is not None:
+                        sources = {mapping.get(key, key): value for key, value in sources.items()}
                     commands = rewrite_run_commands(run_commands, mapping)
                     created = {
                         result["commandIndex"]: result["createdNodeId"]
@@ -18446,6 +18489,7 @@ async def create_canvas_confirmation(
                     username=str(user["username"]), agent_id=body.agent_id, project_id=project,
                     canvas_id=canvas_id, project_state_dir=state_dir, turn_id=body.turn_id,
                     commands=commands, now=now,
+                    **({"generation_sources": sources} if sources is not None else {}),
                     **({"pre_applied": pre_applied} if pre_applied is not None else {}),
                 )
                 count_canvas_metric("canvas_confirmation.created")
@@ -18485,6 +18529,8 @@ async def create_canvas_confirmation(
         canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
         data["generation_settings"] = canvas_confirmations.generation_settings(
             canvas or {}, record["commands"], record["targets"],
+            sources=record.get("generation_sources", {}),
+            created=record.get("pre_applied", {}).get("written", {}).get("created_node_ids", []),
         )
     return {"ok": True, "data": data}
 

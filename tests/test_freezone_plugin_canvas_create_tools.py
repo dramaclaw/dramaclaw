@@ -1349,11 +1349,138 @@ def test_external_host_without_a_key_marker_keeps_the_batch_whole(external):
     assert _node_ids(external.root, b) == []
 
 
+# --- key-exchanged hosts: the platform, not the model, picks an unset tier (ISS-156) ---
+
+TIER_MODEL = {
+    "id": "image-model", "apiModel": "image-model", "providerId": "openai",
+    "ratioOptions": ["1:1", "16:9"], "resolutionOptions": ["4K", "2K", "1K"],
+    "qualityOptions": ["high", "low", "medium"],
+}
+
+
 def _cat_batch(**image_data):
     """CAT_BATCH with the image node's data replaced field by field (None drops a field)."""
     data = {**CAT_BATCH[1]["data"], **image_data}
     data = {key: value for key, value in data.items() if value is not None}
     return [CAT_BATCH[0], {**CAT_BATCH[1], "data": data}, *CAT_BATCH[2:]]
+
+
+def _confirmation_posts(h, canvas):
+    return _posts(h, f"/api/v1/projects/proj/freezone/canvases/{canvas}/confirmations")
+
+
+@pytest.fixture
+def key_host(external, monkeypatch):
+    """A host that holds an agent key and exchanges it for sessions, like the agent kit."""
+    h = external
+    h.user["external_agent_key_id"] = EXTERNAL_KEY_ID
+    h.image_catalog = [TIER_MODEL]
+    monkeypatch.delenv("DRAMACLAW_AGENT_TOKEN", raising=False)
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", "test-agent-key-not-a-secret")
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://127.0.0.1")
+    forward = h.plugin.urlopen
+
+    def urlopen(request, *args, **kwargs):
+        if urlsplit(request.full_url).path == "/api/v1/agent/sessions":
+            return _Response(200, json.dumps({"ok": True, "data": {
+                "token": "test-session-token-not-a-secret", "expires_at": time.time() + 3600,
+            }}).encode())
+        return forward(request, *args, **kwargs)
+
+    async def image_models(_user_id):
+        return h.image_catalog
+
+    monkeypatch.setattr(h.plugin, "urlopen", urlopen)
+    monkeypatch.setattr(routes, "_freezone_image_models_data", image_models)
+    return h
+
+
+def test_key_host_leaves_an_unset_tier_to_the_platform_standard_tier(key_host):
+    b = _created(key_host, "Cat")["canvas_id"]
+    batch = _cat_batch(size=None, quality=None)
+
+    paid = key_host.call("freezone_emit_canvas_command", {"canvas_id": b, "commands": batch})
+
+    assert paid["code"] == "canvas_confirmation_required", paid
+    (body,) = _confirmation_posts(key_host, b)
+    assert body["commands"] == batch
+    assert body["fill_standard_tiers"] == ["cat_image"]
+    canvas = _read(key_host.root, b)
+    by_type = {node["type"]: node for node in canvas["nodes"]}
+    image = by_type["imageGenNode"]
+    assert (image["data"]["size"], image["data"]["quality"]) == ("1K", "medium")
+    assert [(edge["source"], edge["target"]) for edge in canvas["edges"]] == [
+        (by_type["textAnnotationNode"]["id"], image["id"]),
+    ]
+    (settings,) = paid["generation_settings"]
+    assert (settings["resolution"], settings["quality"]) == ("1K", "medium")
+    assert settings["sources"] == {
+        "model": "agent", "aspect_ratio": "agent", "resolution": "server_default",
+        "quality": "server_default", "count": "agent",
+    }
+    summary = paid["generation_summary"]
+    for part in (
+        "model image-model (agent choice)", "aspect ratio 1:1 (agent choice)",
+        "resolution 1K (platform standard default)", "quality medium (platform standard default)",
+        "count 1 (agent choice)",
+    ):
+        assert part in summary, summary
+    assert "platform standard default" in paid["agent_instruction"]
+
+
+def test_key_host_explicit_tier_is_sent_as_chosen(key_host):
+    b = _created(key_host, "Cat")["canvas_id"]
+    batch = _cat_batch(size="4K", quality="high")
+
+    paid = key_host.call("freezone_emit_canvas_command", {"canvas_id": b, "commands": batch})
+
+    assert paid["code"] == "canvas_confirmation_required", paid
+    (body,) = _confirmation_posts(key_host, b)
+    assert "fill_standard_tiers" not in body
+    (image,) = [node for node in _read(key_host.root, b)["nodes"]
+                if node["type"] == "imageGenNode"]
+    assert (image["data"]["size"], image["data"]["quality"]) == ("4K", "high")
+    (settings,) = paid["generation_settings"]
+    assert set(settings["sources"].values()) == {"agent"}
+    assert "platform standard default" not in paid["generation_summary"]
+    assert "platform standard default" not in paid["agent_instruction"]
+
+
+def test_key_host_still_asks_for_settings_outside_the_tier(key_host):
+    b = _created(key_host, "Cat")["canvas_id"]
+
+    result = key_host.call("freezone_emit_canvas_command", {
+        "canvas_id": b, "commands": _cat_batch(size=None, quality=None, count=None),
+    })
+
+    assert result["code"] == "generation_parameters_required", result
+    assert [item["fields"] for item in result["missing_parameters"]] == [["count"]]
+    assert result["required_choices"] == {"image": ["count"]}
+    assert _confirmation_posts(key_host, b) == []
+    assert _node_ids(key_host.root, b) == []
+
+
+@pytest.mark.parametrize(("catalog", "fields"), [
+    pytest.param([], ["size", "quality"], id="model-not-listed"),
+    pytest.param([{**TIER_MODEL, "resolutionOptions": ["3K", "5K"]}], ["size"],
+                 id="no-standard-resolution"),
+])
+def test_key_host_asks_when_the_platform_has_no_standard_tier(key_host, catalog, fields):
+    key_host.image_catalog = catalog
+    b = _created(key_host, "Cat")["canvas_id"]
+
+    result = key_host.call("freezone_emit_canvas_command", {
+        "canvas_id": b, "commands": _cat_batch(size=None, quality=None),
+    })
+
+    assert result["code"] == "generation_parameters_required", result
+    assert [(item["node_id"], item["fields"]) for item in result["missing_parameters"]] == [
+        ("cat_image", fields),
+    ]
+    assert result["required_choices"] == {"image": fields}
+    assert "clarification" not in result
+    assert len(_confirmation_posts(key_host, b)) == 1
+    assert _node_ids(key_host.root, b) == []
 
 
 # --- agent-facing errors name the field and agree with each other (ISS-159) ---

@@ -2199,6 +2199,7 @@ class CanvasConfirmationRequest(BaseModel):
     agent_id: str = "main"
     turn_id: str | None = None
     commands: list[dict] = Field(min_length=1)
+    fill_standard_tiers: list[str] = Field(default_factory=list)
 
 
 class CanvasConfirmationDecisionRequest(BaseModel):

@@ -47,6 +47,9 @@ CE 内部运行时的 Skill owner 是 `src/novelvideo/agent_skills/`；`agent-ki
 `freezone_request_user_clarification` 会立即返回 `clarification_ui_unavailable`，不创建卡片。
 不得重试或换画布；明示合理假设后继续，或在自己的对话中询问用户。不得替用户选择生成参数
 或升级到更贵的设置；缺失的图片、视频参数必须在对话中询问，付费确认规则仍然适用。
+例外：用 agent key 换取会话时，新建图片或视频节点而用户没有指定分辨率或图片画质，Agent 可以
+不填这两项，由服务端补成平台标准档，并在确认结果里标明哪些是平台标准默认、哪些是 Agent 显式
+指定（详见 `docs/zh/guides/local-agent-mcp.md`）。
 
 本地免 Token 模式只允许 `127.0.0.1`、`::1` 或 `localhost`。如果 API 可被局域网或公网访问，
 不要开启 `DRAMACLAW_LOCAL_AGENT_TRUST`，应改用 CE 签发的短期 Agent Token。

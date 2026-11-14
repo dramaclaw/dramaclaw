@@ -162,9 +162,19 @@ Authorization: Bearer xxx
 可明示合理假设后继续，或在自己的对话中询问用户。此时缺参数结果不带澄清卡，
 `required_choices` 直接使用节点数据字段名（与 `missing_parameters[].fields` 一致，视频分辨率在
 `quality`）；Agent 在自己的对话中一次问齐这些字段，不得替用户选择或升级到更贵的设置，
-拿到回答后用补全的参数重试一次。付费操作仍需用户明确同意后调用
-`freezone_confirm_canvas_action`，不得静默采用默认值。普通空节点创建、连线、
-归组、布局、文案及独立音频设置不受该预检影响。
+拿到回答后用补全的参数重试一次。
+
+以 agent key 换取会话（未配置会话 token）的外部 Agent 有一处例外：用画布命令新建图片或视频节点、
+而用户没有指定分辨率或图片画质时，Agent 可以不填这两项，由服务端在创建确认时补成平台标准档。
+标准档复用画布已有的推荐参数，按所选模型目录里的选项取第一个可用值：图片分辨率依次取
+1K、2K、4K，图片画质依次取 medium、low、high（模型没有画质选项时不补），视频分辨率依次取
+720p、480p、1080p、2K；模型只提供一个选项时直接用该选项。确认结果
+`generation_settings[].sources` 与 `generation_summary` 标明每个参数的来源：Agent 显式指定
+（`agent` / agent choice）或平台标准默认（`server_default` / platform standard default）。
+Agent 显式传入的更高档照常放行。所选模型在目录中找不到或没有可用的标准档时，服务端返回
+`generation_parameters_required`，Agent 改为在对话中询问。模型、比例、时长、声音开关、数量等
+其他缺项仍须询问。付费操作仍需用户明确同意后调用 `freezone_confirm_canvas_action`，确认规则和计费
+不因此改变。普通空节点创建、连线、归组、布局、文案及独立音频设置不受该预检影响。
 
 运行命令无效时，错误信息会点名第几条命令（`commands[N]`）、哪个字段，以及可用的取值或形状；
 Agent 应改正该命令后重试一次，不要原样重发。对同一对节点、同一组连接点、同一种连线语义再次

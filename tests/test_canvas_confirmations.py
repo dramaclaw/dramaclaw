@@ -4,6 +4,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import re
 from threading import Barrier
 import time
@@ -22,7 +23,10 @@ from novelvideo.freezone.canvas_confirmations import (
     confirmation_targets,
     create_confirmation,
     expire_due,
+    fill_standard_tiers,
     finish_confirmation,
+    generation_settings,
+    generation_sources,
     list_pending,
     read_confirmation,
     verify_confirmed,
@@ -535,3 +539,128 @@ async def test_split_lock_does_not_hold_up_other_batches(tmp_path, monkeypatch):
     async with canvas_confirmations.split_lock(tmp_path / "new", BATCH_HASH):
         async with canvas_confirmations.split_lock(tmp_path / "new", OTHER_HASH):
             pass
+
+
+# Generation tiers an external agent left unset: the platform fills its standard tier and
+# the confirmation names where every shown value came from.
+
+TIER_IMAGES = [
+    {"id": "image-model", "resolutionOptions": ["4K", "2K", "1K"],
+     "qualityOptions": ["high", "low", "medium"]},
+    {"id": "odd-model", "resolutionOptions": ["3K", "5K"], "qualityOptions": ["low"]},
+    {"apiModel": "plain-model", "resolutionOptions": ["2K", "1K"]},
+]
+TIER_VIDEOS = [{"id": "video-model", "resolutionOptions": ["1080P", "720P", "480P"]}]
+
+
+def test_fill_standard_tiers_fills_only_what_the_agent_left_unset():
+    commands = [
+        {"type": "create_node", "client_id": "img", "node_type": "imageGenNode",
+         "data": {"model": "image-model", "aspectRatio": "1:1", "size": "", "count": 1}},
+        {"type": "add_next_node", "source_node_id": "img", "client_id": "vid",
+         "node_type": "videoNode", "data": {"model": "video-model", "durationSec": 5}},
+        {"type": "create_node", "client_id": "hi", "node_type": "imageGenNode",
+         "data": {"model": "image-model", "size": "4K"}},
+        {"type": "update_node_data", "node_id": "hi", "data": {"quality": "high"}},
+        {"type": "create_node", "client_id": "plain", "node_type": "imageGenNode",
+         "data": {"model": "plain-model"}},
+        {"type": "run_workflow", "node_ids": ["img", "vid", "hi", "plain"],
+         "scope": "selection"},
+    ]
+    original = deepcopy(commands)
+
+    filled, sources, unresolved = fill_standard_tiers(
+        commands, ["img", "vid", "hi", "plain"],
+        image_catalog=TIER_IMAGES, video_catalog=TIER_VIDEOS,
+    )
+
+    assert commands == original
+    assert unresolved == []
+    assert filled[0]["data"] == {
+        "model": "image-model", "aspectRatio": "1:1", "size": "1K", "count": 1,
+        "quality": "medium",
+    }
+    assert filled[1]["data"] == {"model": "video-model", "durationSec": 5, "quality": "720P"}
+    # Higher tiers the agent chose explicitly pass through untouched.
+    assert filled[2:4] == commands[2:4]
+    # A model without quality options gets no quality.
+    assert filled[4]["data"] == {"model": "plain-model", "size": "1K"}
+    assert filled[5] == commands[5]
+    assert sources == {
+        "img": {"resolution": "server_default", "quality": "server_default"},
+        "vid": {"quality": "server_default"},
+        "plain": {"resolution": "server_default"},
+    }
+
+
+def test_fill_standard_tiers_reports_the_fields_it_cannot_resolve():
+    commands = [
+        {"type": "create_node", "client_id": "a", "node_type": "imageGenNode",
+         "data": {"model": "missing-model"}},
+        {"type": "create_node", "client_id": "b", "node_type": "imageGenNode",
+         "data": {"model": "odd-model"}},
+        {"type": "create_node", "client_id": "c", "node_type": "videoNode", "data": {}},
+    ]
+
+    _filled, _sources, unresolved = fill_standard_tiers(
+        commands, ["a", "b", "c"], image_catalog=TIER_IMAGES, video_catalog=TIER_VIDEOS,
+    )
+
+    assert unresolved == [
+        {"node_id": "a", "node_type": "imageGenNode", "fields": ["size", "quality"]},
+        {"node_id": "b", "node_type": "imageGenNode", "fields": ["size"]},
+        {"node_id": "c", "node_type": "videoNode", "fields": ["quality"]},
+    ]
+
+
+@pytest.mark.parametrize("node_id", ["n1", "text", "ghost"])
+def test_fill_standard_tiers_only_fills_media_nodes_created_in_the_batch(node_id):
+    commands = [
+        {"type": "create_node", "client_id": "text", "node_type": "textNode", "data": {}},
+        {"type": "run_node_action", "node_id": "n1", "action": "generate_image"},
+    ]
+
+    with pytest.raises(ValueError, match=r"fill_standard_tiers\[0\]"):
+        fill_standard_tiers(commands, [node_id], image_catalog=TIER_IMAGES, video_catalog=[])
+
+
+def test_generation_sources_marks_the_values_the_agent_wrote():
+    commands = [
+        {"type": "create_node", "client_id": "img", "node_type": "imageGenNode",
+         "data": {"label": "x", "model": "m", "aspectRatio": "1:1", "size": "2K", "count": 1}},
+        {"type": "update_node_data", "node_id": "n2",
+         "data": {"displayName": "y", "durationSec": 8}},
+        {"type": "run_workflow", "node_ids": ["img", "n2"], "scope": "selection"},
+    ]
+
+    assert generation_sources(commands) == {
+        "img": {"model": "agent", "aspect_ratio": "agent", "resolution": "agent",
+                "count": "agent"},
+        "n2": {"duration_seconds": "agent"},
+    }
+
+
+def test_generation_settings_names_where_each_value_came_from():
+    canvas = {"nodes": [
+        {"id": "n2", "type": "videoNode", "data": {"displayName": "片头", "quality": "720P"}},
+        {"id": "real", "type": "imageGenNode", "data": {
+            "label": "新海报", "model": "m", "aspectRatio": "16:9", "size": "1K", "count": 1,
+        }},
+    ]}
+    commands = [{"type": "run_workflow", "node_ids": ["real", "n2"], "scope": "selection"}]
+    targets = confirmation_targets(canvas, commands)
+
+    settings = generation_settings(
+        canvas, commands, targets,
+        sources={"real": {"model": "agent", "resolution": "server_default", "count": "agent"}},
+        created=["real"],
+    )
+
+    assert settings == [
+        {"node_id": "real", "title": "新海报", "node_type": "imageGenNode",
+         "action": "run_workflow", "model": "m", "aspect_ratio": "16:9", "resolution": "1K",
+         "count": 1, "sources": {"model": "agent", "aspect_ratio": "node_default",
+                                 "resolution": "server_default", "count": "agent"}},
+        {"node_id": "n2", "title": "片头", "node_type": "videoNode", "action": "run_workflow",
+         "quality": "720P", "sources": {"quality": "canvas"}},
+    ]

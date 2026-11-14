@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from contextlib import asynccontextmanager, contextmanager
 import hashlib
 import json
@@ -22,6 +23,12 @@ CONFIRMATIONS_DIRNAME = "mcp_canvas_approvals"
 SPLIT_LOCK_WAIT_SECONDS = 30.0
 SPLIT_LOCK_HOLD_SECONDS = 90.0
 SPLIT_REUSE_SECONDS = 24 * 3600
+
+_GENERATION_SETTINGS_FIELDS = (
+    ("model", "model"), ("aspectRatio", "aspect_ratio"), ("size", "resolution"),
+    ("quality", "quality"), ("durationSec", "duration_seconds"),
+    ("generateAudio", "generate_audio"), ("count", "count"),
+)
 
 _ID_PATTERN = re.compile(r"cc_[0-9a-f]{32}")
 _KIND_ORDER = ("delete_nodes", "clear_canvas", "paid_generation")
@@ -154,21 +161,116 @@ def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
     return targets
 
 
-def generation_settings(canvas: dict, commands: list[dict], targets: list[dict]) -> list[dict]:
-    nodes = {**_batch_nodes(commands), **{node["id"]: node for node in canvas.get("nodes", [])}}
+def _generation_value_unset(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def fill_standard_tiers(
+    commands: list[dict], ids: list[str], *, image_catalog: list[dict], video_catalog: list[dict],
+) -> tuple[list[dict], dict[str, dict[str, str]], list[dict]]:
+    from novelvideo.freezone.workflow_preflight import (
+        GENERATION_TIER_FIELDS,
+        _catalog_entry_for_model,
+        standard_generation_tiers,
+    )
+
+    filled = copy.deepcopy(commands)
+    sources: dict[str, dict[str, str]] = {}
+    unresolved = []
+    seen = set()
+    portable_keys = dict(_GENERATION_SETTINGS_FIELDS)
+    for position, node_id in enumerate(ids):
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        match = next((
+            (index, command) for index, command in enumerate(filled)
+            if command.get("type") in {"create_node", "add_next_node"}
+            and command.get("client_id") == node_id
+            and command.get("node_type") in GENERATION_TIER_FIELDS
+        ), None)
+        if match is None:
+            raise ValueError(
+                f"fill_standard_tiers[{position}]: {node_id!r} is not an image or video node "
+                "created in this batch"
+            )
+        index, command = match
+        node_type = command["node_type"]
+        data = dict(command.get("data") or {})
+        updates = [
+            later["data"] for later in filled[index + 1:]
+            if later.get("type") == "update_node_data" and later.get("node_id") == node_id
+            and isinstance(later.get("data"), dict)
+        ]
+        for update in updates:
+            data.update(update)
+        unset = [field for field in GENERATION_TIER_FIELDS[node_type]
+                 if _generation_value_unset(data.get(field))]
+        if not unset:
+            continue
+        catalog = image_catalog if node_type == "imageGenNode" else video_catalog
+        model = data.get("model")
+        entry = _catalog_entry_for_model(
+            [item for item in catalog if isinstance(item, dict)], model
+        ) if isinstance(model, str) and model.strip() else None
+        if entry is None:
+            unresolved.append({"node_id": node_id, "node_type": node_type, "fields": unset})
+            continue
+        standard = standard_generation_tiers(node_type, entry)
+        needed = [field for field in unset if field in standard]
+        missing = [field for field in needed if standard[field] is None]
+        if missing:
+            unresolved.append({"node_id": node_id, "node_type": node_type, "fields": missing})
+            continue
+        for field in needed:
+            if not isinstance(command.get("data"), dict):
+                command["data"] = {}
+            command["data"][field] = standard[field]
+            for update in updates:
+                if field in update and _generation_value_unset(update[field]):
+                    del update[field]
+            sources.setdefault(node_id, {})[portable_keys[field]] = "server_default"
+    return filled, sources, unresolved
+
+
+def generation_sources(commands: list[dict]) -> dict[str, dict[str, str]]:
+    sources: dict[str, dict[str, str]] = {}
+    for command in commands:
+        kind = command.get("type")
+        if kind not in {"create_node", "add_next_node", "update_node_data"}:
+            continue
+        node_id = command.get("node_id" if kind == "update_node_data" else "client_id")
+        data = command.get("data")
+        if not node_id or not isinstance(data, dict):
+            continue
+        for source, destination in _GENERATION_SETTINGS_FIELDS:
+            if not _generation_value_unset(data.get(source)):
+                sources.setdefault(node_id, {})[destination] = "agent"
+    return sources
+
+
+def generation_settings(
+    canvas: dict, commands: list[dict], targets: list[dict],
+    sources: dict[str, dict[str, str]] | None = None, created=(),
+) -> list[dict]:
+    batch_nodes = _batch_nodes(commands)
+    created_ids = set(created) | batch_nodes.keys()
+    nodes = {**batch_nodes, **{node["id"]: node for node in canvas.get("nodes", [])}}
     settings = []
     for target in targets:
         if target["action"] in {"delete_nodes", "clear_canvas"}:
             continue
         entry = {key: target[key] for key in ("node_id", "title", "node_type", "action")}
-        data = nodes.get(target["node_id"], {}).get("data", {})
-        for source, destination in (
-            ("model", "model"), ("aspectRatio", "aspect_ratio"), ("size", "resolution"),
-            ("quality", "quality"), ("durationSec", "duration_seconds"),
-            ("generateAudio", "generate_audio"), ("count", "count"),
-        ):
+        node_id = target["node_id"]
+        data = nodes.get(node_id, {}).get("data", {})
+        entry["sources"] = {}
+        default_source = "node_default" if node_id in created_ids else "canvas"
+        for source, destination in _GENERATION_SETTINGS_FIELDS:
             if source in data:
                 entry[destination] = data[source]
+                entry["sources"][destination] = (sources or {}).get(node_id, {}).get(
+                    destination, default_source
+                )
         settings.append(entry)
     return settings
 
@@ -294,7 +396,7 @@ def find_reusable_split(
 def create_confirmation(
     directory: str | Path, *, project_id: str, canvas_id: str, agent_id: str,
     username: str, turn_id: str | None, commands: list[dict], targets: list[dict], now: float,
-    pre_applied: dict | None = None,
+    pre_applied: dict | None = None, generation_sources: dict | None = None,
 ) -> dict:
     record = {
         "id": "cc_" + uuid4().hex, "project_id": project_id, "canvas_id": canvas_id,
@@ -306,6 +408,8 @@ def create_confirmation(
     }
     if pre_applied is not None:
         record["pre_applied"] = pre_applied
+    if generation_sources is not None:
+        record["generation_sources"] = generation_sources
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     with _directory_lock(directory):
@@ -484,7 +588,7 @@ def confirmations_dir(username: str, agent_id: str, project_state_dir: str | Pat
 def request_confirmation(
     *, username: str, agent_id: str, project_id: str, canvas_id: str,
     project_state_dir: str | Path, turn_id: str | None, commands: list[dict], now: float,
-    pre_applied: dict | None = None,
+    pre_applied: dict | None = None, generation_sources: dict | None = None,
 ) -> dict:
     from novelvideo.freezone import canvas_store
 
@@ -498,5 +602,5 @@ def request_confirmation(
         confirmations_dir(username, agent_id, project_state_dir),
         project_id=project_id, canvas_id=canvas_id, agent_id=agent_id,
         username=username, turn_id=turn_id, commands=commands, targets=targets, now=now,
-        pre_applied=pre_applied,
+        pre_applied=pre_applied, generation_sources=generation_sources,
     )

@@ -4608,6 +4608,14 @@ def _turnless_external_mcp_host() -> bool:
     ).strip()
 
 
+def _key_deferral_host() -> bool:
+    return (
+        _turnless_external_mcp_host()
+        and not _agent_token_configured()
+        and _agent_key_configured()
+    )
+
+
 _WORKFLOW_RESULT_OPERATION_REQUIRED = [] if _turnless_external_mcp_host() else ["operation_id"]
 
 # Shown only to external MCP hosts without a product chat turn.
@@ -4619,6 +4627,25 @@ _TURNLESS_CREATE_CANVAS_GUIDANCE = (
     "you will immediately prepare the workflow draft or write nodes to it. Create at most one "
     "canvas per request and keep using it."
 )
+_KEY_CREATE_CANVAS_GUIDANCE = _TURNLESS_CREATE_CANVAS_GUIDANCE.replace(
+    "(for images or video: model, aspect ratio, resolution, quality, count; "
+    "for video also duration)",
+    "(for images or video: model, aspect ratio, count; for video also duration; "
+    "for a workflow draft also resolution and quality)",
+).replace(
+    "Create at most one canvas per request",
+    "When you write new image or video nodes with canvas commands and the user did not name "
+    "a resolution or image quality, leave resolution and image quality unset instead of asking; "
+    "the platform standard tier is filled in and marked as a platform standard default in the "
+    "confirmation. Create at most one canvas per request",
+)
+_KEY_NO_UI_TIER_GUIDANCE = (
+    " Exception for this session: when you write new image or video nodes with canvas commands "
+    "and the user did not name a resolution or image quality, leave resolution and image quality "
+    "unset instead of asking; the platform standard tier is filled in and marked as a platform "
+    "standard default in the confirmation. Ask for every other missing setting."
+)
+
 _TURNLESS_EMIT_GUIDANCE = (
     " In this session (no product chat turn), when the user describes in their own words a "
     "result that needs several generated images, videos or audio clips, or a multi-step "
@@ -4636,7 +4663,8 @@ _TURNLESS_NO_UI_CANVAS_GUIDANCE = (
     "using it and do not create another."
 )
 _CREATE_CANVAS_HOST_GUIDANCE = (
-    _TURNLESS_CREATE_CANVAS_GUIDANCE if _turnless_external_mcp_host() else ""
+    _KEY_CREATE_CANVAS_GUIDANCE if _key_deferral_host()
+    else _TURNLESS_CREATE_CANVAS_GUIDANCE if _turnless_external_mcp_host() else ""
 )
 _EMIT_HOST_GUIDANCE = _TURNLESS_EMIT_GUIDANCE if _turnless_external_mcp_host() else ""
 
@@ -4684,7 +4712,8 @@ def _clarification_no_ui_result(
             "when a later write returns generation_parameters_required. Paid actions still "
             "return confirmation_required and need the user's explicit consent before "
             "freezone_confirm_canvas_action."
-        ) + (_TURNLESS_NO_UI_CANVAS_GUIDANCE if _turnless_external_mcp_host() else ""),
+        ) + (_TURNLESS_NO_UI_CANVAS_GUIDANCE if _turnless_external_mcp_host() else "")
+        + (_KEY_NO_UI_TIER_GUIDANCE if _key_deferral_host() else ""),
     }
 
 
@@ -5613,7 +5642,10 @@ def _external_generation_parameter_preflight(
     project: str,
     canvas: str,
     commands: list[Any],
+    *, deferred_tiers: dict[str, dict] | None = None,
 ) -> dict[str, Any] | None:
+    from novelvideo.freezone.workflow_preflight import GENERATION_TIER_FIELDS
+
     execution_commands = [
         command
         for command in commands
@@ -5751,6 +5783,21 @@ def _external_generation_parameter_preflight(
                 for field in required_fields
                 if not _generation_parameter_value_present(field, data.get(field))
             ]
+            if (
+                deferred_tiers is not None and node_id in created_ids
+                and node_type in GENERATION_TIER_FIELDS
+            ):
+                removed = [field for field in missing_fields
+                           if field in GENERATION_TIER_FIELDS[node_type]]
+                if removed:
+                    deferred_tiers[node_id] = {
+                        "node_id": node_id, "node_type": node_type,
+                        "display_name": str(
+                            data.get("displayName") or data.get("title") or node_id
+                        )[:120],
+                        "fields": removed,
+                    }
+                    missing_fields = [field for field in missing_fields if field not in removed]
             if missing_fields:
                 missing_by_node[node_id] = {
                     "node_id": node_id,
@@ -5930,7 +5977,12 @@ def _canvas_generation_summary(settings: list[dict]) -> str:
                 value = target[key]
                 if key == "generate_audio":
                     value = "on" if value else "off"
-                values.append(f"{label} {value}{suffix}")
+                marker = {
+                    "agent": " (agent choice)",
+                    "server_default": " (platform standard default)",
+                    "node_default": " (node default)",
+                }.get(target.get("sources", {}).get(key), "")
+                values.append(f"{label} {value}{suffix}{marker}")
         title = target["title"] or target["node_id"]
         detail = ", ".join(values) or "settings from the node defaults"
         summaries.append(f'"{title}" ({target["node_type"]}, {target["action"]}): {detail}')
@@ -5939,6 +5991,7 @@ def _canvas_generation_summary(settings: list[dict]) -> str:
 
 def _create_canvas_confirmation(
     project: str, canvas: str, commands: list[Any],
+    *, fill_standard_tiers: list[str] | None = None,
 ) -> str:
     mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
@@ -5948,9 +6001,28 @@ def _create_canvas_confirmation(
         "POST",
         f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/"
         f"{quote(canvas, safe='')}/confirmations",
-        body={"agent_id": agent_id, "turn_id": turn_id, "commands": commands},
+        body={
+            "agent_id": agent_id, "turn_id": turn_id, "commands": commands,
+            **({"fill_standard_tiers": fill_standard_tiers} if fill_standard_tiers else {}),
+        },
     )
     if not response.get("ok"):
+        if response.get("code") == "generation_parameters_required" and isinstance(
+            response.get("missing_parameters"), list
+        ):
+            batch_data = {
+                command.get("client_id"): command.get("data") or {}
+                for command in commands if isinstance(command, dict)
+                and command.get("type") in {"create_node", "add_next_node"}
+            }
+            items = []
+            for item in response["missing_parameters"]:
+                node_id = item["node_id"]
+                data = batch_data.get(node_id, {})
+                items.append({**item, "display_name": str(
+                    data.get("displayName") or data.get("label") or data.get("title") or node_id
+                )[:120]})
+            return tool_result(_generation_parameters_required_result(items))
         failure = _canvas_executor_failure(response)
         code = response.get("code")
         if code in {"canvas_open_required", "workflow_plan_invalid"}:
@@ -6029,6 +6101,16 @@ def _create_canvas_confirmation(
             "turn. The confirmation expires in 30 minutes; after that, ask again. Use the node "
             "ids in written for any follow-up; do not emit this batch again. Do not tell the "
             "user that any generation was started, sent or submitted."
+        )
+    if any(
+        isinstance(target, dict) and isinstance(target.get("sources"), dict)
+        and "server_default" in target["sources"].values()
+        for target in result.get("generation_settings", [])
+    ):
+        result["agent_instruction"] += (
+            " Values marked platform standard default in generation_summary were filled by the "
+            "platform because the request named none; tell the user these values and that they "
+            "can ask for a different resolution or quality before confirming."
         )
     return tool_result(result)
 
@@ -6673,10 +6755,12 @@ def _emit_canvas_commands(
     recommendation_error = _resolve_canvas_generation_recommendations(project, canvas, commands)
     if recommendation_error is not None:
         return tool_result(recommendation_error)
+    deferred = {} if _key_deferral_host() else None
     generation_preflight = _external_generation_parameter_preflight(
         project,
         canvas,
         commands,
+        **({"deferred_tiers": deferred} if deferred is not None else {}),
     )
     if generation_preflight is not None:
         return tool_result(generation_preflight)
@@ -6686,7 +6770,11 @@ def _emit_canvas_commands(
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
     if confirmation_kinds(commands):
-        return _create_canvas_confirmation(project, canvas, commands)
+        return _create_canvas_confirmation(
+            project, canvas, commands, fill_standard_tiers=list(deferred or {}),
+        )
+    if deferred:
+        return tool_result(_generation_parameters_required_result(list(deferred.values())))
     if executor == "server":
         if _requires_frontend_canvas_executor(commands):
             return _dispatch_server_host_commands(

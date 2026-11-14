@@ -557,6 +557,24 @@ def test_in_product_no_ui_result_instruction_is_unchanged(monkeypatch, env, chat
     assert result["agent_instruction"] == _IN_PRODUCT_NO_UI_INSTRUCTION
 
 
+# Turnless hosts that hold a session token, or run with local trust, keep these
+# texts exactly; only a host that exchanges an agent key learns about the
+# platform standard tier (ISS-156).
+_TURNLESS_CREATE_CANVAS_GUIDANCE = (
+    " This session has no product chat turn, so no interface can show clarification cards. "
+    "If the request still needs generation settings (for images or video: model, aspect ratio, "
+    "resolution, quality, count; for video also duration) or other answers from the user, ask "
+    "in this conversation first and do not create the canvas yet; create it in the turn where "
+    "you will immediately prepare the workflow draft or write nodes to it. Create at most one "
+    "canvas per request and keep using it."
+)
+_TURNLESS_NO_UI_INSTRUCTION = _IN_PRODUCT_NO_UI_INSTRUCTION + (
+    " No canvas is needed to ask the user. If you ask the user and have not created a canvas "
+    "for this request yet, do not create one before they answer: create it once the settings "
+    "are complete, right before you prepare the workflow draft or write the nodes, and only "
+    "if the request needs a new canvas. If you already created one for this request, keep "
+    "using it and do not create another."
+)
 _HOST_CREDENTIAL_ENV = ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE",
                         "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE",
                         "DRAMACLAW_LOCAL_AGENT_TRUST")
@@ -576,6 +594,33 @@ def _turnless_host_with(monkeypatch, credentials) -> None:
         monkeypatch.delenv(name, raising=False)
     for name, value in credentials.items():
         monkeypatch.setenv(name, value)
+
+
+@pytest.mark.parametrize("credentials", _TURNLESS_NON_KEY_HOST_ENVS)
+def test_turnless_non_key_host_texts_are_unchanged(monkeypatch, credentials):
+    _turnless_host_with(monkeypatch, credentials)
+    plugin = _load_plugin_module()
+
+    description = _advertised_descriptions(plugin)["freezone_create_canvas"]
+    no_ui = plugin._clarification_no_ui_result("p", "c", chat_created=False)
+
+    assert description == _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION + _TURNLESS_CREATE_CANVAS_GUIDANCE
+    assert no_ui["agent_instruction"] == _TURNLESS_NO_UI_INSTRUCTION
+
+
+def test_key_host_may_leave_the_tier_to_the_platform_standard(monkeypatch):
+    _turnless_host_with(monkeypatch, _KEY_HOST_ENV)
+    plugin = _load_plugin_module()
+
+    description = _advertised_descriptions(plugin)["freezone_create_canvas"]
+    no_ui = plugin._clarification_no_ui_result("p", "c", chat_created=False)
+
+    added = _added_text(description, _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION)
+    assert "resolution, quality, count" not in added, added
+    for text in (added, no_ui["agent_instruction"]):
+        assert "leave resolution and image quality unset" in text, text
+        assert "platform standard tier" in text, text
+    assert no_ui["agent_instruction"].startswith(_TURNLESS_NO_UI_INSTRUCTION)
 
 
 # A host with a chat turn answers missing generation settings through a card.

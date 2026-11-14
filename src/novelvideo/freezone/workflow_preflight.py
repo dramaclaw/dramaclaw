@@ -55,6 +55,26 @@ def _preferred_option(entry: dict[str, Any], key: str, preferences: tuple[str, .
     return preferred or (options[0] if len(options) == 1 else None)
 
 
+GENERATION_TIER_FIELDS = {"imageGenNode": ("size", "quality"), "videoNode": ("quality",)}
+
+
+def standard_generation_tiers(node_type: str, entry: dict[str, Any]) -> dict[str, str | None]:
+    if node_type == "imageGenNode":
+        tiers = {"size": _preferred_option(
+            entry, "resolutionOptions", _RECOMMENDED_OPTIONS["imageSize"]
+        )}
+        if _catalog_string_options(entry, "qualityOptions"):
+            tiers["quality"] = _preferred_option(
+                entry, "qualityOptions", _RECOMMENDED_OPTIONS["imageQuality"]
+            )
+        return tiers
+    if node_type == "videoNode":
+        return {"quality": _preferred_option(
+            entry, "resolutionOptions", _RECOMMENDED_OPTIONS["videoResolution"]
+        )}
+    return {}
+
+
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
     """Every identifier a node may legitimately use for one catalog entry."""
     values = (
