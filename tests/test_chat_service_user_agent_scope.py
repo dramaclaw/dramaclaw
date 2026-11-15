@@ -3875,6 +3875,383 @@ def test_exact_audio_action_restores_target_subject_omitted_by_planner():
     }
 
 
+_SPEECH_REQUEST = (
+    "请执行当前画布中名为『红杯小店欢迎语配音』的现有音频节点。"
+    "必须逐字朗读『欢迎来到红杯小店。』，使用节点中已选择的音色，"
+    "只运行 generate_audio 一次。不要改台词、换音色、新增、删除或连接节点，"
+    "也不要生成图片或视频。"
+)
+_SPEECH_TITLE = "红杯小店欢迎语配音"
+_SPEECH_WORDS = "欢迎来到红杯小店。"
+# Real planner output reported by a user: execution instructions mixed into text.
+_SPEECH_POLLUTED = (
+    "使用节点中已选择的测试音色，逐字朗读台词：「欢迎来到红杯小店。」"
+    "只运行一次 generate_audio 并完成实际语音生成；不修改台词、不更换音色、"
+    "不新增、删除或连接节点，也不生成图片或视频。"
+)
+_AUDIO_CONFIRMATION_NOTICE = (
+    "音频生成需要你确认后才会提交 generate_audio，确认后会消耗积分。"
+    "请在确认卡片上确认，或在对话里回复确认（确认编号 {confirmation_id}）。"
+)
+
+
+def _speech_plan(text, source, **extra):
+    return json.dumps(
+        {
+            "text": text,
+            "audio_kind": "speech",
+            "force_instrumental": False,
+            "speech_text_source": source,
+            **extra,
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_exact_audio_plan_schema_separates_speech_text_source():
+    schema = chat_service._CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA
+    assert schema["properties"]["speech_text_source"] == {
+        "type": ["string", "null"],
+        "enum": ["user_verbatim", "authored", None],
+    }
+    assert set(schema["required"]) == set(schema["properties"])
+    instructions = chat_service._CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS
+    assert "user_verbatim" in instructions
+    assert "authored" in instructions
+
+
+@pytest.mark.parametrize(
+    ("user_text", "title", "words"),
+    [
+        pytest.param(_SPEECH_REQUEST, _SPEECH_TITLE, _SPEECH_WORDS, id="zh-report"),
+        pytest.param(
+            'Run the existing audio node "Shop Greeting VO" with generate_audio once. '
+            "Read exactly: Welcome to Red Cup, friend! Keep the selected voice.",
+            "Shop Greeting VO",
+            "Welcome to Red Cup, friend!",
+            id="en",
+        ),
+        pytest.param(
+            "执行名为『店长旁白』的现有音频节点，只运行 generate_audio 一次，"
+            "逐字朗读：『他说：“今天打烊，明天见！”』",
+            "店长旁白",
+            "他说：“今天打烊，明天见！”",
+            id="quotes-inside-words",
+        ),
+        pytest.param(
+            "执行现有音频节点『开场白』，generate_audio 跑一次，"
+            "原文照读「等等……你说什么？！OK，我们走——」不要改。",
+            "开场白",
+            "等等……你说什么？！OK，我们走——",
+            id="mixed-punctuation",
+        ),
+        pytest.param(
+            "执行现有音频节点『欢迎光临』并只运行 generate_audio 一次，"
+            "逐字朗读『欢迎光临，里面请。』",
+            "欢迎光临",
+            "欢迎光临，里面请。",
+            id="title-inside-words",
+        ),
+    ],
+)
+def test_exact_audio_verbatim_speech_words_are_saved_unchanged(user_text, title, words):
+    node_data = chat_service._exact_audio_action_node_data(
+        _speech_plan(words, "user_verbatim"),
+        required_subject=title,
+        user_text=user_text,
+    )
+
+    assert node_data == {"text": words, "audioKind": "speech", "forceInstrumental": False}
+
+
+@pytest.mark.parametrize(
+    ("text", "user_text"),
+    [
+        pytest.param(_SPEECH_POLLUTED, _SPEECH_REQUEST, id="report-sample"),
+        pytest.param("欢迎来到红杯小店！", _SPEECH_REQUEST, id="punctuation-changed"),
+        pytest.param("欢迎来到红杯小店.", _SPEECH_REQUEST, id="half-width-period"),
+        pytest.param("欢迎来到 红杯小店。", _SPEECH_REQUEST, id="space-inserted"),
+        pytest.param(f"{_SPEECH_TITLE}：{_SPEECH_WORDS}", _SPEECH_REQUEST, id="title-added"),
+        pytest.param(_SPEECH_WORDS, None, id="no-user-words"),
+    ],
+)
+def test_exact_audio_verbatim_speech_must_be_contiguous_user_words(text, user_text):
+    with pytest.raises(chat_service.ExactAudioSpeechTextMismatch):
+        chat_service._exact_audio_action_node_data(
+            _speech_plan(text, "user_verbatim"),
+            required_subject=_SPEECH_TITLE,
+            user_text=user_text,
+        )
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        pytest.param(
+            {"text": _SPEECH_WORDS, "audio_kind": "speech", "force_instrumental": False},
+            id="missing-source",
+        ),
+        pytest.param(json.loads(_speech_plan(_SPEECH_WORDS, None)), id="null-source"),
+        pytest.param(json.loads(_speech_plan(_SPEECH_WORDS, "verbatim")), id="unknown-source"),
+        pytest.param(json.loads(_speech_plan(_SPEECH_WORDS, True)), id="non-string-source"),
+        pytest.param(
+            json.loads(_speech_plan(_SPEECH_WORDS, "user_verbatim", voice="selected")),
+            id="extra-field",
+        ),
+    ],
+)
+def test_exact_audio_speech_without_valid_text_source_is_invalid(plan):
+    assert (
+        chat_service._exact_audio_action_node_data(
+            json.dumps(plan, ensure_ascii=False),
+            required_subject=_SPEECH_TITLE,
+            user_text=_SPEECH_REQUEST,
+        )
+        is None
+    )
+
+
+def test_exact_audio_authored_speech_is_saved_without_title():
+    words = "欢迎光临红杯小店，今天第二杯半价！"
+    node_data = chat_service._exact_audio_action_node_data(
+        _speech_plan(words, "authored"),
+        required_subject=_SPEECH_TITLE,
+        user_text=(
+            "执行现有音频节点『红杯小店欢迎语配音』，只运行 generate_audio 一次，"
+            "写一句热情的欢迎语。"
+        ),
+    )
+
+    assert node_data == {"text": words, "audioKind": "speech", "forceInstrumental": False}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param({}, id="no-source-field"),
+        pytest.param({"speech_text_source": None}, id="null-source"),
+        pytest.param({"speech_text_source": "user_verbatim"}, id="source-ignored"),
+    ],
+)
+def test_exact_audio_music_keeps_subject_and_creative_constraints(extra):
+    node_data = chat_service._exact_audio_action_node_data(
+        json.dumps(
+            {
+                "text": "轻快温暖的展示背景音乐，以木琴和轻柔鼓点为主，纯器乐、无人声、无歌词。",
+                "audio_kind": "music",
+                "force_instrumental": True,
+                **extra,
+            },
+            ensure_ascii=False,
+        ),
+        required_subject="红杯展示",
+        user_text="请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，只运行 generate_audio 一次。",
+    )
+
+    assert node_data == {
+        "text": "红杯展示：轻快温暖的展示背景音乐，以木琴和轻柔鼓点为主，纯器乐、无人声、无歌词。",
+        "audioKind": "music",
+        "forceInstrumental": True,
+    }
+
+
+def test_exact_audio_known_gap_polluted_speech_marked_authored_is_accepted():
+    """Known gap: the source label is the planner's claim and is not verified.
+
+    Polluted text labelled ``authored`` still reaches confirmation; the
+    confirmation notice lists the words so the user can reject them.
+    """
+    node_data = chat_service._exact_audio_action_node_data(
+        _speech_plan(_SPEECH_POLLUTED, "authored"),
+        required_subject=_SPEECH_TITLE,
+        user_text=_SPEECH_REQUEST,
+    )
+
+    assert node_data == {
+        "text": _SPEECH_POLLUTED, "audioKind": "speech", "forceInstrumental": False,
+    }
+
+
+def test_exact_audio_known_gap_wider_user_words_pass_substring_check():
+    """Known gap: the check proves the words are the user's, not their boundaries."""
+    wider = "必须逐字朗读『欢迎来到红杯小店。』"
+    node_data = chat_service._exact_audio_action_node_data(
+        _speech_plan(wider, "user_verbatim"),
+        required_subject=_SPEECH_TITLE,
+        user_text=_SPEECH_REQUEST,
+    )
+
+    assert node_data == {"text": wider, "audioKind": "speech", "forceInstrumental": False}
+
+
+async def _run_exact_audio_plan(monkeypatch, tmp_path, *, user_text, title, plan_text):
+    """Drive planner output -> conversion -> real pending confirmation on disk."""
+
+    from novelvideo.chat import hermes_workspace
+    from novelvideo.freezone import canvas_store
+    from novelvideo.freezone.canvas_confirmations import confirmations_dir, read_confirmation
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setattr(
+        hermes_workspace, "ensure_user_hermes_workspace",
+        lambda *_args, **_kwargs: tmp_path / "hermes-home",
+    )
+    state_dir = tmp_path / "state" / "admin" / "project-a"
+    canvas_store.save_canvas(state_dir, "canvas-a", base_revision=None, build_payload=lambda _: {
+        "project_id": "project-a", "revision": 1, "edges": [], "nodes": [{
+            "id": "voice-node", "type": "audioNode",
+            "data": {"label": title}, "position": {"x": 0, "y": 0},
+        }],
+    })
+    prompt = (
+        user_text
+        + "\n\n[SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]\n"
+        + json.dumps(
+            {
+                "schema_version": "canvas_ontology_summary.v1",
+                "canvas_id": "canvas-a",
+                "top_objects": [
+                    {"node_id": "voice-node", "node_type": "audioNode", "label": title}
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n[/SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]"
+    )
+
+    class FakeThread:
+        async def stream(self, _prompt):
+            yield SimpleNamespace(
+                type="thread_started", thread_id="codex-thread", turn_id="codex-turn"
+            )
+            yield SimpleNamespace(type="assistant_delta", text=plan_text)
+            yield SimpleNamespace(
+                type="turn_completed", thread_id="codex-thread", turn_id="codex-turn",
+                status="completed", disposition="completed", error=None,
+            )
+            yield SimpleNamespace(type="complete", thread_id="codex-thread", text="")
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, _token):
+            return None
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", fake_create_token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", lambda *_a, **_k: FakeThread())
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    events = []
+
+    async def collect(event):
+        events.append(event)
+
+    scope = ChatScope(
+        kind="project", id="project-a", surface="freezone", canvas_id="canvas-a",
+        agent_id="main", state_dir=str(state_dir),
+    )
+    await chat_service._stream_assistant_reply_codex(
+        "admin", "project-a", prompt, collect,
+        project_state_dir=state_dir, tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"}, store_scope=scope,
+        turn_id="business-turn", route_prompt=user_text,
+    )
+    assert events[-1] == {"type": "done", "message": None}
+    directory = confirmations_dir("admin", "main", state_dir)
+    records = [read_confirmation(directory, path.stem) for path in directory.glob("cc_*.json")]
+    with chat_store.connect("admin", scope) as conn:
+        notices = [
+            tuple(row)
+            for row in conn.execute("SELECT role, content FROM chat_messages").fetchall()
+        ]
+    return records, notices
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("source", "words"),
+    [
+        pytest.param("user_verbatim", _SPEECH_WORDS, id="verbatim"),
+        pytest.param("authored", "欢迎光临红杯小店，今天第二杯半价！", id="authored"),
+    ],
+)
+async def test_exact_audio_speech_chain_saves_words_and_lists_them_in_notice(
+    monkeypatch, tmp_path, source, words
+):
+    records, notices = await _run_exact_audio_plan(
+        monkeypatch, tmp_path,
+        user_text=_SPEECH_REQUEST, title=_SPEECH_TITLE,
+        plan_text=_speech_plan(words, source),
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["status"] == "pending"
+    assert record["commands"] == [
+        {"type": "update_node_data", "node_id": "voice-node", "data": {
+            "text": words, "audioKind": "speech", "forceInstrumental": False,
+        }},
+        {"type": "run_node_action", "node_id": "voice-node", "action": "generate_audio"},
+    ]
+    assert notices == [(
+        "system",
+        _AUDIO_CONFIRMATION_NOTICE.format(confirmation_id=record["id"])
+        + f"\n将要朗读的正文：{words}",
+    )]
+
+
+@pytest.mark.anyio
+async def test_exact_audio_speech_chain_rejects_polluted_verbatim_words(
+    monkeypatch, tmp_path
+):
+    records, notices = await _run_exact_audio_plan(
+        monkeypatch, tmp_path,
+        user_text=_SPEECH_REQUEST, title=_SPEECH_TITLE,
+        plan_text=_speech_plan(_SPEECH_POLLUTED, "user_verbatim"),
+    )
+
+    assert records == []
+    assert notices == [("system", "朗读正文与你给出的原文不一致，未提交画布操作。")]
+
+
+@pytest.mark.anyio
+async def test_exact_audio_music_chain_notice_is_unchanged(monkeypatch, tmp_path):
+    records, notices = await _run_exact_audio_plan(
+        monkeypatch, tmp_path,
+        user_text=(
+            "请执行当前画布中名为『红杯展示背景音乐』的现有音频节点，"
+            "只运行 generate_audio 一次。音乐以木琴为主，纯器乐。"
+        ),
+        title="红杯展示背景音乐",
+        plan_text=json.dumps(
+            {
+                "text": "以木琴为主的轻快背景音乐，纯器乐、无人声。",
+                "audio_kind": "music",
+                "force_instrumental": True,
+                "speech_text_source": None,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert len(records) == 1
+    assert records[0]["commands"][0]["data"] == {
+        "text": "红杯展示：以木琴为主的轻快背景音乐，纯器乐、无人声。",
+        "audioKind": "music",
+        "forceInstrumental": True,
+    }
+    assert notices == [
+        ("system", _AUDIO_CONFIRMATION_NOTICE.format(confirmation_id=records[0]["id"]))
+    ]
+
+
 @pytest.mark.anyio
 async def test_codex_exact_audio_plan_requests_confirmation(
     monkeypatch, tmp_path

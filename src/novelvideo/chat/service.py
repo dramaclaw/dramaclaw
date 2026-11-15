@@ -503,10 +503,16 @@ _CODEX_EXACT_AUDIO_ACTION_PLANNER_INSTRUCTIONS = (
     "You translate one explicit request for an existing Freezone audio node into the node data "
     "that must be saved before its already-selected action runs. Do not call tools and do not "
     "claim that execution happened. Return exactly one JSON object matching the supplied schema. "
-    "In text, preserve every concrete subject, purpose, instrument, mood, vocal, lyric, and other "
-    "creative constraint from the user's request. Use audio_kind=music for music and "
-    "audio_kind=speech only for spoken audio. Set force_instrumental=true exactly when the user "
-    "requires instrumental audio without vocals or lyrics."
+    "Use audio_kind=music for music and audio_kind=speech only for spoken audio. For music, text "
+    "preserves every concrete subject, purpose, instrument, mood, vocal, lyric, and other creative "
+    "constraint from the user's request, and speech_text_source is null. For speech, text contains "
+    "only the words to be spoken; the voice, how many times to run, which nodes to touch, and any "
+    "other execution limit never belong in text. When the user gives the exact words to speak, "
+    "set speech_text_source=user_verbatim and return those words exactly as they appear in the "
+    "user's message, without the quotation marks that enclose them and without adding, removing, "
+    "or changing any character or punctuation. Otherwise set speech_text_source=authored and write "
+    "only the words to be spoken. Set force_instrumental=true exactly when the user requires "
+    "instrumental audio without vocals or lyrics."
 )
 
 _CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA: dict[str, Any] = {
@@ -516,8 +522,12 @@ _CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA: dict[str, Any] = {
         "text": {"type": "string", "minLength": 1},
         "audio_kind": {"type": "string", "enum": ["music", "speech"]},
         "force_instrumental": {"type": "boolean"},
+        "speech_text_source": {
+            "type": ["string", "null"],
+            "enum": ["user_verbatim", "authored", None],
+        },
     },
-    "required": ["text", "audio_kind", "force_instrumental"],
+    "required": ["text", "audio_kind", "force_instrumental", "speech_text_source"],
 }
 
 
@@ -1034,6 +1044,10 @@ def _freezone_exact_node_action_requested(prompt: str | None) -> bool:
     )
 
 
+def _exact_audio_user_text(prompt: str | None, route_prompt: str | None) -> str:
+    return str(route_prompt or prompt or "").split("[SUPERTALE_", 1)[0].strip()
+
+
 def _freezone_exact_audio_action_target(
     prompt: str | None,
     *,
@@ -1041,7 +1055,7 @@ def _freezone_exact_audio_action_target(
 ) -> tuple[str, str, str] | None:
     """Resolve a safe deterministic audio action from the injected summary."""
 
-    user_text = str(route_prompt or prompt or "").split("[SUPERTALE_", 1)[0].strip()
+    user_text = _exact_audio_user_text(prompt, route_prompt)
     intent_text = _FREEZONE_CANVAS_WRITE_NEGATION_RE.sub("", user_text)
     if not (
         _FREEZONE_EXISTING_EXECUTION_ACTION_RE.search(intent_text)
@@ -1096,10 +1110,15 @@ def _freezone_exact_audio_action_target(
     return str(candidates[0]["node_id"]).strip(), "generate_audio", subject
 
 
+class ExactAudioSpeechTextMismatch(ValueError):
+    """Speech text labelled as the user's own words is not a contiguous part of them."""
+
+
 def _exact_audio_action_node_data(
     value: str,
     *,
     required_subject: str | None = None,
+    user_text: str | None = None,
 ) -> dict[str, Any] | None:
     """Validate the model's constrained audio plan before any canvas write."""
 
@@ -1107,7 +1126,7 @@ def _exact_audio_action_node_data(
         plan = json.loads(str(value or ""))
     except (TypeError, json.JSONDecodeError):
         return None
-    if not isinstance(plan, dict) or set(plan) != {
+    if not isinstance(plan, dict) or set(plan) - {"speech_text_source"} != {
         "text",
         "audio_kind",
         "force_instrumental",
@@ -1116,6 +1135,7 @@ def _exact_audio_action_node_data(
     text = str(plan.get("text") or "").strip()
     audio_kind = str(plan.get("audio_kind") or "").strip()
     force_instrumental = plan.get("force_instrumental")
+    speech_text_source = plan.get("speech_text_source")
     subject = str(required_subject or "").strip()
     if (
         not text
@@ -1124,10 +1144,18 @@ def _exact_audio_action_node_data(
         or not isinstance(force_instrumental, bool)
     ):
         return None
-    if subject and subject not in text:
+    if audio_kind == "speech" and (
+        not isinstance(speech_text_source, str)
+        or speech_text_source not in {"user_verbatim", "authored"}
+    ):
+        return None
+    if audio_kind == "music" and subject and subject not in text:
         text = f"{subject}：{text}"
     if len(text) > 20_000:
         return None
+    if audio_kind == "speech" and speech_text_source == "user_verbatim":
+        if not user_text or text not in user_text:
+            raise ExactAudioSpeechTextMismatch
     return {
         "text": text,
         "audioKind": audio_kind,
@@ -5919,12 +5947,17 @@ async def _stream_assistant_reply_codex(
                     await _emit_chat_event_best_effort(on_event, frame)
         if exact_audio_action_target is not None and turn_disposition == "completed":
             node_id, action, required_subject = exact_audio_action_target
-            node_data = _exact_audio_action_node_data(
-                assistant_text, required_subject=required_subject
-            )
-            if node_data is None:
-                audio_notice = "音频执行参数无效，未提交画布操作。"
-            else:
+            audio_notice = "音频执行参数无效，未提交画布操作。"  # i18n-exempt
+            try:
+                node_data = _exact_audio_action_node_data(
+                    assistant_text,
+                    required_subject=required_subject,
+                    user_text=_exact_audio_user_text(prompt, route_prompt),
+                )
+            except ExactAudioSpeechTextMismatch:
+                node_data = None
+                audio_notice = "朗读正文与你给出的原文不一致，未提交画布操作。"  # i18n-exempt
+            if node_data is not None:
                 try:
                     dispatch_result = await _request_exact_audio_confirmation(
                         username=username,
@@ -5959,6 +5992,8 @@ async def _stream_assistant_reply_codex(
                         "请在确认卡片上确认，或在对话里回复确认"
                         f"（确认编号 {confirmation_id}）。"
                     )
+                    if node_data["audioKind"] == "speech":
+                        audio_notice += f"\n将要朗读的正文：{node_data['text']}"  # i18n-exempt
                 else:
                     errors = dispatch_result.get("errors")
                     failure = str(
