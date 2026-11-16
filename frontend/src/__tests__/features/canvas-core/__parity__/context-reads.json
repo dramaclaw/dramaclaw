@@ -2747,6 +2747,7 @@
                 "audioKind": "speech | music",
                 "speechMode": "clone（仅自定义声线；未选择时跳过）",
                 "text": "string",
+                "prompt": "string",
                 "emotionPrompt": "string",
                 "musicLengthMs": "number",
                 "forceInstrumental": "boolean",
@@ -5202,6 +5203,7 @@
               "audioKind",
               "speechMode",
               "text",
+              "prompt",
               "emotionPrompt",
               "voiceRef",
               "voiceLabel",
@@ -5234,7 +5236,13 @@
               },
               "text": {
                 "type": "string",
-                "label": "文本"
+                "label": "文本",
+                "description": "Speech: literal words to speak, without production instructions. Music: creative brief."
+              },
+              "prompt": {
+                "type": "string",
+                "label": "制作说明",
+                "description": "Speech Recipe instructions; never spoken as a fallback. Put supplied dialogue in text."
               },
               "emotionPrompt": {
                 "type": "string",
