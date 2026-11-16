@@ -16,6 +16,9 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     case 'ping': result = { pid: process.pid, count }; break;
     case 'env': result = { keys: Object.keys(process.env) }; break;
     case 'argv': result = { argv: process.execArgv }; break;
+    case 'network_globals':
+      result = { fetch: 'fetch' in globalThis, websocket: 'WebSocket' in globalThis };
+      break;
     case 'stderr_line': console.error('worker diagnostic'); result = {}; break;
     case 'sleep': await new Promise(() => {}); break;
     case 'crash': process.exit(1); break;
