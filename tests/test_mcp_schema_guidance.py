@@ -251,3 +251,125 @@ def assert_choice_guidance(choice):
 
 def test_conditions_remain_scoped_to_their_own_object():
     assert_choice_guidance(published(story_tools._story_choice_schema()))
+
+
+@pytest.fixture
+def canvas_tool_schema():
+    import sys
+
+    from novelvideo.chat import dramaclaw_mcp
+
+    previous = {name: sys.modules.get(name) for name in ("tools", "tools.registry")}
+    try:
+        plugin = dramaclaw_mcp._load_plugin("freezone")
+        yield next(
+            schema
+            for name, schema, _ in plugin.TOOLS
+            if name == "freezone_emit_canvas_command"
+        )
+    finally:
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
+@pytest.mark.parametrize(
+    "node_type,data",
+    [
+        ("textAnnotationNode", {"displayName": "验票提示", "content": "验票通过"}),
+        ("imageGenNode", {}),
+    ],
+)
+async def test_canvas_create_position_error_uses_node_type_branch(
+    canvas_tool_schema, node_type, data
+):
+    calls = []
+
+    def handler(args):
+        calls.append(args)
+        return {"ok": True, "status": "completed", "operation_id": "test-operation"}
+
+    tools = {"freezone_emit_canvas_command": (canvas_tool_schema, handler)}
+    args = {
+        "commands": [
+            {
+                "type": "create_node",
+                "node_type": node_type,
+                "position": {"x": "secret-coordinate", "y": 0},
+                "data": data,
+            }
+        ]
+    }
+    result = await mcp_runtime.call_tool(
+        "freezone_emit_canvas_command", args, tool_index=tools
+    )
+    assert result.isError
+    assert result.structuredContent["path"] == "commands[0].position.x"
+    assert '"type": "number"' in result.structuredContent["message"]
+    assert "secret-coordinate" not in json.dumps(result.model_dump())
+    assert calls == []
+    args["commands"][0]["position"]["x"] = 80
+    assert Draft202012Validator(canvas_tool_schema["parameters"]).is_valid(args)
+    result = await mcp_runtime.call_tool(
+        "freezone_emit_canvas_command", args, tool_index=tools
+    )
+    assert not result.isError
+    assert calls == [args]
+
+
+@pytest.mark.parametrize("node_type", [None, "unrecognized-node"])
+async def test_canvas_create_with_no_unique_node_type_keeps_parent_diagnostic(
+    canvas_tool_schema, node_type
+):
+    calls = []
+    args = {
+        "commands": [
+            {"type": "create_node", "position": {"x": "secret-coordinate", "y": 0}}
+        ]
+    }
+    if node_type is not None:
+        args["commands"][0]["node_type"] = node_type
+    result = await mcp_runtime.call_tool(
+        "freezone_emit_canvas_command",
+        args,
+        tool_index={
+            "freezone_emit_canvas_command": (
+                canvas_tool_schema,
+                lambda args: calls.append(args),
+            )
+        },
+    )
+    assert result.isError
+    assert result.structuredContent["path"] == "commands[0]"
+    assert "secret-coordinate" not in json.dumps(result.model_dump())
+    assert calls == []
+
+
+def test_conflicting_discriminators_do_not_select_a_partial_match():
+    from novelvideo.chat.story_validation import base_validation_error_payload
+
+    schema = {
+        "oneOf": [
+            {
+                "properties": {
+                    "type": {"const": "create"},
+                    "node_type": {"const": "image"},
+                    "position": {"type": "number"},
+                }
+            },
+            {
+                "properties": {
+                    "type": {"const": "delete"},
+                    "node_type": {"const": "text"},
+                }
+            },
+        ]
+    }
+    args = {"type": "create", "node_type": "text", "position": "secret-coordinate"}
+    errors = list(Draft202012Validator(schema).iter_errors(args))
+    result = base_validation_error_payload("check", args, schema, errors[0], errors)
+    assert result["path"] == "arguments"
+    assert result["message"] == "arguments: does not satisfy oneOf"
+    assert "secret-coordinate" not in result["message"]

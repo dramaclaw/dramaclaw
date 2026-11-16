@@ -367,11 +367,14 @@ def _schema_validation_diagnostic(
         instance = exc.instance
         variants = exc.validator_value
         if isinstance(instance, dict) and isinstance(variants, list):
-            for discriminator in ("op", "kind", "type"):
+            candidates = list(range(len(variants)))
+            discriminated = False
+            for discriminator in ("op", "kind", "type", "node_type"):
                 if discriminator not in instance:
                     continue
                 matches = []
-                for index, variant in enumerate(variants):
+                for index in candidates:
+                    variant = variants[index]
                     prop = (
                         variant.get("properties", {}).get(discriminator, {})
                         if isinstance(variant, dict)
@@ -384,14 +387,16 @@ def _schema_validation_diagnostic(
                     if instance[discriminator] in prop.get("enum", [prop.get("const")]):
                         matches.append(index)
                 else:
-                    if len(matches) == 1:
-                        children = [
-                            child
-                            for child in exc.context
-                            if child.schema_path and child.schema_path[0] == matches[0]
-                        ]
-                        if children:
-                            return _schema_validation_diagnostic(children[0])
+                    candidates = matches
+                    discriminated = True
+            if discriminated and len(candidates) == 1:
+                children = [
+                    child
+                    for child in exc.context
+                    if child.schema_path and child.schema_path[0] == candidates[0]
+                ]
+                if children:
+                    return _schema_validation_diagnostic(children[0])
             if (
                 "type" not in instance
                 and variants
