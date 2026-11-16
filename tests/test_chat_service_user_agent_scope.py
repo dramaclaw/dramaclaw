@@ -4584,6 +4584,20 @@ def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
     assert chat_service._load_api_url() == "http://127.0.0.1:8780"
 
 
+@pytest.mark.parametrize("names", [(), ("other",), ("dramaclaw",), ("dramaclaw", "other")])
+def test_codex_schema_budget_is_scoped_to_business_mcp(names):
+    servers = {name: {"command": "python3", "args": []} for name in names}
+    overrides = chat_service._codex_mcp_config_overrides(servers)
+    schema_overrides = [
+        value for value in overrides if ".tool_input_schema_max_bytes=" in value
+    ]
+    assert schema_overrides == (
+        ["mcp_servers.dramaclaw.tool_input_schema_max_bytes=65536"]
+        if "dramaclaw" in names
+        else []
+    )
+
+
 def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path, monkeypatch):
     monkeypatch.setenv("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", "75")
     overrides = chat_service._codex_mcp_config_overrides(
@@ -4737,6 +4751,13 @@ def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
     )
 
     thread = client.thread_start()
+    for configured_thread in (thread, client.thread_resume("existing-thread")):
+        assert (
+            configured_thread._thread_config[
+                "mcp_servers.dramaclaw.tool_input_schema_max_bytes"
+            ]
+            == 65536
+        )
     assert thread._thread_config["mcp_servers.dramaclaw.env"] == {
         "DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token"
     }

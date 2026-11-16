@@ -150,6 +150,8 @@ def test_compose_episode_checks_cancel_after_final_ffmpeg_returns(tmp_path, monk
     def fake_run(cmd, **_kwargs):
         nonlocal cancel_after_final
         if cmd[0] == "ffprobe":
+            if "stream=duration" in cmd:
+                return SimpleNamespace(returncode=0, stdout="1.0\n", stderr="")
             return SimpleNamespace(returncode=0, stdout="0\n", stderr="")
         if cmd[0] == "ffmpeg" and "ep001_final.mp4" in cmd[-1]:
             cancel_after_final = True
@@ -185,6 +187,8 @@ def test_compose_episode_passes_deadline_timeout_to_ffmpeg(tmp_path, monkeypatch
     def fake_run(cmd, **kwargs):
         timeouts.append(kwargs.get("timeout"))
         if cmd[0] == "ffprobe":
+            if "stream=duration" in cmd:
+                return SimpleNamespace(returncode=0, stdout="1.0\n", stderr="")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 

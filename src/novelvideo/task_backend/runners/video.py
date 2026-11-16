@@ -518,6 +518,27 @@ def run_compose_episode(
             audio_path = paths.audio(beat_num)
             if not video_path.exists():
                 continue
+            duration_probe = run_checked(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(video_path),
+                ],
+                default_timeout_seconds=30,
+            )
+            try:
+                video_duration = float(duration_probe.stdout.strip())
+            except ValueError as exc:
+                raise RuntimeError("Cannot determine video stream duration") from exc
+            if duration_probe.returncode != 0 or not 0 < video_duration < float("inf"):
+                raise RuntimeError("Cannot determine video stream duration")
             clip_path = tmp_dir / f"beat_{beat_num:04d}.mp4"
             manager.update_progress_for_project(
                 ctx,
@@ -621,7 +642,9 @@ def run_compose_episode(
                         "-shortest",
                     ]
                 )
-            cmd.append(str(clip_path))
+            # Bound padded audio explicitly; -shortest can retain buffered audio
+            # beyond the last video frame on some FFmpeg builds.
+            cmd.extend(["-t", str(video_duration), str(clip_path)])
             result = run_checked(cmd, default_timeout_seconds=30 * 60)
             check_cancel()
             if result.returncode == 0:
