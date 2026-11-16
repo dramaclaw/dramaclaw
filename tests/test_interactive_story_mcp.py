@@ -234,7 +234,9 @@ def test_excluded_plugins_skip_story_loading_and_keep_mode_specific_caches(
 async def test_native_and_independent_story_contracts_are_identical():
     native = dramaclaw_mcp._plugin_tools("freezone")
     for tool in await interactive_story_mcp.list_tools():
-        assert tool.inputSchema == native[tool.name][0]["parameters"]
+        from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
+
+        assert tool.inputSchema == schema_with_guidance(native[tool.name][0]["parameters"])
         assert tool.outputSchema == native[tool.name][0]["output_schema"]
 
 
