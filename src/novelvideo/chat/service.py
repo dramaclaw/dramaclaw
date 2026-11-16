@@ -5628,6 +5628,7 @@ async def _stream_assistant_reply_codex(
     from novelvideo.chat.codex_live import LiveTurnProjector
 
     assistant_text = ""
+    has_tool_outcome = False
     audio_notice: str | None = None
     timeout_notice: str | None = None
     tool_text = ""
@@ -5893,6 +5894,18 @@ async def _stream_assistant_reply_codex(
                     )
                     if event.type == "tool_updated":
                         turn_agent_product_operations.observe(event)
+                        if not event.error and str(event.status).lower() in {"completed", "success", "succeeded"}:
+                            has_tool_outcome |= _codex_freezone_write_receipt(
+                                event, expected_project=project, expected_canvas=canvas_id,
+                            ) is not None
+                            for value in (event.structured, event.output):
+                                for payload in _json_objects_from_codex_tool_value(value):
+                                    if payload.get("ok") is True and payload.get("status") in {
+                                        "confirmation_required", "workflow_draft_ready",
+                                        "clarification_required",
+                                    }:
+                                        has_tool_outcome = True
+
                     if (
                         _codex_freezone_is_write_event(event)
                         and _codex_freezone_tool_name(event)
@@ -6055,5 +6068,16 @@ async def _stream_assistant_reply_codex(
         )
     if audio_notice is not None:
         await _write_turn_notice(username, store_scope, business_turn_id, "audio", audio_notice)
+    if (
+        turn_disposition == "completed"
+        and not assistant_text.strip()
+        and not has_tool_outcome
+        and audio_notice is None
+        and not stage_confirmation_expected
+    ):
+        await _write_turn_notice(
+            username, store_scope, business_turn_id, "empty_reply",
+            "这轮操作没有收到虾导的有效回复，请稍后重试。",  # i18n-exempt
+        )
     await on_event({"type": "done", "message": None})
     return None
