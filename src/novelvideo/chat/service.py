@@ -192,6 +192,12 @@ _CODEX_GATEWAY_BASE_URL_ENV = "DRAMACLAW_CODEX_GATEWAY_BASE_URL"
 _CODEX_PER_TURN_CREDENTIAL_PLACEHOLDER = "dramaclaw-codex-per-turn-placeholder"
 _CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
 _CODEX_CONTROL_CAPABILITY_METADATA = "dramaclaw_control_context_capability"
+# Codex's default 5 KB tool schema limit compacts away nested fields, so the
+# MCP servers DramaClaw itself provides lift it; other servers keep the default.
+_CODEX_MCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 65536
+_CODEX_SCHEMA_BUDGET_MCP_SERVERS = frozenset(
+    {"dramaclaw", "dramaclaw_interactive_story", "dramaclaw_workflows"}
+)
 _MAINLINE_ASSISTANT_SCOPE_INSTRUCTIONS = (
     "This conversation is the DramaClaw mainline assistant (虾导). When asked who you are, "
     "answer briefly: 我是虾导. Describe current capabilities from the available mainline "
@@ -3859,9 +3865,11 @@ def _codex_mcp_config_overrides(
         )
         if "tool_timeout_sec" in server:
             overrides.append(f"{prefix}.tool_timeout_sec={server['tool_timeout_sec']}")
-        if name == "dramaclaw":
-            # Codex's default 5 KB limit compacts away nested workflow fields.
-            overrides.append(f"{prefix}.tool_input_schema_max_bytes=65536")
+        if name in _CODEX_SCHEMA_BUDGET_MCP_SERVERS:
+            overrides.append(
+                f"{prefix}.tool_input_schema_max_bytes="
+                f"{_CODEX_MCP_TOOL_INPUT_SCHEMA_MAX_BYTES}"
+            )
         overrides.append(f"{prefix}.enabled=true")
         overrides.append(f"{prefix}.required=true")
         if enabled_tools is not None:

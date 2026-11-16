@@ -22,6 +22,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 
 from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
+from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
 from novelvideo.freezone.agent_workflows.catalog import (
     compile_workflow_intent,
     get_workflow_skill,
@@ -361,8 +362,7 @@ async def read_resource(uri: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-@SERVER.list_tools()
-async def list_tools() -> list[types.Tool]:
+def _workflow_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="workflow_catalog_search",
@@ -475,10 +475,18 @@ async def list_tools() -> list[types.Tool]:
     ]
 
 
+@SERVER.list_tools()
+async def list_tools() -> list[types.Tool]:
+    tools = _workflow_tools()
+    for tool in tools:
+        tool.inputSchema = schema_with_guidance(tool.inputSchema)
+    return tools
+
+
 @SERVER.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     args = normalize_workflow_tool_arguments(name, dict(arguments or {}))
-    tool = next((tool for tool in await list_tools() if tool.name == name), None)
+    tool = next((tool for tool in _workflow_tools() if tool.name == name), None)
     if tool is None:
         raise ValueError(f"unknown workflow tool: {name}")
     errors = list(Draft202012Validator(tool.inputSchema).iter_errors(args))

@@ -102,8 +102,8 @@ class CanvasCorePool:
             node,
             "--permission",
             f"--allow-fs-read={self.bundle_path}",
-            "--no-experimental-fetch",
-            "--no-experimental-websocket",
+            "--import",
+            "data:text/javascript,delete globalThis.fetch;delete globalThis.WebSocket",
             f"--max-old-space-size={self.max_old_space_mb}",
             str(self.bundle_path),
         ]

@@ -156,6 +156,74 @@ def test_codex_template_renders_valid_toml() -> None:
     )
 
 
+def test_codex_configs_lift_tool_schema_budget_like_the_product() -> None:
+    """Codex compacts nested tool fields over its 5 KB default schema budget."""
+    from novelvideo.chat import service as chat_service
+
+    key = "mcp_servers.dramaclaw.tool_input_schema_max_bytes="
+    product = chat_service._codex_mcp_config_overrides({"dramaclaw": {"command": "python3"}})
+    (budget,) = [int(value.removeprefix(key)) for value in product if value.startswith(key)]
+    rendered = tomllib.loads(_render("codex"))["mcp_servers"]
+    example = tomllib.loads(
+        (CE_ROOT / "examples" / "codex" / "config.toml.example").read_text(encoding="utf-8")
+    )["mcp_servers"]
+    guide = (CE_ROOT / "docs" / "zh" / "guides" / "local-agent-mcp.md").read_text(
+        encoding="utf-8"
+    )
+    section = guide.split("## Codex 配置示例", 1)[1].split("\n## ", 1)[0]
+    assert "```toml\n" in section, "Codex reads TOML; the guide example must be TOML"
+    guide_example = tomllib.loads(section.split("```toml\n", 1)[1].split("```", 1)[0])
+    for servers in (rendered, example, guide_example["mcp_servers"]):
+        assert {
+            name: server.get("tool_input_schema_max_bytes") for name, server in servers.items()
+        } == {"dramaclaw": budget, "dramaclaw_workflows": budget}
+
+
+async def _launcher_tools(mode: str):
+    env = {
+        **os.environ,
+        "DRAMACLAW_CE_DIR": str(CE_ROOT),
+        "DRAMACLAW_PROJECT_ID": "project-a",
+        "DRAMACLAW_CANVAS_ID": "canvas-a",
+        "DRAMACLAW_USERNAME": "local",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=[str(SCRIPTS / "launch_mcp.py"), mode],
+        env=env,
+        cwd=str(CE_ROOT),
+    )
+    async with stdio_client(parameters) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            return (await session.list_tools()).tools
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("server", "mode"), [("dramaclaw", "tools"), ("dramaclaw_workflows", "workflows")]
+)
+async def test_published_tool_schemas_fit_the_codex_template_budget(
+    server: str,
+    mode: str,
+) -> None:
+    """Fails when a published tool schema outgrows the budget the template sets."""
+    budget = tomllib.loads(_render("codex"))["mcp_servers"][server].get(
+        "tool_input_schema_max_bytes"
+    )
+    assert isinstance(budget, int)
+    # Codex measures compact JSON in UTF-8 bytes.
+    sizes = {
+        tool.name: len(
+            json.dumps(tool.inputSchema, separators=(",", ":"), ensure_ascii=False).encode()
+        )
+        for tool in await _launcher_tools(mode)
+    }
+    largest = max(sizes, key=sizes.__getitem__)
+    assert sizes[largest] <= budget, (largest, sizes[largest], budget)
+
+
 def test_interactive_story_reference_links_are_local_and_reachable() -> None:
     """Check progressive-disclosure navigation, not model compliance with prose."""
     root = (CE_ROOT / "src/novelvideo/agent_skills/interactive-story").resolve()
@@ -364,22 +432,5 @@ async def test_launcher_completes_real_mcp_handshake(
     mode: str,
     required_tool: str,
 ) -> None:
-    env = {
-        **os.environ,
-        "DRAMACLAW_CE_DIR": str(CE_ROOT),
-        "DRAMACLAW_PROJECT_ID": "project-a",
-        "DRAMACLAW_CANVAS_ID": "canvas-a",
-        "DRAMACLAW_USERNAME": "local",
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-    parameters = StdioServerParameters(
-        command=sys.executable,
-        args=[str(SCRIPTS / "launch_mcp.py"), mode],
-        env=env,
-        cwd=str(CE_ROOT),
-    )
-    async with stdio_client(parameters) as (reader, writer):
-        async with ClientSession(reader, writer) as session:
-            await session.initialize()
-            tools = await session.list_tools()
-    assert required_tool in {tool.name for tool in tools.tools}
+    tools = await _launcher_tools(mode)
+    assert required_tool in {tool.name for tool in tools}

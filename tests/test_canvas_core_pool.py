@@ -62,8 +62,8 @@ def test_spawn_spec(pool, monkeypatch):
         shutil.which("node"),
         "--permission",
         f"--allow-fs-read={WORKER.resolve()}",
-        "--no-experimental-fetch",
-        "--no-experimental-websocket",
+        "--import",
+        "data:text/javascript,delete globalThis.fetch;delete globalThis.WebSocket",
         "--max-old-space-size=512",
         str(WORKER.resolve()),
     ]
@@ -169,6 +169,10 @@ def test_missing_node(pool, monkeypatch):
     with pytest.raises(CanvasCoreError) as error:
         pool.spawn_spec()
     assert error.value.code == "canvas_core_unavailable"
+
+
+def test_network_globals_are_unavailable(pool):
+    assert pool.call("network_globals", {}) == {"fetch": False, "websocket": False}
 
 
 def test_file_permission(pool, tmp_path):

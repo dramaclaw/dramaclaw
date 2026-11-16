@@ -8,6 +8,8 @@
 command = "/path/to/dramaclaw-ce/.venv/bin/python"
 args = ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "tools"]
 cwd = "/path/to/dramaclaw-ce"
+# Codex compacts tool schemas above 5,000 bytes and drops nested fields; keep both servers at 65536.
+tool_input_schema_max_bytes = 65536
 
 [mcp_servers.dramaclaw.env]
 DRAMACLAW_API_URL = "http://127.0.0.1:8780"
@@ -30,6 +32,7 @@ DRAMACLAW_USER = "local"
 command = "/path/to/dramaclaw-ce/.venv/bin/python"
 args = ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "workflows"]
 cwd = "/path/to/dramaclaw-ce"
+tool_input_schema_max_bytes = 65536
 
 [mcp_servers.dramaclaw_workflows.env]
 DRAMACLAW_USERNAME = "local"

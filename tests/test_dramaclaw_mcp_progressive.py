@@ -14,6 +14,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from novelvideo.chat import dramaclaw_mcp
+from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
 from novelvideo.interactive_story.models import StoryDraftV2, StoryPatchV2
 
 CE_ROOT = Path(__file__).resolve().parents[1]
@@ -954,7 +955,7 @@ async def test_plan_tool_publication_preserves_registry_and_other_tools(monkeypa
     tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
     target = "freezone_prepare_workflow_plan_draft"
     for name, schema in original.items():
-        expected = deepcopy(schema["parameters"])
+        expected = schema_with_guidance(schema["parameters"])
         if name == target:
             del expected["properties"]["plan"]["anyOf"]
         assert tools[name].inputSchema == expected
@@ -1275,7 +1276,8 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
     assert invalid_payload["ok"] is False
     assert invalid_payload["error"] == "tool_arguments_invalid"
     assert invalid.structuredContent["tool_name"] == "dramaclaw_render_first_frames"
-    assert invalid.structuredContent["path"] == "arguments"
+    assert invalid.structuredContent["path"] == "episode"
+    assert invalid.structuredContent["message"] == "episode: field is required"
     assert invalid.structuredContent["phase"] == "tool_validation"
     assert "details" not in invalid.structuredContent
     assert calls == []
