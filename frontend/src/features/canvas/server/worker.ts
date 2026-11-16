@@ -152,7 +152,8 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     process.stdout.write(JSON.stringify({ id, ok: true, result }) + '\n');
   } catch (error) {
     const code = error instanceof InvalidRequest ? 'invalid_request' : 'canvas_core_failed';
+    const details = error instanceof InvalidRequest ? error.details : undefined;
     if (code === 'canvas_core_failed') console.error(error);
-    process.stdout.write(JSON.stringify({ id, ok: false, error: { code, message: error instanceof Error ? error.message : String(error) } }) + '\n');
+    process.stdout.write(JSON.stringify({ id, ok: false, error: { code, message: error instanceof Error ? error.message : String(error), ...(details !== undefined ? { details } : {}) } }) + '\n');
   }
 }

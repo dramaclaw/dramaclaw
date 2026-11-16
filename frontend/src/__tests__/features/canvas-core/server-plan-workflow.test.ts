@@ -63,3 +63,22 @@ it.each([
   expect(error).toBeInstanceOf(InvalidRequest);
   expect(error.message).toContain(path);
 });
+
+it('lists actions a node does not offer as structured details beside the unchanged message', async () => {
+  const error = await servePlanWorkflow({ canvas, commands: [
+    { type: 'run_workflow', node_ids: ['video'] },
+    { type: 'run_node_action', node_id: 'text', action: 'generate_image' },
+  ] }).catch(caught => caught);
+  expect(error).toBeInstanceOf(InvalidRequest);
+  expect(error.message).toBe('envelopes[0].commands[1]: action not available on node: generate_image');
+  expect(error.details).toEqual({ unavailable_actions: [{ command_index: 1, node_id: 'text', action: 'generate_image' }] });
+});
+
+it('adds no structured details when a run command fails for another reason', async () => {
+  const error = await servePlanWorkflow({ canvas, commands: [
+    { type: 'run_node_action', node_id: 'missing', action: 'generate_image' },
+  ] }).catch(caught => caught);
+  expect(error).toBeInstanceOf(InvalidRequest);
+  expect(error.message).toBe('envelopes[0].commands[0]: node not found: missing');
+  expect(error.details).toBeUndefined();
+});

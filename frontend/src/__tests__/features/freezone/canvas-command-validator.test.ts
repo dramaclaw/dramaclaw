@@ -746,6 +746,9 @@ describe("canvas command validator", () => {
 
     expect(result.ok).toBe(false);
     expect(result.issues[0]?.message).toBe("action not available on node: generate_3gs_world");
+    expect(result.unavailableActions).toEqual([
+      { envelopeIndex: 0, commandIndex: 0, nodeId: "world-node", action: "generate_3gs_world" },
+    ]);
   });
 
   it("accepts 3GS generation when a director world has an image upstream", () => {
@@ -778,6 +781,7 @@ describe("canvas command validator", () => {
 
     expect(result.ok).toBe(true);
     expect(result.issues).toEqual([]);
+    expect(result).not.toHaveProperty("unavailableActions");
   });
 
   it("validates run_workflow node references", () => {
@@ -795,6 +799,7 @@ describe("canvas command validator", () => {
 
     expect(result.ok).toBe(false);
     expect(result.issues[0]?.message).toBe("node not found: missing-node");
+    expect(result).not.toHaveProperty("unavailableActions");
   });
 
   it("accepts video frontend node actions exposed by the node action catalog", () => {

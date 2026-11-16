@@ -36,9 +36,18 @@ export type CanvasCommandValidationIssue = {
   message: string;
 };
 
+export type CanvasCommandUnavailableAction = {
+  envelopeIndex: number;
+  commandIndex: number;
+  nodeId: string;
+  action: string;
+};
+
 export type CanvasCommandValidationResult = {
   ok: boolean;
   issues: CanvasCommandValidationIssue[];
+  // Lists run commands whose target node action catalog lacks the action; present only when non-empty.
+  unavailableActions?: CanvasCommandUnavailableAction[];
 };
 
 const RESERVED_DATA_KEYS = new Set([
@@ -191,6 +200,7 @@ export function validateCanvasChatCommandEnvelopes(
   // 预演台节点在这一批里已经规划出来的场景：后面的 sceneEdit 接着它算，不回头读原始场景。
   const plannedPrevizScenes = new Map<string, PrevizScene>();
   const issues: CanvasCommandValidationIssue[] = [];
+  const unavailableActions: CanvasCommandUnavailableAction[] = [];
 
   const isKnownNodeRef = (id: string): boolean => nodeIds.has(id) || clientIds.has(id);
   const isKnownDeleteRef = (id: string): boolean => isKnownNodeRef(id) || edgeIds.has(id);
@@ -489,6 +499,7 @@ export function validateCanvasChatCommandEnvelopes(
           );
           if (!action) {
             addIssue(issues, path, `action not available on node: ${command.action}`);
+            unavailableActions.push({ envelopeIndex, commandIndex, nodeId: command.node_id, action: command.action });
           } else if (action.execution === "chat_command") {
             addIssue(issues, path, `action must be expressed as a canvas chat command: ${command.action}`);
           } else if (action.can_run_now === false) {
@@ -608,6 +619,7 @@ export function validateCanvasChatCommandEnvelopes(
   return {
     ok: issues.length === 0,
     issues,
+    ...(unavailableActions.length > 0 ? { unavailableActions } : {}),
   };
 }
 

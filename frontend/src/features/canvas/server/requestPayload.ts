@@ -3,10 +3,16 @@
 import { isRecord, isFiniteNumber } from '@/features/freezone/canvasCommandEnvelope';
 import type { SavedCanvas } from './applyCommands';
 
-export class InvalidRequest extends Error {}
+export class InvalidRequest extends Error {
+  declare readonly details?: Record<string, unknown>;
+  constructor(message: string, details?: Record<string, unknown>) {
+    super(message);
+    if (details !== undefined) Object.defineProperty(this, 'details', { value: details, enumerable: true });
+  }
+}
 
-export function invalidRequest(message: string): never {
-  throw new InvalidRequest(message);
+export function invalidRequest(message: string, details?: Record<string, unknown>): never {
+  throw new InvalidRequest(message, details);
 }
 
 export function parseCanvasPayload(payload: unknown) {

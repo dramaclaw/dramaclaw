@@ -46,11 +46,12 @@ it('bundles a standalone React-free worker and serves sequential NDJSON requests
         { type: 'unknown_command' },
       ] }] } }),
       JSON.stringify({ id: 'core-failed', op: 'apply_commands', payload: { canvas: { nodes: [{ id: 'broken', type: 'storyboardNode', data: { frames: {} }, position: { x: 0, y: 0 } }], edges: [] }, envelopes: [] } }),
+      JSON.stringify({ id: 'plan-unavailable', op: 'plan_workflow', payload: { canvas: { nodes: [{ id: 'note', type: 'textAnnotationNode', position: { x: 0, y: 0 }, data: { content: 'Hi' } }], edges: [] }, commands: [{ type: 'run_node_action', node_id: 'note', action: 'generate_image' }] } }),
     ].join('\n') + '\n');
     const timer = setTimeout(() => child.kill(), 20000);
     try { expect(await exit, stderr).toBe(0); } finally { clearTimeout(timer); }
     const lines = stdout.trim().split('\n').map(line => JSON.parse(line));
-    expect(lines).toHaveLength(15);
+    expect(lines).toHaveLength(16);
     expect(lines[0]).toEqual({ id: 'ping', ok: true, result: { pong: true } });
     expect(lines[1]).toMatchObject({ id: null, ok: false, error: { code: 'invalid_json', message: expect.any(String) } });
     expect(lines[2]).toMatchObject({ id: 'apply', ok: true, result: { status: 'applied', canvas: { nodes: expect.any(Array) }, receipt: { canvas_apply_status: 'applied' } } });
@@ -74,5 +75,11 @@ it('bundles a standalone React-free worker and serves sequential NDJSON requests
     expect(lines[12]).toMatchObject({ id: 'context-failed', ok: true, result: { status: 'answered', result: { ok: false, responses: [], errors: [expect.stringContaining('node not found: missing')] } } });
     expect(lines[13]).toMatchObject({ id: 'command-invalid', ok: false, error: { code: 'invalid_request', message: 'commands[1] (create_edge) is not a valid canvas command' } });
     expect(lines[14]).toMatchObject({ id: 'core-failed', ok: false, error: { code: 'canvas_core_failed', message: expect.any(String) } });
+    expect(lines[13].error).not.toHaveProperty('details');
+    expect(lines[14].error).not.toHaveProperty('details');
+    expect(lines[15]).toEqual({ id: 'plan-unavailable', ok: false, error: {
+      code: 'invalid_request', message: 'envelopes[0].commands[0]: action not available on node: generate_image',
+      details: { unavailable_actions: [{ command_index: 0, node_id: 'note', action: 'generate_image' }] },
+    } });
   } finally { await fs.rm(outDir, { recursive: true, force: true }); }
 }, 30000);

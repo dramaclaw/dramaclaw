@@ -96,6 +96,20 @@ def _rewrite_command_indices(message: str, indices: list[int]) -> str:
     return re.sub(r"envelopes\[0\]\.commands\[(\d+)\]", replace, message)
 
 
+def _rewrite_unavailable_action_indices(details: dict, indices: list[int]) -> dict:
+    actions = details.get("unavailable_actions")
+    if not isinstance(actions, list):
+        return details
+    rewritten = []
+    for item in actions:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("command_index")
+        if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(indices):
+            rewritten.append({**item, "command_index": indices[index]})
+    return {**details, "unavailable_actions": rewritten}
+
+
 def rewrite_run_commands(commands: list[dict], mapping: dict[str, str]) -> list[dict]:
     rewritten = []
     for command in commands:
@@ -110,7 +124,7 @@ def rewrite_run_commands(commands: list[dict], mapping: dict[str, str]) -> list[
 
 async def _plan_run_commands(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
-    commands: list[dict], locale: str | None = None,
+    commands: list[dict], locale: str | None = None, canvas: dict | None = None,
 ) -> dict:
     run_commands = [command for command in commands if is_run_command(command)]
     if not run_commands:
@@ -132,9 +146,10 @@ async def _plan_run_commands(
 
     from novelvideo.api.routes import freezone as routes
 
-    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id) or {
-        "nodes": [], "edges": []
-    }
+    if canvas is None:
+        canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id) or {
+            "nodes": [], "edges": []
+        }
     locale = locale or await asyncio.to_thread(recorded_ui_locale, state_dir) or "zh"
     image, video = await asyncio.gather(
         routes._freezone_image_models_data(ctx.requester_user_id),
@@ -165,30 +180,70 @@ async def _plan_run_commands(
                     "selectedNodeIds": []},
         })
     except CanvasCoreError as exc:
-        raise CanvasCoreError(exc.code, _rewrite_command_indices(str(exc), run_indices)) from exc
+        raise CanvasCoreError(
+            exc.code, _rewrite_command_indices(str(exc), run_indices),
+            details=_rewrite_unavailable_action_indices(exc.details, run_indices),
+        ) from exc
     if not plan["ok"]:
         return {"status": "invalid",
                 "message": _rewrite_command_indices(plan["message"], run_indices)}
     return {"status": "planned", "plan": plan, "canvas": canvas, "client_ids": client_ids}
 
 
+def _has_unavailable_saved_node_action(
+    details: dict, commands: list[dict], saved_ids: set[str],
+) -> bool:
+    actions = details.get("unavailable_actions")
+    if not isinstance(actions, list):
+        return False
+    for item in actions:
+        if not isinstance(item, dict):
+            continue
+        index, node_id = item.get("command_index"), item.get("node_id")
+        if (
+            isinstance(index, int) and not isinstance(index, bool)
+            and 0 <= index < len(commands)
+            and isinstance(node_id, str) and node_id in saved_ids
+            and commands[index].get("node_id") == node_id
+        ):
+            return True
+    return False
+
+
 async def check_node_actions_available(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
     commands: list[dict], locale: str | None = None,
 ) -> None:
-    """Raise the server executor's invalid_request error for actions a node does not offer.
+    """Refuse a card only when a node saved in the canvas file does not offer the action.
 
-    Only requests that must fail are refused: an unplannable or browser-only batch passes,
-    and an unavailable canvas core skips the check.
+    Everything else continues to the existing confirmation logic with a warning,
+    because the browser validates again before running anything.
     """
+    if not any(is_run_command(command) for command in commands):
+        return
+    saved_ids: set[str] = set()
     try:
-        await _plan_run_commands(
+        canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id) or {
+            "nodes": [], "edges": [],
+        }
+        saved_ids = {node["id"] for node in canvas.get("nodes", [])
+                     if isinstance(node, dict) and isinstance(node.get("id"), str)}
+        result = await _plan_run_commands(
             ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands, locale=locale,
+            canvas=canvas,
         )
     except CanvasCoreError as exc:
-        if exc.code == "invalid_request":
+        if exc.code == "invalid_request" and _has_unavailable_saved_node_action(
+            exc.details, commands, saved_ids,
+        ):
             raise
-        logger.warning("canvas action availability check skipped code=%s", exc.code)
+        logger.warning("canvas action availability check skipped reason=%s", exc.code)
+        return
+    except Exception as exc:
+        logger.warning("canvas action availability check skipped reason=%s", type(exc).__name__)
+        return
+    if result["status"] == "invalid":
+        logger.warning("canvas action availability check skipped reason=%s", "plan_invalid")
 
 
 async def check_server_workflow(

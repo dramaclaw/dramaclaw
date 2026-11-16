@@ -26,9 +26,10 @@ logger = logging.getLogger(__name__)
 
 
 class CanvasCoreError(RuntimeError):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, details: dict | None = None):
         super().__init__(message)
         self.code = code
+        self.details = dict(details) if isinstance(details, dict) else {}
 
 
 class _WorkerError(CanvasCoreError):
@@ -221,7 +222,7 @@ class CanvasCorePool:
                 raise ValueError("invalid response")
         except (ValueError, UnicodeError) as exc:
             raise CanvasCoreError("canvas_core_protocol", "Invalid canvas core response") from exc
-        raise _WorkerError(error["code"], error["message"])
+        raise _WorkerError(error["code"], error["message"], details=error.get("details"))
 
     def call(self, op: str, payload: dict) -> dict:
         return self._call(op, payload, any_result=False)

@@ -133,6 +133,29 @@ def test_worker_error_keeps_child(pool, caplog, op, code, message, level):
     assert_failure_log(caplog, op, error.value, level)
     assert all(marker not in record.getMessage() for record in caplog.records)
     assert pool.call("ping", {})["pid"] == before
+    assert error.value.details == {}
+
+
+@pytest.mark.parametrize("details,expected", [
+    ({"unavailable_actions": [{"command_index": 0, "node_id": "n1", "action": "generate_image"}]},
+     {"unavailable_actions": [{"command_index": 0, "node_id": "n1", "action": "generate_image"}]}),
+    ("not an object", {}),
+    (["not", "an", "object"], {}),
+    (None, {}),
+])
+def test_worker_error_details_reach_the_caller(pool, details, expected):
+    before = pool.call("ping", {})["pid"]
+    with pytest.raises(CanvasCoreError) as error:
+        pool.call("invalid_request_details", {"details": details})
+    assert error.value.code == "invalid_request"
+    assert str(error.value) == "invalid request"
+    assert error.value.details == expected
+    assert pool.call("ping", {})["pid"] == before
+
+
+def test_error_details_default_to_empty():
+    assert CanvasCoreError("canvas_core_busy", "busy").details == {}
+    assert CanvasCoreError("invalid_request", "bad", details={"k": 1}).details == {"k": 1}
 
 
 def test_retirement():

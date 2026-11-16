@@ -81,7 +81,14 @@ export async function servePlanWorkflow(payload: unknown) {
       store.getState().setCanvasData(canvas.nodes, canvas.edges);
       const state = store.getState();
       const validation = validateCanvasChatCommandEnvelopes(envelopes, state.nodes, state.edges, defaultNodeDataDefaults);
-      if (!validation.ok) invalidRequest(validation.issues.map(issue => `${issue.path}: ${issue.message}`).join('; '));
+      if (!validation.ok) invalidRequest(
+        validation.issues.map(issue => `${issue.path}: ${issue.message}`).join('; '),
+        validation.unavailableActions ? {
+          unavailable_actions: validation.unavailableActions.map(item => ({
+            command_index: item.commandIndex, node_id: item.nodeId, action: item.action,
+          })),
+        } : undefined,
+      );
       const plan = planCanvasNodeActions(store, commands, { selectedNodeIds, nodeDataDefaults: defaultNodeDataDefaults, translate });
       if (!plan.ok) return plan;
       return {

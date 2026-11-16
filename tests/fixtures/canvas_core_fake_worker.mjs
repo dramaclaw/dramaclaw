@@ -35,6 +35,10 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
       console.log(JSON.stringify({ id, ok: false,
         error: { code: 'invalid_request', message: 'invalid request' } }));
       continue;
+    case 'invalid_request_details':
+      console.log(JSON.stringify({ id, ok: false, error: { code: 'invalid_request',
+        message: 'invalid request', details: payload.details } }));
+      continue;
     case 'readfile':
       try { fs.readFileSync(payload.path); result = { code: 'allowed' }; }
       catch (error) { result = { code: error.code }; }
