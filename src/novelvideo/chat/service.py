@@ -3859,6 +3859,9 @@ def _codex_mcp_config_overrides(
         )
         if "tool_timeout_sec" in server:
             overrides.append(f"{prefix}.tool_timeout_sec={server['tool_timeout_sec']}")
+        if name == "dramaclaw":
+            # Codex's default 5 KB limit compacts away nested workflow fields.
+            overrides.append(f"{prefix}.tool_input_schema_max_bytes=65536")
         overrides.append(f"{prefix}.enabled=true")
         overrides.append(f"{prefix}.required=true")
         if enabled_tools is not None:
