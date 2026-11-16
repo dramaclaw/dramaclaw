@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from novelvideo.api.routes import chat as chat_routes
 from novelvideo.chat import backend_sdk
@@ -4584,18 +4586,80 @@ def test_chat_agent_api_url_defaults_to_rest_listener(monkeypatch):
     assert chat_service._load_api_url() == "http://127.0.0.1:8780"
 
 
-@pytest.mark.parametrize("names", [(), ("other",), ("dramaclaw",), ("dramaclaw", "other")])
+_DRAMACLAW_MCP_SERVERS = ("dramaclaw", "dramaclaw_interactive_story", "dramaclaw_workflows")
+# Codex compacts any tool schema above this many bytes unless the server raises it.
+_CODEX_DEFAULT_TOOL_SCHEMA_BYTES = 5_000
+
+
+def _codex_schema_budgets(servers):
+    budgets = {}
+    for value in chat_service._codex_mcp_config_overrides(servers):
+        match = re.fullmatch(r"mcp_servers\.(\w+)\.tool_input_schema_max_bytes=(\d+)", value)
+        if match:
+            budgets[match[1]] = int(match[2])
+    return budgets
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        (),
+        ("other",),
+        ("dramaclaw_extra",),
+        *((name,) for name in _DRAMACLAW_MCP_SERVERS),
+        (*_DRAMACLAW_MCP_SERVERS, "other"),
+    ],
+)
 def test_codex_schema_budget_is_scoped_to_business_mcp(names):
     servers = {name: {"command": "python3", "args": []} for name in names}
-    overrides = chat_service._codex_mcp_config_overrides(servers)
-    schema_overrides = [
-        value for value in overrides if ".tool_input_schema_max_bytes=" in value
-    ]
-    assert schema_overrides == (
-        ["mcp_servers.dramaclaw.tool_input_schema_max_bytes=65536"]
-        if "dramaclaw" in names
-        else []
+    assert _codex_schema_budgets(servers) == {
+        name: 65536 for name in names if name in _DRAMACLAW_MCP_SERVERS
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server", _DRAMACLAW_MCP_SERVERS)
+async def test_freezone_codex_tool_schemas_fit_the_applied_budget(tmp_path, server):
+    """Fails when Codex would compact nested fields of a published tool schema."""
+    servers = chat_service._dramaclaw_mcp_servers("freezone_canvas")
+    budget = _codex_schema_budgets(servers).get(server, _CODEX_DEFAULT_TOOL_SCHEMA_BYTES)
+    config = servers[server]
+    root = Path(__file__).resolve().parents[1]
+    turn_env = {
+        "DRAMACLAW_API_URL": "http://127.0.0.1:9",
+        "DRAMACLAW_AGENT_PROFILE": "freezone",
+        "DRAMACLAW_CANVAS_ID": "canvas-a",
+        "DRAMACLAW_CHAT_SURFACE": "freezone",
+        "DRAMACLAW_EXTERNAL_MCP": "1",
+        "DRAMACLAW_PROJECT_ID": "project-a",
+        "DRAMACLAW_ROOT": str(root),
+        "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+        "DRAMACLAW_USERNAME": "local",
+        "NOVELVIDEO_OUTPUT_DIR": str(tmp_path / "output"),
+        "PYTHONPATH": str(root / "src"),
+        "PYTHON_DOTENV_DISABLED": "1",
+    }
+    # Codex forwards only the declared env names to each MCP process.
+    env = {name: turn_env[name] for name in config["env_vars"] if name in turn_env}
+    params = StdioServerParameters(
+        command=config["command"],
+        args=config["args"],
+        cwd=str(tmp_path),
+        env={**env, "PYTHONDONTWRITEBYTECODE": "1"},
     )
+    async with stdio_client(params) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            await session.initialize()
+            tools = (await session.list_tools()).tools
+    # Codex measures compact JSON in UTF-8 bytes.
+    sizes = {
+        tool.name: len(
+            json.dumps(tool.inputSchema, separators=(",", ":"), ensure_ascii=False).encode()
+        )
+        for tool in tools
+    }
+    largest = max(sizes, key=sizes.__getitem__)
+    assert sizes[largest] <= budget, (largest, sizes[largest], budget)
 
 
 def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path, monkeypatch):
