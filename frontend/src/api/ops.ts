@@ -936,6 +936,8 @@ export interface FreezoneVideoComposeItemPayload {
   /** Trim end within source media, in seconds. Must be > sourceStart. */
   sourceEnd: number;
   volume?: number;
+  /** Fade-out duration in seconds, for audio clips. */
+  fadeOut?: number;
   muted?: boolean;
   /**
    * Playback rate (变速). 1 = original speed. ⚠️ Only honored if the BE compose
@@ -988,6 +990,7 @@ function freezoneVideoComposeBody(
         source_start: item.sourceStart ?? 0,
         source_end: item.sourceEnd,
         volume: item.volume ?? 1,
+        fade_out: item.fadeOut ?? 0,
         muted: item.muted ?? false,
         speed: item.speed ?? 1,
       })),
