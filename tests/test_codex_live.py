@@ -832,3 +832,101 @@ def test_canvas_timeout_result_has_failed_status_live_and_in_history():
     assert live_card["event"]["raw"]["status"] == "failed"
     assert history_card["event"]["raw"]["status"] == "failed"
     assert live.finish() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        None,
+        "read_only",
+        "failed",
+        "confirmation_required",
+        "workflow_draft_ready",
+        "applied",
+    ],
+)
+async def test_empty_completion_stores_notice_before_done(
+    service_runtime, monkeypatch, tmp_path, outcome
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    class Thread:
+        async def stream(self, prompt):
+            yield ChatBackendEvent(
+                type="thread_started", thread_id="thread-1", turn_id="turn-1"
+            )
+            yield ChatBackendEvent(
+                type="item_started",
+                item={"type": "reasoning", "id": "r-1", "summary": []},
+            )
+            yield ChatBackendEvent(
+                type="item_delta",
+                item_id="r-1",
+                name="reasoning",
+                text="Thinking",
+                summary_index=0,
+            )
+            if outcome:
+                payload = {
+                    "ok": outcome != "failed",
+                    "status": outcome,
+                    "project_id": "project-local",
+                    "canvas_id": "canvas-local",
+                }
+                if outcome == "applied":
+                    payload.update(
+                        applied=True, canvas_apply_status="applied", revision=1
+                    )
+                yield ChatBackendEvent(
+                    type="tool_updated",
+                    name="freezone_emit_canvas_command",
+                    status="failed" if outcome == "failed" else "completed",
+                    structured=payload,
+                )
+            yield ChatBackendEvent(
+                type="turn_completed",
+                thread_id="thread-1",
+                turn_id="turn-1",
+                status="completed",
+                disposition="completed",
+            )
+            yield ChatBackendEvent(
+                type="complete", thread_id="thread-1", turn_id="turn-1", text=""
+            )
+
+    monkeypatch.setattr(service, "_build_codex_thread", lambda *a, **kw: Thread())
+    events = []
+
+    async def collect(e):
+        events.append(e)
+
+    scope = ChatScope(
+        kind="project", id="project-local", surface="freezone", canvas_id="canvas-local"
+    )
+    await service._stream_assistant_reply_codex(
+        "test-user",
+        "project-local",
+        "Prepare a draft",
+        collect,
+        project_dir=tmp_path / "project",
+        tool_mode="freezone_canvas",
+        store_scope=scope,
+        turn_id="business-1",
+    )
+    assert events[-1] == {"type": "done", "message": None}
+    assert not any(
+        e.get("card", {}).get("type") == "text"
+        for e in events
+        if isinstance(e.get("card"), dict)
+    )
+    with chat_store.connect("test-user", scope) as conn:
+        rows = conn.execute(
+            "SELECT role, content FROM chat_messages WHERE role != 'user'"
+        ).fetchall()
+        expected = (
+            [("system", "这轮操作没有收到虾导的有效回复，请稍后重试。")]
+            if outcome in {None, "read_only", "failed"}
+            else []
+        )
+        assert [tuple(row) for row in rows] == expected
