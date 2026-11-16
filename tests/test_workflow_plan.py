@@ -6044,3 +6044,16 @@ def test_compose_timeline_reaches_canvas_commands_with_plan_references_intact():
         c for c in result["commands"] if c.get("node_type") == "videoComposeNode"
     )
     assert command["data"]["draftTimeline"] == plan["nodes"][1]["data"]["draftTimeline"]
+
+
+@pytest.mark.parametrize("audio_kind", ["speech", "music"])
+def test_graph_keeps_speech_brief_separate_from_spoken_text(audio_kind):
+    brief = "Generate a warm greeting, without music."
+    graph = build_workflow_graph_commands({"plan": {"nodes": [{
+        "id": "voice", "node_type": "audioNode",
+        "data": {"audioKind": audio_kind, "prompt": brief},
+    }], "edges": []}, "run_after_create": False})
+    assert graph["ok"] is True, graph
+    data = next(c["data"] for c in graph["commands"] if c["type"] == "create_node")
+    assert data["prompt"] == brief
+    assert data.get("text", "") == (brief if audio_kind == "music" else "")

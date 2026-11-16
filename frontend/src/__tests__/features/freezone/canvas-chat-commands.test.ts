@@ -891,8 +891,7 @@ describe("canvas chat commands", () => {
       displayName: "Text label",
     });
     expect(text?.data).not.toHaveProperty("prompt");
-    expect(audio?.data).toMatchObject({ text: "new audio" });
-    expect(audio?.data).not.toHaveProperty("prompt");
+    expect(audio?.data).toMatchObject({ text: "old audio", prompt: "new audio" });
     expect(image?.data).toMatchObject({ prompt: "new image prompt" });
     expect(image?.data).not.toHaveProperty("content");
     expect(video?.data).toMatchObject({ prompt: "new video prompt" });

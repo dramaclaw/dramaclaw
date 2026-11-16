@@ -40,5 +40,8 @@ WORKFLOW_PLANNING_INSTRUCTIONS = (
     "Reference connected plan node IDs in clips.nodeId, leave sourceUrl empty and durationMs null; "
     "runtime binds the generated media. Use volume for gain, timelineStartMs for placement, "
     "and fadeOutMs for an audio fade at the clip end. Preserve existing user-edited timelines. "
+    "For speech audio nodes, keep production instructions in data.prompt and literal "
+    "user-supplied dialogue in data.text. Never put generation instructions in data.text. "
+    "If speech must be authored from upstream content, leave text unset for Recipe compilation. "
     + GENERATION_PARAMETER_PLANNING_INSTRUCTIONS
 )

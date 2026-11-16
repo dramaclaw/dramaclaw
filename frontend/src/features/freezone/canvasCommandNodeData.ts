@@ -133,6 +133,7 @@ const AUDIO_TEXT_ALIASES = [
 export function normalizeCanvasCommandNodeData(
   nodeType: CanvasNodeType | undefined,
   data: Partial<CanvasNodeData> | undefined,
+  currentData?: Partial<CanvasNodeData>,
 ): Partial<CanvasNodeData> {
   if (!data || !nodeType) return data ?? {};
   const next: Partial<CanvasNodeData> = { ...data };
@@ -154,11 +155,13 @@ export function normalizeCanvasCommandNodeData(
       }
       deleteFields(next, ["prompt", "text", "body", "description"]);
       break;
-    case CANVAS_NODE_TYPES.audio:
+    case CANVAS_NODE_TYPES.audio: {
+      const isMusic = (next.audioKind ?? currentData?.audioKind) === "music";
       if (!hasNonEmptyStringField(next, "text")) {
-        const text = firstStringField(next, AUDIO_TEXT_ALIASES);
+        const text = firstStringField(next, isMusic
+          ? AUDIO_TEXT_ALIASES : ["text", "script", "narration"]);
         if (text !== undefined) {
-          // 音频节点的 TTS/音乐文本读 data.text，不读 prompt/content。
+          // Speech text is literal; production prompts belong to Recipe compilation.
           next.text = text;
         }
       }
@@ -167,8 +170,10 @@ export function normalizeCanvasCommandNodeData(
       // is not editable on an audio node; discard it during normalization so
       // a workflow-wide model hint cannot make the whole command fail before
       // the approval card is shown.
-      deleteFields(next, ["prompt", "content", "body", "description", "script", "narration", "model"]);
+      deleteFields(next, ["content", "body", "description", "script", "narration", "model"]);
+      if (isMusic) delete next.prompt;
       break;
+    }
     case CANVAS_NODE_TYPES.beatContext:
       if (!hasNonEmptyStringField(next, "content")) {
         const content = firstStringField(next, TEXT_INPUT_ALIASES);

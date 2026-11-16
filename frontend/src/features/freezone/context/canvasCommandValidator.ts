@@ -308,7 +308,7 @@ export function validateCanvasChatCommandEnvelopes(
             break;
           }
           const target = nodeById.get(command.node_id);
-          const data = normalizeCanvasCommandNodeData(target?.type, command.data);
+          const data = normalizeCanvasCommandNodeData(target?.type, command.data, target?.data);
           const isAllowedPresetBeatContextPatch =
             target?.type === CANVAS_NODE_TYPES.beatContext && isBeatContextAgentEditablePatch(data);
           if (target && isPresetManagedNode(target) && !isAllowedPresetBeatContextPatch) {

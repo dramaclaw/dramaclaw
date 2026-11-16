@@ -63,8 +63,14 @@ function nodeData(ctx: AudioGenerationRequestContext): AudioNodeData | undefined
   return isAudioNode(node) ? node.data : undefined;
 }
 
+function audioRecipePrompt(data: AudioNodeData): string {
+  const literalText = deriveAudioText(data);
+  const brief = data.prompt?.trim();
+  return brief ? [literalText, brief].filter(Boolean).join('\n\n') : literalText;
+}
+
 export function audioEffectivePrompt(data: AudioNodeData, contents: UpstreamContent[]): string {
-  return [joinUpstreamText(contents).trim(), deriveAudioText(data).trim()]
+  return [joinUpstreamText(contents).trim(), audioRecipePrompt(data).trim()]
     .filter((segment) => segment.length > 0).join('\n\n');
 }
 
@@ -75,12 +81,14 @@ function promptInputs(ctx: AudioGenerationRequestContext, data: AudioNodeData) {
   const effectivePrompt = audioEffectivePrompt(data, contents);
   const isMusic = resolveAudioKind(data) === 'music';
   const upstreamText = isMusic ? '' : selectWorkflowUpstreamText(data, contents, joined);
+  // A task brief requires compilation; unlabelled upstream prose is not literal speech.
   const fallbackPrompt = isMusic ? effectivePrompt
     : extractExplicitSpeakableAudioText(ownText.trim()) || extractSpeakableAudioText(ownText.trim())
-      || extractExplicitSpeakableAudioText(upstreamText) || extractSpeakableAudioText(upstreamText);
+      || extractExplicitSpeakableAudioText(upstreamText)
+      || (data.prompt?.trim() ? '' : extractSpeakableAudioText(upstreamText));
   return {
     effectivePrompt, isMusic, directVoiceRecipe: !isMusic && readCatalog(data)?.recipeId === 'drama-shot-voice',
-    input: { nodeKind: 'audio', nodePrompt: ownText, upstreamText,
+    input: { nodeKind: 'audio', nodePrompt: audioRecipePrompt(data), upstreamText,
       upstreamContents: isMusic ? [] : contents, fallbackPrompt } satisfies AudioPromptCompileInput,
   };
 }

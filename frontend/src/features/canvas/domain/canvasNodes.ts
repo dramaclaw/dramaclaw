@@ -701,6 +701,8 @@ export interface AudioNodeData extends NodeDisplayData {
   /** music 模式：是否严格遵守音乐段落时长策略(respect_sections_durations),缺省 true。 */
   respectSectionsDurations?: boolean;
   // operations panel (TTS) ---------------------------------------------------
+  /** Recipe production brief; never used as literal speech on compilation failure. */
+  prompt?: string;
   /** 要合成的纯文本。新字段，未来主用。 */
   text?: string;
   /** 旧字段：分段编辑器留下的 segments；保留只为兼容老节点数据。 */

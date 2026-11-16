@@ -938,7 +938,8 @@ function editableSchemaForNode(node: CanvasNode, defaults: NodeDataDefaults = de
           description:
             "仅 audioKind=speech 时生效。虾画只使用自定义声线；未选择有效 voiceRef 时跳过语音生成。",
         },
-        text: { type: "string", label: "文本" },
+        text: { type: "string", label: "文本", description: "Speech: literal words to speak, without production instructions. Music: creative brief." },
+        prompt: { type: "string", label: "制作说明", description: "Speech Recipe instructions; never spoken as a fallback. Put supplied dialogue in text." },
         emotionPrompt: { type: "string", label: "情绪提示" },
         voiceRef: audioVoiceRefSchema(node),
         voiceLabel: {
