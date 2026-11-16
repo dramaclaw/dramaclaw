@@ -3008,3 +3008,14 @@ async def test_app_server_malformed_tool_call_recovery(monkeypatch, tmp_path):
             assert all(item.get("call_id") != "call-truncated" for item in last_input)
         finally:
             codex_app_server.stop_shared_codex_runtime()
+
+
+@pytest.mark.asyncio
+async def test_codex_empty_completion_preserves_empty_text(monkeypatch, tmp_path):
+    events, interrupts = await _run_codex_no_output_watchdog(
+        monkeypatch, tmp_path,
+        [(1, "reasoning", "Thinking"), (2, "completed", None)],
+    )
+    assert not interrupts
+    complete = next(event for event in events if event.type == "complete")
+    assert complete.text == ""

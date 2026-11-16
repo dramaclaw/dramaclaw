@@ -2400,7 +2400,6 @@ class CodexThread:
                             final_response = (
                                 _codex_final_response_from_items(mapper.items)
                                 or "".join(mapper.assistant_parts).strip()
-                                or "已执行，但没有返回正文。"
                             )
                             final_disposition = "completed"
                 finally:
