@@ -580,9 +580,82 @@ def _resource_text_node_schema() -> dict[str, Any]:
     }
 
 
+def compose_timeline_json_schema() -> dict[str, Any]:
+    clip = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "nodeId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "ID of a plan node connected by composition_input_for; resolved to its generated media at execution.",
+            },
+            "kind": {"enum": ["video", "audio"]},
+            "sourceUrl": {
+                "const": "",
+                "description": "Leave empty; do not invent future media URLs.",
+            },
+            "durationMs": {"type": "null"},
+            "displayName": {"type": ["string", "null"]},
+            "thumbUrl": {"type": "null"},
+            "timelineStartMs": {"type": "number", "minimum": 0},
+            "trimStartMs": {"type": "number", "minimum": 0},
+            "trimEndMs": {"type": "number", "exclusiveMinimum": 0},
+            "volume": {"type": "number", "minimum": 0, "maximum": 1},
+            "muted": {"type": "boolean"},
+            "speed": {"type": "number", "exclusiveMinimum": 0, "maximum": 4},
+            "fadeOutMs": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Fade over the last N milliseconds of the rendered audio clip; omit for no fade.",
+            },
+        },
+        "required": [
+            "id",
+            "nodeId",
+            "kind",
+            "sourceUrl",
+            "durationMs",
+            "displayName",
+            "thumbUrl",
+            "timelineStartMs",
+            "trimStartMs",
+            "trimEndMs",
+            "volume",
+            "muted",
+            "speed",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "description": "Executable composition timeline, not prose. Times are milliseconds. Use separate audio tracks at timelineStartMs=0 for simultaneous voice and music.",
+        "properties": {
+            "resolution": {"enum": ["720p", "1080p"]},
+            "tracks": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "minLength": 1},
+                        "kind": {"enum": ["video", "audio"]},
+                        "clips": {"type": "array", "minItems": 1, "items": clip},
+                    },
+                    "required": ["id", "kind", "clips"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["resolution", "tracks"],
+        "additionalProperties": False,
+    }
+
+
 def _compose_node_schema() -> dict[str, Any]:
     properties = _node_common_properties()
     properties["node_type"] = {"type": "string", "enum": ["videoComposeNode"]}
+    properties["data"]["properties"]["draftTimeline"] = compose_timeline_json_schema()
     return {
         "type": "object",
         "properties": properties,

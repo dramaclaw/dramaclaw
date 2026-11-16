@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import re
+import math
+
+from jsonschema import Draft202012Validator
 from typing import Any
 
 from novelvideo.freezone.workflow_schema import (
+    compose_timeline_json_schema,
     EXTERNAL_INPUT_NODE_TYPES,
     LINK_TYPE_VALUES,
     NODE_TYPE_VALUES,
@@ -100,6 +104,59 @@ def _node_stage_value(node: dict[str, Any]) -> str:
 
 def _edge_link_type_value(edge: dict[str, Any]) -> str:
     return str(edge.get("link_type") or "").strip()
+
+
+def _compose_timeline_issues(
+    timeline: Any, inputs: dict[str, str], path: str
+) -> list[dict[str, str]]:
+    errors = [
+        _issue(f"{path}." + ".".join(map(str, error.path)), error.message)
+        for error in Draft202012Validator(compose_timeline_json_schema()).iter_errors(
+            timeline
+        )
+    ]
+    if errors:
+        return errors
+    clip_ids: set[str] = set()
+    track_ids: set[str] = set()
+    for track in timeline["tracks"]:
+        if track["id"] in track_ids:
+            errors.append(_issue(path, "duplicate track id"))
+        track_ids.add(track["id"])
+        for clip in track["clips"]:
+            expected_type = "audioNode" if clip["kind"] == "audio" else "videoNode"
+            if (
+                inputs.get(clip["nodeId"]) != expected_type
+                or clip["kind"] != track["kind"]
+            ):
+                errors.append(
+                    _issue(
+                        path,
+                        "clip must reference a connected composition input of the same kind",
+                    )
+                )
+            if clip["id"] in clip_ids:
+                errors.append(_issue(path, "duplicate clip id"))
+            clip_ids.add(clip["id"])
+            numbers = [
+                clip[key]
+                for key in (
+                    "timelineStartMs",
+                    "trimStartMs",
+                    "trimEndMs",
+                    "volume",
+                    "speed",
+                )
+            ]
+            fade = clip.get("fadeOutMs", 0)
+            if not all(math.isfinite(value) for value in [*numbers, fade]):
+                errors.append(_issue(path, "timeline values must be finite"))
+            duration = (clip["trimEndMs"] - clip["trimStartMs"]) / clip["speed"]
+            if duration <= 0 or fade > duration or (fade and clip["kind"] != "audio"):
+                errors.append(
+                    _issue(path, "audio fade must fit within a positive clip duration")
+                )
+    return errors
 
 
 def validate_workflow_plan(
@@ -416,6 +473,14 @@ def validate_workflow_plan(
                     )
                 )
             compose_inputs = incoming_edges.get(node_id, [])
+            if "draftTimeline" in data:
+                errors.extend(_compose_timeline_issues(
+                    data["draftTimeline"],
+                    {str(edge.get("source")): node_types[str(edge.get("source"))]
+                     for edge in compose_inputs if _edge_link_type_value(edge) == "composition_input_for"
+                     and str(edge.get("source")) in node_types},
+                    f"nodes[{node_index}].data.draftTimeline",
+                ))
             video_inputs = [
                 edge
                 for edge in compose_inputs

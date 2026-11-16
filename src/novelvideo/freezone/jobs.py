@@ -1116,7 +1116,14 @@ async def _render_audio_clip(
     source_start: float,
     duration: float,
     volume: float,
+    fade_out: float = 0.0,
+    speed: float = 1.0,
 ) -> None:
+    filters = [f"volume={volume:.4f}"]
+    if speed != 1.0:
+        filters.insert(0, _audio_tempo_filter(speed))
+    if fade_out > 0:
+        filters.append(f"afade=t=out:st={max(0, duration / speed - fade_out):.6f}:d={fade_out:.6f}")
     await _run_cmd(
         [
             "ffmpeg",
@@ -1129,7 +1136,7 @@ async def _render_audio_clip(
             source_path,
             "-vn",
             "-af",
-            f"volume={volume:.4f}",
+            ",".join(filters),
             "-c:a",
             "aac",
             "-ar",
@@ -1192,7 +1199,7 @@ async def _mix_audio_tracks(
     for index, item in enumerate(audio_items):
         if bool(item.get("muted")):
             continue
-        volume = float(item.get("volume", 1.0) or 1.0)
+        volume = float(item.get("volume", 1.0))
         if volume <= 0:
             continue
         source_start = float(item.get("source_start", 0.0) or 0.0)
@@ -1207,6 +1214,8 @@ async def _mix_audio_tracks(
             source_start=source_start,
             duration=duration,
             volume=volume,
+            fade_out=float(item.get("fade_out", 0.0)),
+            speed=float(item.get("speed", 1.0)),
         )
         audio_inputs.append((audio_path, float(item.get("timeline_start", 0.0) or 0.0)))
 

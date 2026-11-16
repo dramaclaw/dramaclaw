@@ -1086,7 +1086,7 @@ export function* applyCanvasCommands(
             const targetId = resolveNodeId(command.node_id, clientIdMap);
             const targetNode = nodeById(store, targetId);
             if (!targetNode) throw new Error(`node not found: ${command.node_id}`);
-            const data = normalizeCanvasCommandNodeData(targetNode.type, command.data);
+            const data = normalizeCanvasCommandNodeData(targetNode.type, command.data, targetNode.data);
             if (isPresetManagedNode(targetNode)) {
               if (targetNode.type !== CANVAS_NODE_TYPES.beatContext || !isBeatContextAgentEditablePatch(data)) {
                 throw new Error(`node is preset managed: ${command.node_id}`);

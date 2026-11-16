@@ -5964,3 +5964,96 @@ def test_compact_skill_publishes_shot_detail_input_contract(monkeypatch):
         ["scenes", "drama-shot-group-detail"],
         ["props", "drama-shot-group-detail"],
     ]
+
+
+def _compose_timeline_plan():
+    plan = _video_compose_plan()
+    plan["nodes"].append(
+        {"id": "bgm", "node_type": "audioNode", "data": {"audioKind": "music"}}
+    )
+    plan["edges"].append(
+        {"source": "bgm", "target": "compose", "link_type": "composition_input_for"}
+    )
+    plan["nodes"][1]["data"] = {
+        "draftTimeline": {
+            "resolution": "1080p",
+            "tracks": [
+                {
+                    "id": "music",
+                    "kind": "audio",
+                    "clips": [
+                        {
+                            "id": "bgm-clip",
+                            "nodeId": "bgm",
+                            "kind": "audio",
+                            "sourceUrl": "",
+                            "durationMs": None,
+                            "displayName": None,
+                            "thumbUrl": None,
+                            "timelineStartMs": 0,
+                            "trimStartMs": 0,
+                            "trimEndMs": 8000,
+                            "volume": 0.7,
+                            "muted": False,
+                            "speed": 1,
+                            "fadeOutMs": 2000,
+                        }
+                    ],
+                },
+            ],
+        }
+    }
+    return plan
+
+
+def test_compose_timeline_rejects_invalid_source_and_parameters():
+    valid = _compose_timeline_plan()
+    assert validate_workflow_plan(valid)["ok"]
+    for field, value in (
+        ("nodeId", "missing"),
+        ("volume", -1),
+        ("fadeOutMs", 9000),
+        ("kind", "video"),
+    ):
+        plan = copy.deepcopy(valid)
+        plan["nodes"][1]["data"]["draftTimeline"]["tracks"][0]["clips"][0][field] = (
+            value
+        )
+        result = validate_workflow_plan(plan)
+        assert not result["ok"], (field, result)
+        assert any("draftTimeline" in error["path"] for error in result["errors"])
+
+
+def test_model_visible_compose_schema_describes_structured_timeline():
+    from novelvideo.freezone.workflow_schema import _compose_node_schema
+
+    branch = _compose_node_schema()
+    assert "draftTimeline" in branch["properties"]["data"]["properties"]
+    node = _compose_timeline_plan()["nodes"][1]
+    Draft202012Validator(branch).validate(node)
+    node["data"]["draftTimeline"]["tracks"][0]["clips"][0]["volume"] = -1
+    with pytest.raises(ValidationError):
+        Draft202012Validator(branch).validate(node)
+
+
+def test_compose_timeline_reaches_canvas_commands_with_plan_references_intact():
+    plan = _compose_timeline_plan()
+    result = build_workflow_graph_commands({"plan": plan, "run_after_create": False})
+    assert result["ok"], result
+    command = next(
+        c for c in result["commands"] if c.get("node_type") == "videoComposeNode"
+    )
+    assert command["data"]["draftTimeline"] == plan["nodes"][1]["data"]["draftTimeline"]
+
+
+@pytest.mark.parametrize("audio_kind", ["speech", "music"])
+def test_graph_keeps_speech_brief_separate_from_spoken_text(audio_kind):
+    brief = "Generate a warm greeting, without music."
+    graph = build_workflow_graph_commands({"plan": {"nodes": [{
+        "id": "voice", "node_type": "audioNode",
+        "data": {"audioKind": audio_kind, "prompt": brief},
+    }], "edges": []}, "run_after_create": False})
+    assert graph["ok"] is True, graph
+    data = next(c["data"] for c in graph["commands"] if c["type"] == "create_node")
+    assert data["prompt"] == brief
+    assert data.get("text", "") == (brief if audio_kind == "music" else "")

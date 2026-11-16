@@ -1839,16 +1839,29 @@ class FreezoneVideoComposeItem(BaseModel):
     volume: float = Field(
         default=1.0, ge=0.0, le=2.0, allow_inf_nan=False, description="音量倍率"
     )
+    fade_out: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     muted: bool = Field(default=False, description="是否静音")
     speed: float = Field(
         default=1.0, gt=0.0, le=4.0, allow_inf_nan=False, description="播放倍速"
     )
+
+    @model_validator(mode="after")
+    def validate_fade_duration(self):
+        if self.fade_out and self.fade_out > (self.source_end - self.source_start) / self.speed:
+            raise ValueError("fade_out must fit within the rendered clip duration")
+        return self
 
 
 class FreezoneVideoComposeTrack(BaseModel):
     track_id: str = Field(description="前端轨道唯一标识")
     kind: Literal["video", "audio"] = Field(description="轨道类型")
     items: list[FreezoneVideoComposeItem] = Field(default_factory=list, description="轨道片段列表")
+
+    @model_validator(mode="after")
+    def validate_audio_fades(self):
+        if self.kind != "audio" and any(item.fade_out for item in self.items):
+            raise ValueError("fade_out is supported only on audio tracks")
+        return self
 
 
 class FreezoneVideoComposeRequest(BaseModel):
@@ -1891,6 +1904,12 @@ class FreezoneVideoComposeStudioRequest(FreezoneVideoComposeRequest):
         default=False,
         description="重新生成 film.html；默认复用上次的成片目录以保留 Studio 内编辑",
     )
+
+    @model_validator(mode="after")
+    def reject_unsupported_fade(self):
+        if any(item.fade_out for track in self.tracks for item in track.items):
+            raise ValueError("Studio does not support timeline fades; use the standard compose export")
+        return self
 
 
 class FreezoneStudioFilmEditRequest(BaseModel):

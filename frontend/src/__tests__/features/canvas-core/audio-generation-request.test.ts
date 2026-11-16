@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import path from 'node:path';
+import { normalizeCanvasCommandNodeData } from '@/features/freezone/canvasCommandNodeData';
 import { describe, expect, it } from 'vitest';
 import type { FreezoneRecipeCompileMetadata } from '@/api/ops';
 import { CANVAS_NODE_TYPES, isAudioNode, type AudioNodeData, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
@@ -213,4 +214,57 @@ describe('pure audio boundaries', () => {
       file.endsWith('.tsx') || /^(api|lib|stores|hooks|components|routes)\//.test(file))).toStrictEqual([]);
     expect([...graph.packages.keys()].filter((name) => !['i18next', 'uuid', 'zustand/vanilla'].includes(name))).toStrictEqual([]);
   });
+});
+
+
+describe('speech task briefs are not literal fallback text', () => {
+  const brief = '生成日语短句旁白VO：「風と光、勝負だ！」，户外现场演出的短促喊声质感，仅此一句，无字幕、无背景音乐。';
+  function briefContext(text?: string) {
+    const data = normalizeCanvasCommandNodeData(CANVAS_NODE_TYPES.audio, {
+      audioKind: 'speech', prompt: brief, ...(text === undefined ? {} : { text }),
+    });
+    return fixture('speech brief', { ...voice, text: undefined, ...data });
+  }
+  it('compiles the task brief but refuses timeout fallback without literal speech', () => {
+    const ctx = briefContext();
+    const decision = audioPromptCompileInput(ctx);
+    expect(decision.kind).toBe('compile');
+    if (decision.kind !== 'compile') throw new Error('Expected Recipe compilation');
+    expect(decision.input.nodePrompt).toBe(brief);
+    expect(decision.input.fallbackPrompt).toBe('');
+    expect(buildAudioGenerationRequest({ ...ctx, prompt: brief,
+      compileMode: 'timeout_fallback', recipeIds: ['outdoor-stage-duel-audio-layers'],
+    })).toMatchObject({ ok: false, code: 'no_speakable_text' });
+  });
+  it.each(['model', 'timeout_fallback'])('preserves explicit speech with a separate task brief (%s)', (compileMode) => {
+    const ctx = briefContext('風と光、勝負だ！');
+    const result = buildAudioGenerationRequest({ ...ctx, prompt: '旁白：風と光、勝負だ！',
+      compileMode, recipeIds: ['outdoor-stage-duel-audio-layers'],
+    });
+    expect(result).toMatchObject({ ok: true, requests: [{ body: { text: '風と光、勝負だ！' } }] });
+  });
+  it('accepts explicitly marked compiled speech for a prompt-only node', () => {
+    const result = buildAudioGenerationRequest({ ...briefContext(), prompt: '旁白：風と光、勝負だ！',
+      compileMode: 'model', recipeIds: ['outdoor-stage-duel-audio-layers'],
+    });
+    expect(result).toMatchObject({ ok: true, requests: [{ body: { text: '風と光、勝負だ！' } }] });
+  });
+});
+
+
+it('keeps music prompt updates compatible when audioKind is only on the existing node', () => {
+  expect(normalizeCanvasCommandNodeData(CANVAS_NODE_TYPES.audio,
+    { prompt: 'New instrumental brief' }, { audioKind: 'music', text: 'Old brief' },
+  )).toEqual({ text: 'New instrumental brief' });
+});
+
+
+it('does not read upstream planning prose when a speech task needs Recipe compilation', () => {
+  const ctx = fixture('speech with upstream brief', {}, {
+    nodes: [audioNode({ text: '', prompt: 'Write a short greeting from the scene.' }), source('scene', 'Scene: a noisy station.')],
+    edges: [{ id: 'input', source: 'scene', target: 'audio-1' }],
+  });
+  expect(buildAudioGenerationRequest({ ...ctx, prompt: 'Scene: a noisy station.',
+    compileMode: 'timeout_fallback', recipeIds: ['general-audio'],
+  })).toMatchObject({ ok: false, code: 'no_speakable_text' });
 });

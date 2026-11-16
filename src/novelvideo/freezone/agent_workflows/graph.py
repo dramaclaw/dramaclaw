@@ -655,7 +655,7 @@ def _node_data(
         result.setdefault("durationMs", None)
         result.setdefault("isUploading", False)
         text = result.get("text")
-        if not audio_uses_upstream_text and (
+        if result.get("audioKind") == "music" and not audio_uses_upstream_text and (
             not isinstance(text, str) or not text.strip()
         ):
             for key in ("content", "prompt", "description"):

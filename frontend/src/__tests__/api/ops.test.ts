@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiCall } from "@/api/client";
 import {
+  submitFreezoneVideoCompose,
   compileFreezoneRecipePrompt,
   sendGenerationWireRequest,
   listFreezoneStyleTemplates,
@@ -319,4 +320,16 @@ describe("freezone recipe API", () => {
       "freezone/recipes/compile",
     ]);
   });
+});
+
+
+it("serializes audio gain and fade to the compose HTTP request", async () => {
+  vi.mocked(apiCall).mockResolvedValueOnce({ task_key: "compose", job_id: "compose" });
+  await submitFreezoneVideoCompose("project-1", { tracks: [{ trackId: "music", kind: "audio", items: [{
+    itemId: "bgm", sourceUrl: "/bgm.wav", sourceEnd: 8, volume: .7, fadeOut: 2,
+  }] }] });
+  expect(apiCall).toHaveBeenLastCalledWith("projects/project-1/freezone/video/compose",
+    expect.objectContaining({ json: expect.objectContaining({ tracks: [expect.objectContaining({
+      items: [expect.objectContaining({ volume: .7, fade_out: 2 })],
+    })] }) }));
 });

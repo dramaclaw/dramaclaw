@@ -778,3 +778,15 @@ def test_exact_audio_without_selected_voice_does_not_gain_availability(kind):
     )
     audio_errors = [b for b in preflight['blockers'] if b['code'] == 'audio_voice_required']
     assert bool(audio_errors) == (kind == 'speech')
+
+
+@pytest.mark.parametrize("kind", ["speech", "music"])
+def test_audio_step_brief_update_preserves_literal_speech(kind):
+    plan = {"nodes": [{"id": "audio", "node_type": "audioNode", "data": {
+        "audioKind": kind, "text": "Hello.", "prompt": "Old instruction",
+    }}], "edges": []}
+    updated = update_workflow_steps(plan, [{"node_id": "audio", "prompt": "New instruction"}])
+    data = updated["nodes"][0]["data"]
+    assert data["text"] == ("Hello." if kind == "speech" else "New instruction")
+    if kind == "speech":
+        assert data["prompt"] == "New instruction"
