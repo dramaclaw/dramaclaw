@@ -99,6 +99,8 @@ python3 scripts/render_config.py \
 
 渲染结果是待合并片段，不会自动覆盖 Agent 的现有全局配置。宿主说明见 `hosts/`。
 
+Codex 模板为两个 server 都设置了 `tool_input_schema_max_bytes = 65536`：Codex 默认会把超过 5000 字节的工具输入 schema 压缩掉嵌套字段（如画布命令的 `commands[]` 结构），手动合并或改写配置时请保留这一行。
+
 ## 自检
 
 ```bash

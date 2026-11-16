@@ -83,41 +83,38 @@ python agent-kit/scripts/launch_mcp.py workflows
 
 ## Codex 配置示例
 
-推荐使用仓库虚拟环境里的 Python：
+推荐使用仓库虚拟环境里的 Python，合并到 `~/.codex/config.toml`（完整示例见 `examples/codex/config.toml.example`）：
 
-```json
-{
-  "mcpServers": {
-    "dramaclaw": {
-      "command": "/path/to/dramaclaw-ce/.venv/bin/python",
-      "args": ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "tools"],
-      "cwd": "/path/to/dramaclaw-ce",
-      "env": {
-        "DRAMACLAW_API_URL": "http://127.0.0.1:8780",
-        "DRAMACLAW_LOCAL_AGENT_TRUST": "1",
-        "DRAMACLAW_EXTERNAL_MCP": "1",
-        "DRAMACLAW_USER": "local"
-      }
-    },
-    "dramaclaw-workflows": {
-      "command": "/path/to/dramaclaw-ce/.venv/bin/python",
-      "args": ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "workflows"],
-      "cwd": "/path/to/dramaclaw-ce",
-      "env": {
-        "DRAMACLAW_USERNAME": "local"
-      }
-    }
-  }
-}
+```toml
+[mcp_servers.dramaclaw]
+command = "/path/to/dramaclaw-ce/.venv/bin/python"
+args = ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "tools"]
+cwd = "/path/to/dramaclaw-ce"
+tool_input_schema_max_bytes = 65536
+
+[mcp_servers.dramaclaw.env]
+DRAMACLAW_API_URL = "http://127.0.0.1:8780"
+DRAMACLAW_LOCAL_AGENT_TRUST = "1"
+DRAMACLAW_EXTERNAL_MCP = "1"
+DRAMACLAW_USER = "local"
+
+[mcp_servers.dramaclaw_workflows]
+command = "/path/to/dramaclaw-ce/.venv/bin/python"
+args = ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "workflows"]
+cwd = "/path/to/dramaclaw-ce"
+tool_input_schema_max_bytes = 65536
+
+[mcp_servers.dramaclaw_workflows.env]
+DRAMACLAW_USERNAME = "local"
 ```
 
-如果要操作虾画画布，建议补充当前画布上下文：
+`tool_input_schema_max_bytes = 65536` 与产品内置 Agent 一致：Codex 默认会把超过 5000 字节的工具输入 schema 压缩掉嵌套字段（如画布命令的 `commands[]` 结构），两个 server 都要保留这一行。
 
-```json
-{
-  "DRAMACLAW_CHAT_SURFACE": "freezone",
-  "DRAMACLAW_CANVAS_ID": "当前画布 ID"
-}
+如果要操作虾画画布，建议在 `[mcp_servers.dramaclaw.env]` 中补充当前画布上下文：
+
+```toml
+DRAMACLAW_CHAT_SURFACE = "freezone"
+DRAMACLAW_CANVAS_ID = "当前画布 ID"
 ```
 
 没有 `DRAMACLAW_CANVAS_ID` 时，部分 Freezone 工具会要求调用时显式传 `canvas_id`。
