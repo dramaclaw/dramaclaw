@@ -934,3 +934,99 @@ async def test_failed_graph_compile_omits_success_next_step_fields():
     payload = _result_payload(result)
     assert payload["ok"] is False
     assert {"next_tool", "canvas_changed", "draft_created", "run_started"}.isdisjoint(payload)
+
+
+@pytest.fixture(scope="module")
+def workflow_contract_check():
+    import runpy
+
+    return runpy.run_path(
+        str(
+            Path(__file__).resolve().parents[1]
+            / "scripts/check_workflow_agent_contracts.py"
+        )
+    )
+
+
+async def test_workflow_contract_check_accepts_advertised_guidance(
+    workflow_contract_check,
+):
+    from types import SimpleNamespace
+
+    report = await workflow_contract_check["_run"](SimpleNamespace(username="local"))
+    assert report.errors == []
+
+
+@pytest.mark.parametrize(
+    "path,replacement",
+    [
+        (("properties", "value", "minimum"), -1),
+        (("required",), []),
+        (("additionalProperties",), True),
+        (("properties", "description", "type"), "number"),
+        (("properties", "literal", "const", "description"), "changed"),
+        (("properties", "literal", "enum", 0, "description"), "changed"),
+        (("properties", "literal", "default", "description"), "changed"),
+        (("properties", "value"), None),
+    ],
+)
+def test_workflow_schema_contract_preserves_constraints_and_literal_descriptions(
+    workflow_contract_check, path, replacement
+):
+    from copy import deepcopy
+
+    schema = {
+        "type": "object",
+        "description": "Tool documentation",
+        "required": ["value"],
+        "additionalProperties": False,
+        "properties": {
+            "value": {"type": "number", "minimum": 0},
+            "description": {"type": "string", "description": "A real input field"},
+            "literal": {
+                "const": {"description": "must"},
+                "enum": [{"description": "must"}],
+                "default": {"description": "must"},
+            },
+        },
+    }
+    altered = deepcopy(schema)
+    parent = altered
+    for key in path[:-1]:
+        parent = parent[key]
+    if replacement is None:
+        del parent[path[-1]]
+    else:
+        parent[path[-1]] = replacement
+    contract = workflow_contract_check["_schema_without_descriptions"]
+    assert contract(schema) != contract(altered)
+    assert contract(schema)["properties"]["description"] == {"type": "string"}
+    assert schema["properties"]["description"]["description"] == "A real input field"
+
+
+def test_workflow_schema_contract_ignores_nested_annotations_only(
+    workflow_contract_check,
+):
+    contract = workflow_contract_check["_schema_without_descriptions"]
+    schema = {
+        "allOf": [
+            {
+                "if": {"description": "condition", "required": ["value"]},
+                "then": {
+                    "description": "consequence",
+                    "properties": {
+                        "description": {"type": "string", "description": "field docs"}
+                    },
+                },
+            }
+        ]
+    }
+    expected = {
+        "allOf": [
+            {
+                "if": {"required": ["value"]},
+                "then": {"properties": {"description": {"type": "string"}}},
+            }
+        ]
+    }
+    assert contract(schema) == expected
