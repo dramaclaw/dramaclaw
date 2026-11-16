@@ -24,6 +24,9 @@ SPLIT_LOCK_WAIT_SECONDS = 30.0
 SPLIT_LOCK_HOLD_SECONDS = 90.0
 SPLIT_REUSE_SECONDS = 24 * 3600
 
+# Text actions send none of the generation settings, so a node's stored defaults are not shown.
+_ACTIONS_WITHOUT_GENERATION_SETTINGS = frozenset({"translate_text", "reverse_prompt", "generate_text"})
+
 _GENERATION_SETTINGS_FIELDS = (
     ("model", "model"), ("aspectRatio", "aspect_ratio"), ("size", "resolution"),
     ("quality", "quality"), ("durationSec", "duration_seconds"),
@@ -264,6 +267,9 @@ def generation_settings(
         node_id = target["node_id"]
         data = nodes.get(node_id, {}).get("data", {})
         entry["sources"] = {}
+        if target["action"] in _ACTIONS_WITHOUT_GENERATION_SETTINGS:
+            settings.append(entry)
+            continue
         default_source = "node_default" if node_id in created_ids else "canvas"
         for source, destination in _GENERATION_SETTINGS_FIELDS:
             if source in data:
@@ -397,6 +403,7 @@ def create_confirmation(
     directory: str | Path, *, project_id: str, canvas_id: str, agent_id: str,
     username: str, turn_id: str | None, commands: list[dict], targets: list[dict], now: float,
     pre_applied: dict | None = None, generation_sources: dict | None = None,
+    canvas_deletions: int | None = None,
 ) -> dict:
     record = {
         "id": "cc_" + uuid4().hex, "project_id": project_id, "canvas_id": canvas_id,
@@ -410,6 +417,8 @@ def create_confirmation(
         record["pre_applied"] = pre_applied
     if generation_sources is not None:
         record["generation_sources"] = generation_sources
+    if canvas_deletions is not None:
+        record["canvas_deletions"] = canvas_deletions
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     with _directory_lock(directory):
@@ -535,6 +544,33 @@ def void_confirmation(
         return record
 
 
+def void_canvas_confirmations(
+    project_state_dir: str | Path, *, project_id: str, canvas_id: str, now: float,
+) -> list[dict]:
+    """Void every pending card on a canvas, for all users and agents of the project."""
+    from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
+
+    # Same layout as confirmations_dir, without creating the agent workspace.
+    home = Path(project_state_dir) / "agents" / "hermes" / "freezone"
+    bridge = canvas_bridge_dir_for_profile(home, "")
+    voided = []
+    for directory in sorted(bridge.glob(f"*/{CONFIRMATIONS_DIRNAME}")):
+        if not directory.is_dir():
+            continue
+        with _directory_lock(directory):
+            for path in directory.glob("cc_*.json"):
+                record = read_confirmation(directory, path.stem)
+                if (
+                    record is None or record["status"] != "pending"
+                    or record["project_id"] != project_id or record["canvas_id"] != canvas_id
+                ):
+                    continue
+                record.update(status="voided", outcome={"reason": "canvas_deleted"}, updated_at=now)
+                _save(directory, record)
+                voided.append(record)
+    return voided
+
+
 def finish_confirmation(
     directory: str | Path, confirmation_id: str, *, outcome: dict, now: float,
 ) -> dict:
@@ -603,4 +639,5 @@ def request_confirmation(
         project_id=project_id, canvas_id=canvas_id, agent_id=agent_id,
         username=username, turn_id=turn_id, commands=commands, targets=targets, now=now,
         pre_applied=pre_applied, generation_sources=generation_sources,
+        canvas_deletions=canvas_store.canvas_deletion_count(Path(project_state_dir), canvas_id),
     )

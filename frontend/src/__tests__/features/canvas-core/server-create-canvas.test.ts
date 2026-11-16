@@ -10,8 +10,8 @@ import { InvalidRequest } from "@/features/canvas/server/requestPayload";
 import fixture from "./__parity__/canvas-creation.json";
 
 describe("server canvas creation plans", () => {
-  it("keeps exactly 30 fixture cases", () => {
-    expect(fixture.cases).toHaveLength(30);
+  it("keeps exactly 33 fixture cases", () => {
+    expect(fixture.cases).toHaveLength(33);
   });
 
   it.each(fixture.cases)("preserves the shared core result for $name", async ({ input, locale, expected }) => {
@@ -22,6 +22,7 @@ describe("server canvas creation plans", () => {
       request_id: input.requestId,
       save_source: input.saveSource,
       ...("canvases" in input ? { canvases: input.canvases } : {}),
+      ...("reservedCanvasIds" in input ? { reserved_canvas_ids: input.reservedCanvasIds } : {}),
       ...(input.origin ? { origin: { chat_canvas_id: input.origin.chatCanvasId, turn_id: input.origin.turnId } } : {}),
       env: { locale },
     };
@@ -46,6 +47,8 @@ describe("server canvas creation plans", () => {
     { name: "non-string creator", payload: { ...valid, creator_username: 1 } },
     { name: "non-object environment", payload: { ...valid, env: [] } },
     { name: "non-string locale", payload: { ...valid, env: { locale: 1 } } },
+    { name: "non-array reserved ids", payload: { ...valid, reserved_canvas_ids: "canvas_x" } },
+    { name: "non-string reserved id", payload: { ...valid, reserved_canvas_ids: [1] } },
   ])("rejects $name", async ({ payload }) => {
     await expect(servePlanCanvasCreation(payload)).rejects.toBeInstanceOf(InvalidRequest);
   });

@@ -108,7 +108,7 @@ def rewrite_run_commands(commands: list[dict], mapping: dict[str, str]) -> list[
     return rewritten
 
 
-async def check_server_workflow(
+async def _plan_run_commands(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
     commands: list[dict], locale: str | None = None,
 ) -> dict:
@@ -169,6 +169,41 @@ async def check_server_workflow(
     if not plan["ok"]:
         return {"status": "invalid",
                 "message": _rewrite_command_indices(plan["message"], run_indices)}
+    return {"status": "planned", "plan": plan, "canvas": canvas, "client_ids": client_ids}
+
+
+async def check_node_actions_available(
+    *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
+    commands: list[dict], locale: str | None = None,
+) -> None:
+    """Raise the server executor's invalid_request error for actions a node does not offer.
+
+    Only requests that must fail are refused: an unplannable or browser-only batch passes,
+    and an unavailable canvas core skips the check.
+    """
+    try:
+        await _plan_run_commands(
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands, locale=locale,
+        )
+    except CanvasCoreError as exc:
+        if exc.code == "invalid_request":
+            raise
+        logger.warning("canvas action availability check skipped code=%s", exc.code)
+
+
+async def check_server_workflow(
+    *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
+    commands: list[dict], locale: str | None = None,
+) -> dict:
+    result = await _plan_run_commands(
+        ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands, locale=locale,
+    )
+    if result["status"] != "planned":
+        return result
+    plan, canvas, client_ids = result["plan"], result["canvas"], result["client_ids"]
+
+    from novelvideo.api.routes import freezone as routes
+
     metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
     refused = []
     run_actions = _server_run_actions(canvas, plan, "canvas-confirmation:preflight")

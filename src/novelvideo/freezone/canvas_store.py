@@ -868,6 +868,14 @@ def restore_canvas_version(
         )
 
 
+def canvas_deletion_count(project_dir: Path, canvas_id: str) -> int:
+    """How many times this canvas id was soft-deleted; each deletion keeps one snapshot."""
+    deleted_dir = canvas_deleted_dir_for_path(canvas_path(project_dir, canvas_id))
+    if not deleted_dir.is_dir():
+        return 0
+    return sum(1 for _ in deleted_dir.glob("*.json"))
+
+
 def soft_delete_canvas(
     project_dir: Path,
     canvas_id: str,

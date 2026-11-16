@@ -1,6 +1,6 @@
 {
   "schema": "canvas_creation_plan_fixture.v1",
-  "note": "Recorded from the browser rules before they moved into the shared core. client_save_id, save_source, metadata.create_request_id and metadata.agent_origin follow the plan input. A missing canvases key means the list is unavailable.",
+  "note": "Recorded from the browser rules before they moved into the shared core. client_save_id, save_source, metadata.create_request_id and metadata.agent_origin follow the plan input. A missing canvases key means the list is unavailable. reservedCanvasIds lists ids that a deleted canvas still holds state under; the reserved_ids cases were added with that rule.",
   "limit": 25,
   "cases": [
     {
@@ -3086,6 +3086,165 @@
           "code": "id_taken",
           "name": "Ghost Plan",
           "canvasId": "canvas_ghost_plan_1cebeu5"
+        }
+      }
+    },
+    {
+      "name": "ready-skips-deleted-canvas-id",
+      "locale": "en",
+      "covers": [
+        "success",
+        "reserved_ids"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-reserved",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          }
+        ],
+        "reservedCanvasIds": [
+          "canvas_ghost_plan_1cebeu5"
+        ],
+        "name": "Ghost Plan",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_ghost_plan_1cebeu5_2",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_ghost_plan_1cebeu5_2",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-reserved",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "Ghost Plan",
+            "creator_username": "alice",
+            "create_request_id": "req-reserved"
+          }
+        }
+      }
+    },
+    {
+      "name": "ready-skips-reserved-and-live-variants",
+      "locale": "en",
+      "covers": [
+        "success",
+        "reserved_ids"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-reserved-variants",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          },
+          {
+            "id": "canvas_ghost_plan_1cebeu5_2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "Other plan",
+              "creator_username": "bob"
+            }
+          }
+        ],
+        "reservedCanvasIds": [
+          "canvas_ghost_plan_1cebeu5",
+          "canvas_ghost_plan_1cebeu5_3"
+        ],
+        "name": "Ghost Plan",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "ready",
+        "canvasId": "canvas_ghost_plan_1cebeu5_4",
+        "payload": {
+          "schema_version": 2,
+          "canvas_id": "canvas_ghost_plan_1cebeu5_4",
+          "project_id": "project-a",
+          "base_revision": null,
+          "client_save_id": "req-reserved-variants",
+          "save_source": "manual_save",
+          "nodes": [],
+          "edges": [],
+          "viewport": null,
+          "metadata": {
+            "canvas_origin": "user_created",
+            "display_name": "Ghost Plan",
+            "creator_username": "alice",
+            "create_request_id": "req-reserved-variants"
+          }
+        }
+      }
+    },
+    {
+      "name": "rejected-duplicate-recreated-variant-replay",
+      "locale": "en",
+      "covers": [
+        "duplicate_name",
+        "reserved_ids"
+      ],
+      "input": {
+        "projectId": "project-a",
+        "requestId": "req-reserved-replay",
+        "saveSource": "manual_save",
+        "canvases": [
+          {
+            "id": "default",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "canvas_scope": "default",
+            "revision": 3,
+            "metadata": {}
+          },
+          {
+            "id": "canvas_ghost_plan_1cebeu5_2",
+            "modified_at": "2026-11-01T00:00:00Z",
+            "size": 10,
+            "revision": 1,
+            "metadata": {
+              "canvas_origin": "user_created",
+              "display_name": "Ghost Plan",
+              "creator_username": "alice",
+              "create_request_id": "req-reserved-replay"
+            }
+          }
+        ],
+        "reservedCanvasIds": [
+          "canvas_ghost_plan_1cebeu5"
+        ],
+        "name": "Ghost Plan",
+        "creatorUsername": "alice"
+      },
+      "expected": {
+        "status": "rejected",
+        "canvasId": "canvas_ghost_plan_1cebeu5_2",
+        "rejection": {
+          "code": "duplicate_name",
+          "name": "Ghost Plan",
+          "existingCanvasId": "canvas_ghost_plan_1cebeu5_2"
         }
       }
     }

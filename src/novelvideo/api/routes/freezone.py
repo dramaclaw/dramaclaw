@@ -18324,6 +18324,7 @@ async def create_canvas_confirmation(
 
     from novelvideo.api.freezone_server_workflow_start import (
         canvas_open_required_detail,
+        check_node_actions_available,
         check_server_workflow,
         created_node_mapping,
         is_run_command,
@@ -18483,6 +18484,10 @@ async def create_canvas_confirmation(
                         canvas_id=canvas_id, source_command_hash=source_hash,
                         written=written, commands=commands, canvas=canvas or {}, now=now,
                     )
+            if record is None and executor != "server":
+                await check_node_actions_available(
+                    ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands,
+                )
             if record is None:
                 record = await asyncio.to_thread(
                     canvas_confirmations.request_confirmation,
@@ -18623,6 +18628,7 @@ async def decide_canvas_confirmation(
             "card_requires_browser": "确认卡片只能由浏览器里的用户点击，未执行。",
             "conversation_requires_agent": "对话确认只能由 Agent 调用，未执行。",
             "not_found": "找不到这条确认记录，未执行。",
+            "canvas_deleted": "画布已删除或重建，确认已作废，未执行。",
             "targets_changed": (
                 f"目标节点已删除或已变化（{', '.join(detail.get('node_ids', []))}），"
                 "确认已作废，未执行。"
@@ -18651,6 +18657,25 @@ async def decide_canvas_confirmation(
     if stored is None or stored["project_id"] != project or stored["canvas_id"] != canvas_id:
         raise reject(404, "not_found")
     record = stored
+    if body.decision == "confirmed" and (
+        (record["status"] == "voided"
+         and (record.get("outcome") or {}).get("reason") == "canvas_deleted")
+        or (record["status"] == "pending" and "canvas_deletions" in record
+            and record["canvas_deletions"] != await asyncio.to_thread(
+                canvas_store.canvas_deletion_count, state_dir, canvas_id,
+            ))
+    ):
+        # The card was recorded for a canvas that has since been deleted.
+        if record["status"] == "pending":
+            record = await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="canvas_deleted", now=now,
+            )
+            await release_unapplied_workflow_draft(
+                project_dir=state_dir, canvas_id=canvas_id,
+                identity=workflow_draft_identity(record["commands"]),
+            )
+        raise reject(409, "canvas_deleted")
     executor = agent_canvas_executor()
     needs_browser = executor != "server" or any(
         command["type"] in {
@@ -19100,6 +19125,15 @@ async def delete_canvas(
         )
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
+    voided = await asyncio.to_thread(
+        canvas_confirmations.void_canvas_confirmations, canvas_project_dir,
+        project_id=project, canvas_id=canvas_id, now=_confirmation_now(),
+    )
+    for record in voided:
+        await release_unapplied_workflow_draft(
+            project_dir=canvas_project_dir, canvas_id=canvas_id,
+            identity=workflow_draft_identity(record["commands"]),
+        )
     try:
         await asyncio.to_thread(
             reconcile_workflow_runs_with_canvas_nodes,

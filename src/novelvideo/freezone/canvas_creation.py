@@ -53,6 +53,43 @@ def _replay(project_dir: Path, canvas_id: str, request_id: str) -> CanvasCreatio
     return None
 
 
+def _canvas_chat_dir(project_dir: Path) -> Path:
+    return Path(project_dir) / "_chat" / "freezone"
+
+
+def _has_deleted_canvas_state(project_dir: Path, canvas_id: str) -> bool:
+    """True when a canvas file is gone but its snapshots, history, events or chat remain."""
+    path = paths.canvas_path(project_dir, canvas_id)
+    history = canvas_store.canvas_history_dir_for_path(path)
+    return (
+        path.with_name(f"{canvas_id}.deleted.json").exists()
+        or canvas_store.canvas_deleted_dir_for_path(path).is_dir()
+        or (paths.freezone_root(project_dir) / "_canvas_events" / f"{canvas_id}.jsonl").exists()
+        or (_canvas_chat_dir(project_dir) / canvas_id).is_dir()
+        or any(history.glob(f"{canvas_id}.*.json"))
+    )
+
+
+def _reserved_canvas_ids(project_dir: Path) -> list[str]:
+    """IDs whose canvas file is gone but whose state a new canvas would otherwise inherit."""
+    canvases = paths.canvases_dir(project_dir)
+    ids = {path.name.removesuffix(".deleted.json") for path in canvases.glob("*.deleted.json")}
+    for directory in (canvases / "_deleted", _canvas_chat_dir(project_dir)):
+        if directory.is_dir():
+            ids.update(path.name for path in directory.iterdir() if path.is_dir())
+    history = canvases / "_history"
+    if history.is_dir():
+        ids.update(path.name.split(".", 1)[0] for path in history.glob("*.json"))
+    events = paths.freezone_root(project_dir) / "_canvas_events"
+    if events.is_dir():
+        ids.update(path.stem for path in events.glob("*.jsonl"))
+    return sorted(
+        canvas_id for canvas_id in ids
+        if paths.CANVAS_ID_RE.match(canvas_id)
+        and not paths.canvas_path(project_dir, canvas_id).exists()
+    )
+
+
 def _save_plan(project_dir, plan, fingerprint, request_id, prepare_payload):
     # Always acquire the project create mutex before the store's per-canvas mutex.
     with get_canvas_write_mutex().write_mutex(project_dir, paths.CANVAS_CREATE_LOCK_ID):
@@ -67,6 +104,9 @@ def _save_plan(project_dir, plan, fingerprint, request_id, prepare_payload):
         # Unlisted legacy files and writers outside the create mutex still reserve IDs.
         if paths.canvas_path(project_dir, canvas_id).exists():
             return _replay(project_dir, canvas_id, request_id) or rejection
+        # A deletion that finished after planning leaves state the plan did not reserve.
+        if _has_deleted_canvas_state(project_dir, canvas_id):
+            return None
 
         def build_payload(existing):
             if existing is not None:
@@ -96,11 +136,13 @@ async def create_user_canvas(
     pool = get_canvas_core_pool()
     for _ in range(MAX_PLAN_ATTEMPTS):
         canvases = await asyncio.to_thread(canvas_store.list_canvases, project_dir)
+        reserved = await asyncio.to_thread(_reserved_canvas_ids, project_dir)
         fingerprint = _fingerprint(canvases)
         wire = {
             "project_id": project_id, "name": name, "creator_username": creator_username,
             "request_id": request_id, "save_source": "agent_create" if origin else "manual_save",
             "canvases": canvases, "env": {"locale": locale},
+            "reserved_canvas_ids": reserved,
         }
         if origin is not None:
             wire["origin"] = origin

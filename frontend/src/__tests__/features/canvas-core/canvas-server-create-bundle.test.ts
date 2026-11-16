@@ -30,6 +30,7 @@ it("serves canvas creation plans and descriptions from the standalone worker wit
         request_id: input.requestId,
         save_source: input.saveSource,
         ...("canvases" in input ? { canvases: input.canvases } : {}),
+        ...("reservedCanvasIds" in input ? { reserved_canvas_ids: input.reservedCanvasIds } : {}),
         ...(input.origin ? { origin: { chat_canvas_id: input.origin.chatCanvasId, turn_id: input.origin.turnId } } : {}),
         env: { locale },
       },
@@ -50,15 +51,16 @@ it("serves canvas creation plans and descriptions from the standalone worker wit
     const timer = setTimeout(() => child.kill(), 50000);
     try { expect(await exit, stderr).toBe(0); } finally { clearTimeout(timer); }
     const lines = stdout.trim().split("\n").map(line => JSON.parse(line));
-    expect(fixture.cases).toHaveLength(30);
-    expect(lines).toHaveLength(32);
+    const count = fixture.cases.length;
+    expect(count).toBe(33);
+    expect(lines).toHaveLength(count + 2);
     for (const [index, row] of fixture.cases.entries()) {
       expect.soft(lines[index], row.name).toEqual({ id: row.name, ok: true, result: row.expected });
     }
-    expect.soft(lines[30]).toMatchObject({
+    expect.soft(lines[count]).toMatchObject({
       id: "describe", ok: true, result: { quota: { status: "available", used: 1, limit: 25 } },
     });
-    expect(lines[31]).toMatchObject({ id: "bad-plan", ok: false, error: { code: "invalid_request" } });
+    expect(lines[count + 1]).toMatchObject({ id: "bad-plan", ok: false, error: { code: "invalid_request" } });
   } finally {
     await fs.rm(outDir, { recursive: true, force: true });
   }

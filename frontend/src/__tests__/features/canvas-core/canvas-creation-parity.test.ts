@@ -27,11 +27,11 @@ const fixture: CreationFixture = JSON.parse(fs.readFileSync(
 ));
 
 describe("canvas creation browser parity", () => {
-  it("keeps the recorded schema, quota limit and 30 uniquely named cases", () => {
+  it("keeps the recorded schema, quota limit and 33 uniquely named cases", () => {
     expect(fixture.schema).toBe("canvas_creation_plan_fixture.v1");
     expect(fixture.limit).toBe(MAX_USER_CREATED_CANVASES_PER_PROJECT);
-    expect(fixture.cases).toHaveLength(30);
-    expect(new Set(fixture.cases.map((row) => row.name)).size).toBe(30);
+    expect(fixture.cases).toHaveLength(33);
+    expect(new Set(fixture.cases.map((row) => row.name)).size).toBe(33);
   });
 
   it("covers every rejection, a ready plan and the required browser scenarios", () => {
@@ -43,7 +43,7 @@ describe("canvas creation browser parity", () => {
     expect([...new Set(fixture.cases.flatMap((row) => row.covers))]).toEqual(expect.arrayContaining([
       "success", "quota_unknown", "quota_reached", "name_required", "duplicate_name", "id_taken",
       "system_name_locale", "conflict_copy", "others_not_counted", "list_unavailable", "name_whitespace",
-      "name_case", "non_ascii_name", "agent_create",
+      "name_case", "non_ascii_name", "agent_create", "reserved_ids",
     ]));
   });
 

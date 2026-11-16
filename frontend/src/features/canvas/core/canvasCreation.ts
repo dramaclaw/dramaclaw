@@ -255,6 +255,8 @@ export interface PlanCanvasCreationInput {
   name: string;
   creatorUsername?: string | null;
   canvases: FreezoneCanvasSummary[] | null | undefined;
+  /** IDs still holding a deleted canvas's snapshots, history, events or chat. */
+  reservedCanvasIds?: readonly string[] | null;
   requestId: string;
   saveSource: "manual_save" | "agent_create";
   origin?: { chatCanvasId: string; turnId: string };
@@ -271,12 +273,37 @@ export type CanvasCreationPlan =
   | { status: "rejected"; canvasId: string | null; rejection: CanvasCreationRejection }
   | { status: "ready"; canvasId: string; payload: FreezoneCanvasPayload };
 
+const MAX_CANVAS_ID_VARIANT = 99;
+
+function pickUserCreatedCanvasId(
+  base: string,
+  canvases: readonly FreezoneCanvasSummary[],
+  reserved: ReadonlySet<string>,
+  requestId: string,
+): string {
+  const live = new Map(canvases.map((item) => [item.id, item]));
+  const candidates = [base];
+  for (let suffix = 2; suffix <= MAX_CANVAS_ID_VARIANT; suffix += 1) {
+    candidates.push(`${base}_${suffix}`);
+  }
+  // A replayed request must land on the canvas it already created.
+  const replayed = candidates.find((id) => live.get(id)?.metadata?.create_request_id === requestId);
+  if (replayed) return replayed;
+  if (live.has(base) || !reserved.has(base)) return base;
+  return candidates.find((id) => !live.has(id) && !reserved.has(id)) ?? base;
+}
+
 export function planCanvasCreation(
   input: PlanCanvasCreationInput,
   env: Pick<CanvasEnvironment, "translate">,
 ): CanvasCreationPlan {
   const name = input.name.trim();
-  const canvasId = name ? userCreatedCanvasId(name, input.creatorUsername) : null;
+  const reserved = new Set(input.reservedCanvasIds ?? []);
+  const canvasId = name
+    ? pickUserCreatedCanvasId(
+      userCreatedCanvasId(name, input.creatorUsername), input.canvases ?? [], reserved, input.requestId,
+    )
+    : null;
   const quota = canvasCreationQuota(input.canvases, input.creatorUsername);
   if (quota.status === "unknown") {
     return { status: "rejected", canvasId, rejection: { code: "quota_unknown" } };
@@ -295,7 +322,7 @@ export function planCanvasCreation(
       rejection: { code: "duplicate_name", name, existingCanvasId: duplicate.id },
     };
   }
-  if (canvases.some((item) => item.id === canvasId)) {
+  if (canvases.some((item) => item.id === canvasId) || reserved.has(canvasId)) {
     return { status: "rejected", canvasId, rejection: { code: "id_taken", name, canvasId } };
   }
   return {

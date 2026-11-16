@@ -204,6 +204,89 @@ describe("planCanvasCreation", () => {
   });
 });
 
+describe("planCanvasCreation with ids still holding a deleted canvas's state", () => {
+  const base = userCreatedCanvasId("Ghost Plan", "alice");
+  const variant = (suffix: number) => `${base}_${suffix}`;
+  const recreated = (id: string, requestId = "request-a") => summary(id, {
+    canvas_origin: "user_created", display_name: "Ghost Plan", creator_username: "alice",
+    create_request_id: requestId,
+  });
+
+  it.each([
+    { label: "absent", reservedCanvasIds: undefined },
+    { label: "null", reservedCanvasIds: null },
+    { label: "empty", reservedCanvasIds: [] },
+    { label: "unrelated", reservedCanvasIds: ["canvas_other_plan_1abcd"] },
+  ])("keeps the computed id when reserved ids are $label", ({ reservedCanvasIds }) => {
+    expect(base).toBe("canvas_ghost_plan_1cebeu5");
+    expect(planCanvasCreation(input({ reservedCanvasIds }), env)).toMatchObject({
+      status: "ready", canvasId: base, payload: { canvas_id: base },
+    });
+  });
+
+  it("moves past an id that a deleted canvas left behind", () => {
+    expect(planCanvasCreation(input({ reservedCanvasIds: [base] }), env)).toMatchObject({
+      status: "ready", canvasId: variant(2),
+      payload: {
+        canvas_id: variant(2), client_save_id: "request-a",
+        metadata: { display_name: "Ghost Plan", create_request_id: "request-a" },
+      },
+    });
+  });
+
+  it("skips variants that are live or also reserved", () => {
+    expect(planCanvasCreation(input({
+      canvases: [userCanvas(variant(2), "Other plan")],
+      reservedCanvasIds: [base, variant(3)],
+    }), env)).toMatchObject({ status: "ready", canvasId: variant(4) });
+  });
+
+  it("points a replayed request at the variant it created", () => {
+    expect(planCanvasCreation(input({
+      canvases: [recreated(variant(2))], reservedCanvasIds: [base],
+    }), env)).toEqual({
+      status: "rejected", canvasId: variant(2),
+      rejection: { code: "duplicate_name", name: "Ghost Plan", existingCanvasId: variant(2) },
+    });
+  });
+
+  it("keeps the replayed variant when the creator quota is full", () => {
+    const canvases = [
+      ...ownedCanvases(MAX_USER_CREATED_CANVASES_PER_PROJECT - 1), recreated(variant(2)),
+    ];
+    expect(planCanvasCreation(input({ canvases, reservedCanvasIds: [base] }), env)).toEqual({
+      status: "rejected", canvasId: variant(2),
+      rejection: { code: "quota_reached", limit: MAX_USER_CREATED_CANVASES_PER_PROJECT },
+    });
+  });
+
+  it("does not treat a variant created by another request as a replay", () => {
+    expect(planCanvasCreation(input({
+      canvases: [recreated(variant(2), "request-b")], reservedCanvasIds: [base],
+    }), env)).toEqual({
+      status: "rejected", canvasId: variant(3),
+      rejection: { code: "duplicate_name", name: "Ghost Plan", existingCanvasId: variant(2) },
+    });
+  });
+
+  it("still rejects an occupied live id", () => {
+    expect(planCanvasCreation(input({
+      canvases: [userCanvas(base, "Different name")], reservedCanvasIds: [base],
+    }), env)).toEqual({
+      status: "rejected", canvasId: base,
+      rejection: { code: "id_taken", name: "Ghost Plan", canvasId: base },
+    });
+  });
+
+  it("rejects when every variant is live or reserved", () => {
+    const reservedCanvasIds = [base, ...Array.from({ length: 98 }, (_, index) => variant(index + 2))];
+    expect(planCanvasCreation(input({ reservedCanvasIds }), env)).toEqual({
+      status: "rejected", canvasId: base,
+      rejection: { code: "id_taken", name: "Ghost Plan", canvasId: base },
+    });
+  });
+});
+
 describe("canvasCreationQuota", () => {
   const mixed = [
     userCanvas("alice-a", "A"),

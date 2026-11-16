@@ -14,6 +14,14 @@ function parseCanvases(value: unknown): CanvasSummaryForDisplay[] {
   return value as unknown as CanvasSummaryForDisplay[];
 }
 
+function parseReservedCanvasIds(value: unknown): string[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+    invalidRequest('reserved_canvas_ids must be an array of strings');
+  }
+  return value as string[];
+}
+
 function parseLocale(env: unknown): string | undefined {
   if (env === undefined) return undefined;
   if (!isRecord(env) || (env.locale !== undefined && typeof env.locale !== 'string')) invalidRequest('Invalid canvas creation environment');
@@ -38,6 +46,7 @@ export async function servePlanCanvasCreation(payload: unknown) {
     name: payload.name,
     creatorUsername: payload.creator_username,
     canvases: payload.canvases == null ? null : parseCanvases(payload.canvases),
+    reservedCanvasIds: parseReservedCanvasIds(payload.reserved_canvas_ids),
     requestId: payload.request_id,
     saveSource: payload.save_source,
     origin,

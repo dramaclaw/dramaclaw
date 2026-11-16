@@ -134,7 +134,11 @@ def _wire(case):
         "save_source": source["saveSource"],
         "env": {"locale": case["locale"]},
     }
-    for old, new in (("creatorUsername", "creator_username"), ("canvases", "canvases")):
+    for old, new in (
+        ("creatorUsername", "creator_username"),
+        ("canvases", "canvases"),
+        ("reservedCanvasIds", "reserved_canvas_ids"),
+    ):
         if old in source:
             wire[new] = source[old]
     if "origin" in source:
@@ -229,8 +233,8 @@ def _same_first_snapshot(monkeypatch, pool):
     monkeypatch.setattr(pool, "call", call)
 
 
-def test_creation_fixture_has_thirty_cases():
-    assert len(CASES) == 30
+def test_creation_fixture_has_thirty_three_cases():
+    assert len(CASES) == 33
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])
@@ -295,7 +299,14 @@ def test_describe_worker_returns_display_rows_and_creator_quota(pool):
 
 
 @pytest.mark.parametrize(
-    "change", [{"name": 3}, {"canvases": {}}, {"save_source": "autosave"}]
+    "change",
+    [
+        {"name": 3},
+        {"canvases": {}},
+        {"save_source": "autosave"},
+        {"reserved_canvas_ids": "canvas_x"},
+        {"reserved_canvas_ids": [1]},
+    ],
 )
 def test_creation_worker_rejects_malformed_payload(pool, change):
     wire = _wire(CASES[0])
@@ -330,6 +341,7 @@ async def test_browser_create_saves_trimmed_name_and_one_event(creation):
     assert wire["save_source"] == "manual_save"
     assert "origin" not in wire
     assert wire["env"]["locale"] == "en"
+    assert wire["reserved_canvas_ids"] == []
     assert creation.resolutions[0]["require_home_node"] is False
     assert creation.resolutions[0].get("required_role", "editor") == "editor"
 
