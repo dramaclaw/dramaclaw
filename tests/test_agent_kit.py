@@ -156,27 +156,24 @@ def test_codex_template_renders_valid_toml() -> None:
     )
 
 
-def test_codex_configs_lift_tool_schema_budget_like_the_product() -> None:
-    """Codex compacts nested tool fields over its 5 KB default schema budget."""
-    from novelvideo.chat import service as chat_service
+def test_external_codex_configs_keep_the_codex_default_schema_budget() -> None:
+    """External Codex CLIs leave tool schema compaction at the Codex default.
 
-    key = "mcp_servers.dramaclaw.tool_input_schema_max_bytes="
-    product = chat_service._codex_mcp_config_overrides({"dramaclaw": {"command": "python3"}})
-    (budget,) = [int(value.removeprefix(key)) for value in product if value.startswith(key)]
-    rendered = tomllib.loads(_render("codex"))["mcp_servers"]
-    example = tomllib.loads(
-        (CE_ROOT / "examples" / "codex" / "config.toml.example").read_text(encoding="utf-8")
-    )["mcp_servers"]
+    A raised tool_input_schema_max_bytes made external runs unstable, so the template,
+    the example and the guide do not set it. In-product turns set their own budget.
+    """
+    example = (CE_ROOT / "examples" / "codex" / "config.toml.example").read_text(
+        encoding="utf-8"
+    )
     guide = (CE_ROOT / "docs" / "zh" / "guides" / "local-agent-mcp.md").read_text(
         encoding="utf-8"
     )
     section = guide.split("## Codex 配置示例", 1)[1].split("\n## ", 1)[0]
     assert "```toml\n" in section, "Codex reads TOML; the guide example must be TOML"
-    guide_example = tomllib.loads(section.split("```toml\n", 1)[1].split("```", 1)[0])
-    for servers in (rendered, example, guide_example["mcp_servers"]):
-        assert {
-            name: server.get("tool_input_schema_max_bytes") for name, server in servers.items()
-        } == {"dramaclaw": budget, "dramaclaw_workflows": budget}
+    guide_example = section.split("```toml\n", 1)[1].split("```", 1)[0]
+    for config in (_render("codex"), example, guide_example):
+        assert set(tomllib.loads(config)["mcp_servers"]) == {"dramaclaw", "dramaclaw_workflows"}
+        assert "tool_input_schema_max_bytes" not in config
 
 
 async def _launcher_tools(mode: str):
@@ -198,30 +195,6 @@ async def _launcher_tools(mode: str):
         async with ClientSession(reader, writer) as session:
             await session.initialize()
             return (await session.list_tools()).tools
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("server", "mode"), [("dramaclaw", "tools"), ("dramaclaw_workflows", "workflows")]
-)
-async def test_published_tool_schemas_fit_the_codex_template_budget(
-    server: str,
-    mode: str,
-) -> None:
-    """Fails when a published tool schema outgrows the budget the template sets."""
-    budget = tomllib.loads(_render("codex"))["mcp_servers"][server].get(
-        "tool_input_schema_max_bytes"
-    )
-    assert isinstance(budget, int)
-    # Codex measures compact JSON in UTF-8 bytes.
-    sizes = {
-        tool.name: len(
-            json.dumps(tool.inputSchema, separators=(",", ":"), ensure_ascii=False).encode()
-        )
-        for tool in await _launcher_tools(mode)
-    }
-    largest = max(sizes, key=sizes.__getitem__)
-    assert sizes[largest] <= budget, (largest, sizes[largest], budget)
 
 
 def test_interactive_story_reference_links_are_local_and_reachable() -> None:

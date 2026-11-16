@@ -2,6 +2,10 @@
 
 Opt in with DRAMACLAW_TEST_CODEX_BIN. This tests the product MCP configuration
 and the external agent-kit launcher, not the full patched chat runtime.
+
+Only the product lifts Codex's tool schema budget. The agent-kit template keeps
+the Codex default, which may compact nested constraint guidance away, so that
+host only has to deliver both servers' tools to the model.
 """
 
 from __future__ import annotations
@@ -205,7 +209,13 @@ async def test_real_codex_keeps_conditional_guidance(tmp_path, host):
                 collect(child)
 
     collect(request)
+    print(
+        f"{host}: {len(tools)} tools; model tool JSON bytes={len(json.dumps(tools, ensure_ascii=False).encode())}; capture={tmp_path}"
+    )
     assert "dramaclaw_patch_interactive_story" in tools, sorted(tools)
+    assert {"workflow_catalog_search", "workflow_graph_compile"} <= set(tools)
+    if host == "agent-kit":
+        return
     create = tools["dramaclaw_create_interactive_story"]["properties"]["story"]
     assert_choice_guidance(create["properties"]["choices"]["items"])
     patch = tools["dramaclaw_patch_interactive_story"]["properties"]["operations"][
@@ -230,6 +240,3 @@ async def test_real_codex_keeps_conditional_guidance(tmp_path, host):
         assert rule in text, rule
     assert '"maximum":50' in descriptions(tools["workflow_catalog_search"])
     assert '"minLength":' in descriptions(tools["workflow_graph_compile"])
-    print(
-        f"{host}: {len(tools)} tools; model tool JSON bytes={len(json.dumps(tools, ensure_ascii=False).encode())}; capture={tmp_path}"
-    )

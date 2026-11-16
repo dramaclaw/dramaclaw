@@ -9,6 +9,6 @@
 
 互动故事 Create/Patch 会直接写入 CE 后端画布。外部 Codex 收到 `refresh_canvas=true` 回执，但当前不会向已打开的 DramaClaw 浏览器自动广播刷新；需要宿主刷新适配或手动刷新画布。产品内置 Agent 不受此限制。
 
-模板为两个 server 都设置了 `tool_input_schema_max_bytes = 65536`，因为 Codex 默认会把超过 5000 字节的工具输入 schema 压缩掉嵌套字段；合并时保留这一行。
+模板不设置 `tool_input_schema_max_bytes`，沿用 Codex 默认：超过 5000 字节的工具输入 schema 会被压缩，嵌套字段缺失时 Agent 依靠工具报错里附带的修正示例补齐。不建议把这个上限整体调大：实测会让工具负载明显增大，并导致运行不稳定。
 
 不要把已有 `config.toml` 整体替换为模板。

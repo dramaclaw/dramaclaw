@@ -90,7 +90,6 @@ python agent-kit/scripts/launch_mcp.py workflows
 command = "/path/to/dramaclaw-ce/.venv/bin/python"
 args = ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "tools"]
 cwd = "/path/to/dramaclaw-ce"
-tool_input_schema_max_bytes = 65536
 
 [mcp_servers.dramaclaw.env]
 DRAMACLAW_API_URL = "http://127.0.0.1:8780"
@@ -102,13 +101,12 @@ DRAMACLAW_USER = "local"
 command = "/path/to/dramaclaw-ce/.venv/bin/python"
 args = ["/path/to/dramaclaw-ce/agent-kit/scripts/launch_mcp.py", "workflows"]
 cwd = "/path/to/dramaclaw-ce"
-tool_input_schema_max_bytes = 65536
 
 [mcp_servers.dramaclaw_workflows.env]
 DRAMACLAW_USERNAME = "local"
 ```
 
-`tool_input_schema_max_bytes = 65536` 与产品内置 Agent 一致：Codex 默认会把超过 5000 字节的工具输入 schema 压缩掉嵌套字段（如画布命令的 `commands[]` 结构），两个 server 都要保留这一行。
+示例不设置 `tool_input_schema_max_bytes`，沿用 Codex 默认：超过 5000 字节的工具输入 schema 会被压缩，嵌套字段（如画布命令的 `commands[]` 结构）可能缺失，Agent 依靠工具报错里附带的修正示例补齐。不建议把这个上限整体调大：实测会让工具负载明显增大，并导致运行不稳定。
 
 如果要操作虾画画布，建议在 `[mcp_servers.dramaclaw.env]` 中补充当前画布上下文：
 
