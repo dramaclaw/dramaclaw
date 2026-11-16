@@ -914,7 +914,26 @@ def run_project_task_core_sync(
         )
         return {"failed": True, "error_code": error_code}
     feature_reservation_id = feature_settlement_resolution.reservation_id
-    trusted_billing_metadata = feature_settlement_resolution.trusted_billing_metadata()
+    trusted_billing_metadata: dict[str, Any] = (
+        feature_settlement_resolution.trusted_billing_metadata()
+    )
+    payload = delivery.payload if type(delivery.payload) is dict else {}
+    billing = payload.get("billing")
+    result_billing_version = (
+        billing.get("result_billing_version") if type(billing) is dict else None
+    )
+    # Reconstruct the output-pricing handshake from the verified request and
+    # authoritative EE policy. Unsigned delivery hints cannot authorize money
+    # movement; a durable enqueue reservation keeps legacy EE on its old path.
+    if (
+        task_type == "freezone_text_generate"
+        and type(result_billing_version) is int
+        and result_billing_version == 2
+        and feature_settlement_resolution.outcome == "not_applicable"
+        and feature_settlement_resolution.feature_key == "freezone.text_generate"
+        and feature_settlement_resolution.model_call_credit_policy == "feature_included"
+    ):
+        trusted_billing_metadata["result_billing_version_ack"] = 2
     if trusted_billing_metadata:
         envelope["billing_metadata"] = trusted_billing_metadata
     timeout_seconds = _project_task_timeout_seconds()
