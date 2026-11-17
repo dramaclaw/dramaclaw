@@ -8887,6 +8887,75 @@ def _with_confirmed_execution_policy(
     return _structured_tool_result(merged, tool_name="freezone_confirm_workflow_draft")
 
 
+def _with_draft_run_arguments(
+    payload: dict[str, Any], target: dict[str, Any], created_ids: dict[str, str],
+    *, project_id: str, canvas_id: str,
+) -> dict[str, Any]:
+    node_ids = target.get("node_ids") or []
+    if not node_ids or any(not created_ids.get(node_id) for node_id in node_ids):
+        return payload
+    return {
+        **payload,
+        "run_arguments": {
+            "project_id": project_id, "canvas_id": canvas_id,
+            "node_ids": [created_ids[node_id] for node_id in node_ids],
+            "scope": "selection", "direction": target.get("direction", "connected"),
+            "regenerate": False,
+        },
+        "agent_instruction": (
+            (payload.get("agent_instruction") or "") + " "
+            "To run or continue only this workflow later, call freezone_run_workflow with "
+            "run_arguments; do not use scope=canvas, which also runs unfinished nodes from "
+            "earlier work on the canvas."
+        ).strip(),
+    }
+
+
+def _confirmed_draft_run_arguments(
+    result: dict[str, Any], draft: dict[str, Any], *,
+    project_id: str, canvas_id: str, draft_id: str, revision: int,
+) -> dict[str, Any]:
+    compiled = draft.get("compiled") or {}
+    if not compiled.get("plan"):
+        return result
+    verified = compiled.get("external_inputs_verified") or {}
+    built = build_workflow_graph_commands({
+        "plan": compiled["plan"],
+        "run_after_create": bool(draft.get("run_after_create")),
+        "workflow_instance_id": draft_id,
+        "external_node_ids": {alias: value["node_id"] for alias, value in verified.items()},
+        "external_media_urls": {alias: value["media_url"] for alias, value in verified.items()},
+    })
+    if not built.get("ok"):
+        return result
+    try:
+        response = _request(
+            "GET", f"/api/v1/projects/{quote(project_id, safe='')}/freezone/canvases/"
+            f"{quote(canvas_id, safe='')}",
+        )
+    except Exception:
+        # Optional continuation guidance must not change the settled receipt.
+        return result
+    if not response.get("ok", True):
+        return result
+    current = response.get("data") or {}
+    plan_ids = {}
+    for node in current.get("nodes") or []:
+        data = node.get("data") or {}
+        if (
+            data.get("workflowInstanceId") == draft_id
+            and data.get("workflowDraftRevision", revision) == revision
+        ):
+            plan_ids[data.get("workflowPlanNodeId")] = node.get("id")
+    created_ids = {
+        command["client_id"]: plan_ids.get(command["data"]["workflowPlanNodeId"])
+        for command in built["commands"] if command.get("type") == "create_node"
+    }
+    return _with_draft_run_arguments(
+        result, built["run_target"], created_ids, project_id=project_id, canvas_id=canvas_id,
+    )
+
+
 def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if not _workflow_draft_dependencies_available():
         return _workflow_draft_unavailable()
@@ -8934,32 +9003,36 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     draft_status = current_payload.get("status")
     if draft_status in {"confirmed", "confirming", "submitted"}:
         confirmed = draft_status == "confirmed"
-        return tool_result(
-            {
-                "ok": False,
-                "status": (
-                    "workflow_draft_already_confirmed"
-                    if confirmed else "workflow_draft_confirmation_in_progress"
-                ),
-                "retryable": False,
-                "draft_id": draft_id,
-                "revision": revision,
-                "current_revision": current_revision,
-                "error": (
-                    "Workflow draft has already been confirmed."
-                    if confirmed else "Workflow draft confirmation is in progress or submitted."
-                ),
-                "user_message": (
-                    "工作流已创建，本次未创建任何新节点。"
-                    if confirmed else "工作流正在创建或已提交，本次未创建任何新节点。"
-                ),
-                "agent_instruction": (
-                    "Do not call freezone_confirm_workflow_draft again. "
-                    f"The nodes of revision {current_revision} are or will be on the canvas. "
-                    "Use freezone_run_workflow when the user asks to run them."
-                ),
-            }
-        )
+        result = {
+            "ok": False,
+            "status": (
+                "workflow_draft_already_confirmed"
+                if confirmed else "workflow_draft_confirmation_in_progress"
+            ),
+            "retryable": False,
+            "draft_id": draft_id,
+            "revision": revision,
+            "current_revision": current_revision,
+            "error": (
+                "Workflow draft has already been confirmed."
+                if confirmed else "Workflow draft confirmation is in progress or submitted."
+            ),
+            "user_message": (
+                "工作流已创建，本次未创建任何新节点。"
+                if confirmed else "工作流正在创建或已提交，本次未创建任何新节点。"
+            ),
+            "agent_instruction": (
+                "Do not call freezone_confirm_workflow_draft again. "
+                f"The nodes of revision {current_revision} are or will be on the canvas. "
+                "Use freezone_run_workflow when the user asks to run them."
+            ),
+        }
+        if confirmed:
+            result = _confirmed_draft_run_arguments(
+                result, current_payload, project_id=project_id, canvas_id=canvas_id,
+                draft_id=draft_id, revision=current_revision,
+            )
+        return tool_result(result)
     if draft_status == "cancelled":
         # A cancelled draft is settled, so no revision fence is needed.
         return tool_result(
@@ -9242,6 +9315,13 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             outcome=outcome,
             task_id=confirmation_task_id,
             revision=revision,
+        )
+        result_payload = _with_draft_run_arguments(
+            result_payload, built.get("run_target") or {},
+            {item.get("nodeId"): item.get("createdNodeId")
+             for item in result_payload.get("command_results") or []
+             if item.get("type") == "create_node"},
+            project_id=project_id, canvas_id=canvas_id,
         )
         result = _with_confirmed_execution_policy(
             result, result_payload, draft_id=draft_id, run_after_create=run_after_create
@@ -10288,6 +10368,7 @@ _RESULT_INTEGER_FIELDS = frozenset(
 )
 _RESULT_OBJECT_FIELDS = frozenset(
     {
+        "run_arguments",
         "written",
         "story",
         "outline",
@@ -10750,7 +10831,7 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "changes",
         "expected_revision",
     ),
-    "freezone_confirm_workflow_draft": _WORKFLOW_RESULT_FIELDS,
+    "freezone_confirm_workflow_draft": (*_WORKFLOW_RESULT_FIELDS, "run_arguments"),
     "freezone_prepare_workflow_plan_draft": (
         *_WORKFLOW_RESULT_FIELDS,
         "schema_version",
@@ -14322,7 +14403,7 @@ TOOLS = (
                 "scope": {
                     "type": "string",
                     "enum": ["selection", "canvas"],
-                    "description": "Use canvas to continue all unfinished workflow nodes.",
+                    "description": "canvas runs every unfinished node on the whole canvas, including earlier work. Prefer node_ids; for a just-landed draft, use run_arguments from freezone_confirm_workflow_draft.",
                 },
                 "direction": {
                     "type": "string",

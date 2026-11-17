@@ -6057,3 +6057,20 @@ def test_graph_keeps_speech_brief_separate_from_spoken_text(audio_kind):
     data = next(c["data"] for c in graph["commands"] if c["type"] == "create_node")
     assert data["prompt"] == brief
     assert data.get("text", "") == (brief if audio_kind == "music" else "")
+
+
+@pytest.mark.parametrize("story", [False, True])
+def test_landed_draft_compiler_run_target(story):
+    plan = {"nodes": [{"id": "frame", "node_type": "imageGenNode", "data": {"prompt": "frame"}}], "edges": []}
+    if story:
+        plan["source_context"] = {"story_id": "s", "targets": [{
+            "plan_node_id": "frame", "story_segment_id": "segment", "video_node_id": "video",
+        }]}
+    idle = build_workflow_graph_commands({"plan": plan, "run_after_create": False})
+    running = build_workflow_graph_commands({"plan": plan, "run_after_create": True})
+    expected = {"node_ids": [c["client_id"] for c in idle["commands"] if c["type"] == "create_node"], "scope": "selection"}
+    if story:
+        expected["direction"] = "node"
+    assert idle["run_target"] == running["run_target"] == expected
+    assert running["commands"] == [*idle["commands"], {"type": "run_workflow", **expected}]
+    assert not any(c["type"] == "run_workflow" for c in idle["commands"])

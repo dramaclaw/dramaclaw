@@ -128,9 +128,16 @@ def node_title(data: dict) -> str:
     ), "")
 
 
-def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
+def confirmation_targets(
+    canvas: dict, commands: list[dict], planned_workflow_node_ids: list[str] | None = None,
+) -> list[dict]:
     nodes = {node["id"]: node for node in canvas.get("nodes", [])}
     batch_nodes = _batch_nodes(commands)
+    if planned_workflow_node_ids is not None and any(
+        not isinstance(node_id, str) or node_id not in nodes and node_id not in batch_nodes
+        for node_id in planned_workflow_node_ids
+    ):
+        planned_workflow_node_ids = None
     targets = []
     seen = set()
     missing = set()
@@ -139,7 +146,11 @@ def confirmation_targets(canvas: dict, commands: list[dict]) -> list[dict]:
             continue
         kind = command["type"]
         action = command["action"] if kind == "run_node_action" else kind
-        if _whole_canvas(command):
+        if kind == "run_workflow":
+            missing.update(set(command.get("node_ids", [])) - nodes.keys() - batch_nodes.keys())
+        if kind == "run_workflow" and planned_workflow_node_ids is not None:
+            node_ids = planned_workflow_node_ids
+        elif _whole_canvas(command):
             node_ids = list(nodes)
         elif kind == "run_node_action":
             node_ids = [command["node_id"]]
@@ -284,9 +295,15 @@ def generation_settings(
 def changed_targets(canvas: dict, record: dict) -> list[str]:
     current = {node["id"] for node in canvas.get("nodes", [])}
     shown = {target["node_id"] for target in record["targets"]}
-    changed = shown - current - _batch_nodes(record["commands"]).keys()
+    watched = shown | {node_id for command in record["commands"]
+                       if command["type"] == "run_workflow"
+                       for node_id in command.get("node_ids", [])}
+    batch_ids = _batch_nodes(record["commands"]).keys()
+    changed = watched - current - batch_ids
     if any(_whole_canvas(command) for command in record["commands"]):
-        changed |= current - shown
+        snapshot = record.get("canvas_node_ids")
+        changed |= ((current ^ set(snapshot)) - batch_ids
+                    if isinstance(snapshot, list) else current - shown)
     return sorted(changed)
 
 
@@ -404,6 +421,7 @@ def create_confirmation(
     username: str, turn_id: str | None, commands: list[dict], targets: list[dict], now: float,
     pre_applied: dict | None = None, generation_sources: dict | None = None,
     canvas_deletions: int | None = None,
+    canvas_node_ids: list[str] | None = None,
 ) -> dict:
     record = {
         "id": "cc_" + uuid4().hex, "project_id": project_id, "canvas_id": canvas_id,
@@ -419,6 +437,8 @@ def create_confirmation(
         record["generation_sources"] = generation_sources
     if canvas_deletions is not None:
         record["canvas_deletions"] = canvas_deletions
+    if canvas_node_ids is not None:
+        record["canvas_node_ids"] = canvas_node_ids
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     with _directory_lock(directory):
@@ -625,6 +645,7 @@ def request_confirmation(
     *, username: str, agent_id: str, project_id: str, canvas_id: str,
     project_state_dir: str | Path, turn_id: str | None, commands: list[dict], now: float,
     pre_applied: dict | None = None, generation_sources: dict | None = None,
+    planned_workflow_node_ids: list[str] | None = None,
 ) -> dict:
     from novelvideo.freezone import canvas_store
 
@@ -633,11 +654,13 @@ def request_confirmation(
     }
     if not confirmation_kinds(commands):
         raise CanvasConfirmationError("not_needed", "Canvas confirmation not needed")
-    targets = confirmation_targets(canvas, commands)
+    targets = confirmation_targets(canvas, commands, planned_workflow_node_ids)
     return create_confirmation(
         confirmations_dir(username, agent_id, project_state_dir),
         project_id=project_id, canvas_id=canvas_id, agent_id=agent_id,
         username=username, turn_id=turn_id, commands=commands, targets=targets, now=now,
         pre_applied=pre_applied, generation_sources=generation_sources,
         canvas_deletions=canvas_store.canvas_deletion_count(Path(project_state_dir), canvas_id),
+        canvas_node_ids=([node["id"] for node in canvas.get("nodes", [])]
+                         if any(_whole_canvas(command) for command in commands) else None),
     )

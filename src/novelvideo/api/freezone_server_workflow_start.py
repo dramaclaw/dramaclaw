@@ -187,7 +187,23 @@ async def _plan_run_commands(
     if not plan["ok"]:
         return {"status": "invalid",
                 "message": _rewrite_command_indices(plan["message"], run_indices)}
-    return {"status": "planned", "plan": plan, "canvas": canvas, "client_ids": client_ids}
+    workflow_node_ids = []
+    actions = plan.get("actions")
+    for action in actions if isinstance(actions, list) else [None]:
+        index = action.get("command_index") if isinstance(action, dict) else None
+        node_id = action.get("node_id") if isinstance(action, dict) else None
+        if (
+            type(index) is not int or not 0 <= index < len(run_commands)
+            or not isinstance(node_id, str)
+        ):
+            workflow_node_ids = None
+            break
+        if run_commands[index]["type"] == "run_workflow":
+            node_id = client_ids.get(node_id, node_id)
+            if node_id not in workflow_node_ids:
+                workflow_node_ids.append(node_id)
+    return {"status": "planned", "plan": plan, "canvas": canvas, "client_ids": client_ids,
+            "workflow_node_ids": workflow_node_ids}
 
 
 def _has_unavailable_saved_node_action(
@@ -213,11 +229,11 @@ def _has_unavailable_saved_node_action(
 async def check_node_actions_available(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
     commands: list[dict], locale: str | None = None,
-) -> None:
+) -> list[str] | None:
     """Refuse a card only when a node saved in the canvas file does not offer the action.
 
-    Everything else continues to the existing confirmation logic with a warning,
-    because the browser validates again before running anything.
+    Return planned workflow ids when available, otherwise None for the legacy listing.
+    Other planner failures continue with a warning because the browser validates again.
     """
     if not any(is_run_command(command) for command in commands):
         return
@@ -244,6 +260,7 @@ async def check_node_actions_available(
         return
     if result["status"] == "invalid":
         logger.warning("canvas action availability check skipped reason=%s", "plan_invalid")
+    return result.get("workflow_node_ids") if result["status"] == "planned" else None
 
 
 async def check_server_workflow(
@@ -287,8 +304,10 @@ async def check_server_workflow(
                             "action": action["action"],
                             "label": action["label"], "reason": reason})
     if plan["actions"] and len(refused) == len(plan["actions"]):
-        return {"status": "blocked", "blocked": refused, "plan": plan}
-    return {"status": "runnable", "plan": plan, "refused": refused}
+        return {"status": "blocked", "blocked": refused, "plan": plan,
+                "workflow_node_ids": result["workflow_node_ids"]}
+    return {"status": "runnable", "plan": plan, "refused": refused,
+            "workflow_node_ids": result["workflow_node_ids"]}
 
 
 def canvas_open_required_detail(check: dict) -> dict:

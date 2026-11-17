@@ -835,6 +835,7 @@ def test_active_run_leaves_confirmation_pending(setup):
 def test_zero_actions_already_completed(setup):
     setup.pool.plan.update(actions=[], levels=[], already_completed=True)
     created = create(setup, commands=[{"type": "run_workflow", "scope": "canvas"}])
+    assert created["targets"] == []
     response = decide(setup, created)
     assert response.status_code == 200, response.text
     assert response.json()["data"] == {"confirmation_id": created["confirmation_id"],
@@ -2298,3 +2299,113 @@ def test_browser_executor_stores_the_filled_external_key_batch(tiers, monkeypatc
     ]
     assert stored["generation_sources"]["c1"] == filled_sources
     assert confirmation["generation_settings"][0]["sources"] == filled_sources
+
+
+@pytest.mark.parametrize("executor", ["server", "browser"])
+def test_workflow_card_lists_only_planned_nodes(setup, monkeypatch, executor):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
+    card = create(setup, commands=[{"type": "run_workflow", "scope": "canvas"}])
+    assert card["targets"] == [{**TARGETS[0], "action": "run_workflow"}]
+
+
+@pytest.mark.parametrize("executor", ["server", "browser"])
+@pytest.mark.parametrize("regenerate", [True, False])
+def test_workflow_card_regenerate_follows_plan(setup, monkeypatch, executor, regenerate):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
+    plan = deepcopy(setup.pool.plan)
+
+    def planner(payload):
+        ids = ["n1", "n2"] if payload["commands"][0].get("regenerate") else ["n2"]
+        return {**plan, "actions": [{**plan["actions"][0], "node_id": node_id} for node_id in ids]}
+
+    setup.pool.plan = planner
+    card = create(setup, commands=[{"type": "run_workflow", "scope": "canvas",
+                                    "regenerate": regenerate}])
+    assert [item["node_id"] for item in card["targets"]] == (
+        ["n1", "n2"] if regenerate else ["n2"]
+    )
+
+
+@pytest.mark.parametrize("failure", [CanvasCoreError("worker_unavailable", "offline"),
+                                     {"ok": False, "message": "invalid"}])
+def test_browser_workflow_card_plan_failure_falls_back(setup, monkeypatch, failure):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "browser")
+    setup.pool.plan = failure
+    card = create(setup, commands=[{"type": "run_workflow", "scope": "canvas"}])
+    assert [item["node_id"] for item in card["targets"]] == ["n1", "n2", "n3"]
+
+
+@pytest.mark.parametrize("executor,split", [("browser", False), ("server", False), ("server", True)])
+def test_workflow_card_created_id_space(setup, monkeypatch, executor, split):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
+    setup.pool.plan = mixed_plan()
+    card = external_create(setup) if split else create(setup, commands=SPLIT)
+    expected = created(setup) if split else ["c1"]
+    assert [item["node_id"] for item in card["targets"]] == expected
+
+
+@pytest.mark.parametrize("executor", ["server", "browser"])
+@pytest.mark.parametrize("change", ["unchanged", "added", "removed"])
+def test_filtered_workflow_card_confirm_drift(setup, monkeypatch, executor, change):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
+    touch_canvas_presence(setup.root, "default", "browser", now=1000)
+    card = create(setup, commands=[{"type": "run_workflow", "scope": "canvas"}])
+    assert [item["node_id"] for item in card["targets"]] == ["n1"]
+    canvas = canvas_store.read_canvas(setup.root, "default")
+    if change == "added":
+        canvas["nodes"].append({"id": "new", "type": "textNode", "data": {}})
+    elif change == "removed":
+        canvas["nodes"] = canvas["nodes"][:2]
+    if change != "unchanged":
+        canvas_store.save_canvas(setup.root, "default", base_revision=canvas["revision"],
+                                 build_payload=lambda _: canvas)
+    response = decide(setup, card)
+    assert response.status_code == (200 if change == "unchanged" else 409), response.text
+    if change != "unchanged":
+        assert response.json()["detail"]["code"] == "targets_changed"
+
+
+@pytest.mark.parametrize("action", [None, {}, {"command_index": True, "node_id": "n1"},
+                                    {"command_index": -1, "node_id": "n1"},
+                                    {"command_index": 2, "node_id": "n1"},
+                                    {"command_index": 0, "node_id": 42}])
+def test_browser_malformed_plan_target_falls_back(setup, monkeypatch, action):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "browser")
+    setup.pool.plan["actions"] = [action]
+    card = create(setup, commands=[{"type": "run_workflow", "scope": "canvas"}])
+    assert [item["node_id"] for item in card["targets"]] == ["n1", "n2", "n3"]
+
+
+@pytest.mark.parametrize("executor", ["server", "browser"])
+def test_workflow_targets_use_run_command_indices_and_plan_order(setup, monkeypatch, executor):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
+    action = setup.pool.plan["actions"][0]
+    setup.pool.plan["actions"] = [
+        {**action, "command_index": index, "node_id": node_id}
+        for index, node_id in [(2, "n2"), (0, "n1"), (1, "n1"), (2, "n2")]
+    ]
+    commands = [{"type": "update_node_data", "node_id": "n1", "data": {"prompt": "test"}},
+                *PAID, {"type": "run_workflow", "node_ids": ["n1"], "scope": "selection"},
+                {"type": "run_workflow", "scope": "canvas"}]
+    card = create(setup, commands=commands)
+    assert [(item["node_id"], item["action"]) for item in card["targets"]] == [
+        ("n1", "generate_image"), ("n2", "run_workflow"), ("n1", "run_workflow"),
+    ]
+
+
+@pytest.mark.parametrize("executor", ["server", "browser"])
+def test_workflow_unknown_planned_id_falls_back(setup, monkeypatch, executor):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
+    touch_canvas_presence(setup.root, "default", "browser", now=1000)
+    setup.pool.plan["actions"][0]["node_id"] = "missing"
+    card = create(setup, commands=[{"type": "run_workflow", "scope": "canvas"}])
+    assert [item["node_id"] for item in card["targets"]] == ["n1", "n2", "n3"]
+
+
+def test_browser_mixed_workflow_card_uses_fallback(setup, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "browser")
+    card = create(setup, commands=[{"type": "run_workflow", "scope": "canvas"},
+                                   {"type": "run_node_action", "node_id": "n1",
+                                    "action": "open_crop_tool"}])
+    assert [item["node_id"] for item in card["targets"]] == ["n1", "n2", "n3"]
+    assert setup.pool.plan_inputs == []

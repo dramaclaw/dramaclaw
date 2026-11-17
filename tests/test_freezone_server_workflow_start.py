@@ -115,7 +115,8 @@ async def test_metered_text_requires_recipe_before_creation(setup):
 
 async def test_parameters_do_not_refuse_server_actions(setup):
     setup.plan["actions"][0]["parameters"] = {"prompt": "A tree"}
-    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": []}
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": [],
+                                  "workflow_node_ids": ["image", "text"]}
 
 
 async def test_partial_unsupported_batch_is_runnable(setup):
@@ -123,7 +124,7 @@ async def test_partial_unsupported_batch_is_runnable(setup):
     assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": [
         {"node_id": "text", "action": "auto_compose_video", "label": "Text",
          "reason": "action_not_on_server"},
-    ]}
+    ], "workflow_node_ids": ["image", "text"]}
 
 
 async def test_every_action_unsupported_is_blocked(setup):
@@ -131,12 +132,13 @@ async def test_every_action_unsupported_is_blocked(setup):
     assert await check(setup) == {"status": "blocked", "plan": setup.plan, "blocked": [
         {"node_id": "image", "action": "auto_compose_video", "label": "Image",
          "reason": "action_not_on_server"},
-    ]}
+    ], "workflow_node_ids": ["image"]}
 
 
 async def test_empty_plan_is_runnable(setup):
     setup.plan.update(actions=[], levels=[])
-    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": []}
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": [],
+                                  "workflow_node_ids": []}
 
 
 @pytest.mark.parametrize("ordinary_image", [False, True])
@@ -305,7 +307,7 @@ async def test_audio_translate_on_text_is_refused(setup):
     assert await check(setup) == {"status": "blocked", "plan": setup.plan, "blocked": [{
         "node_id": "text", "action": "translate_text", "label": "Text",
         "reason": "action_not_on_server",
-    }]}
+    }], "workflow_node_ids": ["text"]}
 
 
 async def test_image_audio_translate_batch_is_runnable(setup):
@@ -315,7 +317,8 @@ async def test_image_audio_translate_batch_is_runnable(setup):
                              dict(setup.plan["actions"][1], action="generate_audio"),
                              dict(setup.plan["actions"][1], action="translate_text")]
     register_port("usage_meter", NoOpUsageMeter())
-    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": []}
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": [],
+                                  "workflow_node_ids": ["image", "text"]}
     actions = start._server_run_actions(setup.canvas, setup.plan, "confirmation")
     assert actions == [
         {"node_id": "image", "action": "generate_image", "recipe_id": "image-recipe",
@@ -338,7 +341,7 @@ async def test_video_check_support_and_manifest_refusals(setup, data, reason):
     canvas_store.atomic_write_json(canvas_store.canvas_path(setup.root, "default"), setup.canvas)
     assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": ([{
         "node_id": "text", "action": "generate_video", "label": "Video", "reason": reason,
-    }] if reason else [])}
+    }] if reason else []), "workflow_node_ids": ["image", "text"]}
 
 
 async def test_image_tool_support_attempt_and_no_source_invalidation(setup):
@@ -347,7 +350,8 @@ async def test_image_tool_support_attempt_and_no_source_invalidation(setup):
     setup.plan["actions"] = [dict(setup.plan["actions"][0], action="run_outpaint_tool",
                                   invalidation_reason="upstream_changed")]
     setup.plan["levels"] = [[0]]
-    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": []}
+    assert await check(setup) == {"status": "runnable", "plan": setup.plan, "refused": [],
+                                  "workflow_node_ids": ["image"]}
     run = await launch(setup)
     assert run["actions"][0]["generation_attempt_id"] == (
         "canvas-confirmation:confirmation-1:image:run_outpaint_tool"
@@ -386,7 +390,7 @@ async def test_world_admission_and_attempt(setup, node_type, catalog, metered, r
     result = await check(setup)
     assert result == {"status": "runnable", "plan": setup.plan, "refused": ([{
         "node_id": "text", "action": "generate_3gs_world", "label": "Text", "reason": reason,
-    }] if reason else [])}
+    }] if reason else []), "workflow_node_ids": ["image", "text"]}
     actions = start._server_run_actions(setup.canvas, setup.plan, "confirmation")
     assert actions[1]["generation_attempt_id"] == "confirmation:text:generate_3gs_world"
 
