@@ -6088,7 +6088,9 @@ def _create_canvas_confirmation(
             "or in this same turn. The confirmation expires in 30 minutes; after that, ask again. "
             "Do not tell the user that anything was started, sent, submitted or done."
         )
-    instruction += " Name the project (project_name) to the user when asking for confirmation."
+    external_unbound_agent_key = _external_unbound_agent_key()
+    if external_unbound_agent_key:
+        instruction += " Name the project (project_name) to the user when asking for confirmation."
     result = {
         "ok": True,
         "status": "confirmation_required",
@@ -6098,7 +6100,10 @@ def _create_canvas_confirmation(
         "applied": False,
         "project_id": project,
         "canvas_id": canvas,
-        **({"project_name": data["project_name"]} if "project_name" in data else {}),
+        **(
+            {"project_name": data["project_name"]}
+            if external_unbound_agent_key and "project_name" in data else {}
+        ),
         "confirmation_id": data["confirmation_id"],
         "kinds": data["kinds"],
         "targets": data["targets"],

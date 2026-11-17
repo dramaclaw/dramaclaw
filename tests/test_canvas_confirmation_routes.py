@@ -282,8 +282,9 @@ def test_unknown_direct_command_retains_core_422(setup):
 
 def test_create_confirmation_and_request_errors(setup):
     created = create(setup)
-    assert created == {"confirmation_id": created["confirmation_id"], "kinds": ["delete_nodes"],
-                       "targets": TARGETS, "expires_at": 2800, "browser_open": False}
+    assert created == {"project_name": "demo", "confirmation_id": created["confirmation_id"],
+                       "kinds": ["delete_nodes"], "targets": TARGETS, "expires_at": 2800,
+                       "browser_open": False}
     for commands, status, code in [
         ([{"type": "create_node", "node_type": "textNode", "data": {}}],
          422, "canvas_confirmation_not_needed"),
@@ -1366,7 +1367,9 @@ SPLIT = [
     {"type": "create_edge", "source": "n3", "target": "c1", "link_type": "prompt_for"},
     {"type": "run_workflow", "node_ids": ["c1"], "scope": "selection"},
 ]
-BASE_RESPONSE_KEYS = {"confirmation_id", "kinds", "targets", "expires_at", "browser_open"}
+BASE_RESPONSE_KEYS = {
+    "project_name", "confirmation_id", "kinds", "targets", "expires_at", "browser_open",
+}
 
 
 def external_create(setup, *, commands=SPLIT, canvas="default"):

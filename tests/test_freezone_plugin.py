@@ -12651,3 +12651,27 @@ def test_confirmation_project_name_preserved(external_unbound_write_env, monkeyp
     assert structured["project_name"] == "Demo Project"
     assert "project_name" in plugin._output_schema("freezone_run_node_action")["properties"]
     Draft202012Validator(plugin._output_schema("freezone_run_node_action")).validate(structured)
+
+
+@pytest.mark.parametrize("mode", ["token", "internal", "bound"])
+@pytest.mark.parametrize("card", [False, True])
+def test_confirmation_project_name_external_only(
+    external_unbound_write_env, monkeypatch, mode, card,
+):
+    plugin = _load_plugin_module()
+    if mode == "token":
+        monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN", "test-token-placeholder")
+    elif mode == "internal":
+        monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP")
+    else:
+        monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-1")
+    monkeypatch.setattr(plugin, "_canvas_agent_identity", lambda: ("main", "turn-1" if card else None))
+    monkeypatch.setattr(plugin, "_request", lambda *a, **kw: {"ok": True, "data": {
+        "project_name": "Demo Project", "confirmation_id": "confirmation-1",
+        "browser_open": card, "kinds": ["paid_generation"], "targets": [], "expires_at": 12345,
+    }})
+    result = plugin._create_canvas_confirmation("project-1", "canvas-1", [])
+    assert "project_name" not in result
+    assert "project_name" not in result["agent_instruction"]
+    structured = plugin._structured_tool_result(result, tool_name="freezone_run_node_action")
+    assert "project_name" not in structured
