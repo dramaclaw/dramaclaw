@@ -4411,6 +4411,10 @@ async def stream_assistant_reply(
                 project_context=project_context,
                 image_paths=image_paths,
             )
+        # NOTE: only the Codex backend is in use today. The Hermes and Claude branches
+        # below are kept but not exercised or verified: they bypass the Codex chat
+        # projection (codex_projection / codex_live) and send tool receipts untrimmed.
+        # Re-verify them end to end, then drop this note, before turning either back on.
         if backend == "hermes":
             return await _stream_assistant_reply_hermes(
                 username,
@@ -4652,6 +4656,8 @@ async def _canvas_background_result_context_for_scope(
     return _canvas_background_result_context(notifications)
 
 
+# NOTE: not in use today (Codex is the only active chat backend); see the note at
+# the backend dispatch in stream_assistant_reply. Remove this note when re-enabling.
 async def _stream_assistant_reply_hermes(
     username: str,
     project: str,
@@ -5327,6 +5333,8 @@ async def _stream_assistant_reply_hermes(
                 await persist_partial_reply()
 
 
+# NOTE: not in use today (Codex is the only active chat backend); see the note at
+# the backend dispatch in stream_assistant_reply. Remove this note when re-enabling.
 async def _stream_assistant_reply_claude(
     username: str,
     project: str,
