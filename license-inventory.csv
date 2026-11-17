@@ -111,6 +111,7 @@ agent-kit/manifest.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggre
 agent-kit/scripts/doctor.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 agent-kit/scripts/install_skill.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 agent-kit/scripts/launch_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+agent-kit/scripts/remote_mcp_relay.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 agent-kit/scripts/render_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 agent-kit/scripts/sync_skill.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 agent-kit/skills/dramaclaw-workflows/SKILL.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4127,6 +4128,7 @@ tests/fixtures/interactive_story/cases/visit-count.json,Elastic-2.0,2026 SuperTa
 tests/fixtures/interactive_story/cases/visit-via-other-segment.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/fixtures/previz_blockout/golden.blockout.dsl,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/fixtures/previz_blockout/golden.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/fixtures/remote_mcp_fake_server.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/ports/test_access_local.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/ports/test_auth_local.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/ports/test_authz.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4559,6 +4561,7 @@ tests/test_ref_image_hash.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml 
 tests/test_reference_media_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_reference_media_validation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_release_feed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_remote_mcp_relay.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_render_auto_repair_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_render_identity_guard.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_render_multiview_reference_prompt.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

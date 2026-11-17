@@ -155,3 +155,24 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 ```
 
 发布整个 `agent-kit/` 目录即可。许可证见 `LICENSES/Elastic-2.0.txt`，第三方声明见 `NOTICE`。
+
+## 远程 MCP 中继（仅限本地验证）
+
+在仓库根目录使用已安装的 Python 环境启动：
+
+```bash
+.venv/bin/python agent-kit/scripts/remote_mcp_relay.py --ce-dir "$PWD"
+```
+
+可通过 `--api-url`、`--username`、`--port` 分别指定 API 地址、用户名和监听端口。
+
+使用 Streamable HTTP MCP 客户端连接 `http://127.0.0.1:8790/mcp/tools` 或
+`http://127.0.0.1:8790/mcp/workflows`，并携带请求头
+`Authorization: Bearer <agent key>`。这是唯一的凭据传入渠道；中继通过
+`DRAMACLAW_AGENT_KEY` 将 Key 传给子进程，忽略中继自身环境中的 Agent Key/Token 变量。
+
+每个会话启动一个子进程。`--idle-timeout` 默认为 600 秒，空闲时间从最后一次 POST
+结束时开始计算；保持 GET 流打开不会让会话持续存活。DELETE 请求和中继关闭也会结束
+会话并回收子进程。
+
+中继默认只监听回环地址，仅用于本地验证，不用于生产环境。
