@@ -442,3 +442,136 @@ def test_large_workflow_draft_receipt_remains_actionable_in_live_and_history():
     assert projected == {key: receipt[key] for key in ("ok", "status", "draft_id", "revision")}
     assert "preview" not in projected
     assert len(json.dumps(projected).encode("utf-8")) < 2048
+
+
+def _compact_bytes(value) -> int:
+    return len(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+
+
+def _live_and_history(item: dict) -> tuple[dict, dict]:
+    live = project_item(item, turn_id="turn-1", started_at_ms=12, completed=True)
+    history = project_turn(
+        CodexTurn.model_validate({"id": "turn-1", "status": "completed"}),
+        [
+            CodexItemRecord.model_validate(
+                {"turnId": "turn-1", "startedAtMs": 12, "item": item}
+            )
+        ],
+    )
+    return live, history
+
+
+def test_large_workflow_plan_arguments_keep_operation_id_in_live_and_history():
+    # Same shape as the valid six-image plan built by test_workflow_plan._dynamic_plan.
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "workflow_type": "dynamic.ecommerce-product",
+        "skill": {"id": "ecommerce-product", "version": 6},
+        "summary": "6 张运动鞋电商图",
+        "nodes": [
+            {
+                "id": "brief",
+                "node_type": "textAnnotationNode",
+                "stage": "input",
+                "data": {"displayName": "用户需求", "content": "运动鞋电商图"},
+            }
+        ]
+        + [
+            {
+                "id": f"product_image_{index}",
+                "node_type": "imageGenNode",
+                "stage": "image",
+                "data": {
+                    "displayName": f"商品图 {index}",
+                    "referenceImageUrl": "/static/product.png",
+                    "workflowCatalog": {
+                        "skillId": "ecommerce-product",
+                        "recipeId": "ecommerce-ad-image",
+                        "recipeVersion": "5",
+                    },
+                },
+            }
+            for index in range(1, 7)
+        ],
+        "edges": [
+            {
+                "source": "brief",
+                "target": f"product_image_{index}",
+                "link_type": "prompt_for",
+            }
+            for index in range(1, 7)
+        ],
+        "layout": {"direction": "left_to_right", "groups": []},
+    }
+    arguments = {"operation_id": "operation-a", "plan": plan, "run_after_create": False}
+    assert _compact_bytes(arguments) > 2048
+    item = McpToolCallThreadItem(
+        id="plan-call",
+        type="mcpToolCall",
+        server="dramaclaw",
+        tool="freezone_prepare_workflow_plan_draft",
+        arguments=arguments,
+        status="completed",
+        result=McpToolCallResult(
+            content=[],
+            structured_content={
+                "ok": True,
+                "status": "workflow_draft_ready",
+                "draft_id": "draft-a",
+                "revision": 1,
+            },
+        ),
+    ).model_dump(mode="json", by_alias=True)
+
+    live, history = _live_and_history(item)
+
+    assert history["parts"] == [live]
+    # The browser matches a delivered draft to earlier failed rows by input.operation_id.
+    assert live["event"]["raw"]["input"] == {
+        "operation_id": "operation-a",
+        "run_after_create": False,
+    }
+
+
+def test_oversized_tool_preview_stays_bounded_and_redacted():
+    arguments = {
+        "operation_id": "operation-a",
+        "source_path": "/Users/someone/projects/demo/brief.txt",
+        "notes": "n" * 600,
+        "plan": {"nodes": ["node"] * 600},
+    }
+    receipt = {
+        "ok": False,
+        "status": "s" * 600,
+        "code": "c" * 600,
+        "draft_id": "d" * 600,
+        "error": "e" * 600,
+        "message": "m" * 600,
+        "user_message": "Saved to /Users/someone/projects/demo/out.png " + "u" * 600,
+        "canvas_id": "canvas-a",
+        "details": [{"path": "plan.nodes"}] * 200,
+    }
+    item = McpToolCallThreadItem(
+        id="echo-call",
+        type="mcpToolCall",
+        server="fixture",
+        tool="echo_text",
+        arguments=arguments,
+        status="completed",
+        result=McpToolCallResult(content=[], structured_content=receipt),
+    ).model_dump(mode="json", by_alias=True)
+
+    live, history = _live_and_history(item)
+
+    assert history["parts"] == [live]
+    raw = live["event"]["raw"]
+    assert raw["input"] == {"operation_id": "operation-a", "source_path": "[本地路径]"}
+    result = raw["result_json"]
+    assert result["ok"] is False
+    assert result["canvas_id"] == "canvas-a"
+    assert "details" not in result
+    for preview in (raw["input"], result):
+        assert _compact_bytes(preview) <= 2048
+        assert "/Users/" not in json.dumps(preview, ensure_ascii=False)

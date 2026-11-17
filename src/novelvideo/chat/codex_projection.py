@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 
 REASONING_TEXT_MAX_BYTES = 32 * 1024
 TOOL_PREVIEW_MAX_BYTES = 2 * 1024
+TOOL_PREVIEW_TEXT_MAX_BYTES = 512
+# Statuses and identifiers browser cards act on, then the messages shown beside them.
+TOOL_RESULT_PRIORITY_KEYS = (
+    "ok",
+    "status",
+    "code",
+    "draft_id",
+    "revision",
+    "error",
+    "user_message",
+    "message",
+)
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -37,10 +49,46 @@ def _compact_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _scalar_preview(
+    value: dict[str, Any], priority: Sequence[str] = ()
+) -> dict[str, Any]:
+    """Keep the top-level scalars of an oversized object that fit the preview bound.
+
+    Browser readers look up identifiers and statuses at the top level, so nested
+    objects and lists are dropped, priority keys go first (their text cut to 512
+    bytes), and other whole scalars follow, smallest first.
+    """
+    candidates = []
+    for index, (key, entry) in enumerate(value.items()):
+        if entry is not None and not isinstance(entry, (str, int, float, bool)):
+            continue
+        prioritized = key in priority
+        rank = priority.index(key) if prioritized else len(priority)
+        if isinstance(entry, str):
+            entry = _redact_local_filesystem_paths(entry)
+            if prioritized:
+                entry = _truncate(entry, TOOL_PREVIEW_TEXT_MAX_BYTES)
+            elif len(entry.encode("utf-8")) > TOOL_PREVIEW_TEXT_MAX_BYTES:
+                continue
+        key = _redact_local_filesystem_paths(key)
+        # One member of a compact object, plus its separating comma.
+        size = len(_compact_json({key: entry}).encode("utf-8")) - 1
+        candidates.append(((rank, 0 if prioritized else size), index, key, entry, size))
+    kept = {}
+    used = 1
+    for _order, index, key, entry, size in sorted(candidates, key=lambda c: c[:2]):
+        if used + size <= TOOL_PREVIEW_MAX_BYTES:
+            kept[index] = (key, entry)
+            used += size
+    return dict(kept[index] for index in sorted(kept))
+
+
 def _tool_input(arguments: Any) -> Any:
     encoded = _compact_json(arguments)
     if len(encoded.encode("utf-8")) <= TOOL_PREVIEW_MAX_BYTES:
         return _redact_json(arguments)
+    if isinstance(arguments, dict):
+        return _scalar_preview(arguments)
     return _truncate(_redact_local_filesystem_paths(encoded), TOOL_PREVIEW_MAX_BYTES)
 
 
@@ -49,14 +97,7 @@ def _tool_result(structured: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     if len(_compact_json(structured).encode("utf-8")) <= TOOL_PREVIEW_MAX_BYTES:
         return _redact_json(structured)
-    return {
-        key: _truncate(_redact_local_filesystem_paths(value), 512)
-        if isinstance(value, str) else value
-        for key, value in structured.items()
-        if key in {"ok", "status", "code", "error", "message", "user_message",
-                   "draft_id", "revision"}
-        and (value is None or isinstance(value, (str, int, float, bool)))
-    }
+    return _scalar_preview(structured, TOOL_RESULT_PRIORITY_KEYS)
 
 
 def _tool_error(item: dict[str, Any], structured: dict[str, Any] | None) -> str:
