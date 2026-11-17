@@ -53,7 +53,8 @@ def _tool_result(structured: dict[str, Any] | None) -> dict[str, Any] | None:
         key: _truncate(_redact_local_filesystem_paths(value), 512)
         if isinstance(value, str) else value
         for key, value in structured.items()
-        if key in {"ok", "status", "code", "error", "message", "user_message"}
+        if key in {"ok", "status", "code", "error", "message", "user_message",
+                   "draft_id", "revision"}
         and (value is None or isinstance(value, (str, int, float, bool)))
     }
 

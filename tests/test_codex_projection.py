@@ -416,3 +416,29 @@ def test_turn_sorts_missing_times_last_and_preserves_ties():
         ],
         "ui_events": [],
     }
+
+
+def test_large_workflow_draft_receipt_remains_actionable_in_live_and_history():
+    receipt = {
+        "ok": True,
+        "status": "workflow_draft_ready",
+        "draft_id": "workflow_draft_ready_for_review",
+        "revision": 3,
+        "preview": {"nodes": [{"name": "large planning preview" * 200}]},
+    }
+    item = McpToolCallThreadItem(
+        id="draft-call", type="mcpToolCall", server="dramaclaw",
+        tool="freezone_prepare_workflow_draft", arguments={}, status="completed",
+        result=McpToolCallResult(content=[], structured_content=receipt),
+    ).model_dump(mode="json", by_alias=True)
+    live = project_item(item, turn_id="turn-1", started_at_ms=12, completed=True)
+    turn = CodexTurn.model_validate({"id": "turn-1", "status": "completed"})
+    history = project_turn(turn, [CodexItemRecord.model_validate({
+        "turnId": "turn-1", "startedAtMs": 12, "item": item,
+    })])
+
+    assert history["parts"] == [live]
+    projected = live["event"]["raw"]["result_json"]
+    assert projected == {key: receipt[key] for key in ("ok", "status", "draft_id", "revision")}
+    assert "preview" not in projected
+    assert len(json.dumps(projected).encode("utf-8")) < 2048
