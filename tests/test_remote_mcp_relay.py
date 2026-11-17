@@ -83,8 +83,10 @@ async def wait_reaped(pid, timeout=10):
 
 
 class Exchange:
-    def __init__(self, mode="ok"):
+    def __init__(self, mode="ok", projects=None):
         self.requests = []
+        self.project_requests = []
+        projects = [] if projects is None else projects
         exchange = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -112,6 +114,29 @@ class Exchange:
                 self.end_headers()
                 self.wfile.write(encoded)
 
+            def do_GET(self):
+                matches = self.headers.get("Authorization") == f"Bearer {FAKE_TOKEN}"
+                exchange.project_requests.append({
+                    "path": self.path, "authorization_matches": matches,
+                    "accept": self.headers.get("Accept"),
+                })
+                if self.path != "/api/v1/projects":
+                    status, payload = 404, {"ok": False}
+                elif not matches:
+                    status, payload = 401, {"ok": False}
+                elif isinstance(projects, int):
+                    status, payload = projects, {"ok": False}
+                else:
+                    status, payload = 200, {
+                        "ok": True, "data": [{"id": project_id} for project_id in projects],
+                    }
+                encoded = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
             def log_message(self, *args):
                 pass
 
@@ -129,7 +154,7 @@ class Exchange:
 class Relay:
     def __init__(
         self, directory, *, idle=20, real=False, ignore_term=False,
-        exchange_mode="ok", api_url=None, launch_script=None,
+        exchange_mode="ok", projects=None, api_url=None, launch_script=None,
         max_children=None, max_children_per_key=None, disconnect_grace=None, extra_args=(),
     ):
         self.directory = directory
@@ -138,7 +163,7 @@ class Relay:
             self.ce_dir.mkdir()
         self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}"
-        self.exchange = Exchange(exchange_mode)
+        self.exchange = Exchange(exchange_mode, projects=projects)
         self.api_url = api_url or f"http://127.0.0.1:{self.exchange.port}"
         self.pid_log = directory / "children.txt"
         self.bodies = []
@@ -1054,3 +1079,119 @@ def test_max_children_zero_env_refused_at_startup(relay_factory):
     assert "usage:" in stderr
     assert "error:" in stderr
     assert "max-children" in stderr or "REMOTE_MCP_MAX_CHILDREN" in stderr
+
+
+@pytest.mark.parametrize("mode", ["tools", "workflows"])
+@pytest.mark.parametrize("suffix", ["", "/"])
+def test_home_path_binds_single_visible_project(relay_factory, mode, suffix):
+    relay = relay_factory(projects=["solo-project"])
+
+    async def scenario():
+        async with relay.session(path=f"/mcp/{mode}{suffix}") as (session, sid, _):
+            identity = await whoami(session)
+            assert identity["mode"] == mode
+            assert identity["project_id"] == "solo-project"
+            assert identity["canvas_id"] is None
+            assert [request["body"] for request in relay.exchange.requests] == [
+                {"scope": {"kind": "home"}, "ttl_seconds": 60},
+            ]
+            assert await whoami(session) == identity
+            for path_mode in sorted({mode, "tools"}):
+                response = await relay.request(
+                    "POST", path=f"/mcp/{path_mode}/projects/solo-project",
+                    sid=sid, json=LIST_TOOLS,
+                )
+                assert response.status_code == 404
+            assert await whoami(session) == identity
+            assert relay.exchange.project_requests == [{
+                "path": "/api/v1/projects", "authorization_matches": True,
+                "accept": "application/json",
+            }]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        relay.close()
+        logs = "\n".join(
+            (relay.directory / name).read_text() for name in ("stdout.log", "stderr.log")
+        )
+        assert KEY not in logs
+        assert FAKE_TOKEN not in logs
+
+
+def test_home_path_with_several_projects_stays_home(relay_factory):
+    relay = relay_factory(projects=["p1", "p2"])
+
+    async def scenario():
+        async with relay.session() as (session, _, _):
+            identity = await whoami(session)
+            assert identity["project_id"] is None
+            assert identity["canvas_id"] is None
+            assert await whoami(session) == identity
+
+    asyncio.run(scenario())
+    relay.close()
+    logs = "\n".join(
+        (relay.directory / name).read_text() for name in ("stdout.log", "stderr.log")
+    )
+    assert logs.count("Home path kept home scope:") == 1
+    assert logs.count("Home path kept home scope: several visible projects\n") == 1
+    assert relay.exchange.project_requests == [{
+        "path": "/api/v1/projects", "authorization_matches": True,
+        "accept": "application/json",
+    }]
+
+
+@pytest.mark.parametrize("projects,warning", [
+    pytest.param(500, "Home path kept home scope: project listing unavailable", id="http-500"),
+    pytest.param([], "Home path kept home scope: no visible project", id="empty"),
+])
+def test_home_path_projects_error_stays_home_and_serves(relay_factory, projects, warning):
+    relay = relay_factory(projects=projects)
+
+    async def scenario():
+        async with relay.session() as (session, _, _):
+            identity = await whoami(session)
+            assert identity["project_id"] is None
+            assert identity["canvas_id"] is None
+            echoed = await session.call_tool("echo", {"text": "still serving home"})
+            assert echoed.isError is False
+            assert echoed.content[0].text == "still serving home"
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        relay.close()
+        logs = "\n".join(
+            (relay.directory / name).read_text() for name in ("stdout.log", "stderr.log")
+        )
+        assert KEY not in logs
+        assert FAKE_TOKEN not in logs
+    assert logs.count("Home path kept home scope:") == 1
+    assert logs.count(warning + "\n") == 1
+    assert relay.exchange.project_requests == [{
+        "path": "/api/v1/projects", "authorization_matches": True,
+        "accept": "application/json",
+    }]
+
+
+@pytest.mark.parametrize("suffix,canvas_id", [
+    ("", None), ("/canvases/explicit-canvas", "explicit-canvas"),
+])
+def test_explicit_project_path_is_never_overridden(relay_factory, suffix, canvas_id):
+    relay = relay_factory(projects=["solo-project"])
+
+    async def scenario():
+        async with relay.session(
+            path=f"/mcp/tools/projects/explicit-project{suffix}",
+        ) as (session, _, _):
+            identity = await whoami(session)
+            assert identity["project_id"] == "explicit-project"
+            assert identity["canvas_id"] == canvas_id
+            assert [request["body"] for request in relay.exchange.requests] == [
+                {"scope": {"kind": "project", "id": "explicit-project"}, "ttl_seconds": 60},
+            ]
+
+    asyncio.run(scenario())
+    relay.close()
+    assert relay.exchange.project_requests == []

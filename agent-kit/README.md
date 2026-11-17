@@ -178,13 +178,25 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 
 路径支持以下形式，均可带末尾斜杠：
 
-- `/mcp/{tools|workflows}`：home scope。
+- `/mcp/{tools|workflows}`：自动绑定 Key 唯一可见的项目，否则保留 home scope。
 - `/mcp/{tools|workflows}/projects/<project_id>`：项目 scope。
 - `/mcp/{tools|workflows}/projects/<project_id>/canvases/<canvas_id>`：指定项目和画布。
 
 ID 仅允许 `[A-Za-z0-9._-]`，长度为 1–128 个字符。路径包含项目时，Key 校验使用项目 scope。
 要获得与 Codex 宿主配置等价的工具集（Freezone 画布工具），需使用带画布的项目路径；
-home 路径运行在 home scope。子进程的项目和画布仅取自路径，不继承中继环境中的值。
+子进程的项目和画布不继承中继环境中的值。
+
+home 路径先以 home scope 校验 Key，再用交换得到的 Token 请求 `GET /api/v1/projects`。
+恰好有一个可见项目且 ID 有效时，子进程绑定该项目 scope，画布保持未设置。
+没有可见项目、存在多个项目或列表不可用（包括无效 ID）时，保留 home scope，并记录一行
+`Home path kept home scope: <reason>`；原因分别为 `no visible project`、
+`several visible projects` 或 `project listing unavailable`。
+Token 仅在内存中用于此次查询，查询结束即丢弃，不写入 Session 或日志。
+会话后续请求仍使用原 home URL；携带该会话 ID 访问项目路径会返回 404。
+显式项目或画布路径不查询项目列表，始终使用路径指定的 scope。
+
+可见多个项目的 Key 在静态 home URL 上只能获得 home-scope 工具；需要项目工具时，
+请使用项目路径，或改用仅能访问一个项目的 Key。
 
 每个会话启动一个子进程。以下参数默认读取对应环境变量，显式 CLI 参数优先：
 

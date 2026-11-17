@@ -36,6 +36,7 @@ import uvicorn
 
 logger = logging.getLogger("remote_mcp_relay")
 MAX_INITIAL_BODY_SIZE = 4 * 1024 * 1024
+ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
 
 async def validate_initial_request(transport, request, send):
@@ -93,16 +94,46 @@ async def check_key(api_url, key, project_id):
                 },
             )
         if response.status_code in (401, 403):
-            return 401
+            return 401, None
         if response.is_success:
             body = response.json()
             if (isinstance(body, dict) and body.get("ok") is True
                     and isinstance(body.get("data"), dict)
                     and isinstance(body["data"].get("token"), str) and body["data"]["token"]):
-                return 200
+                return 200, body["data"]["token"] if project_id is None else None
     except (httpx.HTTPError, ValueError):
         pass
-    return 503
+    return 503, None
+
+
+async def resolve_home_project(api_url, token):
+    unavailable = (None, "project listing unavailable")
+    try:
+        async with httpx.AsyncClient(
+            trust_env=False, timeout=10, follow_redirects=False,
+        ) as client:
+            response = await client.get(
+                api_url.rstrip("/") + "/api/v1/projects",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+        if not response.is_success:
+            return unavailable
+        body = response.json()
+        if (not isinstance(body, dict) or body.get("ok") is not True
+                or not isinstance(body.get("data"), list)):
+            return unavailable
+        projects = body["data"]
+        if not projects:
+            return None, "no visible project"
+        if len(projects) > 1:
+            return None, "several visible projects"
+        project = projects[0]
+        if (not isinstance(project, dict) or not isinstance(project.get("id"), str)
+                or ID_PATTERN.fullmatch(project["id"]) is None):
+            return unavailable
+        return project["id"], None
+    except (httpx.HTTPError, ValueError):
+        return unavailable
 
 
 @dataclass
@@ -260,7 +291,7 @@ class Relay:
         project_id = request.path_params.get("project_id")
         canvas_id = request.path_params.get("canvas_id")
         if mode not in ("tools", "workflows") or any(
-            value is not None and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value) is None
+            value is not None and ID_PATTERN.fullmatch(value) is None
             for value in (project_id, canvas_id)
         ):
             await JSONResponse({"error": "Not found"}, 404)(scope, receive, send)
@@ -299,11 +330,21 @@ class Relay:
 
             receive = replay_receive
             try:
-                status = await check_key(self.args.api_url, key, project_id)
+                status, token = await check_key(self.args.api_url, key, project_id)
                 if status != 200:
                     error = "Agent key rejected" if status == 401 else "Agent key check unavailable"
                     await JSONResponse({"error": error}, status)(scope, receive, send)
                     return
+                child_project_id = project_id
+                try:
+                    if project_id is None:
+                        child_project_id, reason = await resolve_home_project(
+                            self.args.api_url, token,
+                        )
+                finally:
+                    del token
+                if project_id is None and child_project_id is None:
+                    logger.warning("Home path kept home scope: %s", reason)
                 sid = uuid4().hex
                 transport.mcp_session_id = sid
                 session = Session(mode, project_id, canvas_id, key_hash, transport)
@@ -317,7 +358,7 @@ class Relay:
             try:
                 ready = await self.tasks.start(
                     self.run_session, sid, session,
-                    self.child_parameters(mode, key, project_id, canvas_id),
+                    self.child_parameters(mode, key, child_project_id, canvas_id),
                 )
             except BaseException:
                 session.stop.set()
