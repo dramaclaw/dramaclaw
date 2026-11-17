@@ -506,10 +506,14 @@ export type FreezoneVideoTargetFps = "auto" | number;
 export type FreezoneVideoSlowdown = "auto" | "2x" | "3x" | "4x" | "5x";
 export type FreezoneVideoScene = "realistic" | "anime";
 
-export type VideoEnhancementModel = "standard" | "topaz";
+export type VideoEnhancementModel = "standard" | "topaz" | "local_gpu";
 
 export interface FreezoneVideoProbe {
   enhancement_models?: VideoEnhancementModel[];
+  enhancement_bindings?: Partial<Record<VideoEnhancementModel, {
+    upscale_catalog_id: string;
+    frame_rate_catalog_id: string | null;
+  }>>;
   width: number;
   height: number;
   fps: number;
@@ -520,6 +524,9 @@ export interface FreezoneVideoProbe {
 
 export interface FreezoneVideoUpscalePayload extends FreezoneNodeContext {
   enhancementModel?: VideoEnhancementModel;
+  planFingerprint?: string;
+  upscaleCatalogId?: string;
+  frameRateCatalogId?: string;
   /** Static URL of the source video to upscale. */
   sourceUrl: string;
   resolution?: FreezoneVideoUpscaleResolution;
@@ -540,7 +547,10 @@ export async function submitFreezoneVideoUpscale(
       method: "POST",
       json: {
         source_url: payload.sourceUrl,
+        ...(payload.planFingerprint ? {plan_fingerprint:payload.planFingerprint}:{}),
         enhancement_model: payload.enhancementModel ?? "standard",
+        ...(payload.upscaleCatalogId ? { upscale_catalog_id: payload.upscaleCatalogId } : {}),
+        ...(payload.frameRateCatalogId ? { frame_rate_catalog_id: payload.frameRateCatalogId } : {}),
         resolution: payload.resolution ?? "1080p",
         target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
         slowdown: payload.slowdown ?? "auto",
@@ -556,14 +566,17 @@ export async function submitFreezoneVideoUpscale(
 export async function quoteFreezoneVideoUpscale(
   project: string,
   payload: FreezoneVideoUpscalePayload,
-): Promise<{ cost: number; display: string; promotion?: { name?: string; discount_basis_points?: number; ends_at?: string | null } }> {
-  return await apiCall<{ cost: number; display: string; promotion?: { name?: string; discount_basis_points?: number; ends_at?: string | null } }>(
+): Promise<{ cost: number; display: string; plan_fingerprint?: string; promotion?: { name?: string; discount_basis_points?: number; ends_at?: string | null } }> {
+  return await apiCall<{ cost: number; display: string; plan_fingerprint?: string; promotion?: { name?: string; discount_basis_points?: number; ends_at?: string | null } }>(
     `projects/${encodeURIComponent(project)}/freezone/video/upscale/quote`,
     {
       method: "POST",
       json: {
         source_url: payload.sourceUrl,
+        ...(payload.planFingerprint ? {plan_fingerprint:payload.planFingerprint}:{}),
         enhancement_model: payload.enhancementModel ?? "standard",
+        ...(payload.upscaleCatalogId ? { upscale_catalog_id: payload.upscaleCatalogId } : {}),
+        ...(payload.frameRateCatalogId ? { frame_rate_catalog_id: payload.frameRateCatalogId } : {}),
         resolution: payload.resolution ?? "1080p",
         target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
         slowdown: payload.slowdown ?? "auto",

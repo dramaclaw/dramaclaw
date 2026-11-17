@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import jobs as freezone_jobs
 from novelvideo.freezone.jobs import _video_upscale_filter
+from novelvideo.generators import video_generator
 
 
 def test_video_upscale_filter_uses_lanczos_and_enhancement() -> None:
@@ -46,8 +47,11 @@ async def test_slow_video_stretches_audio_and_video_together(
     monkeypatch.setattr(freezone_jobs, "_probe_has_audio", fake_has_audio)
     monkeypatch.setattr(freezone_jobs, "_run_cmd", fake_run_cmd)
     await freezone_jobs._slow_video(
-        source, tmp_path / "slow.mp4", factor=factor,
-        project_dir=tmp_path, egress_context=None,
+        source,
+        tmp_path / "slow.mp4",
+        factor=factor,
+        project_dir=tmp_path,
+        egress_context=None,
     )
 
     assert captured[captured.index("-filter_complex") + 1] == (
@@ -71,17 +75,22 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
     calls: list[tuple[str, str, dict[str, object]]] = []
+    progress: list[float] = []
 
     async def fake_probe(_source_path: str, **_kwargs):
         return {"width": 854, "height": 480, "fps": source_fps, "duration": 10.0}
 
     async def fake_model(**kwargs):
+        kwargs["on_progress"](0.2)
         output = Path(kwargs["output_path"])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"model")
         calls.append((kwargs["mode"], kwargs["backend"], kwargs["processing_metadata"]))
+        kwargs["on_progress"](1.0)
 
-    async def fake_slow(source_path: Path, output_path: Path, *, factor: int, **_kwargs):
+    async def fake_slow(
+        source_path: Path, output_path: Path, *, factor: int, **_kwargs
+    ):
         assert source_path.exists()
         assert factor == int(slowdown[0])
         output_path.write_bytes(b"slow")
@@ -102,6 +111,7 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
         face_enhance=True,
         upscale_backend="newapi_video-super-resolution",
         frame_rate_backend="newapi_video-frame-rate",
+        on_progress=progress.append,
     )
 
     assert output.exists()
@@ -125,6 +135,233 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
     ]
     assert metadata["target_fps"] == (target_fps or source_fps)
     assert metadata["stages"] == 3
+    assert progress == pytest.approx([0.20, 0.60, 0.70, 0.75, 0.95])
+
+
+@pytest.mark.parametrize(
+    ("backend", "smart_interpolation", "width", "height", "fps", "duration", "limit"),
+    [
+        ("video-upscale-fast", True, 1344, 768, 24.0, 119.083, 120),
+        ("newapi_video-upscale-fast", False, 854, 480, 30.0, 119.1, 120),
+    ],
+)
+@pytest.mark.asyncio
+async def test_local_1080p60_uses_one_gateway_request_and_publishes_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+    smart_interpolation: bool,
+    width: int,
+    height: int,
+    fps: float,
+    duration: float,
+    limit: int,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+    calls = []
+    progress = []
+
+    async def probe(path, **_kwargs):
+        if Path(path) != source:
+            return {"width": 1920, "height": 1080, "fps": 60, "duration": duration}
+        return {"width": width, "height": height, "fps": fps, "duration": duration}
+
+    async def model(
+        mode: str,
+        *,
+        requester_user_id: str,
+        scheme: str | None = None,
+        catalog_id: str | None = None,
+    ):
+        assert requester_user_id == "member-1"
+        return {
+            "catalog_id": mode,
+            "backend": backend if mode == "video_upscale" else "video-frame-rate",
+            "model_params": {},
+            "request_schema": {},
+            "resolution_options": ["1080p"],
+        }
+
+    async def process(**kwargs):
+        calls.append(kwargs)
+        kwargs["on_progress"](0.55)
+        Path(kwargs["output_path"]).write_bytes(b"1080p60")
+        return SimpleNamespace(status=SimpleNamespace(value="done"))
+
+    def generator(*, backend: str, **_kwargs):
+        assert (
+            video_generator.parse_newapi_video_backend(backend) == "video-upscale-fast"
+        )
+        return SimpleNamespace(generate=process)
+
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
+    monkeypatch.setattr(
+        freezone_routes, "resolve_static_url_to_path", lambda *_: source
+    )
+    monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", model)
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(video_generator, "create_video_generator", generator)
+    body = freezone_routes.FreezoneVideoUpscaleRequest(
+        source_url="/static/source.mp4",
+        target_fps=60,
+        smart_interpolation=smart_interpolation,
+    )
+    for changes in (
+        {"target_fps": 59.94},
+        {"resolution": "4k"},
+        {"slowdown": "2x"},
+        {"face_enhance": True},
+    ):
+        with pytest.raises(HTTPException, match="3060 内测补帧") as rejected:
+            await freezone_routes._prepare_video_upscale(
+                body=body.model_copy(update=changes),
+                project_dir=tmp_path,
+                requester_user_id="member-1",
+            )
+        assert rejected.value.status_code == 400
+    _, _, models, billing = await freezone_routes._prepare_video_upscale(
+        body=body,
+        project_dir=tmp_path,
+        requester_user_id="member-1",
+    )
+    assert [stage["mode"] for stage in billing["pricing_stages"]] == [
+        "video_upscale",
+        "video_frame_rate",
+    ]
+    output, metadata = await freezone_jobs.run_freezone_video_upscale(
+        project_dir=tmp_path,
+        job_id="local-60",
+        source_path=str(source),
+        target_fps=60,
+        smart_interpolation=smart_interpolation,
+        on_progress=progress.append,
+        **models,
+    )
+    assert output.read_bytes() == b"1080p60"
+    assert metadata["target_fps"] == 60
+    assert len(calls) == 1
+    assert calls[0]["gen_mode"] == "video_upscale"
+    assert calls[0]["max_polls"] == 780
+    assert calls[0]["processing_metadata"]["target_fps"] == 60
+    assert calls[0]["processing_metadata"]["smart_interpolation"] is smart_interpolation
+    assert progress == pytest.approx([0.5675])
+    duration = limit + 0.01
+    with pytest.raises(HTTPException, match="最长 120 秒") as rejected:
+        await freezone_routes._prepare_video_upscale(
+            body=body,
+            project_dir=tmp_path,
+            requester_user_id="member-1",
+        )
+    assert rejected.value.status_code == 400
+
+
+@pytest.mark.parametrize("output", [(1920, 1080, 30), (1280, 720, 60)])
+@pytest.mark.asyncio
+async def test_local_1080p60_does_not_publish_mismatched_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    output: tuple[int, int, int],
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+
+    async def probe(path, **_kwargs):
+        width, height, fps = (1280, 720, 30) if Path(path) == source else output
+        return {"width": width, "height": height, "fps": fps, "duration": 1.0}
+
+    async def process(**kwargs):
+        kwargs["output_path"].write_bytes(b"gateway-result")
+
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", process)
+    with pytest.raises(RuntimeError, match="1920×1080 at 60 fps"):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path,
+            job_id="wrong-profile",
+            source_path=str(source),
+            upscale_backend="video-upscale-fast",
+            frame_rate_backend="video-upscale-fast",
+            target_fps=60,
+        )
+    assert not list(
+        freezone_jobs.outputs_dir(tmp_path, "freezone_video_upscale").iterdir()
+    )
+
+
+@pytest.mark.parametrize("backend", ["video-upscale-fast", "newapi_video-upscale-fast"])
+@pytest.mark.asyncio
+async def test_disabled_local_model_is_not_offered_or_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+
+    async def project(*_args, **_kwargs):
+        return (
+            SimpleNamespace(requester_user_id="member-1"),
+            "admin",
+            "project",
+            tmp_path,
+            str(tmp_path),
+        )
+
+    async def catalog(*_args, **_kwargs):
+        return [
+            {
+                "catalogId": "local",
+                "apiModel": backend,
+                "supportedModes": ["video_upscale"],
+                "resolutionOptions": ["1080p"],
+            },
+            {
+                "catalogId": "frame-rate",
+                "apiModel": "newapi_video-frame-rate",
+                "supportedModes": ["video_frame_rate"],
+                "resolutionOptions": ["1080p", "2k"],
+            },
+        ]
+
+    async def probe(*_args, **_kwargs):
+        return {"width": 1280, "height": 720, "fps": 30, "duration": 5}
+
+    monkeypatch.delenv("LOCAL_VIDEO_UPSCALE_ENABLED", raising=False)
+    monkeypatch.setattr(
+        freezone_routes, "resolve_static_url_to_path", lambda *_: source
+    )
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", project)
+    monkeypatch.setattr(freezone_routes, "_scoped_media_model_catalog", catalog)
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+
+    result = await freezone_routes.freezone_video_upscale_probe(
+        project="project",
+        source_url="/static/source.mp4",
+        user={"id": "member-1"},
+    )
+    assert result["data"]["upscale_resolutions"] == []
+    assert result["data"]["frame_rate_resolutions"] == ["1080p", "2k"]
+    with pytest.raises(HTTPException, match="当前没有可用的视频超分模型") as rejected:
+        await freezone_routes._prepare_video_upscale(
+            body=freezone_routes.FreezoneVideoUpscaleRequest(
+                source_url="/static/source.mp4",
+                target_fps=60,
+            ),
+            project_dir=tmp_path,
+            requester_user_id="member-1",
+        )
+    assert rejected.value.status_code == 409
+    with pytest.raises(RuntimeError, match="当前环境未启用本地 GPU 视频增强"):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path,
+            job_id="misrouted",
+            source_path=str(source),
+            upscale_backend=backend,
+            frame_rate_backend=backend,
+            target_fps=60,
+        )
 
 
 @pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
@@ -200,7 +437,13 @@ async def test_freezone_video_upscale_route_starts_task(
     async def fake_probe(_source_path: str, **_kwargs):
         return {"width": 1280, "height": 720, "fps": 24.0, "duration": 8.0}
 
-    async def fake_processing_model(mode: str, *, requester_user_id: str, scheme: str = "standard"):
+    async def fake_processing_model(
+        mode: str,
+        *,
+        requester_user_id: str,
+        scheme: str = "standard",
+        catalog_id: str | None = None,
+    ):
         del requester_user_id
         return {
             "catalog_id": f"catalog-{mode}",
@@ -288,14 +531,19 @@ async def test_freezone_video_upscale_route_starts_task(
     async def fake_quote(**kwargs):
         captured["quote_args"] = kwargs
         return SimpleNamespace(
-            total_cost=24, display="24", original_total_cost=None,
-            discount_amount=0, promotion=None,
+            total_cost=24,
+            display="24",
+            original_total_cost=None,
+            discount_amount=0,
+            promotion=None,
         )
 
     from novelvideo import ports
 
     monkeypatch.setattr(
-        ports, "get_credit_quote", lambda: SimpleNamespace(generation_credit_quote=fake_quote)
+        ports,
+        "get_credit_quote",
+        lambda: SimpleNamespace(generation_credit_quote=fake_quote),
     )
     quote_result = await freezone_routes.freezone_video_upscale_quote(
         project=project,
@@ -330,22 +578,27 @@ async def test_video_upscale_probe_returns_user_scoped_model_resolutions(
     async def fake_catalog(media_type: str, *, requester_user_id: str):
         assert (media_type, requester_user_id) == ("video", "member-1")
         return [
-            {"supportedModes": ["video_upscale"],
-             "resolutionOptions": ["1080p", "4k"]},
-            {"supportedModes": ["video_frame_rate"],
-             "resolutionOptions": ["1080p", "2k"]},
+            {"supportedModes": ["video_upscale"], "resolutionOptions": ["1080p", "4k"]},
+            {
+                "supportedModes": ["video_frame_rate"],
+                "resolutionOptions": ["1080p", "2k"],
+            },
         ]
 
     async def fake_probe(_source_path: str):
         return {"width": 1280, "height": 720, "fps": 24.0, "duration": 8.0}
 
     monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_project)
-    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *_: source)
+    monkeypatch.setattr(
+        freezone_routes, "resolve_static_url_to_path", lambda *_: source
+    )
     monkeypatch.setattr(freezone_routes, "_scoped_media_model_catalog", fake_catalog)
     monkeypatch.setattr(freezone_jobs, "probe_video_stream", fake_probe)
 
     result = await freezone_routes.freezone_video_upscale_probe(
-        project="project", source_url="/static/source.mp4", user={"id": "member-1"},
+        project="project",
+        source_url="/static/source.mp4",
+        user={"id": "member-1"},
     )
 
     assert result["data"]["upscale_resolutions"] == ["1080p", "4k"]
@@ -379,11 +632,22 @@ async def test_video_upscale_quote_rejects_unavailable_model_resolution_before_b
     async def fake_probe(_source_path: str):
         return {"width": 1280, "height": 720, "fps": 24.0, "duration": 8.0}
 
-    async def fake_model(mode: str, *, requester_user_id: str, scheme: str = "standard"):
+    async def fake_model(
+        mode: str,
+        *,
+        requester_user_id: str,
+        scheme: str = "standard",
+        catalog_id: str | None = None,
+    ):
         assert requester_user_id == "member-1"
         options = upscale_options if mode == "video_upscale" else frame_rate_options
-        return {"catalog_id": mode, "backend": mode, "model_params": {},
-                "request_schema": {}, "resolution_options": options}
+        return {
+            "catalog_id": mode,
+            "backend": mode,
+            "model_params": {},
+            "request_schema": {},
+            "resolution_options": options,
+        }
 
     async def unexpected_quote(**_kwargs):
         pytest.fail("unsupported resolution must be rejected before billing")
@@ -391,27 +655,47 @@ async def test_video_upscale_quote_rejects_unavailable_model_resolution_before_b
     from novelvideo import ports
 
     monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_project)
-    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *_: source)
+    monkeypatch.setattr(
+        freezone_routes, "resolve_static_url_to_path", lambda *_: source
+    )
     monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", fake_model)
     monkeypatch.setattr(freezone_jobs, "probe_video_stream", fake_probe)
     monkeypatch.setattr(
-        ports, "get_credit_quote",
+        ports,
+        "get_credit_quote",
         lambda: SimpleNamespace(generation_credit_quote=unexpected_quote),
     )
 
-    with pytest.raises(HTTPException, match=f"当前{expected_model}模型不支持 4k 分辨率"):
+    with pytest.raises(
+        HTTPException, match=f"当前{expected_model}模型不支持 4k 分辨率"
+    ):
         await freezone_routes.freezone_video_upscale_quote(
             project="project",
             body=freezone_routes.FreezoneVideoUpscaleRequest(
-                source_url="/static/source.mp4", resolution="4k", target_fps=target_fps,
+                source_url="/static/source.mp4",
+                resolution="4k",
+                target_fps=target_fps,
             ),
             user={"id": "member-1"},
         )
 
 
-@pytest.mark.parametrize("slowdown,target_fps", [("auto", None), ("auto", 16), ("auto", 60), ("auto", 90), ("auto", 120), ("2x", 60)])
+@pytest.mark.parametrize(
+    "slowdown,target_fps",
+    [
+        ("auto", None),
+        ("auto", 16),
+        ("auto", 60),
+        ("auto", 90),
+        ("auto", 120),
+        ("2x", 60),
+    ],
+)
 async def test_topaz_uses_native_interpolation_without_standard_or_local_slowdown(
-    tmp_path, monkeypatch, slowdown, target_fps,
+    tmp_path,
+    monkeypatch,
+    slowdown,
+    target_fps,
 ):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
@@ -431,8 +715,12 @@ async def test_topaz_uses_native_interpolation_without_standard_or_local_slowdow
     monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", model)
     monkeypatch.setattr(freezone_jobs, "_slow_video", slow)
     output, meta = await freezone_jobs.run_freezone_video_upscale(
-        project_dir=tmp_path, job_id="topaz", source_path=str(source),
-        resolution="1080p", target_fps=target_fps, slowdown=slowdown,
+        project_dir=tmp_path,
+        job_id="topaz",
+        source_path=str(source),
+        resolution="1080p",
+        target_fps=target_fps,
+        slowdown=slowdown,
         upscale_backend="newapi_topaz-video-upscale",
         frame_rate_backend="newapi_topaz-video-frame-rate",
     )
@@ -452,20 +740,178 @@ async def test_topaz_uses_native_interpolation_without_standard_or_local_slowdow
 
 def test_enhancement_catalog_keeps_families_separate():
     catalog = [
-        {"id": "topaz", "apiModel": "newapi_topaz-video-upscale", "supportedModes": ["video_upscale"]},
-        {"id": "original", "apiModel": "newapi_video-super-resolution", "supportedModes": ["video_upscale"]},
+        {
+            "id": "topaz",
+            "apiModel": "newapi_topaz-video-upscale",
+            "supportedModes": ["video_upscale"],
+        },
+        {
+            "id": "original",
+            "apiModel": "newapi_video-super-resolution",
+            "supportedModes": ["video_upscale"],
+        },
     ]
-    assert freezone_routes._video_processing_entry(catalog, "video_upscale", "topaz")["id"] == "topaz"
-    assert freezone_routes._video_processing_entry(catalog, "video_upscale", "standard")["id"] == "original"
+    assert (
+        freezone_routes._video_processing_entry(catalog, "video_upscale", "topaz")["id"]
+        == "topaz"
+    )
+    assert (
+        freezone_routes._video_processing_entry(catalog, "video_upscale", "standard")[
+            "id"
+        ]
+        == "original"
+    )
+
+
+@pytest.mark.parametrize("target_fps", [None, 60])
+@pytest.mark.asyncio
+async def test_third_plan_resolves_plain_models_and_executes_quoted_stages(
+    tmp_path, monkeypatch, target_fps
+):
+    import copy
+
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    catalog = [
+        {
+            "catalogId": "legacy-local",
+            "apiModel": "video-upscale-fast",
+            "supportedModes": ["video_upscale"],
+        },
+        {
+            "catalogId": "standard-up",
+            "apiModel": "newapi_standard-up",
+            "supportedModes": ["video_upscale"],
+        },
+        {
+            "catalogId": "standard-fps",
+            "apiModel": "newapi_standard-fps",
+            "supportedModes": ["video_frame_rate"],
+        },
+        {
+            "catalogId": "topaz-up",
+            "apiModel": "newapi_topaz-video-upscale",
+            "supportedModes": ["video_upscale"],
+        },
+        {
+            "catalogId": "local-up",
+            "apiModel": "newapi_local-video-upscale",
+            "supportedModes": ["video_upscale"],
+        },
+        {
+            "catalogId": "local-fps",
+            "apiModel": "newapi_local-video-frame-rate",
+            "supportedModes": ["video_frame_rate"],
+        },
+    ]
+    for row in catalog:
+        row["resolutionOptions"] = ["1080p"]
+    original = copy.deepcopy(catalog)
+
+    async def scoped(*args, **kwargs):
+        return catalog
+
+    async def resolve(kind, catalog_id, params, **kwargs):
+        return (
+            {"endpoint": "video/generations", "parameters": []},
+            {},
+            next(row for row in catalog if row["catalogId"] == catalog_id),
+        )
+
+    async def probe(path, **kwargs):
+        return {
+            "width": 1280 if str(path) == str(source) else 1920,
+            "height": 720 if str(path) == str(source) else 1080,
+            "fps": 60 if "03_frame_rate" in str(path) else 24,
+            "duration": 8,
+        }
+
+    monkeypatch.setattr(freezone_routes, "_scoped_media_model_catalog", scoped)
+    monkeypatch.setattr(freezone_routes, "_resolve_catalog_request", resolve)
+    monkeypatch.setattr(
+        freezone_routes, "resolve_static_url_to_path", lambda *args: source
+    )
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    assert (
+        freezone_routes._video_processing_entry(catalog, "video_upscale", "standard")[
+            "catalogId"
+        ]
+        == "standard-up"
+    )
+    assert (
+        freezone_routes._video_processing_entry(catalog, "video_upscale", "topaz")[
+            "catalogId"
+        ]
+        == "topaz-up"
+    )
+    body = freezone_routes.FreezoneVideoUpscaleRequest(
+        source_url="source",
+        enhancement_model="local_gpu",
+        target_fps=target_fps,
+    )
+    _, _, models, billing = await freezone_routes._prepare_video_upscale(
+        body=body,
+        project_dir=tmp_path,
+        requester_user_id="member",
+    )
+    assert billing["feature_key"] == "freezone.video_enhance"
+    assert [s["catalog_id"] for s in billing["pricing_stages"]] == [
+        "local-up",
+        *(["local-fps"] if target_fps else []),
+    ]
+    assert models["upscale_backend"] == "newapi_local-video-upscale"
+    assert models["frame_rate_backend"] == (
+        "newapi_local-video-frame-rate" if target_fps else None
+    )
+    calls = []
+
+    async def run_model(**kwargs):
+        calls.append(kwargs)
+        output = Path(kwargs["output_path"])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"output")
+
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", run_model)
+    await freezone_jobs.run_freezone_video_upscale(
+        project_dir=tmp_path,
+        job_id="local-group",
+        source_path=str(source),
+        target_fps=target_fps,
+        **models,
+    )
+    assert len(calls) == (2 if target_fps else 1)
+    assert calls[0]["backend"] == "newapi_local-video-upscale"
+    if target_fps:
+        assert calls[1]["backend"] == "newapi_local-video-frame-rate"
+        assert calls[1]["mode"] == "video_frame_rate"
+        assert calls[1]["job_id"] != calls[0]["job_id"]
+        assert calls[1]["source_path"] == calls[0]["output_path"]
+    assert calls[0]["local_gpu"] is True
+    assert calls[0]["processing_metadata"].get("target_fps") is None
+    assert catalog == original
+    # A caller cannot price against standard while executing the local group.
+    with pytest.raises(HTTPException) as mismatch:
+        await freezone_routes._prepare_video_upscale(
+            body=body.model_copy(update={"upscale_catalog_id": "standard-up"}),
+            project_dir=tmp_path,
+            requester_user_id="member",
+        )
+    assert mismatch.value.status_code == 409
 
 
 def test_topaz_quote_has_same_fps_and_duration_as_execution():
     request = freezone_routes.FreezoneVideoUpscaleRequest(
-        source_url="/source.mp4", enhancement_model="topaz", target_fps=60, slowdown="2x",
+        source_url="/source.mp4",
+        enhancement_model="topaz",
+        target_fps=60,
+        slowdown="2x",
     )
     billing = freezone_routes._video_enhance_billing(
-        request, {"duration": 10, "fps": 24},
-        {"catalog_id": "topaz-up"}, {"catalog_id": "topaz-fps"},
+        request,
+        {"duration": 10, "fps": 24},
+        {"catalog_id": "topaz-up"},
+        {"catalog_id": "topaz-fps"},
     )
     stages = billing["pricing_stages"]
     assert stages[0]["duration_seconds"] == 10
@@ -475,13 +921,19 @@ def test_topaz_quote_has_same_fps_and_duration_as_execution():
     assert all(s["enhancement_model"] == "topaz" for s in stages)
 
 
-@pytest.mark.parametrize("slowdown,target_fps,expected_modes", [
-    ("auto", 16, ["video_upscale"]), ("auto", 60, ["video_upscale"]),
-    ("auto", 90, ["video_upscale", "video_frame_rate"]),
-    ("auto", 120, ["video_upscale", "video_frame_rate"]),
-    ("2x", 60, ["video_upscale", "video_frame_rate"]),
-])
-async def test_prepare_topaz_selects_matching_catalog_stages(tmp_path, monkeypatch, slowdown, target_fps, expected_modes):
+@pytest.mark.parametrize(
+    "slowdown,target_fps,expected_modes",
+    [
+        ("auto", 16, ["video_upscale"]),
+        ("auto", 60, ["video_upscale"]),
+        ("auto", 90, ["video_upscale", "video_frame_rate"]),
+        ("auto", 120, ["video_upscale", "video_frame_rate"]),
+        ("2x", 60, ["video_upscale", "video_frame_rate"]),
+    ],
+)
+async def test_prepare_topaz_selects_matching_catalog_stages(
+    tmp_path, monkeypatch, slowdown, target_fps, expected_modes
+):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
     selected = []
@@ -489,21 +941,32 @@ async def test_prepare_topaz_selects_matching_catalog_stages(tmp_path, monkeypat
     async def probe(*args, **kwargs):
         return {"width": 1280, "height": 720, "fps": 24.0, "duration": 10.0}
 
-    async def resolve(mode, *, requester_user_id, scheme):
+    async def resolve(mode, *, requester_user_id, scheme, catalog_id=None):
         assert scheme == "topaz"
         assert requester_user_id == "user"
         selected.append(mode)
-        return {"catalog_id": mode, "backend": "topaz", "model_params": {},
-                "request_schema": {}, "resolution_options": ["1080p"]}
+        return {
+            "catalog_id": mode,
+            "backend": "topaz",
+            "model_params": {},
+            "request_schema": {},
+            "resolution_options": ["1080p"],
+        }
 
     monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
-    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *args: source)
+    monkeypatch.setattr(
+        freezone_routes, "resolve_static_url_to_path", lambda *args: source
+    )
     monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", resolve)
     _source, _meta, _models, billing = await freezone_routes._prepare_video_upscale(
         body=freezone_routes.FreezoneVideoUpscaleRequest(
-            source_url="source", enhancement_model="topaz", target_fps=target_fps, slowdown=slowdown,
+            source_url="source",
+            enhancement_model="topaz",
+            target_fps=target_fps,
+            slowdown=slowdown,
         ),
-        project_dir=tmp_path, requester_user_id="user",
+        project_dir=tmp_path,
+        requester_user_id="user",
     )
     assert selected == expected_modes
     stages = billing["pricing_stages"]
@@ -514,47 +977,256 @@ async def test_prepare_topaz_selects_matching_catalog_stages(tmp_path, monkeypat
         assert stages[1]["duration_seconds"] == (20 if slowdown == "2x" else 10)
 
 
-@pytest.mark.parametrize("target_fps,slowdown,source_fps", [
-    (12, "auto", 24), (12, "2x", 24), (15, "auto", 24),
-    (29.97, "auto", 24), (None, "2x", 12),
-])
+@pytest.mark.parametrize(
+    "target_fps,slowdown,source_fps",
+    [
+        (12, "auto", 24),
+        (12, "2x", 24),
+        (15, "auto", 24),
+        (29.97, "auto", 24),
+        (None, "2x", 12),
+    ],
+)
 async def test_topaz_invalid_target_fps_rejected_before_model_submission(
-    tmp_path, monkeypatch, target_fps, slowdown, source_fps,
+    tmp_path,
+    monkeypatch,
+    target_fps,
+    slowdown,
+    source_fps,
 ):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
+
     async def probe(*args, **kwargs):
         return {"width": 1280, "height": 720, "fps": source_fps, "duration": 10.0}
+
     async def unexpected_model(*args, **kwargs):
         pytest.fail("invalid FPS must fail before selecting or submitting paid models")
+
     monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
-    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *args: source)
-    monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", unexpected_model)
+    monkeypatch.setattr(
+        freezone_routes, "resolve_static_url_to_path", lambda *args: source
+    )
+    monkeypatch.setattr(
+        freezone_routes, "_resolve_video_processing_model", unexpected_model
+    )
     with pytest.raises(HTTPException, match="16–120") as exc:
         await freezone_routes._prepare_video_upscale(
             body=freezone_routes.FreezoneVideoUpscaleRequest(
-                source_url="source", enhancement_model="topaz",
-                target_fps=target_fps, slowdown=slowdown,
-            ), project_dir=tmp_path, requester_user_id="user",
+                source_url="source",
+                enhancement_model="topaz",
+                target_fps=target_fps,
+                slowdown=slowdown,
+            ),
+            project_dir=tmp_path,
+            requester_user_id="user",
         )
     assert exc.value.status_code == 400
 
 
-async def test_topaz_high_fps_requires_apollo_before_paid_upscale(tmp_path, monkeypatch):
-    source = tmp_path / 'source.mp4'
-    source.write_bytes(b'source')
+async def test_topaz_high_fps_requires_apollo_before_paid_upscale(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
 
     async def probe(*args, **kwargs):
-        return {'width': 1280, 'height': 720, 'fps': 24, 'duration': 10}
+        return {"width": 1280, "height": 720, "fps": 24, "duration": 10}
 
     async def unexpected_model(**kwargs):
-        pytest.fail('missing Apollo must fail before paying for upscale')
+        pytest.fail("missing Apollo must fail before paying for upscale")
 
-    monkeypatch.setattr(freezone_jobs, 'probe_video_stream', probe)
-    monkeypatch.setattr(freezone_jobs, '_run_video_processing_model', unexpected_model)
-    with pytest.raises(RuntimeError, match='frame-rate model is not configured'):
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", unexpected_model)
+    with pytest.raises(RuntimeError, match="frame-rate model is not configured"):
         await freezone_jobs.run_freezone_video_upscale(
-            project_dir=tmp_path, job_id='missing-apollo', source_path=str(source),
-            resolution='1080p', target_fps=120,
-            upscale_backend='newapi_topaz-video-upscale', frame_rate_backend=None,
+            project_dir=tmp_path,
+            job_id="missing-apollo",
+            source_path=str(source),
+            resolution="1080p",
+            target_fps=120,
+            upscale_backend="newapi_topaz-video-upscale",
+            frame_rate_backend=None,
         )
+
+
+@pytest.mark.parametrize("frame_backend", [None, "newapi_video-frame-rate"])
+@pytest.mark.asyncio
+async def test_local_video_rejects_old_external_frame_backend_before_egress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frame_backend: str | None
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.touch()
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
+
+    async def no_egress(*_args, **_kwargs):
+        pytest.fail("mixed-provider task must be rejected before probing or submitting")
+
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", no_egress)
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", no_egress)
+    with pytest.raises(RuntimeError, match="local frame-rate backend"):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path,
+            job_id="old-api-payload",
+            source_path=str(source),
+            upscale_backend="video-upscale-fast",
+            frame_rate_backend=frame_backend,
+            target_fps=60,
+        )
+
+
+@pytest.mark.asyncio
+async def test_two_stage_plan_cancellation_prevents_next_model(tmp_path, monkeypatch):
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    calls = []
+    checkpoints = 0
+
+    async def probe(path, **kwargs):
+        return {
+            "width": 1280 if Path(path) == source else 1920,
+            "height": 720 if Path(path) == source else 1080,
+            "fps": 30,
+            "duration": 10,
+        }
+
+    async def process(**kwargs):
+        calls.append(kwargs)
+        Path(kwargs["output_path"]).write_bytes(b"output")
+
+    async def checkpoint():
+        nonlocal checkpoints
+        checkpoints += 1
+        if checkpoints == 2:
+            raise TaskCancelled()
+
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", process)
+    with pytest.raises(TaskCancelled):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path,
+            job_id="cancel-between",
+            source_path=str(source),
+            enhancement_model="local_gpu",
+            enhancement_plan_version=2,
+            upscale_backend="newapi_local-video-upscale",
+            frame_rate_backend="newapi_local-video-frame-rate",
+            target_fps=60,
+            before_stage=checkpoint,
+        )
+    assert len(calls) == 1
+    assert calls[0]["mode"] == "video_upscale"
+    assert not (tmp_path / "freezone_video_upscale/cancel-between_stages").exists()
+
+
+@pytest.mark.asyncio
+async def test_two_stage_plan_rejects_incompatible_intermediate_before_second_charge(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    calls = []
+
+    async def probe(path, **kwargs):
+        return {"width": 1280, "height": 720, "fps": 30, "duration": 10}
+
+    async def process(**kwargs):
+        calls.append(kwargs)
+        Path(kwargs["output_path"]).write_bytes(b"invalid output")
+
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", process)
+    with pytest.raises(RuntimeError, match="补帧输入契约"):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path,
+            job_id="invalid-first",
+            source_path=str(source),
+            enhancement_model="local_gpu",
+            enhancement_plan_version=2,
+            upscale_backend="newapi_local-video-upscale",
+            frame_rate_backend="newapi_local-video-frame-rate",
+            target_fps=60,
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_submission_freezes_the_quoted_server_plan_and_rejects_drift(
+    tmp_path, monkeypatch
+):
+    import copy
+    from novelvideo import ports
+
+    models = {
+        "enhancement_model": "local_gpu",
+        "enhancement_plan_version": 2,
+        "upscale_backend": "newapi_local-video-upscale",
+        "upscale_model_params": {"quality": 1},
+    }
+    metadata = {"width": 1280, "height": 720, "fps": 30, "duration": 10}
+    billing = {
+        "feature_key": "freezone.video_enhance",
+        "pricing_stages": [
+            {"mode": "video_upscale", "catalog_id": "ordinary-directory"}
+        ],
+    }
+    calls = []
+
+    async def project(*args, **kwargs):
+        return (
+            SimpleNamespace(requester_user_id="member", project_id="project"),
+            "user",
+            "project",
+            tmp_path,
+            str(tmp_path),
+        )
+
+    async def prepare(**kwargs):
+        return tmp_path / "source.mp4", metadata, models, billing
+
+    async def quote(**kwargs):
+        return SimpleNamespace(
+            total_cost=10,
+            display="10",
+            original_total_cost=None,
+            discount_amount=0,
+            promotion=None,
+        )
+
+    async def enqueue(**kwargs):
+        calls.append(copy.deepcopy(kwargs["payload"]))
+        return {"ok": True}
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", project)
+    monkeypatch.setattr(freezone_routes, "_prepare_video_upscale", prepare)
+    monkeypatch.setattr(
+        freezone_routes, "_enqueue_or_start_freezone_media_job", enqueue
+    )
+    monkeypatch.setattr(
+        ports,
+        "get_credit_quote",
+        lambda: SimpleNamespace(generation_credit_quote=quote),
+    )
+    body = freezone_routes.FreezoneVideoUpscaleRequest(
+        source_url="/source.mp4", enhancement_model="local_gpu"
+    )
+    quoted = await freezone_routes.freezone_video_upscale_quote(
+        "project", body, {"id": "member"}
+    )
+    submitted = body.model_copy(
+        update={"plan_fingerprint": quoted["data"]["plan_fingerprint"]}
+    )
+    await freezone_routes.freezone_video_upscale("project", submitted, {"id": "member"})
+    assert calls[0]["enhancement_plan_version"] == 2
+    assert calls[0]["billing"] == billing
+    models["upscale_model_params"]["quality"] = 2
+    with pytest.raises(HTTPException, match="阶段计划已变化"):
+        await freezone_routes.freezone_video_upscale(
+            "project", submitted, {"id": "member"}
+        )
+    assert len(calls) == 1
+    assert calls[0]["upscale_model_params"]["quality"] == 1
+    with pytest.raises(HTTPException, match="先获取"):
+        await freezone_routes.freezone_video_upscale("project", body, {"id": "member"})

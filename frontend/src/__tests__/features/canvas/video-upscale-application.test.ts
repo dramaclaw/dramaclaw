@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
 
+const quoteFreezoneVideoUpscale = vi.hoisted(()=>vi.fn());
 const submitFreezoneVideoUpscale = vi.hoisted(() => vi.fn());
 const fetchFreezoneJobResult = vi.hoisted(() => vi.fn());
 const awaitTaskCompletion = vi.hoisted(() => vi.fn());
@@ -13,6 +14,7 @@ const readUrl = vi.hoisted(() => vi.fn());
 vi.mock('@/api/ops', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   submitFreezoneVideoUpscale,
+  quoteFreezoneVideoUpscale,
   fetchFreezoneJobResult,
 }));
 vi.mock('@/api/tasks', async (importOriginal) => ({
@@ -141,4 +143,21 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       generationError: 'backend down',
     });
   });
+});
+
+
+it('workflow submission freezes the third plan and blocks an unresolved paid retry',async()=>{
+  readUrl.mockReturnValue({project:'proj-1',canvas:'canvas-1'});
+  seedVideoNode();
+  const id=createVideoUpscaleResultNode('vid-1',{sourceUrl:'/source.mp4',displayName:'enhance',resolution:'1080p',enhancementModel:'local_gpu'})!;
+  useCanvasStore.getState().updateNodeData(id,{upscaleTargetFps:60});
+  quoteFreezoneVideoUpscale.mockResolvedValue({display:'10',plan_fingerprint:'server-plan'});
+  submitFreezoneVideoUpscale.mockResolvedValue(JOB_REF);
+  awaitTaskCompletion.mockResolvedValue({result:{output_url:'/result.mp4'}});
+  await submitVideoUpscale(id,{sourceUrl:'/source.mp4',resolution:'1080p'});
+  expect(submitFreezoneVideoUpscale).toHaveBeenLastCalledWith('proj-1',expect.objectContaining({enhancementModel:'local_gpu',targetFps:60,planFingerprint:'server-plan'}));
+  useCanvasStore.getState().updateNodeData(id,{upscaleSubmissionPending:true,generationError:'LOCAL_VIDEO_SUBMISSION_PENDING'});
+  submitFreezoneVideoUpscale.mockClear();
+  await expect(submitVideoUpscale(id,{sourceUrl:'/source.mp4',resolution:'1080p'})).rejects.toThrow('LOCAL_VIDEO_SUBMISSION_PENDING');
+  expect(submitFreezoneVideoUpscale).not.toHaveBeenCalled();
 });

@@ -22,6 +22,8 @@ async def download_to_path(
     *,
     expected_size: int | None = None,
     expected_sha256: str | None = None,
+    headers: dict[str, str] | None = None,
+    timeout_seconds: float = 600,
 ) -> VideoDeliveryReceipt:
     """Stream media into a sibling temp file and atomically publish it."""
 
@@ -51,9 +53,14 @@ async def download_to_path(
                 digest.update(chunk)
                 size = len(chunk)
             else:
-                timeout = aiohttp.ClientTimeout(total=600)
+                timeout = aiohttp.ClientTimeout(total=timeout_seconds)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.get(url) as response:
+                    options = (
+                        {"headers": headers, "allow_redirects": False}
+                        if headers is not None
+                        else {}
+                    )
+                    async with session.get(url, **options) as response:
                         if response.status < 200 or response.status >= 300:
                             raise VideoDeliveryError(
                                 f"VIDEO_DOWNLOAD_HTTP_{response.status}", retryable=True
@@ -76,7 +83,7 @@ async def download_to_path(
             size=size,
             sha256=actual_sha256,
         )
-    except Exception as exc:
+    except BaseException as exc:
         try:
             os.unlink(temp_name)
         except FileNotFoundError:

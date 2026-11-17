@@ -55,6 +55,7 @@ interface PersistedFields {
   upscaleSmartInterpolation?: boolean;
   upscaleScene?: FreezoneVideoScene;
   upscaleFaceEnhance?: boolean;
+  upscaleSubmissionPending?: boolean;
 }
 
 export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) => {
@@ -67,12 +68,15 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   const [probeError, setProbeError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [creditQuote, setCreditQuote] = useState<{
-    display: string; promotion?: CreditPromotionDisplay;
+    display: string; plan_fingerprint?: string; promotion?: CreditPromotionDisplay; identity: string;
   } | null>(null);
   const [quoteError, setQuoteError] = useState('');
 
   const enhancementModel = persisted.upscaleEnhancementModel ?? 'standard';
+  const submissionPending = Boolean((persisted.upscaleSubmissionPending && node.data.generationError) || String(node.data.generationError ?? '').includes('LOCAL_VIDEO_SUBMISSION_PENDING'));
   const topaz = enhancementModel === 'topaz';
+  const localGpu = enhancementModel === 'local_gpu';
+  const binding = localGpu ? probe?.enhancement_bindings?.local_gpu : undefined;
   const resolution = persisted.upscaleResolution ?? '1080p';
   const targetFps = persisted.upscaleTargetFps ?? 'auto';
   const slowdown = persisted.upscaleSlowdown ?? 'auto';
@@ -80,13 +84,18 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   const scene = persisted.upscaleScene ?? 'realistic';
   const faceEnhance = persisted.upscaleFaceEnhance === true;
   const needsFrameRate = targetFps !== 'auto' || slowdown !== 'auto';
-  const needsSeparateFrameRate = topaz
+  const needsSeparateFrameRate = localGpu ? needsFrameRate : topaz
     ? slowdown !== 'auto' || (targetFps !== 'auto' && targetFps > 60)
     : needsFrameRate;
   const initializingModel = persisted.upscaleModelPendingInitialization === true;
   const modelUnavailable = Boolean(
     probe?.enhancement_models && !probe.enhancement_models.includes(enhancementModel),
   );
+  const quoteIdentity = JSON.stringify([
+    project, sourceUrl, enhancementModel, binding, resolution, targetFps,
+    slowdown, smartInterpolation, scene, faceEnhance,
+  ]);
+  const matchingQuote = creditQuote?.identity === quoteIdentity;
 
   useEffect(() => {
     let active = true;
@@ -129,12 +138,12 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
       sourceUrl: sourceUrl.split('?')[0], enhancementModel, resolution, targetFps, slowdown, smartInterpolation,
       scene, faceEnhance,
     }).then((value) => {
-      if (active) setCreditQuote(value);
+      if (active) setCreditQuote({ ...value, identity: quoteIdentity });
     }).catch((error: unknown) => {
       if (active) setQuoteError(error instanceof Error ? error.message : String(error));
     });
     return () => { active = false; };
-  }, [availableResolutions, enhancementModel, faceEnhance, initializingModel, modelUnavailable, probe, project, resolution, scene, slowdown, smartInterpolation, sourceUrl, targetFps]);
+  }, [availableResolutions, binding, enhancementModel, faceEnhance, initializingModel, modelUnavailable, probe, project, quoteIdentity, resolution, scene, slowdown, smartInterpolation, sourceUrl, targetFps]);
 
   useEffect(() => {
     if (!availableResolutions.length || availableResolutions.includes(resolution)) return;
@@ -153,7 +162,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   }, [node.id, t, updateNodeData]);
 
   const handleSubmit = useCallback(async () => {
-    if (isSubmitting || initializingModel || modelUnavailable || !creditQuote || !project || !sourceUrl || !availableResolutions.includes(resolution)) return;
+    if (submissionPending || isSubmitting || initializingModel || modelUnavailable || !matchingQuote || !project || !sourceUrl || !availableResolutions.includes(resolution)) return;
     const canvasId = readUrl().canvas ?? 'default';
     setIsSubmitting(true);
     updateNodeData(node.id, {
@@ -161,6 +170,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
       upscaleModelPendingInitialization: false,
       generationStartedAt: Date.now(),
       generationError: null,
+      upscaleSubmissionPending: false,
       // A rerun must not briefly expose the previous task handle to the resume scanner.
       generationTaskKey: null,
       generationTaskType: null,
@@ -170,6 +180,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
       const ref = await submitFreezoneVideoUpscale(project, {
         sourceUrl: sourceUrl.split('?')[0], enhancementModel, resolution, targetFps, slowdown, smartInterpolation, scene,
         faceEnhance, canvasId, nodeId: node.id,
+        planFingerprint: creditQuote?.plan_fingerprint,
       });
       updateNodeData(node.id, generationTaskDescriptor(ref));
       const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
@@ -185,6 +196,10 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
         generationTaskJobId: null,
       });
     } catch (error) {
+      if (String(error).includes('LOCAL_VIDEO_SUBMISSION_PENDING')) {
+        updateNodeData(node.id, { isGenerating: false, generationError: 'LOCAL_VIDEO_SUBMISSION_PENDING', upscaleSubmissionPending: true });
+        return;
+      }
       if (isTaskPollTimeoutError(error)) {
         notifyTaskStillRunning(t);
         return;
@@ -200,21 +215,23 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
     } finally {
       setIsSubmitting(false);
     }
-  }, [availableResolutions, creditQuote, enhancementModel, faceEnhance, initializingModel, isSubmitting, modelUnavailable, node.id, project, resolution, scene, slowdown, smartInterpolation, sourceUrl, t, targetFps, updateNodeData]);
+  }, [availableResolutions, binding, creditQuote, enhancementModel, faceEnhance, initializingModel, isSubmitting, submissionPending, matchingQuote, modelUnavailable, node.id, project, resolution, scene, slowdown, smartInterpolation, sourceUrl, t, targetFps, updateNodeData]);
 
-  const disabled = isSubmitting || initializingModel || modelUnavailable || !probe || !creditQuote || Boolean(probeError) || availableResolutions.length === 0;
+  const disabled = submissionPending || isSubmitting || initializingModel || modelUnavailable || !probe || !matchingQuote || Boolean(probeError) || availableResolutions.length === 0;
   return (
     <ReactFlowNodeToolbar nodeId={node.id} isVisible position={Position.Bottom} align="center" offset={12} className={NODE_TOOLBAR_CLASS}>
       <ZoomScaledToolbar origin="top center">
         <div className={`w-[440px] max-w-[calc(100vw-32px)] rounded-[var(--node-radius)] p-4 ${CANVAS_NODE_OPS_PANEL_CLASS}`} onClick={(event) => event.stopPropagation()}>
           <div className="space-y-3">
+            {submissionPending && <p role="status" className="text-sm text-muted-foreground">{t('node.videoUpscale.panel.submissionPending')}</p>}
             <SelectRow
               label={t('node.videoUpscale.panel.model')}
               value={enhancementModel}
               options={(modelUnavailable
                 ? [enhancementModel, ...(probe?.enhancement_models ?? [])]
                 : probe?.enhancement_models ?? [enhancementModel]).map((value) => ({
-                value, label: value === 'topaz' ? 'Topaz Labs' : t('node.videoUpscale.panel.standardModel'),
+                value, label: value === 'topaz' ? 'Topaz Labs' : value === 'local_gpu'
+                  ? t('node.videoUpscale.panel.localGpuModel') : t('node.videoUpscale.panel.standardModel'),
               }))}
               onChange={(value) => {
                 setCreditQuote(null);
@@ -223,6 +240,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
                   upscaleModelPendingInitialization: false,
                   upscaleTargetFps: 'auto', upscaleScene: 'realistic',
                   upscaleFaceEnhance: false, upscaleSmartInterpolation: true,
+                  upscaleSlowdown: 'auto',
                 });
               }}
             />
@@ -238,7 +256,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
               value={String(targetFps)}
               options={[
                 { value: 'auto', label: t('node.videoUpscale.panel.targetFpsAuto') },
-                ...(topaz ? TOPAZ_TARGET_FPS_PRESETS : TARGET_FPS_PRESETS).map((value) => ({ value: String(value), label: `${value}fps` })),
+                ...(localGpu ? (binding?.frame_rate_catalog_id ? [60] : []) : topaz ? TOPAZ_TARGET_FPS_PRESETS : TARGET_FPS_PRESETS).map((value) => ({ value: String(value), label: `${value}fps` })),
               ]}
               onChange={(value) => updateNodeData(node.id, {
                 upscaleTargetFps: value === 'auto' ? 'auto' : Number(value),
@@ -249,14 +267,14 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
               value={slowdown}
               options={[
                 { value: 'auto', label: t('node.videoUpscale.panel.speedAuto') },
-                ...[2, 3, 4, 5].map((multiplier) => ({
+                ...(localGpu ? [] : [2, 3, 4, 5]).map((multiplier) => ({
                   value: `${multiplier}x`,
                   label: t('node.videoUpscale.panel.speedMultiplier', { multiplier }),
                 })),
               ]}
               onChange={(value) => updateNodeData(node.id, { upscaleSlowdown: value as FreezoneVideoSlowdown })}
             />
-            {!topaz && <SelectRow
+            {!topaz && !localGpu && <SelectRow
               label={t('node.videoUpscale.panel.scene')}
               value={scene}
               options={[
@@ -272,7 +290,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
                 onChange={(checked) => updateNodeData(node.id, { upscaleSmartInterpolation: checked })}
               />
             )}
-            {!topaz && <ToggleRow
+            {!topaz && !localGpu && <ToggleRow
               label={t('node.videoUpscale.panel.faceEnhance')}
               checked={faceEnhance}
               onChange={(checked) => updateNodeData(node.id, { upscaleFaceEnhance: checked })}

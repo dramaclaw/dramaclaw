@@ -12,6 +12,15 @@ from novelvideo.task_backend.consumer import VerifiedTaskDelivery
 from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 
 
+@pytest.fixture(autouse=True)
+def isolated_runner_registry(monkeypatch):
+    import novelvideo.task_backend.runners  # noqa: F401
+    from novelvideo.task_backend import registry
+
+    monkeypatch.setattr(registry, "_PROJECT_TASK_RUNNERS", dict(registry._PROJECT_TASK_RUNNERS))
+    monkeypatch.setattr(registry, "_PROJECT_TASK_PLACEMENTS", dict(registry._PROJECT_TASK_PLACEMENTS))
+
+
 class _FakeTaskManager:
     def __init__(self) -> None:
         self.completed: list[dict] = []
@@ -796,3 +805,29 @@ def test_run_project_task_core_confirms_runner_result_even_when_read_model_ignor
             },
         )
     ]
+
+
+def test_local_gpu_task_deadline_preserves_other_task_budgets(monkeypatch):
+    # Exercise the actual runner envelope construction, not just timeout constants.
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend import registry
+    from dataclasses import replace
+
+    monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", "true")
+    monkeypatch.setenv("ST_PROJECT_TASK_TIMEOUT_S", "42")
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "_set_project_task_metrics_context", lambda *_, **kw: None)
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+
+    async def noop(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(run_core, "is_cancel_requested", noop)
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", noop)
+    captured = []
+    monkeypatch.setitem(registry._PROJECT_TASK_RUNNERS, "freezone_video_upscale", lambda envelope, ctx: captured.append(envelope["__timeout_seconds"]) or {"ok": True})
+    for backend, enabled, expected in [("newapi_video-upscale-fast", "true", 4800), ("video-upscale-fast", "true", 4800), ("video-upscale-fast", "false", 42), ("external-video", "true", 42)]:
+        monkeypatch.setenv("LOCAL_VIDEO_UPSCALE_ENABLED", enabled)
+        delivery = replace(_verified_delivery(task_type="freezone_video_upscale"), payload={"upscale_backend": backend})
+        run_core.run_project_task_core_sync(delivery, SimpleNamespace(project_id="proj_timeout",requester_user_id="usr_1",is_home_node=True), _FakeTaskManager(),run_task_id="task_1")
+        assert captured[-1] == expected

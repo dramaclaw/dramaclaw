@@ -3395,6 +3395,10 @@
       "pipeline": {
         "normalizingScenes": "AI 规范化剧本场景块..."
       },
+      "videoUpscale": {
+        "start": "开始视频高清处理...",
+        "processing": "正在处理高清视频..."
+      },
       "script": {
         "start": "开始生成脚本...",
         "beatVideoPromptStart": "开始生成 Beat {{beatNum}} 视频提示词",
@@ -6879,6 +6883,8 @@
         "submit": "生成高清视频",
         "model": "模型",
         "standardModel": "标准视频增强",
+        "localGpuModel": "本地 GPU（3060）",
+        "submissionPending": "上一笔提交正在核对，请先在任务中心查看原任务。",
         "modelUnavailable": "已保存的增强模型当前不可用，请选择可用模型后继续。"
       }
     },

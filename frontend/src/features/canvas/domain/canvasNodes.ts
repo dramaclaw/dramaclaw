@@ -294,7 +294,8 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleSourceUrl?: string;
   /** 目标清晰度档位。 */
   upscaleResolution?: '1080p' | '2k' | '4k';
-  upscaleEnhancementModel?: 'standard' | 'topaz';
+  upscaleSubmissionPending?: boolean;
+  upscaleEnhancementModel?: 'standard' | 'topaz' | 'local_gpu';
   upscaleModelPendingInitialization?: boolean;
   /** 降噪强度。 */
   upscaleDenoise?: 'none' | '1x' | '2x';

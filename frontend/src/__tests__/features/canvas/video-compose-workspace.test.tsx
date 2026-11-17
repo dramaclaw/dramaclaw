@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { StrictMode } from 'react';
 import { fireEvent, render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { VideoComposeWorkspace } from '@/features/canvas/compose/VideoComposeWorkspace';
 import { BackendStatusError } from '@/lib/api-errors';
@@ -506,6 +506,8 @@ describe('VideoComposeWorkspace', () => {
     await waitFor(() => expect(openStudio).toHaveBeenCalledTimes(2));
   });
   it('exports through the existing task API only for a message from its own editor frame', async () => {
+    const listen = vi.spyOn(window, 'addEventListener');
+    onTestFinished(() => { listen.mockRestore(); });
     useCanvasStore.setState({
       nodes: [
         videoNode('video-a', 5000),
@@ -517,7 +519,10 @@ describe('VideoComposeWorkspace', () => {
     const { container } = render(
       <VideoComposeWorkspace projectId="proj-demo" canvasId="canvas-1" nodeId="compose" onExit={onExit} />,
     );
-    await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy());
+    await waitFor(() => {
+      expect(container.querySelector('iframe')).toBeTruthy();
+      expect(listen).toHaveBeenCalledWith('message', expect.any(Function));
+    });
     const iframe = container.querySelector('iframe')!;
     const message = (origin: string, source: Window) => new MessageEvent('message', {
       origin, source, data: { type: 'dramaclaw:studio-export' },

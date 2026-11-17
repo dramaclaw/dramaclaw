@@ -55,7 +55,8 @@ def _delivery() -> VerifiedTaskDelivery:
     )
 
 
-def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
+@pytest.mark.parametrize("pending", [False, True])
+def test_post_start_authz_indeterminate_is_review_only(monkeypatch, pending) -> None:
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
 
@@ -95,6 +96,12 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
             "feature_key": "mainline.beat_video_generation",
             "model_call_credit_policy": "feature_included",
         }
+        if pending:
+            from novelvideo.freezone.local_video_upscale import (
+                LocalVideoSubmissionPending,
+            )
+
+            raise LocalVideoSubmissionPending("original-stage")
         raise RunningTaskAuthorityIndeterminate(failure_kind="unavailable")
 
     async def not_cancelled(**_kwargs):
@@ -124,6 +131,15 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
         manager,
         run_task_id="task-1",
     )
+
+    if pending:
+        assert result["pending"] is True
+        assert result["gateway_request_id"] == "original-stage"
+        assert result["settlement_status"] == "awaiting_reconciliation"
+        assert reviews[0][0] == "reservation-1"
+        assert reviews[0][1]["gateway_request_id"] == "original-stage"
+        assert manager.failures[0]["metadata"]["gateway_request_id"] == "original-stage"
+        return
 
     assert result == {
         "failed": True,

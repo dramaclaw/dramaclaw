@@ -881,6 +881,23 @@ def run_project_task_core_sync(
     if trusted_billing_metadata:
         envelope["billing_metadata"] = trusted_billing_metadata
     timeout_seconds = _project_task_timeout_seconds()
+    from novelvideo.freezone.local_video_upscale import (
+        LOCAL_VIDEO_UPSCALE_TASK_TIMEOUT_SECONDS,
+        is_local_video_upscale_backend,
+        local_video_upscale_enabled,
+    )
+
+    if (
+        task_type == "freezone_video_upscale"
+        and (
+            (envelope.get("payload") or {}).get("enhancement_plan_version") == 2
+            or local_video_upscale_enabled() and (
+                (envelope.get("payload") or {}).get("enhancement_model") == "local_gpu"
+                or is_local_video_upscale_backend((envelope.get("payload") or {}).get("upscale_backend"))
+            )
+        )
+    ):
+        timeout_seconds = LOCAL_VIDEO_UPSCALE_TASK_TIMEOUT_SECONDS
     deadline_monotonic = (
         time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
     )
@@ -1107,6 +1124,17 @@ def run_project_task_core_sync(
                         )
                     )
                     return {"pending": True, **failure_payload}
+                from novelvideo.freezone.local_video_upscale import LocalVideoSubmissionPending
+
+                if isinstance(exc, LocalVideoSubmissionPending):
+                    metadata = {**run_metadata, "error_code": exc.code, "gateway_request_id": exc.request_id, "settlement_status": "awaiting_reconciliation"}
+                    if feature_reservation_id:
+                        try:
+                            asyncio.run(get_usage_meter().mark_feature_credit_settlement_for_review(feature_reservation_id, metadata=metadata))
+                        except Exception:
+                            logger.error("video submission settlement review unavailable")
+                    manager.fail_task_for_project(ctx, task_type, episode, beat_num=beat_num, scope=scope, error=exc.code, metadata=metadata, expected_task_id=run_task_id)
+                    return {"pending": True, **metadata}
                 if isinstance(exc, RunningTaskAuthorityIndeterminate):
                     logger.warning(
                         "running_task_authz_outcome_indeterminate",

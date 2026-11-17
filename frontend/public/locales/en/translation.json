@@ -3395,6 +3395,10 @@
       "pipeline": {
         "normalizingScenes": "Normalizing screenplay scene blocks with AI..."
       },
+      "videoUpscale": {
+        "start": "Starting video enhancement...",
+        "processing": "Enhancing video..."
+      },
       "script": {
         "start": "Generating script...",
         "beatVideoPromptStart": "Generating video prompt for beat {{beatNum}}",
@@ -6879,6 +6883,8 @@
         "submit": "Generate HD video",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "localGpuModel": "Local GPU (3060)",
+        "submissionPending": "The previous submission is being reconciled. Check the existing task before starting another.",
         "modelUnavailable": "The saved enhancement model is unavailable. Select an available model to continue."
       }
     },

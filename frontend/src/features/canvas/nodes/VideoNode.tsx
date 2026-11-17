@@ -182,6 +182,7 @@ import {
 } from "@/features/canvas/ui/NodeHeader";
 import { NodeResizeHandle } from "@/features/canvas/ui/NodeResizeHandle";
 import { NodeGenerationOverlay } from "@/features/canvas/ui/NodeGenerationOverlay";
+import { useTaskCenterStore } from "@/task-center/store";
 import {
   CANVAS_NODE_INPUT_BODY_FRAME_CLASS,
   CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS,
@@ -666,6 +667,11 @@ function resolveOutputUrl(
 export const VideoNode = memo(
   ({ id, data, selected, width, height }: VideoNodeProps) => {
     const { t } = useTranslation();
+    const upscaleTaskProgress = useTaskCenterStore((state) =>
+      data.isUpscaleNode && typeof data.generationTaskKey === "string"
+        ? state.tasks.get(data.generationTaskKey)?.progress ?? 0
+        : 0,
+    );
     const updateNodeInternals = useUpdateNodeInternals();
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     // 故事片段「播放器形态」:故事组内的视频节点默认收起画布编辑 chrome,
@@ -3815,6 +3821,7 @@ export const VideoNode = memo(
               <NodeGenerationOverlay
                 startedAt={data.generationStartedAt ?? null}
                 durationMs={data.generationDurationMs}
+                percent={data.isUpscaleNode ? upscaleTaskProgress * 100 : undefined}
                 hasBackground={Boolean(data.previewImageUrl)}
               />
             </div>

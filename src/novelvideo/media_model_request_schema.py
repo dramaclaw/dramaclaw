@@ -491,6 +491,14 @@ def validate_media_model_catalog_config(
     if not isinstance(config, dict):
         raise MediaModelSchemaError("media model config must be an object")
     expected_endpoint = media_model_request_endpoint(media_type)
+    if "enhancementGroup" in config and (
+        media_type != "video" or config["enhancementGroup"] != "local_gpu"
+        or not isinstance(config.get("supportedModes"), list)
+        or not all(isinstance(mode, str) for mode in config["supportedModes"])
+        or not set(config.get("supportedModes") or []).issubset({"video_upscale", "video_frame_rate"})
+        or len(config.get("supportedModes") or []) != 1
+    ):
+        raise MediaModelSchemaError("enhancementGroup requires local_gpu video processing modes")
     reserved_fields = sorted(RESERVED_CATALOG_CONFIG_FIELDS.intersection(config))
     if reserved_fields:
         raise MediaModelSchemaError(

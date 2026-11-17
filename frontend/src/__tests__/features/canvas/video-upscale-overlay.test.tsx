@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CanvasNode } from '@/features/canvas/domain/canvasNodes';
 
-const mocks = vi.hoisted(() => ({ update: vi.fn(), probe: vi.fn(), quote: vi.fn() }));
+const mocks = vi.hoisted(() => ({ update: vi.fn(), probe: vi.fn(), quote: vi.fn(), submit: vi.fn(), complete: vi.fn() }));
 vi.mock('@/stores/canvasStore', () => ({
   useCanvasStore: (selector: (state: { updateNodeData: typeof mocks.update }) => unknown) =>
     selector({ updateNodeData: mocks.update }),
@@ -13,10 +13,10 @@ vi.mock('@/stores/canvasStore', () => ({
 vi.mock('@/api/ops', () => ({
   probeFreezoneVideoUpscale: mocks.probe,
   quoteFreezoneVideoUpscale: mocks.quote,
-  submitFreezoneVideoUpscale: vi.fn(),
+  submitFreezoneVideoUpscale: mocks.submit,
   fetchFreezoneJobResult: vi.fn(),
 }));
-vi.mock('@/api/tasks', () => ({ awaitTaskCompletion: vi.fn(), isTaskPollTimeoutError: vi.fn() }));
+vi.mock('@/api/tasks', () => ({ awaitTaskCompletion: mocks.complete, isTaskPollTimeoutError: vi.fn() }));
 vi.mock('@/lib/url-params', () => ({ readUrl: () => ({ project: 'project' }) }));
 vi.mock('@/features/canvas/application/errorDialog', () => ({ notifyTaskStillRunning: vi.fn() }));
 vi.mock('@/features/canvas/application/resumeGeneration', () => ({ generationTaskDescriptor: vi.fn() }));
@@ -97,4 +97,38 @@ describe('saved video enhancement selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'node.videoUpscale.panel.resolution' }));
     expect(screen.queryByRole('option', { name: '2K' })).toBeNull();
   });
+});
+
+
+it('quotes and submits the independent local group with the same explicit bindings', async () => {
+  mocks.probe.mockResolvedValue({
+    width: 1280, height: 720, fps: 30, duration: 70,
+    enhancement_models: ['standard', 'topaz', 'local_gpu'],
+    enhancement_bindings: { local_gpu: { upscale_catalog_id: 'local-up', frame_rate_catalog_id: 'local-fps' } },
+    upscale_resolutions: ['1080p', '2k', '4k'], frame_rate_resolutions: ['1080p'],
+  });
+  mocks.submit.mockResolvedValue({ task_key: 'local-task', task_type: 'freezone_video_upscale', job_id: 'local-job' });
+  mocks.complete.mockResolvedValue({ result: { output_url: '/local-result.mp4' } });
+  const view = render(<VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: 'local_gpu', upscaleTargetFps: 60 })} />);
+  const expected = { enhancementModel: 'local_gpu', resolution: '1080p', targetFps: 60 };
+  mocks.quote.mockResolvedValue({display:'10',plan_fingerprint:'frozen-plan'});
+  await waitFor(() => expect(mocks.quote).toHaveBeenCalledWith('project', expect.objectContaining(expected)));
+  const submit = screen.getByTitle('node.videoUpscale.panel.submit');
+  await waitFor(() => expect(submit).not.toBeDisabled());
+  fireEvent.click(submit);
+  await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith('project', expect.objectContaining({...expected,planFingerprint:'frozen-plan'})));
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('upscale', expect.objectContaining({ videoUrl: '/local-result.mp4', isGenerating: false })));
+  // A parameter change must wait for its own quote, even while the previous price is visible.
+  mocks.quote.mockImplementation(() => new Promise(() => {}));
+  view.rerender(<VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: 'local_gpu', upscaleTargetFps: 'auto', upscaleResolution: '2k' })} />);
+  expect(screen.getByTitle('node.videoUpscale.panel.submit')).toBeDisabled();
+});
+
+
+it('blocks a new paid retry when the original submission is unresolved',async()=>{
+  render(<VideoUpscaleEditorOverlay node={node({upscaleEnhancementModel:'standard',upscaleSubmissionPending:true,generationError:'LOCAL_VIDEO_SUBMISSION_PENDING',generationTaskKey:'original-task'})}/>);
+  await waitFor(()=>expect(mocks.quote).toHaveBeenCalled());
+  expect(screen.getByTitle('node.videoUpscale.panel.submit')).toBeDisabled();
+  fireEvent.click(screen.getByTitle('node.videoUpscale.panel.submit'));
+  expect(mocks.submit).not.toHaveBeenCalled();
 });

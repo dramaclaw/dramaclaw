@@ -871,3 +871,16 @@ def test_blockout_models_are_chat_models_without_media_capabilities():
         )
     with pytest.raises(MediaModelSchemaError, match="media type must be"):
         validate_media_model_catalog_config({}, "text")
+
+
+@pytest.mark.parametrize("modes", [None, 1, "video_upscale", [["video_upscale"]], [], ["video_upscale", "video_frame_rate"], ["all_reference"]])
+def test_local_enhancement_group_requires_one_typed_processing_role(modes):
+    with pytest.raises(MediaModelSchemaError, match="enhancementGroup"):
+        validate_media_model_catalog_config({"enhancementGroup": "local_gpu", "supportedModes": modes}, "video")
+
+
+@pytest.mark.parametrize("mode", ["video_upscale", "video_frame_rate"])
+def test_local_enhancement_group_has_independent_catalog_role(mode):
+    config = {"enhancementGroup": "local_gpu", "supportedModes": [mode],
+              "request": {"endpoint": "video/generations", "parameters": []}}
+    assert validate_media_model_catalog_config(config, "video") == config

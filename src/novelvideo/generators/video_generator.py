@@ -13,6 +13,7 @@ import os
 import random
 import re
 import subprocess
+import time
 import urllib.parse
 import uuid
 from abc import ABC, abstractmethod
@@ -34,6 +35,15 @@ from dotenv import load_dotenv
 
 from novelvideo.egress_context import ambient_egress_context
 from novelvideo.authz_retry import retry_authz_read
+from novelvideo.freezone.local_video_upscale import (
+    LOCAL_VIDEO_UPSCALE_CANCEL_TIMEOUT_SECONDS,
+    LOCAL_VIDEO_UPSCALE_COMPUTE_TIMEOUT_SECONDS,
+    LOCAL_VIDEO_UPSCALE_DOWNLOAD_TIMEOUT_SECONDS,
+    LOCAL_VIDEO_UPSCALE_POLL_GRACE_SECONDS,
+    LOCAL_VIDEO_UPSCALE_CLIENT_HEADER,
+    is_local_video_upscale_backend,
+    local_video_upscale_client_key,
+)
 from novelvideo.i18n_message import lmsg
 from novelvideo.ports import (
     get_usage_meter,
@@ -2061,9 +2071,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         *,
         headers: dict[str, str] | None = None,
     ) -> dict:
+        options = (
+            {"allow_redirects": False}
+            if headers and LOCAL_VIDEO_UPSCALE_CLIENT_HEADER in headers
+            else {}
+        )
         async with aiohttp.ClientSession(timeout=self._client_timeout()) as session:
             async with session.post(
-                url, json=payload, headers=headers or self.headers
+                url, json=payload, headers=headers or self.headers, **options
             ) as resp:
                 text = await resp.text()
                 if resp.status < 200 or resp.status >= 300:
@@ -2084,6 +2099,74 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     raise RuntimeError(
                         f"DramaClawAPI submit returned invalid JSON: {text}"
                     ) from exc
+
+    async def _submit_local_video(self, url: str, payload: dict, headers: dict[str, str], on_progress) -> dict:
+        from novelvideo.freezone.local_video_upscale import LocalVideoSubmissionPending
+
+        deadline = time.monotonic() + 60
+        for attempt in range(12):
+            try:
+                return await asyncio.wait_for(self._post_json(url, payload, headers=headers), timeout=max(0.001, min(10, deadline - time.monotonic())))
+            except NewApiVideoError as exc:
+                if exc.status_code not in {None, 408, 409, 429, 500, 502, 503, 504}:
+                    raise
+                if exc.status_code == 409 and "local_video_submission_pending" not in str(exc):
+                    raise
+            except (aiohttp.ClientError, TimeoutError):
+                pass
+            if on_progress:
+                on_progress(0.1)
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(min(5, attempt + 1))
+        raise LocalVideoSubmissionPending(headers["Idempotency-Key"])
+
+    async def _cancel_local_submission(self, base_url: str, headers: dict[str, str]) -> None:
+        try:
+            async with asyncio.timeout(60):
+                for attempt in range(12):
+                    try:
+                        response = await asyncio.wait_for(self._post_json(
+                            f"{base_url}/video/submissions/cancel",
+                            {"model": self.model, "request_id": headers["Idempotency-Key"]}, headers=headers,
+                        ), timeout=8)
+                        if response.get("state") in {"cancelled", "failed", "succeeded", "expired"}:
+                            return
+                    except (NewApiVideoError, aiohttp.ClientError, TimeoutError):
+                        pass
+                    await asyncio.sleep(min(3, attempt + 1))
+        except TimeoutError:
+            pass
+        logger.warning("local_video_submission_cancel_unconfirmed request_id=%s", headers["Idempotency-Key"])
+
+    async def _cancel_local_video(self, base_url: str, task_id: str, headers: dict[str, str]) -> None:
+        if re.fullmatch(r"task_[A-Za-z0-9_-]{1,123}", task_id) is None:
+            return
+        try:
+            cancel_headers = dict(headers)
+            if self.model.removeprefix("newapi_") == "video-upscale-fast":
+                cancel_headers[LOCAL_VIDEO_UPSCALE_CLIENT_HEADER] = local_video_upscale_client_key(f"{base_url}/video/generations")
+            async with asyncio.timeout(LOCAL_VIDEO_UPSCALE_CANCEL_TIMEOUT_SECONDS):
+                for attempt in range(20):
+                    try:
+                        result = await asyncio.wait_for(
+                            self._post_json(
+                                f"{base_url}/videos/{task_id}/cancel", {}, headers=cancel_headers
+                            ),
+                            timeout=10,
+                        )
+                        if result.get("state") in {"cancelled", "failed", "succeeded", "expired"}:
+                            return
+                    except NewApiVideoError as exc:
+                        if exc.status_code not in {408, 429, 500, 502, 503, 504}:
+                            raise
+                    except (aiohttp.ClientError, TimeoutError):
+                        pass
+                    await asyncio.sleep(min(attempt + 1, 3))
+                raise TimeoutError()
+        except Exception as exc:
+            # Compute still enforces its own parent deadline if the network is down.
+            logger.warning("local_video_cancel_unconfirmed task_id=%s error_type=%s", task_id, type(exc).__name__)
 
     async def _get_json(
         self,
@@ -3004,6 +3087,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "videoUpscale": "video_upscale",
             "videoFrameRate": "video_frame_rate",
         }.get(requested_mode, requested_mode)
+        durable_processing = (
+            bool(kwargs.get("idempotency_key")) or is_local_video_upscale_backend(self.model)
+        ) and normalized_requested_mode in {"video_upscale", "video_frame_rate"}
         is_processing_model = normalized_requested_mode in {
             "video_upscale",
             "video_frame_rate",
@@ -3062,6 +3148,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         operation_claim = None
         operation_version: int | None = None
         operation_terminal = False
+        from novelvideo.freezone.local_video_upscale import LocalVideoSubmissionPending
+
         submit_attempted = False
         provider_completed = False
         provider_settled = False
@@ -3135,6 +3223,16 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 else error
             )
             return VideoGenResult(status=VideoGenStatus.FAILED, error=safe_error)
+
+        submit_url = f"{request_base_url}/video/generations"
+        submit_headers = request_headers if organization_request else None
+        if durable_processing:
+            submit_headers = {**(request_headers or self.headers), "Idempotency-Key": str(kwargs.get("idempotency_key") or uuid.uuid4().hex)}
+            if self.model.removeprefix("newapi_") == "video-upscale-fast":
+                try:
+                    submit_headers[LOCAL_VIDEO_UPSCALE_CLIENT_HEADER] = local_video_upscale_client_key(submit_url)
+                except ValueError as exc:
+                    return await fail_before_submit(str(exc))
 
         if requested_mode:
             try:
@@ -3436,16 +3534,13 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 request_payload=payload,
             )
             submit_attempted = True
-            if organization_request:
-                submitted = await self._post_json(
-                    f"{request_base_url}/video/generations",
-                    payload,
-                    headers=request_headers,
+            if submit_headers is not None:
+                submitted = (
+                    await self._submit_local_video(submit_url, payload, submit_headers, on_progress)
+                    if durable_processing else await self._post_json(submit_url, payload, headers=submit_headers)
                 )
             else:
-                submitted = await self._post_json(
-                    f"{request_base_url}/video/generations", payload
-                )
+                submitted = await self._post_json(submit_url, payload)
             await update_current_model_call_log(
                 response_payload=submitted,
             )
@@ -3496,8 +3591,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             record_accepted(task_id)
             log(f"任务已提交: {task_id}")
             progress(0.2)
+            compute_deadline = (
+                time.monotonic() + LOCAL_VIDEO_UPSCALE_COMPUTE_TIMEOUT_SECONDS
+                + LOCAL_VIDEO_UPSCALE_POLL_GRACE_SECONDS
+            )
+            delivery_deadline = None
+            poll_failures = 0
+            last_progress = 0.2
 
             for poll_count in range(max_polls):
+                if durable_processing and time.monotonic() >= (delivery_deadline or compute_deadline):
+                    break
                 if organization_request:
                     running_authority_error = None
                     try:
@@ -3524,23 +3628,45 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         )
                     if running_authority_error is not None:
                         raise running_authority_error from None
-                    polled = await self._get_json(
+                try:
+                    query = self._get_json(
                         f"{request_base_url}/video/generations/{task_id}",
-                        headers=request_headers,
+                        **({"headers": request_headers} if organization_request else {}),
                     )
-                else:
-                    polled = await self._get_json(
-                        f"{request_base_url}/video/generations/{task_id}"
+                    if durable_processing:
+                        remaining = (delivery_deadline or compute_deadline) - time.monotonic()
+                        polled = await asyncio.wait_for(query, timeout=min(30, max(0.001, remaining)))
+                    else:
+                        polled = await query
+                    poll_failures = 0
+                except (NewApiVideoError, aiohttp.ClientError, TimeoutError) as exc:
+                    transient = (
+                        not isinstance(exc, NewApiVideoError)
+                        or exc.status_code in {408, 429, 500, 502, 503, 504}
                     )
+                    if not durable_processing or not transient or poll_failures >= 5:
+                        raise
+                    poll_failures += 1
+                    progress(last_progress)
+                    await asyncio.sleep(min(2 ** (poll_failures - 1), 15))
+                    continue
                 task = self._task_response_data(polled)
                 status = str(task.get("status") or "").lower()
-                progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
+                if durable_processing:
+                    match = re.fullmatch(r"(\d{1,3})%", str(task.get("progress") or ""))
+                    if match and int(match[1]) < 100:
+                        last_progress = max(last_progress, int(match[1]) / 100)
+                        progress(last_progress)
+                else:
+                    progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
 
                 if status in {"completed", "succeeded", "success", "done"}:
                     await update_current_model_call_log(
                         response_payload=polled,
                     )
                     provider_completed = True
+                    if durable_processing and delivery_deadline is None:
+                        delivery_deadline = time.monotonic() + LOCAL_VIDEO_UPSCALE_DOWNLOAD_TIMEOUT_SECONDS
                     if not provider_settled:
                         await _confirm_video_model_call(
                             model=self.model,
@@ -3684,6 +3810,27 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             delivery = await archive_delivery.deliver(
                                 source=archived_source,
                                 output_path=output_path,
+                            )
+                        elif durable_processing:
+                            from novelvideo.utils.media_download import download_to_path
+
+                            # Credentials go only to the gateway that accepted this job.
+                            path = urllib.parse.urlsplit(video_url).path
+                            if (
+                                re.fullmatch(
+                                    r"task_[A-Za-z0-9_-]{1,123}", task_id or ""
+                                )
+                                is None
+                                or path != f"/v1/videos/{task_id}/content"
+                            ):
+                                raise VideoDeliveryError(
+                                    "VIDEO_GATEWAY_RESULT_INVALID", retryable=False
+                                )
+                            delivery = await download_to_path(
+                                f"{request_base_url}/videos/{task_id}/content",
+                                output_path,
+                                headers=request_headers or self.headers,
+                                timeout_seconds=max(0.001, delivery_deadline - time.monotonic()),
                             )
                         else:
                             log(
@@ -3891,6 +4038,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 error=timeout_error,
                 task_id=task_id,
             )
+        except LocalVideoSubmissionPending:
+            if organization_request and operation_claim is not None and not operation_terminal:
+                try:
+                    await self._mark_operation_unknown(operation_port, operation_claim, expected_version=operation_version)
+                except Exception:
+                    logger.error("video submission reconciliation marker unavailable")
+            raise
+        except (asyncio.CancelledError, TaskCancelled, TaskTimedOut):
+            if durable_processing and submit_attempted and not task_id and submit_headers is not None:
+                await asyncio.shield(self._cancel_local_submission(request_base_url, submit_headers))
+            raise
         except RunningTaskAuthorityIndeterminate as exc:
             # Provider acceptance is already durable.  This branch must not
             # resubmit the provider request or decide refund/confirm locally.
@@ -4033,6 +4191,13 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 error=safe_exception_error,
                 task_id=task_id,
             )
+        finally:
+            if durable_processing and task_id and not provider_completed:
+                await asyncio.shield(
+                    self._cancel_local_video(
+                        request_base_url, task_id, request_headers or self.headers
+                    )
+                )
 
 
 class ComfyUIVideoGenerator(VideoGeneratorBase):

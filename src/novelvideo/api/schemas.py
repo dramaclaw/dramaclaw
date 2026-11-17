@@ -1631,10 +1631,13 @@ class FreezoneVideoEraseRequest(BaseModel):
 class FreezoneVideoUpscaleRequest(BaseModel):
     """视频增强请求。模型由媒体目录能力动态选择。"""
 
-    enhancement_model: Literal["standard", "topaz"] = Field(
+    enhancement_model: Literal["standard", "topaz", "local_gpu"] = Field(
         default="standard",
         description="增强方案；旧请求保持标准方案",
     )
+    plan_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    upscale_catalog_id: str | None = Field(default=None, min_length=1, max_length=128)
+    frame_rate_catalog_id: str | None = Field(default=None, min_length=1, max_length=128)
     source_url: str = Field(description="待高清处理视频的静态地址")
     resolution: Literal["1080p", "2k", "4k"] = Field(
         default="1080p",

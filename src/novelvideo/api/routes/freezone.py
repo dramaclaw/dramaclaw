@@ -261,6 +261,10 @@ from novelvideo.freezone.image_node import (
     DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION,
     reverse_prompt_from_image,
 )
+from novelvideo.freezone.local_video_upscale import (
+    is_local_video_upscale_backend,
+    local_video_upscale_enabled,
+)
 from novelvideo.freezone.mark_node import detect_freezone_mark
 from novelvideo.freezone.paths import (
     CANVAS_ID_RE,
@@ -9925,24 +9929,26 @@ def _video_processing_entry(
     catalog: list[dict[str, Any]] | None,
     mode: str,
     scheme: str | None = None,
+    catalog_id: str | None = None,
 ) -> dict[str, Any] | None:
-    from novelvideo.freezone.video_slowdown import is_topaz_backend
+    from novelvideo.freezone.local_video_upscale import video_enhancement_group
 
-    return next(
-        (
+    candidates = [
             item
             for item in catalog or []
             if mode in (item.get("supportedModes") or [])
             and (
                 scheme is None
-                or is_topaz_backend(
-                    str(item.get("apiModel") or item.get("api_model") or "")
-                )
-                == (scheme == "topaz")
+                or video_enhancement_group(item) == scheme
             )
-        ),
-        None,
-    )
+            and (catalog_id is None or _catalog_entry_id(item) == catalog_id)
+            and (scheme != "local_gpu" or str(item.get("apiModel") or item.get("api_model") or "").removeprefix("newapi_") == ("local-video-upscale" if mode == "video_upscale" else "local-video-frame-rate"))
+            and (str(item.get("apiModel") or "").removeprefix("newapi_") != "video-upscale-fast" or local_video_upscale_enabled())
+    ]
+    if scheme == "local_gpu" and len(candidates) != 1:
+        return None
+    candidates.sort(key=lambda item: str(item.get("apiModel") or "").removeprefix("newapi_") == "video-upscale-fast")
+    return candidates[0] if candidates else None
 
 
 def _video_processing_resolutions(entry: dict[str, Any] | None) -> list[str]:
@@ -9957,12 +9963,13 @@ async def _resolve_video_processing_model(
     *,
     requester_user_id: str,
     scheme: str | None = None,
+    catalog_id: str | None = None,
 ) -> dict[str, Any]:
     catalog = await _scoped_media_model_catalog(
         "video",
         requester_user_id=requester_user_id,
     )
-    entry = _video_processing_entry(catalog, mode, scheme)
+    entry = _video_processing_entry(catalog, mode, scheme, catalog_id)
     if entry is None:
         label = "视频超分" if mode == "video_upscale" else "视频帧率调整"
         raise HTTPException(409, f"当前没有可用的{label}模型，请联系管理员配置")
@@ -9975,12 +9982,20 @@ async def _resolve_video_processing_model(
         requester_user_id=requester_user_id,
     )
     selected = resolved or entry
+    from novelvideo.freezone.local_video_upscale import video_enhancement_group
+
+    if scheme is not None and video_enhancement_group(selected) != scheme:
+        raise HTTPException(409, "视频增强模型组绑定已变化，请刷新后重试")
+    backend = str(selected.get("apiModel") or selected.get("api_model") or "")
+    if backend.removeprefix("newapi_") == "video-upscale-fast" and not local_video_upscale_enabled():
+        raise HTTPException(409, "当前环境未启用本地 GPU 视频增强")
     return {
         "catalog_id": identifier,
-        "backend": str(selected.get("apiModel") or selected.get("api_model") or ""),
+        "backend": backend,
         "request_schema": schema,
         "model_params": params,
         "resolution_options": _video_processing_resolutions(selected),
+        "max_duration": selected.get("maxDuration"),
     }
 
 
@@ -10022,7 +10037,13 @@ def _video_enhance_billing(
             stages[0]["output_fps"] = body.target_fps or float(source_meta["fps"])
         else:
             stages[0]["output_fps"] = float(source_meta["fps"])
-    return {"feature_key": "freezone.video_enhance", "pricing_stages": stages}
+    if body.enhancement_model == "local_gpu":
+        for stage in stages:
+            stage["enhancement_model"] = "local_gpu"
+    return {
+        "feature_key": "freezone.video_enhance",
+        "pricing_stages": stages,
+    }
 
 
 async def _resolve_catalog_video_backend(
@@ -11820,8 +11841,9 @@ async def _prepare_video_upscale(
         source_meta = await probe_video_stream(str(source_path))
     except RuntimeError as exc:
         raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
+    width, height = int(source_meta["width"]), int(source_meta["height"])
     target_long_edge = VIDEO_UPSCALE_TARGET_LONG_EDGES[body.resolution]
-    if max(int(source_meta["width"]), int(source_meta["height"])) >= target_long_edge:
+    if max(width, height) >= target_long_edge:
         raise HTTPException(400, "目标分辨率必须高于源视频分辨率")
 
     if body.enhancement_model == "topaz":
@@ -11844,7 +11866,25 @@ async def _prepare_video_upscale(
         "video_upscale",
         requester_user_id=requester_user_id,
         scheme=body.enhancement_model,
+        catalog_id=body.upscale_catalog_id,
     )
+    adjust_frame_rate = body.target_fps is not None or body.slowdown != "auto"
+    local_frame_rate = (
+        (body.enhancement_model == "local_gpu" or is_local_video_upscale_backend(upscale["backend"]))
+        and adjust_frame_rate
+    )
+    if body.enhancement_model == "local_gpu":
+        if body.face_enhance or body.slowdown != "auto":
+            raise HTTPException(400, "所选增强模型支持原速，不支持专项人脸修复")
+        if adjust_frame_rate and (body.resolution != "1080p" or body.target_fps != 60 or float(source_meta["fps"]) not in (24,30)):
+            raise HTTPException(400, "所选补帧模型支持 1080p 档位、24/30→60 fps")
+    elif local_frame_rate:
+        # Historical fused model remains available for frozen legacy payloads.
+        if body.resolution != "1080p" or body.target_fps != 60 or body.slowdown != "auto" or body.face_enhance:
+            raise HTTPException(400, "3060 内测补帧仅支持 1080p60、原速且关闭人脸修复")
+        fps, duration = float(source_meta["fps"]), float(source_meta["duration"])
+        if width <= height or min(width,height)<64 or width>1344 or height>768 or width%2 or height%2 or fps not in (24,30) or not 0<duration<=120:
+            raise HTTPException(400, "3060 内测补帧支持最长 120 秒、24/30 fps 横屏视频，最大 1344×768")
     frame_rate: dict[str, Any] | None = None
     from novelvideo.freezone.video_slowdown import topaz_requires_frame_rate
 
@@ -11858,19 +11898,30 @@ async def _prepare_video_upscale(
             "video_frame_rate",
             requester_user_id=requester_user_id,
             scheme=body.enhancement_model,
+            catalog_id=body.frame_rate_catalog_id,
         )
     for label, model in (("视频超分", upscale), ("视频帧率调整", frame_rate)):
+        if model is not None and isinstance(model.get("max_duration"), (int, float)) and float(source_meta["duration"]) > model["max_duration"]:
+            raise HTTPException(400, f"当前{label}模型不支持该视频时长")
         if model is not None and body.resolution not in model["resolution_options"]:
             raise HTTPException(400, f"当前{label}模型不支持 {body.resolution} 分辨率")
     processing_models = {
+        "enhancement_model": body.enhancement_model,
+        **({"enhancement_plan_version": 2} if body.enhancement_model == "local_gpu" else {}),
         "upscale_backend": upscale["backend"],
         "upscale_model_params": upscale["model_params"],
         "upscale_request_schema": upscale["request_schema"],
-        "frame_rate_backend": frame_rate["backend"] if frame_rate else None,
-        "frame_rate_model_params": frame_rate["model_params"] if frame_rate else None,
-        "frame_rate_request_schema": (
-            frame_rate["request_schema"] if frame_rate else None
-        ),
+        "frame_rate_backend": upscale["backend"]
+        if local_frame_rate and body.enhancement_model != "local_gpu"
+        else frame_rate["backend"]
+        if frame_rate
+        else None,
+        "frame_rate_model_params": frame_rate["model_params"]
+        if frame_rate and (not local_frame_rate or body.enhancement_model == "local_gpu")
+        else None,
+        "frame_rate_request_schema": frame_rate["request_schema"]
+        if frame_rate and (not local_frame_rate or body.enhancement_model == "local_gpu")
+        else None,
     }
     billing = _video_enhance_billing(body, source_meta, upscale, frame_rate)
     return source_path, source_meta, processing_models, billing
@@ -11894,7 +11945,7 @@ async def freezone_video_upscale_quote(
         body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
     )
     quote = await get_credit_quote().generation_credit_quote(
-        kind="feature", model="freezone.video_enhance", params=billing,
+        kind="feature", model=billing["feature_key"], params=billing,
         quantity=1, product_surface="freezone",
         user_id=str(user.get("id") or user.get("user_id") or ""),
     )
@@ -11902,7 +11953,9 @@ async def freezone_video_upscale_quote(
     display = quote.display
     if quote.discount_amount > 0 and original_cost is not None:
         display = f"{original_cost}→{quote.total_cost}"
-    data = {"cost": quote.total_cost, "display": display}
+    import hashlib
+    plan = json.dumps({"models":_processing_models,"billing":billing,"source":_source_meta}, sort_keys=True, separators=(",",":"))
+    data = {"cost": quote.total_cost, "display": display, "plan_fingerprint":hashlib.sha256(plan.encode()).hexdigest()}
     if quote.promotion:
         data["promotion"] = quote.promotion
     return {"ok": True, "data": data}
@@ -11925,6 +11978,14 @@ async def freezone_video_upscale(
     source_path, source_meta, processing_models, billing = await _prepare_video_upscale(
         body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
     )
+
+    if body.enhancement_model == "local_gpu" and not body.plan_fingerprint:
+        raise HTTPException(409, "请先获取视频增强阶段计划和报价")
+    if body.plan_fingerprint:
+        import hashlib
+        plan = json.dumps({"models":processing_models,"billing":billing,"source":source_meta}, sort_keys=True,separators=(",",":"))
+        if hashlib.sha256(plan.encode()).hexdigest() != body.plan_fingerprint:
+            raise HTTPException(409, "视频增强模型或阶段计划已变化，请重新报价")
 
     try:
         job_id = _new_job_id()
@@ -11983,7 +12044,7 @@ async def freezone_video_upscale(
 async def freezone_video_upscale_probe(
     project: str,
     source_url: str = Query(...),
-    enhancement_model: Literal["standard", "topaz"] = Query("standard"),
+    enhancement_model: Annotated[Literal["standard", "topaz", "local_gpu"], Query()] = "standard",
     user: dict = Depends(get_api_user),
 ):
     """读取源视频参数，供增强面板过滤无效的目标档位。"""
@@ -12014,9 +12075,16 @@ async def freezone_video_upscale_probe(
     )
     metadata["enhancement_models"] = [
         scheme
-        for scheme in ("topaz", "standard")
+        for scheme in ("topaz", "standard", "local_gpu")
         if _video_processing_entry(catalog, "video_upscale", scheme) is not None
     ]
+    metadata["enhancement_bindings"] = {
+        scheme: {
+            "upscale_catalog_id": _catalog_entry_id(_video_processing_entry(catalog, "video_upscale", scheme)),
+            "frame_rate_catalog_id": _catalog_entry_id(_video_processing_entry(catalog, "video_frame_rate", scheme)) or None,
+        }
+        for scheme in metadata["enhancement_models"]
+    }
     if enhancement_model == "topaz":
         source_long_edge = max(int(metadata["width"]), int(metadata["height"]))
         metadata["upscale_resolutions"] = [

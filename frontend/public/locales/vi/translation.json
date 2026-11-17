@@ -3278,6 +3278,10 @@
       "pipeline": {
         "normalizingScenes": "AI đang chuẩn hoá các khối cảnh trong kịch bản..."
       },
+      "videoUpscale": {
+        "start": "Đang bắt đầu nâng cấp video...",
+        "processing": "Đang nâng cấp video..."
+      },
       "script": {
         "start": "Đang tạo kịch bản...",
         "beatVideoPromptStart": "Đang tạo prompt video cho beat {{beatNum}}",
@@ -6753,6 +6757,8 @@
         "submit": "Tạo video HD",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "localGpuModel": "GPU nội bộ (3060)",
+        "submissionPending": "Lần gửi trước đang được xác minh. Hãy kiểm tra tác vụ hiện có trước khi bắt đầu tác vụ khác.",
         "modelUnavailable": "Mô hình tăng cường đã lưu hiện không khả dụng. Hãy chọn mô hình khả dụng để tiếp tục."
       }
     },

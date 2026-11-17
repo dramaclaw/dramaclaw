@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1429,7 +1430,38 @@ async def _run_freezone_video_upscale_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_video_upscale", job_id, 0.1, "开始视频高清处理...")
+    task_type = "freezone_video_upscale"
+    from novelvideo.freezone.local_video_upscale import (
+        is_local_video_upscale_backend,
+    )
+
+    local_cancel = payload.get("enhancement_model") == "local_gpu" or is_local_video_upscale_backend(payload.get("upscale_backend"))
+    get_task_manager().update_progress_for_project(
+        ctx, task_type, 0, scope=job_id, progress=0.1,
+        current_task=lmsg("tasks.progress.videoUpscale.start", "开始视频高清处理..."),
+        # EE must not terminate this worker before its gateway cancellation handshake.
+        metadata={"video_cancel_protocol": "gateway-v1"} if local_cancel else None,
+    )
+    last_percent = 10
+    last_reported_at = time.monotonic()
+
+    def on_progress(value: float) -> None:
+        nonlocal last_percent, last_reported_at
+        percent = max(last_percent, min(99, round(value * 100)))
+        # A queued segment may make no visible progress for a long time. Refresh
+        # the same durable task row so stale-worker recovery does not reap it.
+        if percent > last_percent or time.monotonic() - last_reported_at >= 30:
+            get_task_manager().update_progress_for_project(
+                ctx, task_type, 0, scope=job_id, progress=percent / 100,
+                current_task=lmsg("tasks.progress.videoUpscale.processing", "正在处理高清视频..."),
+            )
+            last_percent = percent
+            last_reported_at = time.monotonic()
+
+    async def before_stage() -> None:
+        from novelvideo.task_backend.cancel import raise_if_envelope_cancel_requested
+        await asyncio.to_thread(raise_if_envelope_cancel_requested, envelope, task_type=task_type, episode=0, scope=job_id)
+
     output_path, meta = await _call_freezone_leaf(
         envelope,
         run_freezone_video_upscale,
@@ -1444,11 +1476,15 @@ async def _run_freezone_video_upscale_async(
         scene=str(payload.get("scene") or "realistic"),
         face_enhance=bool(payload.get("face_enhance", False)),
         upscale_backend=payload.get("upscale_backend"),
+        **({"enhancement_model": payload["enhancement_model"]} if "enhancement_model" in payload else {}),
+        **({"enhancement_plan_version": payload["enhancement_plan_version"]} if "enhancement_plan_version" in payload else {}),
         upscale_model_params=payload.get("upscale_model_params"),
         upscale_request_schema=payload.get("upscale_request_schema"),
         frame_rate_backend=payload.get("frame_rate_backend"),
         frame_rate_model_params=payload.get("frame_rate_model_params"),
         frame_rate_request_schema=payload.get("frame_rate_request_schema"),
+        on_progress=on_progress,
+        **({"before_stage": before_stage} if payload.get("enhancement_plan_version") == 2 else {}),
     )
     rel = output_path.relative_to(project_dir).as_posix()
     return {

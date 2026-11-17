@@ -3395,6 +3395,10 @@
       "pipeline": {
         "normalizingScenes": "A normalizar os blocos de cenas do guião com IA..."
       },
+      "videoUpscale": {
+        "start": "A iniciar a melhoria do vídeo...",
+        "processing": "A melhorar o vídeo..."
+      },
       "script": {
         "start": "A gerar o guião...",
         "beatVideoPromptStart": "A gerar o prompt de vídeo para o beat {{beatNum}}",
@@ -7019,6 +7023,8 @@
         "submit": "Gerar vídeo em HD",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "localGpuModel": "GPU local (3060)",
+        "submissionPending": "O envio anterior está sendo verificado. Consulte a tarefa existente antes de iniciar outra.",
         "modelUnavailable": "O modelo de aprimoramento salvo está indisponível. Selecione um modelo disponível para continuar."
       }
     },

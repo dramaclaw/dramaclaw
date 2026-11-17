@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { apiCall } from "@/api/client";
-import { probeFreezoneVideoUpscale, quoteFreezoneVideoUpscale } from "@/api/ops";
+import { probeFreezoneVideoUpscale, quoteFreezoneVideoUpscale, submitFreezoneVideoUpscale } from "@/api/ops";
 
 vi.mock("@/api/client", () => ({
   apiCall: vi.fn(),
@@ -67,4 +67,17 @@ it("preserves the selected Topaz family in probe and quote", async () => {
   expect(apiCall).toHaveBeenCalledWith(expect.stringContaining("/quote"), expect.objectContaining({
     json: expect.objectContaining({ enhancement_model: "topaz", target_fps: 60 }),
   }));
+});
+
+
+it('serializes identical third-group catalog bindings for quote and execution', async () => {
+  const parameters = { sourceUrl: '/source.mp4', enhancementModel: 'local_gpu' as const,
+    resolution: '1080p' as const, targetFps: 60 as const, upscaleCatalogId: 'local-up', frameRateCatalogId: 'local-fps' };
+  await quoteFreezoneVideoUpscale('project-1', parameters);
+  await submitFreezoneVideoUpscale('project-1', parameters);
+  for (const suffix of ['/quote', '/upscale']) {
+    expect(apiCall).toHaveBeenCalledWith(expect.stringContaining(suffix), expect.objectContaining({
+      json: expect.objectContaining({ enhancement_model: 'local_gpu', upscale_catalog_id: 'local-up', frame_rate_catalog_id: 'local-fps', target_fps: 60 }),
+    }));
+  }
 });

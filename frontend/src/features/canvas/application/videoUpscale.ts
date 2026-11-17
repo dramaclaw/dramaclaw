@@ -3,6 +3,7 @@
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoUpscale,
+  quoteFreezoneVideoUpscale,
   type FreezoneVideoUpscaleResolution,
   type FreezoneVideoUpscalePayload,
   type VideoEnhancementModel,
@@ -91,6 +92,10 @@ export async function submitVideoUpscale(
     return;
   }
   const canvasId = readUrl().canvas ?? 'default';
+  const original = useCanvasStore.getState().nodes.find((node)=>node.id===nodeId)?.data;
+  if (original?.upscaleSubmissionPending || String(original?.generationError ?? '').includes('LOCAL_VIDEO_SUBMISSION_PENDING')) {
+    throw new Error('LOCAL_VIDEO_SUBMISSION_PENDING');
+  }
 
   useCanvasStore.getState().updateNodeData(nodeId, {
     isGenerating: true,
@@ -109,8 +114,10 @@ export async function submitVideoUpscale(
     ]) {
       if (saved?.[field] !== undefined) Object.assign(settings, { [key]: saved[field] });
     }
+    const plan = settings.enhancementModel === 'local_gpu' ? await quoteFreezoneVideoUpscale(project,{...settings,sourceUrl:opts.sourceUrl.split('?')[0],resolution:opts.resolution}) : undefined;
     const ref = await submitFreezoneVideoUpscale(project, {
       ...settings,
+      ...(plan?.plan_fingerprint ? {planFingerprint:plan.plan_fingerprint}:{}),
       sourceUrl: opts.sourceUrl.split('?')[0],
       resolution: opts.resolution,
       canvasId,
@@ -133,6 +140,10 @@ export async function submitVideoUpscale(
       generationError: null,
     });
   } catch (err) {
+    if (String(err).includes('LOCAL_VIDEO_SUBMISSION_PENDING')) {
+      useCanvasStore.getState().updateNodeData(nodeId,{isGenerating:false,generationError:'LOCAL_VIDEO_SUBMISSION_PENDING',upscaleSubmissionPending:true});
+      throw err;
+    }
     if (isTaskPollTimeoutError(err)) {
       notifyTaskStillRunning();
       return;
