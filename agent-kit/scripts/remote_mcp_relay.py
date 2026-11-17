@@ -106,7 +106,11 @@ class Relay:
             try:
                 async for message in reader:
                     if isinstance(message, Exception):
-                        break
+                        logger.warning(
+                            "Session %s (%s) skipped an unreadable message from %s",
+                            sid[:8], session.mode, "child" if from_child else "client",
+                        )
+                        continue
                     if from_child:
                         session.child_received = True
                         session.child_outcome.set()
@@ -295,7 +299,8 @@ def main():
     if not 0 < args.idle_timeout < float("inf"):
         parser.error("--idle-timeout must be finite and positive")
     # The SDK's malformed-stdio diagnostic includes raw child output in a traceback.
-    logging.getLogger("mcp.client.stdio").disabled = True
+    # Unlike disabled, this filter survives uvicorn's logging configuration.
+    logging.getLogger("mcp.client.stdio").addFilter(lambda record: False)
     relay = Relay(args)
     app = Starlette(routes=[
         Route("/mcp/{mode}", relay),

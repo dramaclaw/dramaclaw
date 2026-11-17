@@ -322,7 +322,7 @@ def test_tools_resources_and_child_environment(relay_factory):
         async with relay.session() as (session, _, initialized):
             assert initialized.serverInfo.name == "fake-tools"
             names = [t.name for t in (await session.list_tools()).tools]
-            assert names == ["whoami", "sleep", "echo"]
+            assert names == ["whoami", "sleep", "echo", "noisy"]
             echoed = await session.call_tool("echo", {"text": "literal echo: ☃"})
             assert echoed.isError is False
             assert echoed.content[0].text == "literal echo: ☃"
@@ -361,6 +361,64 @@ def test_tools_resources_and_child_environment(relay_factory):
     asyncio.run(scenario())
 
 
+def test_stray_child_stdout_preserves_session(relay_factory):
+    relay = relay_factory()
+
+    async def scenario():
+        async with relay.session() as (session, sid, _):
+            pid = (await whoami(session))["pid"]
+            try:
+                await asyncio.wait_for(session.call_tool("noisy", {}), 10)
+            except Exception:
+                # Only this call may fail; subsequent calls must use the same live child.
+                pass
+            echoed = await session.call_tool("echo", {"text": "after noise"})
+            assert echoed.isError is False
+            assert echoed.content[0].text == "after noise"
+            assert (await whoami(session))["pid"] == pid
+            assert pid_exists(pid)
+            return sid
+
+    sid = asyncio.run(scenario())
+    relay.close()
+    logs = "\n".join(
+        (relay.directory / name).read_text(errors="replace")
+        for name in ("stderr.log", "stdout.log")
+    )
+    message = f"Session {sid[:8]} (tools) skipped an unreadable message from child"
+    assert logs.count(message) == 1
+    assert "stray-stdout-line-not-json-5d1e" not in logs
+    assert_secret_free(logs)
+
+
+def test_aborted_post_body_preserves_session(relay_factory):
+    relay = relay_factory()
+
+    async def scenario():
+        async with relay.session() as (session, sid, _):
+            pid = (await whoami(session))["pid"]
+            with socket.create_connection(("127.0.0.1", relay.port), timeout=3) as sock:
+                request = (
+                    "POST /mcp/tools HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{relay.port}\r\n"
+                    f"Authorization: Bearer {KEY}\r\n"
+                    f"Mcp-Session-Id: {sid}\r\n"
+                    "MCP-Protocol-Version: 2025-03-26\r\n"
+                    "Accept: application/json, text/event-stream\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Content-Length: 500\r\n\r\n"
+                    '{"jsonrpc"'
+                )
+                sock.sendall(request.encode())
+                await asyncio.sleep(0.3)
+            await asyncio.sleep(1.5)
+            identity = await asyncio.wait_for(whoami(session), 5)
+            assert identity["pid"] == pid
+            assert pid_exists(pid)
+
+    asyncio.run(scenario())
+
+
 def test_workflows_path_selects_workflows_server(relay_factory):
     relay = relay_factory()
 
@@ -368,7 +426,7 @@ def test_workflows_path_selects_workflows_server(relay_factory):
         async with relay.session("workflows") as (session, _, initialized):
             assert initialized.serverInfo.name == "fake-workflows"
             assert [t.name for t in (await session.list_tools()).tools] == [
-                "whoami", "sleep", "echo", "workflow_only",
+                "whoami", "sleep", "echo", "workflow_only", "noisy",
             ]
             assert (await whoami(session))["mode"] == "workflows"
 
