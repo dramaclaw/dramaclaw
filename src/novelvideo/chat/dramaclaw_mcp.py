@@ -438,7 +438,146 @@ def build_mcp_tools(tool_index: ToolIndex) -> list[types.Tool]:
             # original registry, including node/edge cardinality.
             tool.inputSchema = deepcopy(tool.inputSchema)
             tool.inputSchema["properties"]["plan"].pop("anyOf", None)
+        elif tool.name in _CANVAS_COMMAND_TOOLS:
+            # Published as is, the per-type command oneOf is about twice Codex's
+            # default tool schema budget, and Codex then collapses commands[] to an
+            # empty object. Advertise a flat projection generated from the registry;
+            # call_tool still validates every call against the registry.
+            parameters = tool_index[tool.name][0]["parameters"]
+            tool.inputSchema = deepcopy(tool.inputSchema)
+            tool.inputSchema["properties"]["commands"]["items"] = _flat_command_schema(
+                parameters["properties"]["commands"]["items"]
+            )
     return tools
+
+
+_FLAT_COMMAND_LEGEND = (
+    "One canvas command. properties lists the fields of all types; each type accepts "
+    "only its own fields. Required besides type, per type (a or b: either form; x|y: at "
+    "least one; f=v: fixed value; f(a|b): one of; f{...}: required inside f; -: none): "
+)
+
+
+def _schema_literals(schema: Any) -> list[Any]:
+    if not isinstance(schema, dict):
+        return []
+    if "const" in schema:
+        return [schema["const"]]
+    return list(schema.get("enum") or [])
+
+
+def _union_schema(variants: list[Any]) -> Any:
+    """A schema accepting every value one of ``variants`` accepts.
+
+    Properties are united and merged by name, ``required`` keeps what every variant
+    requires, enums are united, and any other keyword (descriptions included) is kept
+    only when every variant has the same value.
+    """
+    if not all(isinstance(variant, dict) for variant in variants):
+        return deepcopy(variants[0]) if all(v == variants[0] for v in variants) else {}
+    keys: list[str] = []
+    for variant in variants:
+        keys += [key for key in variant if key not in keys]
+    merged: dict[str, Any] = {}
+    for key in keys:
+        if key in ("const", "enum"):
+            continue
+        values = [variant[key] for variant in variants if key in variant]
+        everywhere = len(values) == len(variants)
+        if key == "properties":
+            names: list[str] = []
+            for value in values:
+                names += [name for name in value if name not in names]
+            merged[key] = {
+                name: _union_schema([value[name] for value in values if name in value])
+                for name in names
+            }
+        elif key == "required":
+            common = [
+                name for name in values[0] if all(name in value for value in values)
+            ]
+            if everywhere and common:
+                merged[key] = common
+        elif (
+            key in ("items", "additionalProperties")
+            and everywhere
+            and all(isinstance(value, dict) for value in values)
+        ):
+            merged[key] = _union_schema(values)
+        elif everywhere and all(value == values[0] for value in values):
+            merged[key] = deepcopy(values[0])
+    literal_sets = [_schema_literals(variant) for variant in variants]
+    if all(literal_sets):
+        merged["enum"] = []
+        for literals in literal_sets:
+            merged["enum"] += [
+                value for value in literals if value not in merged["enum"]
+            ]
+    return merged
+
+
+def _required_fields(
+    schema: dict[str, Any], merged: Any, skip: tuple[str, ...] = ()
+) -> str:
+    """What ``schema`` requires, in the notation of ``_FLAT_COMMAND_LEGEND``."""
+    properties = schema.get("properties") or {}
+    merged_properties = (
+        merged.get("properties") if isinstance(merged, dict) else None
+    ) or {}
+    parts = []
+    for name in schema.get("required") or []:
+        if name in skip:
+            continue
+        field = properties.get(name) if isinstance(properties.get(name), dict) else {}
+        literals = _schema_literals(field)
+        nested = _required_fields(field, merged_properties.get(name))
+        if len(literals) == 1:
+            parts.append(f"{name}={literals[0]}")
+        elif nested:
+            parts.append(f"{name}{{{nested}}}")
+        elif literals and not _schema_literals(merged_properties.get(name)):
+            # The merged property lost this type's enum; keep the values in the text.
+            parts.append(f"{name}({'|'.join(map(str, literals))})")
+        else:
+            parts.append(name)
+    alternatives = [
+        _required_fields({"properties": properties, **alternative}, merged, skip)
+        for alternative in schema.get("anyOf") or []
+        if isinstance(alternative, dict)
+    ]
+    if alternatives and all(alternatives):
+        parts.append("|".join(alternatives))
+    return ", ".join(parts)
+
+
+def _flat_command_schema(items: dict[str, Any]) -> dict[str, Any]:
+    """Project a per-type command ``oneOf`` onto one object plus a requirements text.
+
+    Every field the registry knows stays visible, and the text lists what each command
+    type requires, so the schema survives Codex's compaction budget. It is looser than
+    the registry, which remains the only schema calls are validated against.
+    """
+    variants = [
+        variant for variant in items.get("oneOf") or [] if isinstance(variant, dict)
+    ]
+    if not variants:
+        return deepcopy(items)
+    merged = _union_schema(variants)
+    by_type: dict[str, list[str]] = {}
+    for variant in variants:
+        type_values = _schema_literals((variant.get("properties") or {}).get("type"))
+        requirement = _required_fields(variant, merged, skip=("type",)) or "-"
+        if isinstance(variant.get("description"), str):
+            requirement += f" ({variant['description']})"
+        for type_value in type_values:
+            by_type.setdefault(str(type_value), []).append(requirement)
+    flat = {key: deepcopy(value) for key, value in items.items() if key != "oneOf"}
+    flat.update(merged)
+    flat["description"] = _FLAT_COMMAND_LEGEND + "; ".join(
+        f"{type_value}: {' or '.join(requirements)}"
+        for type_value, requirements in by_type.items()
+    )
+    return flat
 
 
 def _skill_resource_path(uri: str) -> Path:

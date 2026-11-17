@@ -99,7 +99,7 @@ python3 scripts/render_config.py \
 
 渲染结果是待合并片段，不会自动覆盖 Agent 的现有全局配置。宿主说明见 `hosts/`。
 
-Codex 模板不设置 `tool_input_schema_max_bytes`，沿用 Codex 默认：超过 5000 字节的工具输入 schema 会被压缩，嵌套字段（如画布命令的 `commands[]` 结构）可能缺失，Agent 依靠工具报错里附带的修正示例补齐。不建议把这个上限整体调大：实测会让工具负载明显增大，并导致运行不稳定。
+Codex 模板不设置 `tool_input_schema_max_bytes`，沿用 Codex 默认：超过 5000 字节的工具输入 schema 会被压缩，嵌套字段可能缺失。画布命令的两个工具（`freezone_emit_canvas_command`、`freezone_validate_canvas_commands`）发布的是 5000 字节以内的精简 schema，`commands[]` 的字段完整可见，每种命令的必填字段写在说明里。其余被压缩的工具里，工作流草稿的拒绝信息附带改正示例，互动故事的拒绝信息列出操作名和必填字段但不带示例；画布命令的拒绝信息只在文本节点缺标题或正文时附带示例。不建议把这个上限整体调大：实测会让工具负载明显增大，并导致运行不稳定。
 
 ## 自检
 

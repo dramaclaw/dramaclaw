@@ -5,7 +5,8 @@ and the external agent-kit launcher, not the full patched chat runtime.
 
 Only the product lifts Codex's tool schema budget. The agent-kit template keeps
 the Codex default, which may compact nested constraint guidance away, so that
-host only has to deliver both servers' tools to the model.
+host only has to deliver both servers' tools to the model, with every canvas
+command field intact.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from test_codex_app_server import (
     _responses_sse,
 )
 from test_mcp_schema_guidance import descriptions, assert_choice_guidance
+from test_canvas_command_schema_publication import CANVAS_TOOLS, PROFILES, _load, _paths
 
 
 @pytest.mark.parametrize("host", ["product", "agent-kit"])
@@ -214,6 +216,9 @@ async def test_real_codex_keeps_conditional_guidance(tmp_path, host):
     )
     assert "dramaclaw_patch_interactive_story" in tools, sorted(tools)
     assert {"workflow_catalog_search", "workflow_graph_compile"} <= set(tools)
+    index, _ = _load(PROFILES["freezone"])
+    for name in CANVAS_TOOLS:
+        assert _paths(tools[name]) == _paths(index[name][0]["parameters"]), name
     if host == "agent-kit":
         return
     create = tools["dramaclaw_create_interactive_story"]["properties"]["story"]

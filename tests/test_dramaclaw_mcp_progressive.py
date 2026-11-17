@@ -954,11 +954,19 @@ async def test_plan_tool_publication_preserves_registry_and_other_tools(monkeypa
 
     tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
     target = "freezone_prepare_workflow_plan_draft"
+    canvas_tools = {"freezone_emit_canvas_command", "freezone_validate_canvas_commands"}
     for name, schema in original.items():
         expected = schema_with_guidance(schema["parameters"])
+        published = tools[name].inputSchema
         if name == target:
             del expected["properties"]["plan"]["anyOf"]
-        assert tools[name].inputSchema == expected
+        if name in canvas_tools:
+            # commands[] items are a flat projection of the registry; see
+            # test_canvas_command_schema_publication.py for its own guards.
+            published = deepcopy(published)
+            assert "oneOf" not in published["properties"]["commands"].pop("items")
+            del expected["properties"]["commands"]["items"]
+        assert published == expected
         assert registry[name][0] == schema
     assert tools[target].inputSchema["properties"]["plan"]["required"] == [
         "schema_version", "skill", "nodes", "edges"
@@ -971,6 +979,11 @@ async def test_plan_tool_publication_preserves_registry_and_other_tools(monkeypa
     # MCP clients must not be able to alter the server's execution contract.
     tools[target].inputSchema["properties"]["plan"]["required"].clear()
     assert registry[target][0] == original[target]
+    for name in canvas_tools:
+        items = tools[name].inputSchema["properties"]["commands"]["items"]
+        for field in items["properties"].values():
+            field.clear()
+        assert registry[name][0] == original[name]
 
 
 @pytest.mark.asyncio

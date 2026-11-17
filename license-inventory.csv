@@ -4080,6 +4080,7 @@ src/novelvideo/workflows/literal_script_writing.py,Elastic-2.0,2026 SuperTale co
 src/novelvideo/workflows/script_writing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/canvas_core_requirements.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/codex_history_stub.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/codex_schema_compaction.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/compliance/test_generate_p0b_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/conftest.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/contract/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4096,6 +4097,7 @@ tests/contract/test_m07_tasks.py,Elastic-2.0,2026 SuperTale contributors,REUSE.t
 tests/contract/test_m08_chat_agent.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/contract/test_m09_route_contracts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/data/control-context-vectors.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/fixtures/canvas_command_publication_snapshot.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/fixtures/canvas_core_fake_worker.mjs,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/fixtures/codex-0.162/02-thread-start-ce.jsonl,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/fixtures/codex-0.162/03-turn-ce-plain.jsonl,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4248,6 +4250,7 @@ tests/test_canvas_change_log.py,Elastic-2.0,2026 SuperTale contributors,REUSE.to
 tests/test_canvas_change_stream.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_command_bridge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_command_push.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_canvas_command_schema_publication.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_command_stream.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_confirmation_frames.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_confirmation_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
