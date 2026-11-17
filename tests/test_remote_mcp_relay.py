@@ -1195,3 +1195,22 @@ def test_explicit_project_path_is_never_overridden(relay_factory, suffix, canvas
     asyncio.run(scenario())
     relay.close()
     assert relay.exchange.project_requests == []
+
+
+def test_real_launcher_home_with_several_projects_lists_freezone_tools(relay_factory):
+    python = ROOT / ".venv/bin/python"
+    if not python.exists():
+        pytest.skip("Real launcher requires the repository .venv/bin/python")
+    relay = relay_factory(real=True, projects=["project-a", "project-b"])
+
+    async def scenario():
+        async with relay.session(path="/mcp/tools") as (session, _, initialized):
+            names = {tool.name for tool in (await session.list_tools()).tools}
+            assert {
+                "freezone_list_projects", "freezone_create_node", "freezone_list_canvases",
+            } <= names
+            assert len(names) > 4
+            assert "freezone_list_projects" in (initialized.instructions or "")
+            assert "project_id" in (initialized.instructions or "")
+
+    asyncio.run(scenario())

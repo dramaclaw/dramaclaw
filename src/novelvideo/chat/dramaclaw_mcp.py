@@ -199,9 +199,101 @@ def _plugin_tools(plugin_name: str) -> dict[str, tuple[dict[str, Any], Any]]:
     return tools
 
 
+_PROJECT_DISCOVERY_INSTRUCTIONS = (
+    "Call freezone_list_projects first, then pick the project the user means. "
+    "Ask the user if ambiguous; never guess. Pass project_id on every other Freezone "
+    "tool call. No project is bound to this connection; one connection may work on "
+    "several projects."
+)
+_MISSING_PROJECT_ERROR = (
+    "project_id is required and no current project context is configured"
+)
+_PROJECT_DISCOVERY_HINT = " Call freezone_list_projects and pass project_id."
+
+
+def _external_unbound_freezone() -> bool:
+    # Only external MCP connections opt into per-call project selection.
+    if os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() != "1":
+        return False
+    # Keep other plugins and already-bound connections on their existing paths.
+    if _agent_plugin_name() != "freezone" or _scope_kind() != "home":
+        return False
+    plugin = _plugin("freezone")
+    # Turn tokens take precedence over keys; hosted turns also set EXTERNAL_MCP.
+    return plugin._agent_key_configured() and not plugin._agent_token_configured()
+
+
+def server_instructions() -> str | None:
+    return _PROJECT_DISCOVERY_INSTRUCTIONS if _external_unbound_freezone() else None
+
+
+def _list_freezone_projects(arguments: dict[str, Any]) -> str:
+    items, error = _plugin("freezone")._project_candidates()
+    if error is not None:
+        return json.dumps(error, ensure_ascii=False)
+    projects = []
+    for item in items:
+        project_id = str(item.get("id") or "").strip()
+        if not project_id:
+            continue
+        projects.append({
+            "project_id": project_id,
+            "name": str(item.get("name") or ""),
+            **{key: item[key] for key in ("updated_at", "created_at") if key in item},
+        })
+    return json.dumps({
+        "ok": True,
+        "projects": projects,
+        "count": len(projects),
+        "agent_instruction": _PROJECT_DISCOVERY_INSTRUCTIONS,
+    }, ensure_ascii=False)
+
+
+_PROJECT_DISCOVERY_SCHEMA = {
+    "name": "freezone_list_projects",
+    "description": (
+        "Read-only: lists the projects this agent key can see. "
+        + _PROJECT_DISCOVERY_INSTRUCTIONS
+    ),
+    "parameters": {
+        "type": "object", "properties": {}, "required": [], "additionalProperties": False,
+    },
+    "output_schema": {
+        "x-dramaclaw-tool": "freezone_list_projects",
+        "type": "object",
+        "properties": {
+            "ok": {"type": "boolean"},
+            "projects": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "updated_at": {},
+                        "created_at": {},
+                    },
+                    "required": ["project_id", "name"],
+                    "additionalProperties": False,
+                },
+            },
+            "count": {"type": "integer", "minimum": 0},
+            "agent_instruction": {"type": "string"},
+        },
+        "required": ["ok"],
+        "if": {"properties": {"ok": {"const": True}}},
+        "then": {"required": ["projects", "count", "agent_instruction"]},
+    },
+}
+
+
 def _agent_tools() -> dict[str, tuple[dict[str, Any], Any]]:
     """Load only the plugin belonging to the active agent profile."""
     tools = _plugin_tools(_agent_plugin_name())
+    if _external_unbound_freezone():
+        return {**tools, "freezone_list_projects": (
+            _PROJECT_DISCOVERY_SCHEMA, _list_freezone_projects,
+        )}
     if _scope_kind() == "home":
         return {name: tools[name] for name in sorted(HOME_TOOL_NAMES) if name in tools}
     return tools
@@ -220,6 +312,17 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         result = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
         result = None
+    if (
+        name.startswith("freezone_")
+        and name != "freezone_list_projects"
+        and isinstance(result, dict)
+        and result.get("ok") is False
+        and _external_unbound_freezone()
+    ):
+        for field in ("error", "message"):
+            if result.get(field) == _MISSING_PROJECT_ERROR:
+                result[field] += _PROJECT_DISCOVERY_HINT
+        raw = json.dumps(result, ensure_ascii=False)
     if (
         isinstance(result, dict)
         and result.get("ok") is True
@@ -323,6 +426,8 @@ def _freezone_canvas_mode() -> bool:
 def _normalize_structured_result(
     schema: dict[str, Any], decoded: Any
 ) -> dict[str, Any]:
+    if schema.get("x-dramaclaw-tool") == "freezone_list_projects":
+        return decoded
     structured = mcp_runtime.normalize_structured_result(schema, decoded)
     raw = decoded if isinstance(decoded, dict) else {}
     properties = schema.get("properties") or {}
@@ -432,6 +537,8 @@ async def list_tools() -> list[types.Tool]:
 def build_mcp_tools(tool_index: ToolIndex) -> list[types.Tool]:
     tools = mcp_runtime.build_mcp_tools(tool_index)
     for tool in tools:
+        if tool.name == "freezone_list_projects":
+            tool.annotations = types.ToolAnnotations(readOnlyHint=True)
         if tool.name == "freezone_prepare_workflow_plan_draft":
             # Codex clears cardinality-only anyOf fragments into empty schemas.
             # Adapt only the advertised copy; call_tool still validates the
@@ -821,14 +928,25 @@ async def call_tool(
             _scope_kind(),
             _workflow_plan_log_summary(arguments),
         )
-    result = await mcp_runtime.call_tool(
-        name,
-        arguments,
-        tool_index=tools,
-        hooks=_tool_call_hooks(name),
-        scope=_scope_kind(),
-        log=logger,
-    )
+    try:
+        result = await mcp_runtime.call_tool(
+            name,
+            arguments,
+            tool_index=tools,
+            hooks=_tool_call_hooks(name),
+            scope=_scope_kind(),
+            log=logger,
+        )
+    except ValueError as exc:
+        if not (
+            name.startswith("freezone_")
+            and str(exc) == _MISSING_PROJECT_ERROR
+            and _external_unbound_freezone()
+        ):
+            raise
+        result = _mcp_error_result(name, {
+            "ok": False, "error": str(exc) + _PROJECT_DISCOVERY_HINT,
+        }, tools)
     if workflow_started is not None:
         payload = result.structuredContent or {}
         if payload.get("error") == "tool_arguments_invalid":
@@ -850,6 +968,7 @@ async def call_tool(
 
 
 async def _main() -> None:
+    SERVER.instructions = server_instructions()
     async with stdio_server() as (read_stream, write_stream):
         await SERVER.run(
             read_stream,

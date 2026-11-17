@@ -1690,3 +1690,147 @@ def test_successful_canvas_tool_instructs_plain_text_final_response():
     assert instruction.startswith(CANVAS_FINAL_RESPONSE_INSTRUCTIONS)
     assert instruction.endswith("Report success briefly.")
     assert "message field" not in instruction
+
+
+@pytest.fixture
+def external_unbound_freezone_env(monkeypatch):
+    for name in (
+        "DRAMACLAW_EXTERNAL_MCP", "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE",
+        "DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE", "DRAMACLAW_PROJECT_ID",
+        "DRAMACLAW_CANVAS_ID", "DRAMACLAW_TOOL_MODE", "DRAMACLAW_CHAT_SURFACE",
+        "DRAMACLAW_AGENT_PROFILE", "DRAMACLAW_LOCAL_AGENT_TRUST",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", "test-key-placeholder")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    monkeypatch.setenv("DRAMACLAW_CHAT_SURFACE", "freezone")
+    monkeypatch.setenv("DRAMACLAW_AGENT_PROFILE", "freezone:main")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key_source", ["env", "file"])
+async def test_external_unbound_freezone_lists_all_tools(
+    external_unbound_freezone_env, monkeypatch, tmp_path, key_source,
+):
+    if key_source == "file":
+        key_file = tmp_path / "agent-key"
+        key_file.write_text("test-key-placeholder")
+        monkeypatch.delenv("DRAMACLAW_AGENT_KEY")
+        monkeypatch.setenv("DRAMACLAW_AGENT_KEY_FILE", str(key_file))
+    plugin_names = set(dramaclaw_mcp._plugin_tools("freezone"))
+    assert "freezone_list_projects" not in plugin_names
+    assert {tool.name for tool in await dramaclaw_mcp.list_tools()} == (
+        plugin_names | {"freezone_list_projects"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_external_unbound_freezone_project_discovery_schema(external_unbound_freezone_env):
+    tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
+    assert "freezone_list_projects" in tools
+    tool = tools["freezone_list_projects"]
+    schema = tool.inputSchema
+    assert schema["type"] == "object"
+    assert not schema.get("required")
+    assert schema["additionalProperties"] is False
+    assert len(json.dumps(schema)) < 5000
+    description = (tool.description or "").lower()
+    assert "first" in description
+    assert "project_id" in description
+    assert "every" in description
+    assert tool.annotations is not None
+    assert tool.annotations.readOnlyHint is True
+
+
+@pytest.mark.asyncio
+async def test_external_unbound_freezone_project_discovery_result(
+    external_unbound_freezone_env, monkeypatch,
+):
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        return {"ok": True, "data": [
+            {"id": "project-a", "name": "First project", "updated_at": "2026-01-01"},
+            {"id": "project-b", "name": "Second project"},
+        ]}
+
+    monkeypatch.setattr(dramaclaw_mcp._plugin("freezone"), "_request", request)
+    result = await dramaclaw_mcp.call_tool("freezone_list_projects", {})
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload["ok"] is True
+    assert payload["count"] == 2
+    assert [(p["project_id"], p["name"]) for p in payload["projects"]] == [
+        ("project-a", "First project"), ("project-b", "Second project"),
+    ]
+    assert isinstance(payload["agent_instruction"], str)
+    assert "project_id" in payload["agent_instruction"]
+    assert calls == [("GET", "/api/v1/projects")]
+
+
+@pytest.mark.asyncio
+async def test_external_unbound_freezone_project_discovery_reader_error(
+    external_unbound_freezone_env, monkeypatch,
+):
+    error = {"ok": False, "error": "projects unavailable"}
+    monkeypatch.setattr(
+        dramaclaw_mcp._plugin("freezone"), "_project_candidates", lambda: ([], error),
+    )
+    result = await dramaclaw_mcp.call_tool("freezone_list_projects", {})
+    assert result.isError is True
+    assert result.structuredContent == error
+
+
+@pytest.mark.asyncio
+async def test_external_unbound_freezone_missing_project_guidance(external_unbound_freezone_env):
+    result = await dramaclaw_mcp.call_tool("freezone_list_canvases", {})
+    assert result.isError is True
+    text = "\n".join(block.text for block in result.content if block.type == "text")
+    assert "project_id is required and no current project context is configured" in text
+    assert "freezone_list_projects" in text
+    assert "pass" in text.lower()
+
+
+def test_external_unbound_freezone_server_instructions(external_unbound_freezone_env):
+    # Public helper contract for the instructions supplied during MCP initialization.
+    instructions = dramaclaw_mcp.server_instructions()
+    assert "freezone_list_projects" in instructions
+    assert "project_id" in instructions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outside_gate", [
+    "token", "token_file", "external_unset", "external_zero", "no_key",
+    "default_plugin", "bound_project",
+])
+async def test_external_freezone_outside_gate_preserves_tools_and_instructions(
+    external_unbound_freezone_env, monkeypatch, tmp_path, outside_gate,
+):
+    expected = set()
+    if outside_gate == "token":
+        monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN", "test-token-placeholder")
+    elif outside_gate == "token_file":
+        token_file = tmp_path / "agent-token"
+        token_file.write_text("test-token-placeholder")
+        monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN_FILE", str(token_file))
+    elif outside_gate == "external_unset":
+        monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP")
+    elif outside_gate == "external_zero":
+        monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "0")
+    elif outside_gate == "no_key":
+        monkeypatch.delenv("DRAMACLAW_AGENT_KEY")
+    elif outside_gate == "default_plugin":
+        monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
+        monkeypatch.delenv("DRAMACLAW_CHAT_SURFACE")
+        monkeypatch.delenv("DRAMACLAW_AGENT_PROFILE")
+        expected = set(dramaclaw_mcp.HOME_TOOL_NAMES)
+    elif outside_gate == "bound_project":
+        monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+        expected = set(dramaclaw_mcp._plugin_tools("freezone"))
+
+    names = {tool.name for tool in await dramaclaw_mcp.list_tools()}
+    assert names == expected
+    assert "freezone_list_projects" not in names
+    assert dramaclaw_mcp.SERVER.create_initialization_options().instructions is None

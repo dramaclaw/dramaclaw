@@ -183,7 +183,7 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 - `/mcp/{tools|workflows}/projects/<project_id>/canvases/<canvas_id>`：指定项目和画布。
 
 ID 仅允许 `[A-Za-z0-9._-]`，长度为 1–128 个字符。路径包含项目时，Key 校验使用项目 scope。
-要获得与 Codex 宿主配置等价的工具集（Freezone 画布工具），需使用带画布的项目路径；
+tools 服务无需带画布的项目路径也可提供 Freezone 画布工具；带画布路径用于预先绑定项目和画布。
 子进程的项目和画布不继承中继环境中的值。
 
 home 路径先以 home scope 校验 Key，再用交换得到的 Token 请求 `GET /api/v1/projects`。
@@ -195,8 +195,11 @@ Token 仅在内存中用于此次查询，查询结束即丢弃，不写入 Sess
 会话后续请求仍使用原 home URL；携带该会话 ID 访问项目路径会返回 404。
 显式项目或画布路径不查询项目列表，始终使用路径指定的 scope。
 
-可见多个项目的 Key 在静态 home URL 上只能获得 home-scope 工具；需要项目工具时，
-请使用项目路径，或改用仅能访问一个项目的 Key。
+当 Agent Key 的 home 路径保留 home scope（没有或有多个可见项目等情况）时，tools 服务提供
+完整 Freezone 工具集和只读的 `freezone_list_projects`。模型应先列出项目，选择用户所指的项目
+（有歧义时询问，不猜测），再在每次其他 Freezone 工具调用中传入 `project_id`；同一连接可操作多个项目。
+服务的 initialize instructions 会说明此流程；因缺少 `project_id` 而失败的调用会在错误中提示
+`freezone_list_projects`。单项目自动绑定和上述显式项目／画布路径保持不变，workflows 服务不受影响。
 
 每个会话启动一个子进程。以下参数默认读取对应环境变量，显式 CLI 参数优先：
 
