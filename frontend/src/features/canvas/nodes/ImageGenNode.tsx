@@ -76,10 +76,8 @@ import {
 } from '@/features/canvas/application/nodeActionResult';
 import { getBeatDirectorStageManifest } from '@/api/viewerManifests';
 import { BackgroundCropperDialog } from '@/features/canvas/ui/BackgroundCropperDialog';
-import {
-  ThreeDDirectorDialog,
-  type ThreeDDirectorCaptureMeta,
-} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+import type { ThreeDDirectorCaptureMeta } from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+import { LazyThreeDDirectorDialog as ThreeDDirectorDialog } from '@/features/viewer-kit/three-d/LazyThreeDDirectorDialog';
 import type { DirectorStageManifest } from '@/features/viewer-kit/three-d/directorManifest';
 import { readUrl } from '@/lib/url-params';
 import { useNodeGenerationHistory } from '@/features/canvas/hooks/useNodeGenerationHistory';
