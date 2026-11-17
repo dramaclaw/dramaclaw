@@ -925,6 +925,26 @@ async def test_graph_compile_states_nothing_created_or_run_and_names_next_tool()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("run_after_create", [None, False, True])
+async def test_graph_compile_real_result_matches_its_published_output_schema(run_after_create):
+    arguments = {"plan": canonical_plan()}
+    if run_after_create is not None:
+        arguments["run_after_create"] = run_after_create
+    tool = next(
+        tool for tool in await workflow_mcp.list_tools() if tool.name == "workflow_graph_compile"
+    )
+
+    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+
+    payload = _result_payload(result)
+    assert payload["ok"] is True, payload
+    assert result.structuredContent == payload
+    Draft202012Validator(tool.outputSchema).validate(payload)
+    runs = [command for command in payload["commands"] if command["type"] == "run_workflow"]
+    assert len(runs) == (1 if run_after_create else 0)
+
+
+@pytest.mark.asyncio
 async def test_failed_graph_compile_omits_success_next_step_fields():
     plan = canonical_plan()
     plan["edges"][0]["target"] = "unknown-node"
