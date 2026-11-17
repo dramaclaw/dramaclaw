@@ -2560,6 +2560,192 @@ async def _run_codex_no_output_watchdog(monkeypatch, tmp_path, steps, *, expires
     return events, interrupt_calls
 
 
+async def _run_codex_retry_watchdog(
+    monkeypatch, tmp_path, *, second_timeout=False, tool_activity=None,
+    timeout_kind="no-output", gate=lambda: True, enabled=True,
+    newest_id=None, newest_status="interrupted", revert_raises=False, close_after_resend=False,
+):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+    from novelvideo.chat import codex_history, codex_protocol as protocol
+
+    monkeypatch.setattr(backend_sdk, "CODEX_NO_OUTPUT_RETRY_ENABLED", enabled)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT",
+                        240.0 if timeout_kind == "first-progress" else 10_000.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT",
+                        240.0 if timeout_kind == "idle" else 10_000.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_NO_OUTPUT_TIMEOUT",
+                        240.0 if timeout_kind == "no-output" else 10_000.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.5)
+    clock = SimpleNamespace(now=10_000.0)
+    loop = asyncio.get_running_loop()
+    adapter = SimpleNamespace(**vars(asyncio))
+    adapter.get_running_loop = lambda: SimpleNamespace(
+        time=lambda: clock.now, call_soon_threadsafe=loop.call_soon_threadsafe,
+    )
+    monkeypatch.setattr(backend_sdk, "asyncio", adapter)
+    state = SimpleNamespace(
+        starts=[], interrupts=[], calls=[], invalidated=[], turns=[], awaiting=None,
+        consumed=threading.Event(), gate_open=True,
+    )
+    invalidate = codex_history.HISTORY_CACHE.invalidate
+
+    def record_invalidate(thread_id):
+        state.invalidated.append(thread_id)
+        invalidate(thread_id)
+
+    monkeypatch.setattr(codex_history.HISTORY_CACHE, "invalidate", record_invalidate)
+
+    class Client:
+        def request(self, method, params, *, response_model):
+            state.calls.append((method, params))
+            if method == protocol.THREAD_TURNS_LIST:
+                assert response_model is protocol.ThreadTurnsPage
+                assert params == protocol.newest_turns_params("thread-retry", limit=1)
+                wire = {"data": [_repair_turn(
+                    newest_id or state.turns[-1].id, newest_status,
+                )], "nextCursor": None}
+            elif method == protocol.THREAD_REVERT:
+                assert response_model is protocol.ThreadRevertResponse
+                assert params == {"threadId": "thread-retry", "beforeTurnId": "turn-1"}
+                if revert_raises:
+                    raise RuntimeError("scripted revert failure")
+                wire = {
+                    "thread": {"id": "thread-retry", "status": {"type": "idle"},
+                               "historyMode": "paginated"},
+                    "turnsBackwardsCursor": None,
+                }
+            else:
+                pytest.fail(f"Unexpected retry request: {method}")
+            return response_model.model_validate(wire)
+
+    class Turn:
+        def __init__(self, number):
+            self.id = f"turn-{number}"
+            self.number = number
+            self.stopped = threading.Event()
+
+        def interrupt(self):
+            state.interrupts.append(self.id)
+            self.stopped.set()
+            state.consumed.set()
+
+        def notification(self, kind, value=None):
+            common = {"threadId": "thread-retry", "turnId": self.id}
+            if kind in {"started", "completed"}:
+                model = v2.TurnStartedNotification if kind == "started" else (
+                    v2.TurnCompletedNotification
+                )
+                payload = {"threadId": "thread-retry", "turn": {
+                    "id": self.id, "items": [], "status": value or "inProgress",
+                }}
+                method, last = f"turn/{kind}", f"turn_{kind}"
+            elif kind in {"reasoning", "answer"}:
+                payload = {**common, "itemId": kind, "delta": value}
+                if kind == "reasoning":
+                    model = v2.ReasoningSummaryTextDeltaNotification
+                    payload["summaryIndex"] = 0
+                    method, last = "item/reasoning/summaryTextDelta", "thought_delta"
+                else:
+                    model = v2.AgentMessageDeltaNotification
+                    method, last = "item/agentMessage/delta", "assistant_delta"
+            else:
+                start = kind == "tool_start"
+                model = v2.ItemStartedNotification if start else v2.ItemCompletedNotification
+                payload = {**common, "item": {
+                    "id": "call-1", "type": "mcpToolCall", "server": "tools",
+                    "tool": "read_document", "arguments": {},
+                    "status": "inProgress" if start else "completed",
+                }, "startedAtMs" if start else "completedAtMs": int(clock.now * 1000)}
+                method = "item/started" if start else "item/completed"
+                last = "tool_started" if start else "tool_updated"
+                if tool_activity == "item-only":
+                    last = "item_started"
+            return Notification(method=method, payload=model.model_validate(payload)), last
+
+        def stream(self):
+            start = clock.now
+            steps = [(0, "started", None)]
+            if self.number == 2 and not second_timeout:
+                steps += [(1, "answer", "Done."), (2, "completed", "completed")]
+            else:
+                if tool_activity:
+                    steps += [(1, "tool_start", None)]
+                    if tool_activity == "start-end":
+                        steps += [(2, "tool_end", None)]
+                if timeout_kind != "first-progress":
+                    steps += [(3, "reasoning", "Thinking")]
+                steps += [(244, "started" if timeout_kind != "no-output" else "reasoning",
+                           None if timeout_kind != "no-output" else "Still thinking")]
+            for elapsed, kind, value in steps:
+                if self.stopped.is_set():
+                    break
+                state.consumed.clear()
+                clock.now = start + elapsed
+                event, state.awaiting = self.notification(kind, value)
+                yield event
+                assert state.consumed.wait(2), "consumer did not process scripted notification"
+            if steps[-1][1] != "completed" and not self.stopped.is_set():
+                assert self.stopped.wait(2), "watchdog did not interrupt scripted turn"
+            if self.stopped.is_set():
+                yield self.notification("completed", "interrupted")[0]
+
+    if tool_activity == "item-only":
+        original_map = backend_sdk._CodexNotificationMapper.map
+
+        def item_only(mapper, event):
+            return [mapped for mapped in original_map(mapper, event)
+                    if mapped.type not in {"tool_started", "tool_updated"}]
+
+        monkeypatch.setattr(backend_sdk._CodexNotificationMapper, "map", item_only)
+
+    runtime_thread = SimpleNamespace(id="thread-retry")
+
+    @contextmanager
+    def shared(_config):
+        yield SimpleNamespace(_client=Client())
+
+    def start_turn(*args, **kwargs):
+        state.starts.append((args, kwargs))
+        turn = Turn(len(state.starts))
+        state.turns.append(turn)
+        return turn
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", shared)
+    monkeypatch.setattr(backend_sdk, "_start_or_resume_codex_thread",
+                        lambda *a, **kw: runtime_thread)
+    monkeypatch.setattr(backend_sdk, "_start_codex_turn", start_turn)
+    thread = CodexThread(
+        codex_bin=None, cwd=tmp_path, env={}, model="fake", model_provider="fake",
+        developer_instructions="", config_overrides=(), thread_config={},
+        turn_metadata={"trace": "same-turn"}, output_schema={"type": "object"},
+        additional_context={"context": {"value": "same context", "kind": "application"}},
+        client_user_message_id="user-1", thread_id=None,
+        retry_allowed=(lambda: state.gate_open) if close_after_resend else gate,
+    )
+
+    async def collect():
+        events = []
+        async for event in thread.stream("Same prompt", image_paths=[tmp_path / "image.png"]):
+            events.append(event)
+            if close_after_resend and event.type == "thread_started" and event.turn_id == "turn-2":
+                state.gate_open = False
+            if event.type == state.awaiting:
+                state.consumed.set()
+        return events
+
+    try:
+        state.events = await asyncio.wait_for(collect(), timeout=5)
+    finally:
+        for turn in state.turns:
+            turn.stopped.set()
+        state.consumed.set()
+    for turn_id in ("turn-1", "turn-2"):
+        assert ("thread-retry", turn_id) not in backend_sdk._LIVE_CODEX_TURNS
+        assert ("thread-retry", turn_id) not in backend_sdk._INTERRUPTED_CODEX_TURNS
+    return state
+
+
 def _assert_codex_no_output_timeout(events, interrupt_calls):
     message = "模型长时间只在思考、没有产出内容，已自动停止本轮。请重试，或把需求拆小一些。"
     assert interrupt_calls == ["turn-watchdog"]
@@ -3019,3 +3205,283 @@ async def test_codex_empty_completion_preserves_empty_text(monkeypatch, tmp_path
     assert not interrupts
     complete = next(event for event in events if event.type == "complete")
     assert complete.text == ""
+
+
+def _assert_retry_timeout(state, turn_id="turn-1", kind="no-output"):
+    events = state.events
+    assert [e.type for e in events[-3:]] == ["turn_completed", "egress_disposition", "complete"]
+    assert [e.turn_id for e in events[-3:]] == [turn_id, turn_id, turn_id]
+    assert [e.disposition for e in events[-3:]] == ["timeout", "timeout", "timeout"]
+    assert sum(e.disposition == "timeout" for e in events) == 3
+    assert events[-3].status == "timeout"
+    assert events[-1].error == events[-3].error
+    assert events[-1].error["kind"] == kind
+    assert isinstance(events[-1].error["elapsed_ms"], int)
+    if kind == "no-output":
+        assert events[-1].text == backend_sdk.CODEX_NO_OUTPUT_TIMEOUT_MESSAGE
+        assert events[-1].error["message"] == backend_sdk.CODEX_NO_OUTPUT_TIMEOUT_MESSAGE
+        assert events[-1].error["elapsed_ms"] >= 240_000
+
+
+def _assert_retry_skipped(state, kind="no-output"):
+    _assert_retry_timeout(state, kind=kind)
+    assert len(state.starts) == 1
+    assert state.interrupts == ["turn-1"]
+    assert not any(e.type == "turn_retrying" for e in state.events)
+    assert not any(method == "thread/revert" for method, _ in state.calls)
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_retry_reverts_and_resends_once(monkeypatch, tmp_path):
+    from novelvideo.chat import codex_protocol as protocol
+
+    state = await _run_codex_retry_watchdog(monkeypatch, tmp_path)
+    assert state.interrupts == ["turn-1"]
+    assert state.calls == [
+        (protocol.THREAD_TURNS_LIST, protocol.newest_turns_params("thread-retry", limit=1)),
+        (protocol.THREAD_REVERT, {"threadId": "thread-retry", "beforeTurnId": "turn-1"}),
+    ]
+    assert state.invalidated == ["thread-retry"]
+    assert len(state.starts) == 2
+    assert state.starts[0] == state.starts[1]
+    events = state.events
+    retry, = [e for e in events if e.type == "turn_retrying"]
+    assert retry.thread_id == "thread-retry"
+    assert retry.turn_id == "turn-1"
+    assert retry.error == {"message": backend_sdk.CODEX_NO_OUTPUT_TIMEOUT_MESSAGE,
+                           "kind": "no-output", "elapsed_ms": retry.error["elapsed_ms"]}
+    assert isinstance(retry.error["elapsed_ms"], int)
+    assert not any(e.disposition == "timeout" for e in events)
+    assert not any(e.turn_id == "turn-1" and e.type in {
+        "turn_completed", "egress_disposition", "complete",
+    } for e in events)
+    assert [e.turn_id for e in events if e.type == "thread_started"] == ["turn-1", "turn-2"]
+    assert [e.type for e in events[-2:]] == ["egress_disposition", "complete"]
+    assert events[-2].disposition == "completed"
+    assert events[-1].text == "Done."
+    assert events[-1].error is None
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_retry_second_timeout_ends_like_today(monkeypatch, tmp_path):
+    state = await _run_codex_retry_watchdog(monkeypatch, tmp_path, second_timeout=True)
+    assert state.interrupts == ["turn-1", "turn-2"]
+    assert len(state.starts) == 2
+    assert sum(method == "thread/revert" for method, _ in state.calls) == 1
+    assert sum(e.type == "turn_retrying" for e in state.events) == 1
+    _assert_retry_timeout(state, "turn-2")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_activity", ["start-end", "item-only"])
+async def test_codex_no_output_retry_skipped_after_tool_activity(
+    monkeypatch, tmp_path, tool_activity,
+):
+    state = await _run_codex_retry_watchdog(monkeypatch, tmp_path, tool_activity=tool_activity)
+    _assert_retry_skipped(state)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout_kind", ["first-progress", "idle"])
+async def test_codex_no_output_retry_skipped_for_other_timeouts(
+    monkeypatch, tmp_path, timeout_kind,
+):
+    state = await _run_codex_retry_watchdog(monkeypatch, tmp_path, timeout_kind=timeout_kind)
+    _assert_retry_skipped(state, timeout_kind)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gate", [None, lambda: False], ids=["none", "revoked"])
+async def test_codex_no_output_retry_skipped_without_gate(monkeypatch, tmp_path, gate):
+    state = await _run_codex_retry_watchdog(monkeypatch, tmp_path, gate=gate)
+    _assert_retry_skipped(state)
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_retry_switch_off(monkeypatch, tmp_path):
+    state = await _run_codex_retry_watchdog(monkeypatch, tmp_path, enabled=False)
+    _assert_retry_skipped(state)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unsafe", ["different-turn", "in-progress", "revert-raises"])
+async def test_codex_no_output_retry_skipped_when_revert_unsafe(monkeypatch, tmp_path, unsafe):
+    state = await _run_codex_retry_watchdog(
+        monkeypatch, tmp_path, newest_id="other-turn" if unsafe == "different-turn" else None,
+        newest_status="inProgress" if unsafe == "in-progress" else "interrupted",
+        revert_raises=unsafe == "revert-raises",
+    )
+    _assert_retry_timeout(state)
+    assert len(state.starts) == 1
+    assert not any(e.type == "turn_retrying" for e in state.events)
+    assert sum(method == "thread/revert" for method, _ in state.calls) == (
+        1 if unsafe == "revert-raises" else 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_codex_no_output_retry_gate_closed_after_resend_cancels_new_turn(
+    monkeypatch, tmp_path,
+):
+    state = await _run_codex_retry_watchdog(monkeypatch, tmp_path, close_after_resend=True)
+    assert state.interrupts == ["turn-1", "turn-2"]
+    assert len(state.starts) == 2
+    assert sum(e.type == "turn_retrying" for e in state.events) == 1
+    assert not any(e.disposition == "timeout" for e in state.events)
+    assert [e.type for e in state.events[-2:]] == ["egress_disposition", "complete"]
+    assert state.events[-2].disposition == "cancelled"
+    assert state.events[-1].turn_id == "turn-2"
+    assert state.events[-1].error is None
+
+
+def test_codex_no_output_retry_default():
+    if "DRAMACLAW_CODEX_NO_OUTPUT_RETRY" in os.environ:
+        pytest.skip("retry switch is configured in the process environment")
+    assert backend_sdk.CODEX_NO_OUTPUT_RETRY_ENABLED is True
+
+
+def test_codex_client_passes_retry_gate_to_threads(tmp_path):
+    def gate():
+        return True
+
+    client = backend_sdk.CodexClient(
+        codex_bin=None, cwd=tmp_path, env={}, model="fake", model_provider="fake",
+        developer_instructions="", retry_allowed=gate,
+    )
+    assert client.thread_start()._retry_allowed is gate
+    assert client.thread_resume("t")._retry_allowed is gate
+
+
+@contextmanager
+def _no_output_retry_gateway():
+    import time
+
+    requests = []
+    shutdown = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def log_message(self, *_args):
+            pass
+
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers["Content-Length"]))
+            if self.headers.get("Content-Encoding") == "gzip":
+                raw = gzip.decompress(raw)
+            requests.append({"body": json.loads(raw)})
+            attempt = len(requests)
+            if attempt > 2:
+                self.send_error(500, "unexpected third Responses request")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                if attempt == 2:
+                    self.wfile.write(_responses_sse(
+                        _response_created("response-retry"),
+                        {"type": "response.output_item.done", "item": {
+                            "type": "message", "role": "assistant", "id": "message-retry",
+                            "content": [{"type": "output_text", "text": "重试成功。"}],
+                        }},
+                        _response_completed("response-retry"),
+                    ))
+                    self.wfile.flush()
+                    return
+                self.wfile.write(_responses_sse(
+                    _response_created("response-runaway"),
+                    {"type": "response.output_item.added", "output_index": 0,
+                     "item": {"type": "reasoning", "id": "rs-runaway", "summary": []}},
+                    {"type": "response.reasoning_summary_part.added", "item_id": "rs-runaway",
+                     "output_index": 0, "summary_index": 0,
+                     "part": {"type": "summary_text", "text": ""}},
+                ))
+                self.wfile.flush()
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline and not shutdown.wait(0.2):
+                    self.wfile.write(_responses_sse({
+                        "type": "response.reasoning_summary_text.delta", "item_id": "rs-runaway",
+                        "output_index": 0, "summary_index": 0, "delta": "想",
+                    }))
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/v1", requests
+    finally:
+        shutdown.set()
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_app_server_no_output_retry_drops_aborted_turn(monkeypatch, tmp_path):
+    from openai_codex import CodexConfig
+    from novelvideo.chat import codex_history, codex_protocol as protocol
+
+    binary = _contract_codex_bin()
+    assert binary.is_file(), "the pinned App Server binary is required"
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_NO_OUTPUT_TIMEOUT", 3.0)
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    with _no_output_retry_gateway() as (gateway_url, requests):
+        env = {
+            **os.environ, "CODEX_HOME": str(tmp_path / "codex-home"),
+            "DRAMACLAW_CODEX_GATEWAY_BASE_URL": gateway_url, "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        overrides = service._codex_gateway_config_overrides(gateway_url)
+        try:
+            client = backend_sdk.CodexClient(
+                codex_bin=binary, cwd=tmp_path, env=env,
+                model="DC-codex-agent-LLM", model_provider="dramaclaw_gateway",
+                developer_instructions="", config_overrides=overrides,
+                thread_config_overrides=(),
+                turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
+                retry_allowed=lambda: True,
+            )
+            thread = client.thread_start()
+
+            async def collect():
+                return [event async for event in thread.stream("请回答。")]
+
+            events = await asyncio.wait_for(collect(), timeout=20)
+            assert events[-1].type == "complete"
+            assert events[-1].text == "重试成功。"
+            assert events[-1].error is None
+            assert sum(e.type == "turn_retrying" for e in events) == 1
+            assert len(requests) == 2
+            # Codex assigns fresh item ids per request; the retry must resend the same items.
+            first_input, retry_input = (
+                [{key: value for key, value in item.items() if key != "id"}
+                 for item in request["body"]["input"]]
+                for request in requests
+            )
+            assert retry_input == first_input
+            config = CodexConfig(
+                codex_bin=str(binary), cwd=str(tmp_path), env=env, config_overrides=overrides,
+            )
+            with codex_app_server.shared_codex(config) as runtime:
+                page = runtime._client.request(
+                    protocol.THREAD_TURNS_LIST, protocol.newest_turns_params(thread.id, limit=10),
+                    response_model=protocol.ThreadTurnsPage,
+                )
+                turn, = page.data
+                assert turn.status == "completed"
+                items = runtime._client.request(
+                    protocol.THREAD_ITEMS_LIST,
+                    protocol.turn_items_params(thread.id, turn.id, limit=50),
+                    response_model=protocol.ThreadItemsPage,
+                )
+                assert sum(item.item["type"] == "userMessage" for item in items.data) == 1
+                history = codex_history.read_codex_history_page(runtime._client, thread.id)
+                message, = history.messages
+                assert message["id"] == f"assistant:{turn.id}"
+                assert message["content"] == "重试成功。"
+                assert [part["type"] for part in message["parts"]] == ["text"]
+        finally:
+            codex_app_server.stop_shared_codex_runtime()

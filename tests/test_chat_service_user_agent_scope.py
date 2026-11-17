@@ -9008,3 +9008,31 @@ def test_codex_canvas_timeout_does_not_change_other_mcp_servers(monkeypatch):
     assert [entry for entry in overrides if ".tool_timeout_sec=" in entry] == [
         "mcp_servers.dramaclaw.tool_timeout_sec=105"
     ]
+
+
+def test_build_codex_thread_retry_gate_follows_turn_token_file(monkeypatch, tmp_path):
+    token_file = tmp_path / "turn-token"
+    token_file.write_text("synthetic-token", encoding="utf-8")
+    monkeypatch.setattr(
+        chat_service, "ensure_user_codex_workspace",
+        lambda *a, **kw: (tmp_path, tmp_path / "codex-home"),
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_env", lambda *a, **kw: {})
+    monkeypatch.setattr(
+        chat_service, "_codex_turn_gateway_credentials",
+        lambda _: ("synthetic-key", "http://127.0.0.1:1/v1"),
+    )
+    monkeypatch.setattr(chat_service, "_codex_gateway_config_overrides", lambda *a, **kw: ())
+    monkeypatch.setattr(chat_service, "_codex_mcp_config_overrides", lambda *a, **kw: ())
+    monkeypatch.setattr(chat_service, "_get_codex_thread_id", lambda *a, **kw: None)
+    monkeypatch.setattr(chat_service, "_codex_bin_path", lambda: None)
+    thread = chat_service._build_codex_thread(
+        "test-user", "", "synthetic-token", agent_token_file=token_file,
+    )
+    assert thread._retry_allowed() is True
+    token_file.unlink()
+    assert thread._retry_allowed() is False
+    without_token = chat_service._build_codex_thread(
+        "test-user", "", "synthetic-token", agent_token_file=None,
+    )
+    assert without_token._retry_allowed is None

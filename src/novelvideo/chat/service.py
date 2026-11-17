@@ -192,6 +192,9 @@ _CODEX_GATEWAY_BASE_URL_ENV = "DRAMACLAW_CODEX_GATEWAY_BASE_URL"
 _CODEX_PER_TURN_CREDENTIAL_PLACEHOLDER = "dramaclaw-codex-per-turn-placeholder"
 _CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
 _CODEX_CONTROL_CAPABILITY_METADATA = "dramaclaw_control_context_capability"
+_CODEX_NO_OUTPUT_RETRY_TEXT = (  # i18n-exempt
+    "模型长时间只在思考、没有产出内容，已自动重试一次。"
+)
 # Codex's default 5 KB tool schema limit compacts away nested fields, so the
 # MCP servers DramaClaw itself provides lift it; other servers keep the default.
 _CODEX_MCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 65536
@@ -4171,6 +4174,7 @@ def _build_codex_thread(
             },
             "client_user_message_id": client_user_message_id,
         }
+    token_path = Path(agent_token_file) if agent_token_file is not None else None
     client = CodexClient(
         codex_bin=_codex_bin_path(),
         cwd=workspace,
@@ -4188,6 +4192,8 @@ def _build_codex_thread(
         output_schema=(
             _CODEX_EXACT_AUDIO_ACTION_PLAN_SCHEMA if exact_audio_action_plan else None
         ),
+        # Stop, authorization invalidation and finalization remove the token file first.
+        retry_allowed=(lambda: token_path.exists()) if token_path is not None else None,
         **context_kwargs,
     )
     thread_id = _get_codex_thread_id(
@@ -5821,6 +5827,28 @@ async def _stream_assistant_reply_codex(
                     str(getattr(event, "thread_id", "") or "") or "-",
                     str(getattr(event, "turn_id", "") or "") or "-",
                 )
+                if event.type == "turn_retrying":
+                    if exact_audio_action_target is None:
+                        for frame in live.discard():
+                            await on_event(frame)
+                        retry_id = f"retry:{event.turn_id}"
+                        await on_event({
+                            "type": "item", "message_id": live.message_id, "item_id": retry_id,
+                            "card": {
+                                "id": retry_id, "seq": int(time.time() * 1000),
+                                "type": "agent_thought",
+                                "event": {
+                                    "type": "agent.thought", "turn_id": business_turn_id,
+                                    "text": _CODEX_NO_OUTPUT_RETRY_TEXT,
+                                    "status": "completed", "truncated": False,
+                                },
+                            },
+                        })
+                    live = LiveTurnProjector(turn_id=business_turn_id)
+                    assistant_text = ""
+                    tool_text = ""
+                    turn_disposition = _DEFAULT_TURN_DISPOSITION
+                    continue
                 if event.type in {"item_started", "item_completed", "item_delta"}:
                     frame = _codex_event_frame(event, live)
                     if frame is not None and exact_audio_action_target is None:
@@ -5854,7 +5882,10 @@ async def _stream_assistant_reply_codex(
                             "lock_key": _chat_run_lock_key(_chat_run_lock_project_for_turn(
                                 project, tool_mode=tool_mode, store_scope=store_scope,
                             )),
-                            "started_at": time.time(),
+                            "started_at": (
+                                active_turn_value["started_at"]
+                                if active_turn_value is not None else time.time()
+                            ),
                             "token_file": str(token_file) if token_file else None,
                             "store_scope": (
                                 store_scope.to_dict() if store_scope is not None

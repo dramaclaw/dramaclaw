@@ -930,3 +930,150 @@ async def test_empty_completion_stores_notice_before_done(
             else []
         )
         assert [tuple(row) for row in rows] == expected
+
+
+async def _service_no_output_retry(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    entries, frames, finalized = [], [], []
+    original_finalize = service.finalize_codex_turn
+
+    async def finalize(username, scope_key, turn_id, disposition):
+        finalized.append((turn_id, disposition))
+        return await original_finalize(username, scope_key, turn_id, disposition)
+
+    monkeypatch.setattr(service, "finalize_codex_turn", finalize)
+
+    class Thread:
+        async def stream(self, prompt):
+            for turn_id in ("t1", "t2"):
+                common = {"thread_id": "thread-retry", "turn_id": turn_id}
+                yield ChatBackendEvent(type="thread_started", **common)
+                entry, = service._load_active_codex_turns("test-user").values()
+                entries.append(dict(entry))
+                yield ChatBackendEvent(type="turn_started", **common)
+                yield ChatBackendEvent(type="egress_submitted", **common)
+                if turn_id == "t1":
+                    yield ChatBackendEvent(
+                        type="item_started", item={"type": "reasoning", "id": "r-1", "summary": []},
+                        started_at_ms=1, **common,
+                    )
+                    yield ChatBackendEvent(
+                        type="item_delta", item_id="r-1", name="reasoning", summary_index=0,
+                        text="Thinking", **common,
+                    )
+                    yield ChatBackendEvent(
+                        type="turn_retrying", error={
+                            "message": backend_sdk.CODEX_NO_OUTPUT_TIMEOUT_MESSAGE,
+                            "kind": "no-output", "elapsed_ms": 240_000,
+                        }, **common,
+                    )
+                else:
+                    yield ChatBackendEvent(
+                        type="item_started", item={"type": "agentMessage", "id": "m-2", "text": ""},
+                        started_at_ms=2, **common,
+                    )
+                    yield ChatBackendEvent(
+                        type="item_delta", item_id="m-2", name="text", text="Done.", **common,
+                    )
+                    yield ChatBackendEvent(
+                        type="item_completed",
+                        item={"type": "agentMessage", "id": "m-2", "text": "Done."}, **common,
+                    )
+                    yield ChatBackendEvent(
+                        type="turn_completed", status="completed",
+                        disposition="completed", **common,
+                    )
+                    yield ChatBackendEvent(
+                        type="egress_disposition", disposition="completed", **common,
+                    )
+                    yield ChatBackendEvent(type="complete", text="Done.", **common)
+
+    monkeypatch.setattr(service, "_build_codex_thread", lambda *a, **kw: Thread())
+
+    async def collect(event):
+        frames.append(event)
+
+    scope = ChatScope(kind="home")
+    await service._stream_assistant_reply_codex(
+        "test-user", "", "hello", collect, store_scope=scope, turn_id="business-1",
+    )
+    return frames, entries, finalized, scope
+
+
+def _assert_service_retry_frames(frames):
+    removal = {"type": "item", "message_id": "assistant:t1", "item_id": "r-1", "card": None}
+    assert removal in frames
+    index = frames.index(removal)
+    assert any(f.get("item_id") == "r-1" for f in frames[:index])
+    assert not any(f.get("item_id") == "r-1" for f in frames[index + 1:])
+    status = frames[index + 1]
+    assert isinstance(status["card"]["seq"], int)
+    assert status == {
+        "type": "item", "message_id": "assistant:t1", "item_id": "retry:t1",
+        "card": {"id": "retry:t1", "seq": status["card"]["seq"], "type": "agent_thought",
+                 "event": {"type": "agent.thought", "turn_id": "business-1",
+                           "text": "模型长时间只在思考、没有产出内容，已自动重试一次。",
+                           "status": "completed", "truncated": False}},
+    }
+    assert all(f.get("turn_id") != "t2" for f in frames[:index + 2])
+    messages = [f for f in frames if f.get("item_id") == "m-2"]
+    assert messages
+    assert all(f["message_id"] == "assistant:t2" for f in messages)
+    completed, = [f for f in frames if f["type"] == "turn_completed"]
+    assert completed["turn_id"] == "t2"
+    assert sum(f["type"] == "done" for f in frames) == 1
+    assert frames[-1]["type"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_service_codex_no_output_retry_replaces_aborted_attempt(
+    service_runtime, monkeypatch, tmp_path,
+):
+    frames, entries, finalized, scope = await _service_no_output_retry(monkeypatch, tmp_path)
+    _assert_service_retry_frames(frames)
+    assert [entry["turn_id"] for entry in entries] == ["t1", "t2"]
+    assert entries[1]["started_at"] == entries[0]["started_at"]
+    assert finalized == [("t2", "completed")]
+    assert service._load_active_codex_turns("test-user") == {}
+    with chat_store.connect("test-user", scope) as conn:
+        rows = conn.execute("SELECT role FROM chat_messages WHERE role IN ('system', 'notice')")
+        assert rows.fetchall() == []
+
+
+@pytest.mark.asyncio
+async def test_service_codex_no_output_retry_settles_operation_once(
+    service_runtime, monkeypatch, tmp_path,
+):
+    from novelvideo.chat.hermes_operation import TurnOperationFinalizer
+
+    calls = []
+
+    class Port:
+        async def mark_accepted(self, **kwargs):
+            calls.append(("accepted", kwargs))
+            return SimpleNamespace(version=2)
+
+        async def mark_completed(self, **kwargs):
+            calls.append(("completed", kwargs))
+            return SimpleNamespace(version=3)
+
+        async def mark_unknown(self, **kwargs):
+            calls.append(("unknown", kwargs))
+
+        async def mark_rejected_before_submit(self, **kwargs):
+            calls.append(("rejected", kwargs))
+
+    finalizer = TurnOperationFinalizer(Port(), SimpleNamespace(
+        operation=SimpleNamespace(operation_id="operation-1", version=1),
+        transition_token="token-1",
+    ))
+    monkeypatch.setattr(service, "_turn_operation_finalizer", lambda _: finalizer)
+    frames, _, finalized, _ = await _service_no_output_retry(monkeypatch, tmp_path)
+    assert calls == [
+        ("accepted", {"operation_id": "operation-1", "transition_token": "token-1",
+                      "expected_version": 1}),
+        ("completed", {"operation_id": "operation-1", "transition_token": "token-1",
+                       "expected_version": 2}),
+    ]
+    assert finalized == [("t2", "completed")]
+    _assert_service_retry_frames(frames)

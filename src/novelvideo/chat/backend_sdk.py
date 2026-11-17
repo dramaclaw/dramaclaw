@@ -8,8 +8,9 @@ import re
 import threading
 import time
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Mapping, Sequence
 
 if TYPE_CHECKING:
     from novelvideo.chat.codex_history import CodexHistoryPage
@@ -67,6 +68,9 @@ CODEX_STREAM_NO_OUTPUT_TIMEOUT = _positive_timeout_from_env(
 CODEX_NO_OUTPUT_TIMEOUT_MESSAGE = (
     "模型长时间只在思考、没有产出内容，已自动停止本轮。请重试，或把需求拆小一些。"
 )
+CODEX_NO_OUTPUT_RETRY_ENABLED = os.environ.get(
+    "DRAMACLAW_CODEX_NO_OUTPUT_RETRY", ""
+).strip().lower() not in {"0", "false", "no", "off"}
 CODEX_STREAM_IDLE_TIMEOUT = 300.0
 CODEX_INTERRUPT_GRACE_TIMEOUT = 5.0
 
@@ -1354,6 +1358,40 @@ def revert_codex_thread_history(
     return "reverted"
 
 
+def _revert_interrupted_codex_turn(config: Any, thread_id: str, turn_id: str) -> bool:
+    from novelvideo.chat.codex_app_server import shared_codex
+    from novelvideo.chat.codex_history import HISTORY_CACHE
+    from novelvideo.chat.codex_protocol import (
+        THREAD_REVERT,
+        THREAD_TURNS_LIST,
+        ThreadRevertResponse,
+        ThreadTurnsPage,
+        newest_turns_params,
+        thread_revert_params,
+    )
+
+    try:
+        with shared_codex(config) as codex:
+            turns = codex._client.request(
+                THREAD_TURNS_LIST, newest_turns_params(thread_id, limit=1),
+                response_model=ThreadTurnsPage,
+            ).data
+            if not turns or turns[0].id != turn_id or turns[0].status != "interrupted":
+                raise ValueError("Newest Codex turn is not the interrupted attempt")
+            codex._client.request(
+                THREAD_REVERT, thread_revert_params(thread_id, turn_id),
+                response_model=ThreadRevertResponse,
+            )
+            HISTORY_CACHE.invalidate(thread_id)
+        return True
+    except Exception:
+        _log.warning(
+            "Could not revert interrupted Codex turn: thread=%s turn=%s",
+            thread_id, turn_id, exc_info=True,
+        )
+        return False
+
+
 def _revert_malformed_tool_call_turns(
     client: Any, thread_id: str, failed_turn_id: str
 ) -> str | None:
@@ -1668,6 +1706,7 @@ class CodexClient:
         output_schema: dict[str, Any] | None = None,
         additional_context: Mapping[str, Mapping[str, str]] | None = None,
         client_user_message_id: str | None = None,
+        retry_allowed: Callable[[], bool] | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1689,6 +1728,7 @@ class CodexClient:
             if additional_context is not None else None
         )
         self._client_user_message_id = client_user_message_id
+        self._retry_allowed = retry_allowed
 
     def thread_start(self) -> "CodexThread":
         return CodexThread(
@@ -1705,6 +1745,7 @@ class CodexClient:
             additional_context=self._additional_context,
             client_user_message_id=self._client_user_message_id,
             thread_id=None,
+            retry_allowed=self._retry_allowed,
         )
 
     def thread_resume(self, thread_id: str) -> "CodexThread":
@@ -1722,6 +1763,7 @@ class CodexClient:
             additional_context=self._additional_context,
             client_user_message_id=self._client_user_message_id,
             thread_id=thread_id,
+            retry_allowed=self._retry_allowed,
         )
 
 
@@ -2250,6 +2292,34 @@ async def follow_codex_turn(
         await asyncio.shield(task)
 
 
+@dataclass
+class _CodexAttempt:
+    turn_id: str | None = None
+    timeout_error: dict[str, Any] | None = None
+    retry_requested: bool = False
+    worker_stopped_cleanly: bool = False
+    worker_failed: bool = False
+
+
+def _codex_timeout_events(
+    thread_id: str | None, turn_id: str | None, error: dict[str, Any]
+) -> tuple[ChatBackendEvent, ...]:
+    return (
+        ChatBackendEvent(
+            type="turn_completed", thread_id=thread_id, turn_id=turn_id,
+            status="timeout", disposition="timeout", error=error,
+        ),
+        ChatBackendEvent(
+            type="egress_disposition", thread_id=thread_id, turn_id=turn_id,
+            disposition="timeout",
+        ),
+        ChatBackendEvent(
+            type="complete", thread_id=thread_id, turn_id=turn_id,
+            disposition="timeout", text=error["message"], error=error,
+        ),
+    )
+
+
 class CodexThread:
     def __init__(
         self,
@@ -2267,6 +2337,7 @@ class CodexThread:
         output_schema: dict[str, Any] | None = None,
         additional_context: Mapping[str, Mapping[str, str]] | None = None,
         client_user_message_id: str | None = None,
+        retry_allowed: Callable[[], bool] | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -2283,10 +2354,57 @@ class CodexThread:
             if additional_context is not None else None
         )
         self._client_user_message_id = client_user_message_id
+        self._retry_allowed = retry_allowed
         self.id = thread_id
 
     async def stream(
         self, prompt: str, *, image_paths: Sequence[Path] = ()
+    ) -> AsyncIterator[ChatBackendEvent]:
+        from contextlib import aclosing
+        from openai_codex import CodexConfig
+
+        config = CodexConfig(
+            codex_bin=str(self._codex_bin) if self._codex_bin is not None else None,
+            cwd=str(self._cwd), env=self._env, config_overrides=self._config_overrides,
+        )
+        stream_started_at = asyncio.get_running_loop().time()
+        for attempt_number in range(2):
+            attempt = _CodexAttempt()
+            async with aclosing(self._stream_attempt(
+                prompt, image_paths=image_paths, config=config, attempt=attempt,
+                is_retry=bool(attempt_number), stream_started_at=stream_started_at,
+            )) as events:
+                async for event in events:
+                    yield event
+            if not attempt.retry_requested:
+                return
+            assert attempt.timeout_error is not None
+            if (
+                attempt.worker_stopped_cleanly
+                and self.id and attempt.turn_id
+                and await asyncio.to_thread(
+                    _revert_interrupted_codex_turn, config, self.id, attempt.turn_id
+                )
+                and self._retry_allowed is not None and self._retry_allowed()
+            ):
+                _log.info(
+                    "Retrying Codex no-output turn: thread=%s aborted_turn=%s",
+                    self.id, attempt.turn_id,
+                )
+                yield ChatBackendEvent(
+                    type="turn_retrying", thread_id=self.id, turn_id=attempt.turn_id,
+                    error=attempt.timeout_error,
+                )
+            else:
+                for event in _codex_timeout_events(
+                    self.id, attempt.turn_id, attempt.timeout_error
+                ):
+                    yield event
+                return
+
+    async def _stream_attempt(
+        self, prompt: str, *, image_paths: Sequence[Path], config: Any,
+        attempt: _CodexAttempt, is_retry: bool, stream_started_at: float,
     ) -> AsyncIterator[ChatBackendEvent]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
@@ -2298,7 +2416,6 @@ class CodexThread:
         def worker() -> None:
             from openai_codex import (
                 ApprovalMode,
-                CodexConfig,
                 Sandbox,
             )
             from novelvideo.chat.codex_app_server import shared_codex
@@ -2306,13 +2423,6 @@ class CodexThread:
 
             if self._codex_bin is not None and not self._codex_bin.exists():
                 raise RuntimeError(f"Codex binary not found: {self._codex_bin}")
-
-            config = CodexConfig(
-                codex_bin=str(self._codex_bin) if self._codex_bin is not None else None,
-                cwd=str(self._cwd),
-                env=self._env,
-                config_overrides=self._config_overrides,
-            )
 
             final_response: str | None = None
             final_disposition: str | None = None
@@ -2348,6 +2458,7 @@ class CodexThread:
                 )
                 nonlocal current_turn_id
                 current_turn_id = turn.id
+                attempt.turn_id = turn.id
                 mapper = _CodexNotificationMapper(self.id, turn.id)
                 register_live_codex_turn(self.id, turn.id, turn)
                 emit(
@@ -2432,6 +2543,7 @@ class CodexThread:
             try:
                 await asyncio.to_thread(worker)
             except Exception as exc:
+                attempt.worker_failed = True
                 if (
                     self.id
                     and current_turn_id
@@ -2458,12 +2570,14 @@ class CodexThread:
         first_progress_deadline = started_at + CODEX_STREAM_FIRST_PROGRESS_TIMEOUT
         idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
         saw_runtime_progress = False
+        saw_tool_activity = False
         last_output_at = started_at
         busy_without_output = False
         active_tool_calls: set[str] = set()
         user_input_calls: set[str] = set()
         canvas_tool_deadlines: dict[str, float] = {}
         timed_out = False
+        retry_revoked = False
         timeout_kind = "first-progress"
 
         try:
@@ -2495,6 +2609,14 @@ class CodexThread:
                         self.id,
                         current_turn_id,
                     )
+                    attempt.retry_requested = (
+                        timeout_kind == "no-output"
+                        and not saw_tool_activity
+                        and CODEX_NO_OUTPUT_RETRY_ENABLED
+                        and not is_retry
+                        and self._retry_allowed is not None
+                        and self._retry_allowed()
+                    )
                     if self.id and current_turn_id:
                         try:
                             await asyncio.wait_for(
@@ -2522,36 +2644,27 @@ class CodexThread:
                         "message": timeout_message,
                         "kind": timeout_kind,
                         # Stream time at deadline detection, before interrupt cleanup.
-                        "elapsed_ms": int((now - started_at) * 1000),
+                        "elapsed_ms": int((now - stream_started_at) * 1000),
                     }
-                    yield ChatBackendEvent(
-                        type="turn_completed",
-                        thread_id=self.id,
-                        turn_id=current_turn_id,
-                        status="timeout",
-                        disposition="timeout",
-                        error=timeout_error,
-                    )
-                    yield ChatBackendEvent(
-                        type="egress_disposition",
-                        thread_id=self.id,
-                        turn_id=current_turn_id,
-                        disposition="timeout",
-                    )
-                    yield ChatBackendEvent(
-                        type="complete",
-                        thread_id=self.id,
-                        turn_id=current_turn_id,
-                        disposition="timeout",
-                        text=timeout_message,
-                        error=timeout_error,
-                    )
+                    attempt.timeout_error = timeout_error
+                    if not attempt.retry_requested:
+                        for event in _codex_timeout_events(
+                            self.id, current_turn_id, timeout_error
+                        ):
+                            yield event
                     break
                 if kind == "error":
                     if isinstance(payload, (CodexThreadBusyError, CodexMalformedToolCallError)):
                         raise payload
                     raise RuntimeError(str(payload))
                 event = payload
+                if event.type in {"tool_started", "tool_updated", "tool_update"} or (
+                    event.type == "item_started"
+                    and (event.item or {}).get("type") not in {
+                        "userMessage", "agentMessage", "reasoning", "plan", "contextCompaction",
+                    }
+                ):
+                    saw_tool_activity = True
                 if event.type not in _CODEX_LIFECYCLE_ONLY_EVENTS:
                     saw_runtime_progress = True
                     idle_deadline = loop.time() + CODEX_STREAM_IDLE_TIMEOUT
@@ -2579,6 +2692,24 @@ class CodexThread:
                         user_input_calls.discard(call_key)
                         canvas_tool_deadlines.pop(call_key, None)
                 yield event
+                if (
+                    is_retry and event.type == "thread_started"
+                    and self._retry_allowed is not None and not self._retry_allowed()
+                    and self.id and current_turn_id
+                ):
+                    retry_revoked = True
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.to_thread(
+                                interrupt_live_codex_turn, self.id, current_turn_id
+                            ),
+                            timeout=CODEX_INTERRUPT_GRACE_TIMEOUT,
+                        )
+                    except Exception:
+                        _log.warning(
+                            "Failed to interrupt revoked Codex retry: thread=%s turn=%s",
+                            self.id, current_turn_id, exc_info=True,
+                        )
                 if event.type == "complete":
                     break
         finally:
@@ -2593,12 +2724,13 @@ class CodexThread:
                 await asyncio.to_thread(
                     detach_live_codex_turn, self.id, current_turn_id
                 )
-            if timed_out or detached:
+            if timed_out or detached or retry_revoked:
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(worker_task),
                         timeout=CODEX_INTERRUPT_GRACE_TIMEOUT,
                     )
+                    attempt.worker_stopped_cleanly = not attempt.worker_failed
                 except asyncio.TimeoutError:
                     # Cancelling a to_thread wrapper cannot stop the underlying
                     # thread, but it prevents this request from waiting forever.
@@ -2607,7 +2739,7 @@ class CodexThread:
                     if not detached:
                         raise
                 finally:
-                    if timed_out and self.id and current_turn_id:
+                    if (timed_out or retry_revoked) and self.id and current_turn_id:
                         consume_interrupted_codex_turn(self.id, current_turn_id)
             else:
                 await worker_task
