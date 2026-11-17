@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import subprocess
@@ -51,7 +52,7 @@ def clean_env():
     # Keep host credentials and agent profile settings out of test subprocesses.
     return {
         k: v for k, v in os.environ.items()
-        if not k.startswith(("DRAMACLAW_", "ST_", "SUPERTALE_", "REMOTE_MCP_FAKE_"))
+        if not k.startswith(("DRAMACLAW_", "ST_", "SUPERTALE_", "REMOTE_MCP_"))
     } | {"PYTHONDONTWRITEBYTECODE": "1"}
 
 
@@ -67,8 +68,8 @@ def pid_exists(pid):
     return True
 
 
-async def wait_reaped(pid):
-    deadline = time.monotonic() + 10
+async def wait_reaped(pid, timeout=10):
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not pid_exists(pid):
             state = subprocess.run(
@@ -78,7 +79,7 @@ async def wait_reaped(pid):
             assert not state.startswith("Z"), "Child became a zombie"
             return
         await asyncio.sleep(0.05)
-    pytest.fail("Child still exists (including possible zombie) after 10 seconds")
+    pytest.fail(f"Child still exists (including possible zombie) after {timeout} seconds")
 
 
 class Exchange:
@@ -129,6 +130,7 @@ class Relay:
     def __init__(
         self, directory, *, idle=20, real=False, ignore_term=False,
         exchange_mode="ok", api_url=None, launch_script=None,
+        max_children=None, max_children_per_key=None, disconnect_grace=None, extra_args=(),
     ):
         self.directory = directory
         self.ce_dir = ROOT if real else directory / "ce"
@@ -149,6 +151,12 @@ class Relay:
             "DRAMACLAW_AGENT_KEY_FILE": "poison-key-value",
             "DRAMACLAW_AGENT_TOKEN_FILE": "poison-token-value",
         }
+        for name, value in (
+            ("MAX_CHILDREN", max_children), ("MAX_CHILDREN_PER_KEY", max_children_per_key),
+            ("IDLE_TIMEOUT", idle), ("DISCONNECT_GRACE", disconnect_grace),
+        ):
+            if value is not None:
+                self.env[f"REMOTE_MCP_{name}"] = str(value)
         if ignore_term:
             self.env["REMOTE_MCP_FAKE_IGNORE_TERM"] = "1"
         if not real:
@@ -163,6 +171,7 @@ class Relay:
             self.command += ["--child-python", str(ROOT / ".venv/bin/python")]
         else:
             self.command += ["--launch-script", str(launch_script or FAKE)]
+        self.command += list(extra_args)
         self.stdout = (directory / "stdout.log").open("wb")
         self.stderr = (directory / "stderr.log").open("wb")
         self.process = None
@@ -209,6 +218,14 @@ class Relay:
             assert_secret_free((self.directory / name).read_text(errors="replace"))
         for body in self.bodies:
             assert_secret_free(body)
+
+    def child_pids(self):
+        if not self.pid_log.exists():
+            return []
+        return [int(value) for value in self.pid_log.read_text().splitlines()]
+
+    def live_children(self):
+        return [pid for pid in self.child_pids() if pid_exists(pid)]
 
     async def request(self, method, path="/mcp/tools", *, key=KEY, sid=None, **kwargs):
         headers = {"Accept": "application/json, text/event-stream"}
@@ -622,7 +639,10 @@ def test_credentials_never_appear_in_process_command_lines(relay_factory):
     asyncio.run(scenario())
 
 
-def test_cli_help_and_defaults():
+def test_cli_help_and_defaults(monkeypatch):
+    for name in tuple(os.environ):
+        if name.startswith("REMOTE_MCP_"):
+            monkeypatch.delenv(name)
     result = subprocess.run(
         [sys.executable, str(RELAY), "--help"], capture_output=True, text=True, timeout=5,
         env=clean_env(),
@@ -631,8 +651,17 @@ def test_cli_help_and_defaults():
     for option in (
         "--idle-timeout", "--host", "--port", "--ce-dir", "--api-url", "--username",
         "--launch-script", "--child-python",
+        "--max-children", "--max-children-per-key", "--disconnect-grace",
     ):
         assert option in result.stdout
+    for option, default in (
+        ("max-children", 32), ("max-children-per-key", 8),
+        ("idle-timeout", 600), ("disconnect-grace", 10),
+    ):
+        assert re.search(
+            rf"--{option}\s[^\n]*(?:\n(?!  --)[^\n]*)*?default:\s*{default}\b",
+            result.stdout,
+        ), f"--{option} help must show default: {default}"
     spec = importlib.util.spec_from_file_location("remote_mcp_relay", RELAY)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -641,6 +670,9 @@ def test_cli_help_and_defaults():
         args = module.build_arg_parser().parse_args([])
         assert args.api_url == "http://127.0.0.1:8780"
         assert args.host == "127.0.0.1"
+        assert args.max_children == 32
+        assert args.max_children_per_key == 8
+        assert args.disconnect_grace == 10
         assert args.idle_timeout == 600
         assert str(args.launch_script) == str(LAUNCHER)
         assert str(args.child_python) == sys.executable
@@ -886,3 +918,139 @@ def test_real_launcher_project_tool_definitions_match_direct_stdio(relay_factory
             assert serialized(actual) == expected
 
     asyncio.run(scenario())
+
+
+def test_per_key_cap_refuses_new_session_and_keeps_existing(relay_factory):
+    relay = relay_factory(max_children_per_key=2)
+
+    async def scenario():
+        async with relay.session() as (first, first_sid, _):
+            async with relay.session() as (second, _, _):
+                first_identity = await whoami(first)
+                second_identity = await whoami(second)
+                assert len(relay.exchange.requests) == 2
+                response = await relay.request("POST", json=INITIALIZE)
+                assert response.status_code == 429
+                assert response.json() == {
+                    "jsonrpc": "2.0", "id": INITIALIZE["id"],
+                    "error": {"code": -32000, "message": (
+                        "Too many open MCP sessions for this agent key (limit 2). "
+                        "Close unused sessions or wait for idle sessions to end."
+                    )},
+                }
+                assert len(relay.exchange.requests) == 2
+                assert len(relay.child_pids()) == len(relay.live_children()) == 2
+                assert await whoami(first) == first_identity
+                assert await whoami(second) == second_identity
+                terminated = await relay.request("DELETE", sid=first_sid)
+                assert terminated.status_code == 200
+                await wait_reaped(first_identity["pid"])
+                async with relay.session() as (replacement, _, _):
+                    assert (await whoami(replacement))["key_matches"] is True
+                    assert len(relay.live_children()) == 2
+
+    asyncio.run(scenario())
+
+
+def test_total_cap_refuses_new_session(relay_factory):
+    relay = relay_factory(max_children=1, max_children_per_key=8)
+
+    async def scenario():
+        async with relay.session() as (session, _, _):
+            identity = await whoami(session)
+            response = await relay.request("POST", json=INITIALIZE)
+            assert response.status_code == 429
+            assert response.json() == {
+                "jsonrpc": "2.0", "id": INITIALIZE["id"],
+                "error": {"code": -32000, "message": (
+                    "The relay has too many open MCP sessions (limit 1). Try again later."
+                )},
+            }
+            assert len(relay.exchange.requests) == 1
+            assert relay.child_pids() == relay.live_children() == [identity["pid"]]
+            assert await whoami(session) == identity
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_new_sessions_never_exceed_cap(relay_factory):
+    relay = relay_factory(max_children_per_key=2)
+
+    async def scenario():
+        async with httpx.AsyncClient(timeout=8, trust_env=False) as client:
+            responses = await asyncio.gather(*(
+                client.post(relay.url + "/mcp/tools", json=INITIALIZE, headers={
+                    "Authorization": f"Bearer {KEY}",
+                    "Accept": "application/json, text/event-stream",
+                }) for _ in range(6)
+            ))
+        assert sorted(response.status_code for response in responses) == [
+            200, 200, 429, 429, 429, 429,
+        ]
+        session_ids = [r.headers["mcp-session-id"] for r in responses if r.status_code == 200]
+        assert len(set(session_ids)) == 2
+        assert len(relay.exchange.requests) == 2
+        assert len(relay.child_pids()) == len(relay.live_children()) == 2
+
+    asyncio.run(scenario())
+
+
+def test_status_polls_without_delete_do_not_accumulate_children(relay_factory):
+    relay = relay_factory(idle=600, disconnect_grace=1, max_children_per_key=3)
+
+    async def scenario():
+        for _ in range(10):
+            async with relay.session(delete=False) as (session, sid, _):
+                assert (await session.list_tools()).tools
+            # Close the SDK stream first so this GET cannot conflict with it.
+            async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
+                async with client.stream("GET", relay.url + "/mcp/tools", headers={
+                    "Authorization": f"Bearer {KEY}", "Mcp-Session-Id": sid,
+                    "Accept": "text/event-stream", "MCP-Protocol-Version": "2025-03-26",
+                }) as response:
+                    assert response.status_code == 200
+                    assert response.headers["content-type"].startswith("text/event-stream")
+            assert len(relay.live_children()) <= 1
+            await wait_reaped(relay.child_pids()[-1], timeout=5)
+            assert relay.live_children() == []
+        assert len(relay.child_pids()) == len(relay.exchange.requests) == 10
+        await asyncio.sleep(3)
+        assert relay.live_children() == []
+        for pid in relay.child_pids():
+            await wait_reaped(pid)
+
+    asyncio.run(scenario())
+
+
+def test_idle_sessions_without_get_stream_are_reaped_and_free_slots(relay_factory):
+    relay = relay_factory(idle=2, max_children_per_key=1)
+
+    async def scenario():
+        first = await relay.request("POST", json=INITIALIZE)
+        assert first.status_code == 200
+        assert first.headers["mcp-session-id"]
+        pid, = relay.child_pids()
+        refused = await relay.request("POST", json=INITIALIZE)
+        assert refused.status_code == 429
+        assert len(relay.exchange.requests) == 1
+        await wait_reaped(pid, timeout=5)
+        assert relay.live_children() == []
+        replacement = await relay.request("POST", json=INITIALIZE)
+        assert replacement.status_code == 200
+        assert replacement.headers["mcp-session-id"] != first.headers["mcp-session-id"]
+        assert len(relay.live_children()) == 1
+
+    asyncio.run(scenario())
+
+
+def test_max_children_zero_env_refused_at_startup(relay_factory):
+    relay = relay_factory(max_children=0, wait_ready=False)
+    try:
+        relay.process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pytest.fail("Relay accepted REMOTE_MCP_MAX_CHILDREN=0 instead of an argparse error")
+    assert relay.process.returncode == 2
+    stderr = (relay.directory / "stderr.log").read_text()
+    assert "usage:" in stderr
+    assert "error:" in stderr
+    assert "max-children" in stderr or "REMOTE_MCP_MAX_CHILDREN" in stderr

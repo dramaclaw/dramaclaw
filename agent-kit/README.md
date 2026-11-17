@@ -186,8 +186,25 @@ ID 仅允许 `[A-Za-z0-9._-]`，长度为 1–128 个字符。路径包含项目
 要获得与 Codex 宿主配置等价的工具集（Freezone 画布工具），需使用带画布的项目路径；
 home 路径运行在 home scope。子进程的项目和画布仅取自路径，不继承中继环境中的值。
 
-每个会话启动一个子进程。`--idle-timeout` 默认为 600 秒，空闲时间从最后一次 POST
-结束时开始计算；保持 GET 流打开不会让会话持续存活。DELETE 请求和中继关闭也会结束
-会话并回收子进程。
+每个会话启动一个子进程。以下参数默认读取对应环境变量，显式 CLI 参数优先：
+
+| CLI 参数 | 环境变量 | 默认值 |
+| --- | --- | --- |
+| `--max-children` | `REMOTE_MCP_MAX_CHILDREN` | 32 |
+| `--max-children-per-key` | `REMOTE_MCP_MAX_CHILDREN_PER_KEY` | 8 |
+| `--idle-timeout` | `REMOTE_MCP_IDLE_TIMEOUT` | 600 秒 |
+| `--disconnect-grace` | `REMOTE_MCP_DISCONNECT_GRACE` | 10 秒 |
+
+两个上限必须是 ≥ 1 的整数，两个时间必须是有限正数。总会话数或单 Key 会话数达到上限时，
+新初始化请求返回 HTTP 429，JSON-RPC 错误保留请求 id，并说明限额；现有会话不受影响。
+限额包含正在创建的会话，单 Key 按 SHA-256 摘要计数，不保存原始 Key 用于计数。
+限额仅作用于单个中继进程，不排队、不跨实例计数。因限额拒绝或无效的请求均不调用
+Key 交换接口（`POST /api/v1/agent/sessions`），也不启动子进程。
+
+空闲时间从最后一次 POST 结束时开始计算；没有 POST 请求进行时，即使 GET 流保持打开，
+达到 idle timeout 也会结束会话。曾打开 GET 流的会话，在所有 GET 流关闭且没有 POST
+请求进行时，从最后一次 POST 或 GET 结束起经过 disconnect grace 后结束。未打开过
+GET 流的会话按 idle timeout 回收。DELETE 请求、子进程退出和中继关闭也会结束会话；
+回收后释放名额。
 
 中继默认只监听回环地址，仅用于本地验证，不用于生产环境。

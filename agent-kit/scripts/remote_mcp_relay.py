@@ -4,6 +4,7 @@ Each session owns one child process, bridging Streamable HTTP to stdio.
 """
 
 import argparse
+from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import hashlib
@@ -74,7 +75,7 @@ async def validate_initial_request(transport, request, send):
     if not isinstance(message.root, JSONRPCRequest) or message.root.method != "initialize":
         await reject("Bad Request: a new session requires an initialize request")
         return None
-    return bytes(body)
+    return bytes(body), message.root.id
 
 
 async def check_key(api_url, key, project_id):
@@ -115,6 +116,9 @@ class Session:
     child_outcome: anyio.Event = field(default_factory=anyio.Event)
     child_received: bool = False
     posts: int = 0
+    gets: int = 0
+    had_get: bool = False
+    last_end: float = field(default_factory=time.monotonic)
     last_post_end: float = field(default_factory=time.monotonic)
 
 
@@ -122,7 +126,26 @@ class Relay:
     def __init__(self, args):
         self.args = args
         self.sessions: dict[str, Session] = {}
+        self.reservations: Counter[bytes] = Counter()
         self.tasks = None
+
+    def reserve(self, key_hash):
+        per_key = self.reservations[key_hash] + sum(
+            session.key_hash == key_hash for session in self.sessions.values()
+        )
+        if per_key >= self.args.max_children_per_key:
+            return (
+                "Too many open MCP sessions for this agent key "
+                f"(limit {self.args.max_children_per_key}). "
+                "Close unused sessions or wait for idle sessions to end."
+            )
+        if len(self.sessions) + self.reservations.total() >= self.args.max_children:
+            return (
+                "The relay has too many open MCP sessions "
+                f"(limit {self.args.max_children}). Try again later."
+            )
+        self.reservations[key_hash] += 1
+        return None
 
     def child_parameters(self, mode, key, project_id, canvas_id):
         env = {
@@ -186,7 +209,7 @@ class Relay:
                                 await session.stop.wait()
                                 bridge.cancel_scope.cancel()
                         finally:
-                            self.sessions.pop(sid, None)
+                            session.stop.set()
                             await session.transport.terminate()
                 # stdio_client closes stdin, escalates terminate to kill, and waits.
         except Exception:
@@ -200,10 +223,15 @@ class Relay:
 
     async def reaper(self):
         while True:
-            await anyio.sleep(min(1.0, self.args.idle_timeout / 4))
+            await anyio.sleep(min(1.0, self.args.idle_timeout / 4, self.args.disconnect_grace / 4))
             now = time.monotonic()
             for session in list(self.sessions.values()):
-                if session.posts == 0 and now - session.last_post_end > self.args.idle_timeout:
+                idle = now - session.last_post_end > self.args.idle_timeout
+                disconnected = (
+                    session.had_get and session.gets == 0
+                    and now - session.last_end > self.args.disconnect_grace
+                )
+                if session.posts == 0 and (idle or disconnected):
                     session.stop.set()
 
     @asynccontextmanager
@@ -248,8 +276,16 @@ class Relay:
         new_session = sid is None and request.method == "POST"
         if new_session:
             transport = StreamableHTTPServerTransport(None)
-            body = await validate_initial_request(transport, request, send)
-            if body is None:
+            validated = await validate_initial_request(transport, request, send)
+            if validated is None:
+                return
+            body, request_id = validated
+            error = self.reserve(key_hash)
+            if error is not None:
+                await JSONResponse({
+                    "jsonrpc": "2.0", "id": request_id,
+                    "error": {"code": -32000, "message": error},
+                }, 429)(scope, receive, send)
                 return
             original_receive = receive
 
@@ -262,23 +298,31 @@ class Relay:
                 return await original_receive()
 
             receive = replay_receive
-            status = await check_key(self.args.api_url, key, project_id)
-            if status != 200:
-                error = "Agent key rejected" if status == 401 else "Agent key check unavailable"
-                await JSONResponse({"error": error}, status)(scope, receive, send)
-                return
-            sid = uuid4().hex
-            transport.mcp_session_id = sid
-            session = Session(
-                mode, project_id, canvas_id, key_hash, transport,
-            )
-            self.sessions[sid] = session
+            try:
+                status = await check_key(self.args.api_url, key, project_id)
+                if status != 200:
+                    error = "Agent key rejected" if status == 401 else "Agent key check unavailable"
+                    await JSONResponse({"error": error}, status)(scope, receive, send)
+                    return
+                sid = uuid4().hex
+                transport.mcp_session_id = sid
+                session = Session(mode, project_id, canvas_id, key_hash, transport)
+                self.sessions[sid] = session
+            finally:
+                self.reservations[key_hash] -= 1
+                if self.reservations[key_hash] == 0:
+                    del self.reservations[key_hash]
             # Count initialization before starting the child so the reaper cannot race it.
             session.posts += 1
-            ready = await self.tasks.start(
-                self.run_session, sid, session,
-                self.child_parameters(mode, key, project_id, canvas_id),
-            )
+            try:
+                ready = await self.tasks.start(
+                    self.run_session, sid, session,
+                    self.child_parameters(mode, key, project_id, canvas_id),
+                )
+            except BaseException:
+                session.stop.set()
+                self.sessions.pop(sid, None)
+                raise
             if not ready:
                 await JSONResponse({"error": "Child unavailable"}, 503)(scope, receive, send)
                 return
@@ -292,6 +336,9 @@ class Relay:
             if request.method == "POST":
                 session.posts += 1
         del key, authorization
+        if request.method == "GET":
+            session.gets += 1
+            session.had_get = True
         try:
             if new_session:
                 await self.handle_initial_request(session, scope, receive, send)
@@ -301,6 +348,10 @@ class Relay:
             if request.method == "POST":
                 session.posts -= 1
                 session.last_post_end = time.monotonic()
+            if request.method == "GET":
+                session.gets -= 1
+            if request.method in ("POST", "GET"):
+                session.last_end = time.monotonic()
             if session.transport.is_terminated:
                 session.stop.set()
 
@@ -335,7 +386,17 @@ def build_arg_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8790)
-    parser.add_argument("--idle-timeout", type=float, default=600)
+    for option, value_type, default, description in (
+        ("max-children", int, 32, "Maximum live sessions in this relay process"),
+        ("max-children-per-key", int, 8, "Maximum live sessions per agent key"),
+        ("idle-timeout", float, 600, "Idle timeout in seconds since the last POST ended"),
+        ("disconnect-grace", float, 10, "Grace period in seconds after GET disconnect"),
+    ):
+        parser.add_argument(
+            f"--{option}", type=value_type,
+            default=os.environ.get("REMOTE_MCP_" + option.upper().replace("-", "_"), default),
+            help=description + " (default: %(default)s)",
+        )
     parser.add_argument("--ce-dir")
     parser.add_argument("--api-url", default="http://127.0.0.1:8780")
     parser.add_argument("--username")
@@ -359,8 +420,12 @@ def main():
         valid_url = False
     if not valid_url:
         parser.error("--api-url must use https or loopback http")
-    if not 0 < args.idle_timeout < float("inf"):
-        parser.error("--idle-timeout must be finite and positive")
+    for option in ("max_children", "max_children_per_key"):
+        if getattr(args, option) < 1:
+            parser.error(f"--{option.replace('_', '-')} must be an integer >= 1")
+    for option in ("idle_timeout", "disconnect_grace"):
+        if not 0 < getattr(args, option) < float("inf"):
+            parser.error(f"--{option.replace('_', '-')} must be finite and positive")
     # The SDK's malformed-stdio diagnostic includes raw child output in a traceback.
     # Unlike disabled, this filter survives uvicorn's logging configuration.
     logging.getLogger("mcp.client.stdio").addFilter(lambda record: False)
