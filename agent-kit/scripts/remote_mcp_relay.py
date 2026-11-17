@@ -11,6 +11,7 @@ import hmac
 import logging
 import os
 from pathlib import Path
+import re
 import sys
 import time
 from uuid import uuid4
@@ -31,14 +32,15 @@ import uvicorn
 logger = logging.getLogger("remote_mcp_relay")
 
 
-async def check_key(api_url, key):
+async def check_key(api_url, key, project_id):
+    scope = {"kind": "home"} if project_id is None else {"kind": "project", "id": project_id}
     try:
         async with httpx.AsyncClient(
             trust_env=False, timeout=10, follow_redirects=False,
         ) as client:
             response = await client.post(
                 api_url.rstrip("/") + "/api/v1/agent/sessions",
-                json={"scope": {"kind": "home"}, "ttl_seconds": 60},
+                json={"scope": scope, "ttl_seconds": 60},
                 headers={
                     "Authorization": f"Bearer {key}",
                     "Content-Type": "application/json", "Accept": "application/json",
@@ -60,6 +62,8 @@ async def check_key(api_url, key):
 @dataclass
 class Session:
     mode: str
+    project_id: str | None
+    canvas_id: str | None
     key_hash: bytes
     transport: StreamableHTTPServerTransport
     stop: anyio.Event = field(default_factory=anyio.Event)
@@ -75,11 +79,16 @@ class Relay:
         self.sessions: dict[str, Session] = {}
         self.tasks = None
 
-    def child_parameters(self, mode, key):
+    def child_parameters(self, mode, key, project_id, canvas_id):
         env = {
             name: value for name, value in os.environ.items()
             if not name.startswith(("DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_TOKEN"))
+            and name not in ("DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID")
         }
+        if project_id is not None:
+            env["DRAMACLAW_PROJECT_ID"] = project_id
+        if canvas_id is not None:
+            env["DRAMACLAW_CANVAS_ID"] = canvas_id
         for option in ("ce_dir", "api_url", "username"):
             value = getattr(self.args, option)
             if value is not None:
@@ -169,7 +178,12 @@ class Relay:
     async def __call__(self, scope, receive, send):
         request = Request(scope, receive)
         mode = request.path_params["mode"]
-        if mode not in ("tools", "workflows"):
+        project_id = request.path_params.get("project_id")
+        canvas_id = request.path_params.get("canvas_id")
+        if mode not in ("tools", "workflows") or any(
+            value is not None and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value) is None
+            for value in (project_id, canvas_id)
+        ):
             await JSONResponse({"error": "Not found"}, 404)(scope, receive, send)
             return
         authorization = request.headers.get("authorization", "").split(None, 1)
@@ -182,18 +196,21 @@ class Relay:
         sid = request.headers.get("mcp-session-id")
         new_session = sid is None and request.method == "POST"
         if new_session:
-            status = await check_key(self.args.api_url, key)
+            status = await check_key(self.args.api_url, key, project_id)
             if status != 200:
                 error = "Agent key rejected" if status == 401 else "Agent key check unavailable"
                 await JSONResponse({"error": error}, status)(scope, receive, send)
                 return
             sid = uuid4().hex
-            session = Session(mode, key_hash, StreamableHTTPServerTransport(sid))
+            session = Session(
+                mode, project_id, canvas_id, key_hash, StreamableHTTPServerTransport(sid),
+            )
             self.sessions[sid] = session
             # Count initialization before starting the child so the reaper cannot race it.
             session.posts += 1
             ready = await self.tasks.start(
-                self.run_session, sid, session, self.child_parameters(mode, key)
+                self.run_session, sid, session,
+                self.child_parameters(mode, key, project_id, canvas_id),
             )
             if not ready:
                 await JSONResponse({"error": "Child unavailable"}, 503)(scope, receive, send)
@@ -201,6 +218,7 @@ class Relay:
         else:
             session = self.sessions.get(sid)
             if (session is None or session.stop.is_set() or session.mode != mode
+                    or session.project_id != project_id or session.canvas_id != canvas_id
                     or not hmac.compare_digest(session.key_hash, key_hash)):
                 await JSONResponse({"error": "Session not found"}, 404)(scope, receive, send)
                 return
@@ -282,6 +300,10 @@ def main():
     app = Starlette(routes=[
         Route("/mcp/{mode}", relay),
         Route("/mcp/{mode}/", relay),
+        Route("/mcp/{mode}/projects/{project_id}", relay),
+        Route("/mcp/{mode}/projects/{project_id}/", relay),
+        Route("/mcp/{mode}/projects/{project_id}/canvases/{canvas_id}", relay),
+        Route("/mcp/{mode}/projects/{project_id}/canvases/{canvas_id}/", relay),
     ], lifespan=relay.lifespan)
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level,
                 timeout_graceful_shutdown=1)

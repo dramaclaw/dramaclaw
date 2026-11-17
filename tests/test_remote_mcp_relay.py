@@ -151,8 +151,9 @@ class Relay:
         }
         if ignore_term:
             self.env["REMOTE_MCP_FAKE_IGNORE_TERM"] = "1"
-        if real:
-            self.env["DRAMACLAW_PROJECT_ID"] = "relay-test-project"
+        if not real:
+            self.env["DRAMACLAW_PROJECT_ID"] = "inherited-project"
+            self.env["DRAMACLAW_CANVAS_ID"] = "inherited-canvas"
         self.command = [
             sys.executable, str(RELAY), "--host", "127.0.0.1", "--port", str(self.port),
             "--idle-timeout", str(idle), "--api-url", self.api_url,
@@ -224,9 +225,10 @@ class Relay:
         return response
 
     @asynccontextmanager
-    async def session(self, mode="tools", *, delete=True):
+    async def session(self, mode="tools", *, path=None, delete=True):
         async with streamablehttp_client(
-            self.url + f"/mcp/{mode}", headers={"Authorization": f"Bearer {KEY}"},
+            self.url + (path if path is not None else f"/mcp/{mode}"),
+            headers={"Authorization": f"Bearer {KEY}"},
             timeout=8, sse_read_timeout=12, terminate_on_close=delete,
         ) as (reader, writer, get_id):
             async with ClientSession(
@@ -327,6 +329,7 @@ def test_tools_resources_and_child_environment(relay_factory):
             identity = await whoami(session)
             assert identity == {
                 "mode": "tools", "pid": identity["pid"], "key_matches": True,
+                "project_id": None, "canvas_id": None,
                 "has_token_env": False, "has_key_file_env": False,
                 "ce_dir": str(relay.ce_dir),
                 "api_url": f"http://127.0.0.1:{relay.exchange.port}",
@@ -527,13 +530,13 @@ def test_real_launcher_tool_definitions_match_direct_stdio(relay_factory):
     env = clean_env() | {
         "DRAMACLAW_AGENT_KEY": KEY, "DRAMACLAW_API_URL": relay.api_url,
         "DRAMACLAW_USERNAME": "relay-user", "DRAMACLAW_CE_DIR": str(ROOT),
-        "DRAMACLAW_PROJECT_ID": "relay-test-project",
     }
 
     async def scenario():
         for mode in ("tools", "workflows"):
             expected = await direct_tools(LAUNCHER, mode, env, ROOT, str(python))
-            assert json.loads(expected)["tools"]
+            if mode == "workflows":
+                assert json.loads(expected)["tools"]
             async with relay.session(mode) as (session, _, _):
                 assert serialized(await session.list_tools()) == expected
 
@@ -638,5 +641,121 @@ def test_child_exit_before_initialize_logs_fixed_message(relay_factory, tmp_path
         assert "(tools)" in logs
         assert child_message not in logs
         assert child_message not in response.text
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("path,mode,project_id,canvas_id", [
+    ("/mcp/tools", "tools", None, None),
+    ("/mcp/tools/projects/proj.A-1_x", "tools", "proj.A-1_x", None),
+    ("/mcp/tools/projects/proj.A-1_x/", "tools", "proj.A-1_x", None),
+    ("/mcp/workflows/projects/p1/canvases/c1", "workflows", "p1", "c1"),
+    ("/mcp/workflows/projects/p1/canvases/c1/", "workflows", "p1", "c1"),
+])
+def test_path_scope_controls_child_environment_and_exchange(
+    relay_factory, path, mode, project_id, canvas_id,
+):
+    relay = relay_factory()
+
+    async def scenario():
+        async with relay.session(path=path) as (session, _, _):
+            identity = await whoami(session)
+            assert identity["mode"] == mode
+            assert identity["project_id"] == project_id
+            assert identity["canvas_id"] == canvas_id
+            scope = {"kind": "home"} if project_id is None else {
+                "kind": "project", "id": project_id,
+            }
+            assert [request["body"] for request in relay.exchange.requests] == [
+                {"scope": scope, "ttl_seconds": 60},
+            ]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("path", [
+    "/mcp/tools/projects/a%20b",
+    "/mcp/tools/projects/a$b",
+    "/mcp/tools/projects/" + "a" * 129,
+    "/mcp/tools/projects/p1/canvases/c%2Fd",
+    "/mcp/tools/projects/p1/canvases/",
+    "/mcp/tools/projects/p1/other/c1",
+    "/mcp/tools/projects",
+])
+def test_invalid_scope_path_never_exchanges_or_starts_child(relay_factory, path):
+    relay = relay_factory()
+
+    async def scenario():
+        response = await relay.request("POST", path=path, json=INITIALIZE)
+        assert response.status_code == 404
+        assert not relay.pid_log.exists() or relay.pid_log.read_text() == ""
+        assert relay.exchange.requests == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("exchange_mode", ["401", "403"])
+def test_rejected_project_exchange_never_starts_child(relay_factory, exchange_mode):
+    relay = relay_factory(exchange_mode=exchange_mode)
+
+    async def scenario():
+        response = await relay.request(
+            "POST", path="/mcp/tools/projects/p1", json=INITIALIZE,
+        )
+        assert response.status_code == 401
+        assert "www-authenticate" not in response.headers
+        assert not relay.pid_log.exists() or relay.pid_log.read_text() == ""
+        assert [request["body"] for request in relay.exchange.requests] == [
+            {"scope": {"kind": "project", "id": "p1"}, "ttl_seconds": 60},
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_session_cannot_be_reused_on_another_scope_path(relay_factory):
+    relay = relay_factory()
+
+    async def scenario():
+        async with relay.session(
+            path="/mcp/tools/projects/p1/canvases/c1",
+        ) as (session, sid, _):
+            identity = await whoami(session)
+            expected = serialized(await session.list_tools())
+            for path in (
+                "/mcp/tools",
+                "/mcp/tools/projects/p2/canvases/c1",
+                "/mcp/tools/projects/p1/canvases/c2",
+                "/mcp/tools/projects/p1",
+                "/mcp/workflows/projects/p1/canvases/c1",
+            ):
+                response = await relay.request("POST", path=path, sid=sid, json=LIST_TOOLS)
+                assert response.status_code == 404
+            assert serialized(await session.list_tools()) == expected
+            assert await whoami(session) == identity
+
+    asyncio.run(scenario())
+
+
+def test_real_launcher_project_tool_definitions_match_direct_stdio(relay_factory):
+    python = ROOT / ".venv/bin/python"
+    if not python.exists():
+        pytest.skip("Real launcher requires the repository .venv/bin/python")
+    relay = relay_factory(real=True)
+    env = clean_env() | {
+        "DRAMACLAW_AGENT_KEY": KEY, "DRAMACLAW_API_URL": relay.api_url,
+        "DRAMACLAW_USERNAME": "relay-user", "DRAMACLAW_CE_DIR": str(ROOT),
+        "DRAMACLAW_PROJECT_ID": "relay-test-project",
+        "DRAMACLAW_CANVAS_ID": "relay-test-canvas",
+    }
+
+    async def scenario():
+        expected = await direct_tools(LAUNCHER, "tools", env, ROOT, str(python))
+        assert json.loads(expected)["tools"]
+        async with relay.session(
+            path="/mcp/tools/projects/relay-test-project/canvases/relay-test-canvas",
+        ) as (session, _, _):
+            actual = await session.list_tools()
+            assert actual.tools
+            assert serialized(actual) == expected
 
     asyncio.run(scenario())

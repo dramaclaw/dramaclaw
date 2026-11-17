@@ -173,6 +173,16 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 `Authorization: Bearer <agent key>`。这是唯一的凭据传入渠道；中继通过
 `DRAMACLAW_AGENT_KEY` 将 Key 传给子进程，忽略中继自身环境中的 Agent Key/Token 变量。
 
+路径支持以下形式，均可带末尾斜杠：
+
+- `/mcp/{tools|workflows}`：home scope。
+- `/mcp/{tools|workflows}/projects/<project_id>`：项目 scope。
+- `/mcp/{tools|workflows}/projects/<project_id>/canvases/<canvas_id>`：指定项目和画布。
+
+ID 仅允许 `[A-Za-z0-9._-]`，长度为 1–128 个字符。路径包含项目时，Key 校验使用项目 scope。
+要获得与 Codex 宿主配置等价的工具集（Freezone 画布工具），需使用带画布的项目路径；
+home 路径运行在 home scope。子进程的项目和画布仅取自路径，不继承中继环境中的值。
+
 每个会话启动一个子进程。`--idle-timeout` 默认为 600 秒，空闲时间从最后一次 POST
 结束时开始计算；保持 GET 流打开不会让会话持续存活。DELETE 请求和中继关闭也会结束
 会话并回收子进程。

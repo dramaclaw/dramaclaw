@@ -56,6 +56,8 @@ async def main():
         if name == "whoami":
             value = json.dumps({
                 "mode": args.mode,
+                "project_id": os.environ.get("DRAMACLAW_PROJECT_ID"),
+                "canvas_id": os.environ.get("DRAMACLAW_CANVAS_ID"),
                 "pid": os.getpid(),
                 "key_matches": hashlib.sha256(
                     os.environ.get("DRAMACLAW_AGENT_KEY", "").encode()
