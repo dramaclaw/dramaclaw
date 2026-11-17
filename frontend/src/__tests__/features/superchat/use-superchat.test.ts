@@ -25,6 +25,7 @@ import {
   pendingAssistantClarificationEventsForTurnForTest,
   removeSkillStudioStatusForTurnForTest,
   revealIncompleteSkillStudioDraftForTurnForTest,
+  updatePendingSkillStudioDraftChunksFromToolFrameForTest,
   pruneOldMessageCaches,
   resolveUiEventTurnIdForTest,
   sanitizeMessagesForCache,
@@ -114,7 +115,7 @@ import {
   visibleAssistantClarificationTimelineItemsForTest,
   visibleSkillStudioEventsForMessageForTest,
 } from "@/features/superchat/superchat-panel";
-import type { ChatMessage, ChatMessagePart, ChatRole } from "@/features/superchat/types";
+import type { ChatMessage, ChatMessagePart, ChatRole, ServerFrame } from "@/features/superchat/types";
 
 const MESSAGE_CACHE_PREFIX = "superchat:messages:v2:";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -644,6 +645,90 @@ describe("mergeHistorySnapshot", () => {
     expect(assistant?.uiEvents?.some((item) =>
       Boolean(item && typeof item === "object" && (item as Record<string, unknown>).type === "skill_studio.status"),
     )).toBe(false);
+  });
+});
+
+// Shape of the websocket frame the chat route sends for a completed agent tool call.
+// Codex reports dramaclaw MCP tools as "<server>.<tool>"; other runtimes send the bare name.
+const TOOL_NAME_PREFIXES = [
+  { runtime: "Codex", prefix: "dramaclaw." },
+  { runtime: "unprefixed", prefix: "" },
+];
+
+function skillStudioToolFrame(
+  name: string,
+  callId: string,
+  input: Record<string, unknown>,
+  scope: unknown = { type: "project", id: "project-a", canvasId: "canvas-a" },
+): ServerFrame {
+  return {
+    type: "agent.tool.updated",
+    scope,
+    turn_id: "turn-1",
+    call_id: callId,
+    name,
+    status: "completed",
+    text: "",
+    input: {
+      project_id: "project-a",
+      canvas_id: "canvas-a",
+      skill_studio_session_id: "skill_studio_01",
+      ...input,
+    },
+    output: null,
+    error: null,
+    result_json: null,
+  } as ServerFrame;
+}
+
+describe("Skill Studio draft chunk capture", () => {
+  it.each(TOOL_NAME_PREFIXES)("captures skill and recipe chunks from $runtime tool frames", ({ prefix }) => {
+    const chunks: Parameters<typeof updatePendingSkillStudioDraftChunksFromToolFrameForTest>[0] = new Map();
+
+    updatePendingSkillStudioDraftChunksFromToolFrameForTest(chunks, skillStudioToolFrame(
+      `${prefix}freezone_put_agent_catalog_skill`,
+      "mcp-skill",
+      { skill: { id: "public-service-video", description: "公益短片 Skill" } },
+    ));
+    updatePendingSkillStudioDraftChunksFromToolFrameForTest(chunks, skillStudioToolFrame(
+      `${prefix}freezone_put_agent_catalog_recipe`,
+      "mcp-recipe",
+      { index: 0, recipe: { id: "public-service-video-recipe", name: "公益短片" } },
+    ));
+
+    const captured = chunks.get("skill_studio_01");
+    expect(captured).toMatchObject({
+      turnId: "turn-1",
+      sessionId: "skill_studio_01",
+      skill: { id: "public-service-video", description: "公益短片 Skill" },
+    });
+    expect([...(captured?.recipes.entries() ?? [])]).toEqual([
+      [0, { id: "public-service-video-recipe", name: "公益短片" }],
+    ]);
+  });
+
+  it.each(TOOL_NAME_PREFIXES)("drops captured chunks when a $runtime finish call completes", ({ prefix }) => {
+    const chunks: Parameters<typeof updatePendingSkillStudioDraftChunksFromToolFrameForTest>[0] = new Map([
+      [
+        "skill_studio_01",
+        {
+          turnId: "turn-1",
+          sessionId: "skill_studio_01",
+          mode: "create",
+          expectedRecipeCount: 1,
+          skill: { id: "public-service-video" },
+          recipes: new Map(),
+        },
+      ],
+    ]);
+
+    updatePendingSkillStudioDraftChunksFromToolFrameForTest(chunks, skillStudioToolFrame(
+      `${prefix}freezone_finish_agent_catalog_draft`,
+      "mcp-finish",
+      {},
+    ));
+
+    expect(chunks.has("skill_studio_01")).toBe(false);
   });
 });
 
@@ -1206,6 +1291,46 @@ This Freezone chat can change the current canvas by returning a JSON block.
             raw: { type: "agent.tool.updated", name: "freezone_get_canvas_ontology" },
           },
         },
+        { id: "text-a", type: "text", text: "我来分析当前画布内容。" },
+      ],
+    });
+
+    expect(normalized?.parts?.map((part) => part.type)).toEqual(["text"]);
+  });
+
+  it("removes Codex-projected canvas context and write tool status parts from history", () => {
+    // Card shape produced by the Codex thread projection for dramaclaw MCP tool calls.
+    const codexToolCard = (callId: string, tool: string): ChatMessagePart => ({
+      id: callId,
+      seq: 1,
+      type: "tool_status",
+      event: {
+        id: `agent-tool-${callId}`,
+        role: "tool",
+        text: `dramaclaw.${tool}`,
+        turnId: "turn-1",
+        timestamp: 1,
+        raw: {
+          type: "agent.tool.updated",
+          turn_id: "turn-1",
+          call_id: callId,
+          name: `dramaclaw.${tool}`,
+          status: "completed",
+          input: { canvas_id: "canvas-a" },
+          text: "",
+          error: null,
+          result_json: null,
+          duration_ms: 12,
+        },
+      },
+    });
+    const normalized = normalizeMessage({
+      id: "assistant-1",
+      role: "assistant",
+      text: "我来分析当前画布内容。",
+      parts: [
+        codexToolCard("item-ontology", "freezone_get_canvas_ontology"),
+        codexToolCard("item-create", "freezone_create_node"),
         { id: "text-a", type: "text", text: "我来分析当前画布内容。" },
       ],
     });
@@ -6294,6 +6419,92 @@ describe("useSuperChat websocket lifecycle", () => {
     });
   });
 
+  it.each(TOOL_NAME_PREFIXES)(
+    "shows the read-only incomplete Skill Studio draft when a turn with $runtime draft tools ends without a final draft",
+    async ({ prefix }) => {
+      class TestWebSocket {
+        static OPEN = 1;
+        readyState = 1;
+        onopen: (() => void) | null = null;
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: (() => void) | null = null;
+        onclose: ((event: CloseEvent) => void) | null = null;
+
+        constructor() {
+          sockets.push(this);
+        }
+
+        send() {}
+        close() {}
+      }
+      const sockets: TestWebSocket[] = [];
+      Object.defineProperty(globalThis, "WebSocket", {
+        value: TestWebSocket,
+        writable: true,
+        configurable: true,
+      });
+
+      const hook = renderHook(() =>
+        useSuperChat({
+          project: "project-a",
+          displayName: "Tester",
+          surface: "freezone",
+          freezoneCanvasId: "canvas-a",
+          freezoneAgentId: "agent-2",
+        }),
+      );
+
+      await waitFor(() => expect(sockets).toHaveLength(1));
+      const socket = sockets[0];
+      await waitFor(() => expect(socket.onmessage).toBeTypeOf("function"));
+      await act(async () => {
+        socket.onopen?.();
+      });
+      const scope = {
+        kind: "project",
+        id: "project-a",
+        surface: "freezone",
+        canvasId: "canvas-a",
+        agentId: "agent-2",
+      };
+
+      await act(async () => {
+        for (const frame of [
+          skillStudioToolFrame(
+            `${prefix}freezone_put_agent_catalog_skill`,
+            "mcp-skill",
+            { skill: { id: "public-service-video", description: "公益短片 Skill" } },
+            scope,
+          ),
+          skillStudioToolFrame(
+            `${prefix}freezone_put_agent_catalog_recipe`,
+            "mcp-recipe",
+            { index: 0, recipe: { id: "public-service-video-recipe", name: "公益短片" } },
+            scope,
+          ),
+          { type: "chat.done", scope, turn_id: "turn-1" },
+        ]) {
+          socket.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+        }
+      });
+
+      await waitFor(() => {
+        const assistant = hook.result.current.messages.find((item) =>
+          item.role === "assistant" && item.turnId === "turn-1");
+        const draft = assistant?.uiEvents?.find((event): event is Record<string, unknown> =>
+          Boolean(event && typeof event === "object"
+            && (event as Record<string, unknown>).type === "skill_studio.draft"));
+        expect(draft).toMatchObject({
+          skill_studio_session_id: "skill_studio_01",
+          incomplete: true,
+          read_only: true,
+          skill: { id: "public-service-video" },
+          recipes: [{ id: "public-service-video-recipe" }],
+        });
+      });
+    },
+  );
+
   it("updates local draft part state after confirming a Skill Studio draft", async () => {
     apiPostMock.mockClear();
     class TestWebSocket {
@@ -6781,6 +6992,43 @@ describe("tool status parts", () => {
       title: genericToolTitleForTest(confirmCompleted),
       toolMessage: confirmCompleted,
     })).toBe("已提交到画布");
+  });
+
+  it.each(TOOL_NAME_PREFIXES)("keeps the retry labels for failed $runtime outline and workflow draft tools", ({ prefix }) => {
+    const failed = (name: string) => (toolCard({
+      turn_id: "turn-a",
+      call_id: `call-${name}`,
+      name: `${prefix}${name}`,
+      status: "failed",
+      error: "rejected",
+    }) as { event: ChatMessage }).event;
+    const outline = failed("freezone_put_agent_catalog_draft_outline");
+    const prepare = failed("freezone_prepare_workflow_draft");
+
+    expect(toolStatusRuntimeTextForTest({
+      t: zhT,
+      status: "failed",
+      title: genericToolTitleForTest(outline),
+      toolMessage: outline,
+    })).toBe("待重新整理 Skill 方案");
+    expect(toolStatusRuntimeTextForTest({
+      t: zhT,
+      status: "failed",
+      title: genericToolTitleForTest(prepare),
+      toolMessage: prepare,
+    })).toBe("待重新生成工作流草稿");
+  });
+
+  it.each(TOOL_NAME_PREFIXES)("titles $runtime tools without a friendly label from the bare tool name", ({ prefix }) => {
+    const title = (name: string) => genericToolTitleForTest((toolCard({
+      turn_id: "turn-a",
+      call_id: `call-${name}`,
+      name: `${prefix}${name}`,
+      status: "completed",
+    }) as { event: ChatMessage }).event);
+
+    expect(title("freezone_run_workflow")).toBe("Run Workflow");
+    expect(title("dramaclaw_patch_interactive_story")).toBe("Dramaclaw Patch Interactive Story");
   });
 
   it("renders workflow parameter handoff as waiting instead of failed", () => {
