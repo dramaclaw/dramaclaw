@@ -1459,8 +1459,8 @@ async def _run_freezone_video_upscale_async(
             last_reported_at = time.monotonic()
 
     async def before_stage() -> None:
-        from novelvideo.task_backend.cancel import raise_if_envelope_cancel_requested
-        await asyncio.to_thread(raise_if_envelope_cancel_requested, envelope, task_type=task_type, episode=0, scope=job_id)
+        from novelvideo.task_backend.cancel import raise_if_envelope_cancel_requested_async
+        await raise_if_envelope_cancel_requested_async(envelope, task_type=task_type, episode=0, scope=job_id)
 
     output_path, meta = await _call_freezone_leaf(
         envelope,

@@ -269,3 +269,29 @@ def raise_if_envelope_cancel_requested(
         return
     if asyncio.run(is_cancel_requested(**fields)):
         raise TaskCancelled()
+
+
+async def raise_if_envelope_cancel_requested_async(
+    envelope: dict[str, Any],
+    *,
+    task_type: str | None = None,
+    episode: int | None = None,
+    beat_num: int | None = None,
+    scope: str | None = None,
+) -> None:
+    """Check a stage boundary on the runner loop that owns its async clients."""
+    deadline_monotonic = _optional_float(envelope.get("__deadline_monotonic"))
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        raise TaskTimedOut(timeout_seconds=_optional_int(envelope.get("__timeout_seconds")))
+
+    fields = _envelope_cancel_fields(
+        envelope,
+        task_type=task_type,
+        episode=episode,
+        beat_num=beat_num,
+        scope=scope,
+    )
+    if not fields["task_id"]:
+        return
+    if await is_cancel_requested(**fields):
+        raise TaskCancelled()

@@ -462,3 +462,27 @@ async def test_cancel_unknown_submission_fences_original_request(local, monkeypa
         "request_id": "cancel-stage",
     }
     assert "X-Local-Video-Upscale-Key" not in calls[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_stage_checkpoint_uses_the_running_async_client_loop(monkeypatch):
+    from novelvideo.task_backend import cancel
+
+    loop = asyncio.get_running_loop()
+
+    async def requested(**kwargs):
+        assert asyncio.get_running_loop() is loop
+        assert kwargs["task_id"] == "original-task"
+        return True
+
+    monkeypatch.setattr(cancel, "is_cancel_requested", requested)
+    with pytest.raises(cancel.TaskCancelled):
+        await cancel.raise_if_envelope_cancel_requested_async(
+            {
+                "__run_task_id": "original-task",
+                "project_id": "project",
+                "task_type": "freezone_video_upscale",
+                "episode": 0,
+                "scope": "original-job",
+            }
+        )
