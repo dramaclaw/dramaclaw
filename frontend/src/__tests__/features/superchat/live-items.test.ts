@@ -118,4 +118,15 @@ describe("live item cards", () => {
     const messages = applyLiveItemFrame([], item(tool("in_progress")));
     expect(applyLiveItemFrame(messages, item(hidden))[0].parts).toEqual([]);
   });
+
+  it("does not show Codex-qualified hidden canvas tool cards", () => {
+    const hidden = { id: "tool-1", seq: 7, type: "tool_status", event: {
+      id: "agent-tool-tool-1", role: "tool", text: "dramaclaw.freezone_get_node_detail",
+      turnId: "turn-1", timestamp: 7,
+      raw: { type: "agent.tool.updated", turn_id: "turn-1", call_id: "tool-1",
+        name: "dramaclaw.freezone_get_node_detail", status: "in_progress", input: null, text: "",
+        error: null, result_json: null, duration_ms: null },
+    } } satisfies ChatMessagePart;
+    expect(applyLiveItemFrame([], item(hidden))[0].parts).toEqual([]);
+  });
 });

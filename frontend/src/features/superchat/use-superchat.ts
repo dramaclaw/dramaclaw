@@ -18,6 +18,7 @@ import type {
   SuperChatSettings,
 } from "@/features/superchat/types";
 import {
+  bareToolName,
   buildLocalUserMessage,
   normalizeMessage,
 } from "@/features/superchat/message";
@@ -1369,7 +1370,7 @@ function updatePendingSkillStudioDraftChunksFromToolFrame(
   frame: ServerFrame,
 ): void {
   if (frame.type !== "agent.tool.updated" || frame.status !== "completed") return;
-  const name = typeof frame.name === "string" ? frame.name : "";
+  const name = typeof frame.name === "string" ? bareToolName(frame.name) : "";
   const input = frame.input && typeof frame.input === "object" && !Array.isArray(frame.input)
     ? frame.input as Record<string, unknown>
     : null;

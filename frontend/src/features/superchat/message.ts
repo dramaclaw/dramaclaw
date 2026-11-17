@@ -51,13 +51,23 @@ const HIDDEN_TOOL_STATUS_NAMES = new Set<string>([
   "ToolSearch",
 ]);
 
+/**
+ * Tool name without its MCP server qualifier: Codex reports MCP tools as
+ * "<server>.<tool>" (e.g. "dramaclaw.freezone_get_selection"), other runtimes send
+ * the bare tool name. Names without a qualifier are returned unchanged.
+ */
+export function bareToolName(name: string): string {
+  return name.slice(name.lastIndexOf(".") + 1);
+}
+
 function normalizeToolStatusName(name: string): string {
   return name.trim().replace(/[\s_-]+/gu, " ").toLowerCase();
 }
 
 function isHiddenToolStatusName(name: string): boolean {
-  if (HIDDEN_TOOL_STATUS_NAMES.has(name)) return true;
-  const normalized = normalizeToolStatusName(name);
+  const bare = bareToolName(name);
+  if (HIDDEN_TOOL_STATUS_NAMES.has(bare)) return true;
+  const normalized = normalizeToolStatusName(bare);
   return normalized === "tool search" || normalized === "tool describe";
 }
 

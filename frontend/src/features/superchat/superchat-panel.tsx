@@ -115,6 +115,7 @@ import {
 } from "@/features/superchat/use-superchat";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
 import { resolveMessagePresentation } from "@/features/superchat/message-presentation";
+import { bareToolName } from "@/features/superchat/message";
 import {
   buildChatTaskBatchNotification,
   resolveChatTaskBatchSummary,
@@ -1779,9 +1780,8 @@ function FreezoneToolActivityCard({ message }: { message: ChatMessage }) {
 
 function genericToolTitle(message: ChatMessage): string {
   const raw = toolRawRecord(message);
-  const name = typeof raw?.name === "string" ? raw.name.trim() : "";
-  const normalizedName = name.toLowerCase().split(".").pop() ?? "";
-  const override = AGENT_TOOL_TITLE_OVERRIDES[normalizedName];
+  const name = typeof raw?.name === "string" ? bareToolName(raw.name.trim()) : "";
+  const override = AGENT_TOOL_TITLE_OVERRIDES[name.toLowerCase()];
   if (override) return override;
   if (!name) return "执行工具";
   return name
@@ -2106,20 +2106,12 @@ function toolStatusRuntimeText(params: {
   if (businessStatus === "clarification_required") return t("superchat.runtime.waitingForGenerationParameters");
   if (businessStatus === "confirmation_required") return t("superchat.runtime.waitingForConfirmation");
   if (businessStatus === "clarification_frontend_timeout") return t("superchat.runtime.clarificationPaused");
-  if (
-    status === "failed" &&
-    (raw?.name === "freezone_put_agent_catalog_draft_outline" ||
-      raw?.tool_name === "freezone_put_agent_catalog_draft_outline" ||
-      raw?.toolName === "freezone_put_agent_catalog_draft_outline")
-  ) {
+  const toolNames = [raw?.name, raw?.tool_name, raw?.toolName].flatMap((candidate) =>
+    typeof candidate === "string" ? [bareToolName(candidate)] : []);
+  if (status === "failed" && toolNames.includes("freezone_put_agent_catalog_draft_outline")) {
     return "待重新整理 Skill 方案";
   }
-  if (
-    status === "failed" &&
-    (raw?.name === "freezone_prepare_workflow_draft" ||
-      raw?.tool_name === "freezone_prepare_workflow_draft" ||
-      raw?.toolName === "freezone_prepare_workflow_draft")
-  ) {
+  if (status === "failed" && toolNames.includes("freezone_prepare_workflow_draft")) {
     return "待重新生成工作流草稿";
   }
   if (status === "running") return `正在${title}`;
