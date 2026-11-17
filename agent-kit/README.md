@@ -168,6 +168,8 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 `--api-url` 默认是 `http://127.0.0.1:8780`，必须使用 https 或回环地址 http。
 `--api-url` 指向的 API 必须提供 `POST /api/v1/agent/sessions`；缺少此接口会使每个新会话返回 503。
 中继在启动会话前通过 API（`POST /api/v1/agent/sessions`）校验 Key；拒绝返回 401，校验不可用返回 503。
+新会话在确认携带 Bearer 后，先校验请求头及 JSON-RPC `initialize` 请求，再校验 Key、启动子进程。
+初始化请求体最多 4 MiB，超过返回 413；无效请求返回可读的 JSON 错误，不调用 Key 校验接口或启动子进程。
 
 使用 Streamable HTTP MCP 客户端连接 `http://127.0.0.1:8790/mcp/tools` 或
 `http://127.0.0.1:8790/mcp/workflows`，并携带请求头

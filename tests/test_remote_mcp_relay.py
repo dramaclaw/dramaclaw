@@ -297,6 +297,47 @@ def test_rejects_missing_invalid_and_empty_authorization(relay_factory):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("request_kwargs,status", [
+    pytest.param({"json": LIST_TOOLS}, 400, id="not-initialize"),
+    pytest.param(
+        {"json": INITIALIZE, "headers": {"Accept": "application/json"}},
+        406, id="missing-event-stream",
+    ),
+    pytest.param(
+        {"content": json.dumps(INITIALIZE), "headers": {"Content-Type": "text/plain"}},
+        # SDK transport security rejects this before the transport's 415 check.
+        400, id="wrong-content-type",
+    ),
+    pytest.param(
+        {"content": b"{not json", "headers": {"Content-Type": "application/json"}},
+        400, id="invalid-json",
+    ),
+    pytest.param({"json": []}, 400, id="json-array"),
+    pytest.param({"json": {"foo": 1}}, 400, id="not-jsonrpc"),
+])
+def test_invalid_first_request_never_exchanges_or_starts_child(
+    relay_factory, request_kwargs, status,
+):
+    relay = relay_factory()
+
+    async def scenario():
+        response = await relay.request("POST", **request_kwargs)
+        assert response.status_code == status
+        error = response.json()["error"]
+        message = error["message"] if isinstance(error, dict) else error
+        assert isinstance(message, str) and message.strip()
+        await asyncio.sleep(0.5)
+        children = relay.pid_log.read_text().splitlines() if relay.pid_log.exists() else []
+        assert (children, relay.exchange.requests) == ([], [])
+        async with relay.session() as (session, _, initialized):
+            assert initialized.serverInfo.name == "fake-tools"
+            identity = await whoami(session)
+            assert identity["key_matches"] is True
+            assert relay.pid_log.read_text().splitlines() == [str(identity["pid"])]
+
+    asyncio.run(scenario())
+
+
 def test_unknown_and_well_known_paths_are_404(relay_factory):
     relay = relay_factory()
 
@@ -322,7 +363,7 @@ def test_tools_resources_and_child_environment(relay_factory):
         async with relay.session() as (session, _, initialized):
             assert initialized.serverInfo.name == "fake-tools"
             names = [t.name for t in (await session.list_tools()).tools]
-            assert names == ["whoami", "sleep", "echo", "noisy"]
+            assert names == ["whoami", "sleep", "echo", "noisy", "binary_noise"]
             echoed = await session.call_tool("echo", {"text": "literal echo: ☃"})
             assert echoed.isError is False
             assert echoed.content[0].text == "literal echo: ☃"
@@ -391,6 +432,34 @@ def test_stray_child_stdout_preserves_session(relay_factory):
     assert_secret_free(logs)
 
 
+def test_non_utf8_child_stdout_preserves_session(relay_factory):
+    relay = relay_factory()
+
+    async def scenario():
+        async with relay.session() as (session, _, _):
+            pid = (await whoami(session))["pid"]
+            try:
+                await asyncio.wait_for(session.call_tool("binary_noise", {}), 10)
+            except Exception:
+                # Only the noisy call may fail; the same session must remain usable.
+                pass
+            echoed = await session.call_tool("echo", {"text": "after binary noise"})
+            assert echoed.isError is False
+            assert echoed.content[0].text == "after binary noise"
+            assert (await whoami(session))["pid"] == pid
+            assert relay.pid_log.read_text().splitlines() == [str(pid)]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        relay.close()
+        logs = "\n".join(
+            (relay.directory / name).read_text(errors="replace")
+            for name in ("stderr.log", "stdout.log")
+        )
+        assert "stray-binary-line" not in logs
+
+
 def test_aborted_post_body_preserves_session(relay_factory):
     relay = relay_factory()
 
@@ -426,7 +495,7 @@ def test_workflows_path_selects_workflows_server(relay_factory):
         async with relay.session("workflows") as (session, _, initialized):
             assert initialized.serverInfo.name == "fake-workflows"
             assert [t.name for t in (await session.list_tools()).tools] == [
-                "whoami", "sleep", "echo", "workflow_only", "noisy",
+                "whoami", "sleep", "echo", "workflow_only", "noisy", "binary_noise",
             ]
             assert (await whoami(session))["mode"] == "workflows"
 

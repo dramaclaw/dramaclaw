@@ -43,6 +43,7 @@ async def main():
         if args.mode == "workflows":
             schemas["workflow_only"] = {}
         schemas["noisy"] = {}
+        schemas["binary_noise"] = {}
         return [
             types.Tool(
                 name=name,
@@ -77,6 +78,9 @@ async def main():
         elif name == "noisy":
             os.write(1, b"stray-stdout-line-not-json-5d1e\n")
             value = "noisy done"
+        elif name == "binary_noise":
+            os.write(1, b"\xff\xfe stray-binary-line\n")
+            value = "binary noise done"
         elif name == "workflow_only" and args.mode == "workflows":
             value = "workflow"
         else:

@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import hashlib
 import hmac
+from http import HTTPStatus
+import json
 import logging
 import os
 from pathlib import Path
@@ -22,6 +24,8 @@ import httpx
 from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.server.streamable_http import StreamableHTTPServerTransport
+from mcp.types import INVALID_PARAMS, INVALID_REQUEST, PARSE_ERROR, JSONRPCMessage, JSONRPCRequest
+from pydantic import ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -30,6 +34,47 @@ import uvicorn
 
 
 logger = logging.getLogger("remote_mcp_relay")
+MAX_INITIAL_BODY_SIZE = 4 * 1024 * 1024
+
+
+async def validate_initial_request(transport, request, send):
+    async def reject(message, status=HTTPStatus.BAD_REQUEST, code=INVALID_REQUEST):
+        response = transport._create_error_response(message, status, code)
+        await response(request.scope, request.receive, send)
+
+    # Match SDK security validation without logging the untrusted header value.
+    if not request.headers.get("content-type", "").lower().startswith("application/json"):
+        await reject("Invalid Content-Type header")
+        return None
+    if not await transport._validate_accept_header(request, request.scope, send):
+        return None
+    if not transport._check_content_type(request):
+        await reject(
+            "Unsupported Media Type: Content-Type must be application/json",
+            HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+        )
+        return None
+
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > MAX_INITIAL_BODY_SIZE:
+            await reject("Request body exceeds 4 MiB", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return None
+        body.extend(chunk)
+    try:
+        raw_message = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        await reject("Parse error: body must be valid JSON", code=PARSE_ERROR)
+        return None
+    try:
+        message = JSONRPCMessage.model_validate(raw_message)
+    except ValidationError:
+        await reject("Validation error: body must be a JSON-RPC message", code=INVALID_PARAMS)
+        return None
+    if not isinstance(message.root, JSONRPCRequest) or message.root.method != "initialize":
+        await reject("Bad Request: a new session requires an initialize request")
+        return None
+    return bytes(body)
 
 
 async def check_key(api_url, key, project_id):
@@ -97,7 +142,9 @@ class Relay:
         args = [str(self.args.launch_script), mode]
         if self.args.ce_dir is not None:
             args += ["--ce-dir", str(self.args.ce_dir)]
-        return StdioServerParameters(command=self.args.child_python, args=args, env=env)
+        return StdioServerParameters(
+            command=self.args.child_python, args=args, env=env, encoding_error_handler="replace",
+        )
 
     async def run_session(self, sid, session, params, *, task_status=anyio.TASK_STATUS_IGNORED):
         started = False
@@ -200,14 +247,30 @@ class Relay:
         sid = request.headers.get("mcp-session-id")
         new_session = sid is None and request.method == "POST"
         if new_session:
+            transport = StreamableHTTPServerTransport(None)
+            body = await validate_initial_request(transport, request, send)
+            if body is None:
+                return
+            original_receive = receive
+
+            async def replay_receive():
+                nonlocal body
+                if body is not None:
+                    message = {"type": "http.request", "body": body, "more_body": False}
+                    body = None
+                    return message
+                return await original_receive()
+
+            receive = replay_receive
             status = await check_key(self.args.api_url, key, project_id)
             if status != 200:
                 error = "Agent key rejected" if status == 401 else "Agent key check unavailable"
                 await JSONResponse({"error": error}, status)(scope, receive, send)
                 return
             sid = uuid4().hex
+            transport.mcp_session_id = sid
             session = Session(
-                mode, project_id, canvas_id, key_hash, StreamableHTTPServerTransport(sid),
+                mode, project_id, canvas_id, key_hash, transport,
             )
             self.sessions[sid] = session
             # Count initialization before starting the child so the reaper cannot race it.
