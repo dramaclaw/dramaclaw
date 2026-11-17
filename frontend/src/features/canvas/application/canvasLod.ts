@@ -173,11 +173,10 @@ export function beginCanvasHydrateBurst(): void {
 /* ------------------------------------------------------------------------- *
  * 换画布时的缩放档同步
  *
- * 相机在挂节点之前就用 reactFlow.setViewport 摆好了，但 Canvas 的
- * lowDetailActive（驱动 onlyRenderVisibleElements）只由 onMove/onMoveEnd 更新，
- * 而 ReactFlow 的程序化 setViewport 要到下一拍才派发这些事件。于是新画布的节点
- * 是按「上一张画布的缩放档」挂载的：0.6 → 0.2 会先按裁剪只挂十几个再翻成全量，
- * 0.2 → 0.6 会先全量挂 354 个再裁回十几个——两个方向都白挂一整波。
+ * 相机在挂节点之前就用 reactFlow.setViewport 摆好了，但 Canvas 的低缩放档信号
+ * （wrapper 上的 low-detail class 与 setCanvasLowDetail）只由 onMove/onMoveEnd
+ * 更新，而 ReactFlow 的程序化 setViewport 要到下一拍才派发这些事件，新画布会先按
+ * 「上一张画布的缩放档」渲染一拍。
  *
  * 这里给 hydrate 一条直达通道：在同一个事件里同步喂给 Canvas 目标缩放，React 会
  * 把它和 setCanvasData 批进同一次提交，节点一次就按最终档挂好。

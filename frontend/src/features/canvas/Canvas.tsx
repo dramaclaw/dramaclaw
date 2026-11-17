@@ -1994,27 +1994,15 @@ export function Canvas({
   // LOD 效果类一律走 classList 直改 DOM，不进 React state：平移期间每帧 setState
   // 会把「省下来的光栅化时间」原样还给 render，得不偿失。
   //
-  // lowDetailActive 是唯一的例外：它驱动 onlyRenderVisibleElements 的开关（低缩放
-  // 档全部节点都是轻量 shell，视口裁剪只剩挂载/卸载翻腾的坏处，索性关掉），必须是
-  // React state。setState 有值守卫，平移中每帧调用但值不变，不触发重渲染；只有
-  // 缩放跨过阈值那一次会让 Canvas 重渲染一遍。
+  // 低缩放档同样保持 onlyRenderVisibleElements 视口裁剪：每帧平移/缩放的渲染成本
+  // 与视口子树里的节点盒子数成正比，屏外节点也照算（575 节点、0 个可见时仍 ~27ms/帧）。
+  // 曾经在低缩放档关掉裁剪以避免挂载翻腾，节点一多反而整体掉到 ~30fps、缩放手势
+  // ~10fps；shell 很轻，裁剪带来的挂载翻腾远比全量挂载便宜。
   const panningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [lowDetailActive, setLowDetailActive] = useState(() =>
-    isLowDetailZoom(initialViewportRef.current.zoom)
-  );
   const applyLowDetailClass = useCallback((zoom: number) => {
     const lowDetail = isLowDetailZoom(zoom);
     wrapperRef.current?.classList.toggle(CANVAS_LOW_DETAIL_CLASS, lowDetail);
     setCanvasLowDetail(lowDetail);
-    // 升档（退出低缩放）必须与 withLodShell 的 shell→full 交换落在同一次提交：
-    // 此刻裁剪若还停留在「低缩放档全量挂载」，302 个 shell 会同时换成完整组件
-    // （实测 ~960ms 冻结），随后 moveEnd 恢复裁剪又把 ~290 个刚挂上的整批卸掉
-    // （再冻 ~1s）。同一提交生效则裁剪先把可见集收窄到十几个，只有它们挂完整
-    // 组件（实测 ~90ms）。React 对同一事件里的 store 通知和 setState 统一批处理，
-    // 这里的 set 与交换必然同帧。降档方向相反——见 handleMoveEnd 的注释。
-    if (!lowDetail) {
-      setLowDetailActive(false);
-    }
   }, []);
 
   const handleMoveStart = useCallback(() => {
@@ -2029,11 +2017,6 @@ export function Canvas({
   const handleMoveEnd = useCallback(
     (_event: unknown, viewport: Viewport) => {
       applyLowDetailClass(viewport.zoom);
-      // 降档（进入低缩放）的裁剪关闭只在手势结束时提交：全量挂载 ~240 个 shell 的
-      // 波放在缩放手势中途会有可感知的顿挫，推迟到松手后手势保持流畅；中途已跨档
-      // 的可见节点由 withLodShell 的 selector 先行换成 shell，不受此影响。升档方向
-      // 不能等到这里——见 applyLowDetailClass 的注释。
-      setLowDetailActive(isLowDetailZoom(viewport.zoom));
       if (panningReleaseTimerRef.current) {
         clearTimeout(panningReleaseTimerRef.current);
       }
@@ -2094,20 +2077,15 @@ export function Canvas({
   });
 
   // 换画布同样不触发 onMove/onMoveEnd（程序化 setViewport 的事件慢一拍），由
-  // hydrate 在同一个事件里直接喂过来，好让裁剪开关与节点挂载落在同一次提交。
+  // hydrate 在同一个事件里直接喂过来，好让 shell 档位与节点挂载落在同一次提交。
   useEffect(
-    () =>
-      onCanvasHydrateViewport((zoom) => {
-        applyLowDetailClass(zoom);
-        setLowDetailActive(isLowDetailZoom(zoom));
-      }),
+    () => onCanvasHydrateViewport(applyLowDetailClass),
     [applyLowDetailClass]
   );
 
   // 首屏恢复的视口不会触发 onMove/onMoveEnd，低缩放档要在这里补一次。
   useEffect(() => {
     applyLowDetailClass(initialViewportRef.current.zoom);
-    setLowDetailActive(isLowDetailZoom(initialViewportRef.current.zoom));
     return () => {
       if (panningReleaseTimerRef.current) {
         clearTimeout(panningReleaseTimerRef.current);
@@ -5087,11 +5065,11 @@ export function Canvas({
         multiSelectionKeyCode={MULTI_SELECTION_KEY_CODES}
         selectionKeyCode={null}
         deleteKeyCode={null}
-        // 低缩放档关掉视口裁剪：此档所有节点都是轻量 shell（见 withLodShell），
-        // 全量挂载的渲染树很小；而裁剪在快速平移时每帧挂/卸边界节点，实测 4 秒
-        // 拖拽 800+ 次翻腾、p99 帧时 470ms——收益早已倒挂。高缩放档维持裁剪。
-        // 工作流执行期也要保持节点挂载，避免后台节点因裁剪中断。
-        onlyRenderVisibleElements={!workflowExecutionActive && !lowDetailActive}
+        // 所有缩放档都开视口裁剪（理由见 applyLowDetailClass 上方注释）。
+        // 首次测量前 React Flow 会强制渲染全部节点，那一遍由 withLodShell 挂成
+        // 不带媒体的 shell，避免屏外节点拉原图/视频。
+        // 工作流执行期保持节点挂载，避免后台节点因裁剪中断。
+        onlyRenderVisibleElements={!workflowExecutionActive}
         zoomOnDoubleClick={false}
         proOptions={REACT_FLOW_PRO_OPTIONS}
         className="bg-background"

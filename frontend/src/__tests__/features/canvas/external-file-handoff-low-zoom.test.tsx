@@ -19,8 +19,13 @@ let currentZoom = 1;
 vi.mock('@xyflow/react', () => ({
   Handle: () => null,
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
-  useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
-    selector({ transform: [0, 0, currentZoom] }),
+  // nodeLookup：节点都已被 React Flow 测量过（有 handleBounds），否则 withLodShell
+  // 会把它当作首屏强制渲染那一遍、一律先出 shell。
+  useStore: (selector: (state: unknown) => unknown) =>
+    selector({
+      transform: [0, 0, currentZoom],
+      nodeLookup: { get: () => ({ internals: { handleBounds: { source: [], target: [] } } }) },
+    }),
 }));
 
 // 画布 store：只有 withLodShell 的「选中豁免」读它。这些用例里节点不被选中 ——
