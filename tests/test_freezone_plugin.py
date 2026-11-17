@@ -12565,3 +12565,89 @@ def test_command_catalog_typed_tools_are_registered_plugin_tools():
     advertised = set(typed_tools(json.loads(path.read_text())))
     registered = {name for name, _schema, _handler in _load_plugin_module().TOOLS}
     assert advertised <= registered, f"Unregistered typed tools: {sorted(advertised - registered)}"
+
+
+@pytest.fixture
+def external_unbound_write_env(monkeypatch):
+    for name in (
+        "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE",
+        "DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE",
+        "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID", "DRAMACLAW_TURN_ID",
+        "DRAMACLAW_LOCAL_AGENT_TRUST",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", "test-key-placeholder")
+
+
+@pytest.mark.parametrize("canvas", [None, "canvas-1"])
+def test_project_required_external_write_scope(external_unbound_write_env, monkeypatch, canvas):
+    plugin = _load_plugin_module()
+    calls = []
+    monkeypatch.setattr(plugin, "_request", lambda *a, **kw: calls.append(a) or {"ok": True, "data": []})
+    _, _, error = plugin._resolve_canvas_scope_for_write(None, canvas)
+    assert error["ok"] is False
+    assert error["code"] == "project_id_required"
+    assert "freezone_list_projects" in error["agent_instruction"]
+    assert calls == []
+
+
+@pytest.mark.parametrize("handler,args", [
+    ("_handle_run_node_action", {"node_id": "node-1", "action": "generate_image"}),
+    ("_handle_run_workflow", {"scope": "canvas"}),
+    ("_handle_run_workflow", {"node_ids": ["node-1"]}),
+    ("_handle_canvas_ontology", {}),
+])
+def test_project_required_external_handlers(external_unbound_write_env, monkeypatch, handler, args):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_request", lambda *a, **kw: pytest.fail("unexpected HTTP call"))
+    monkeypatch.setattr(plugin, "_chat_canvas_scope_mismatch", lambda *a: pytest.fail("unexpected frontend lookup"))
+    result = getattr(plugin, handler)(args)
+    assert result["ok"] is False
+    assert result["code"] == "project_id_required"
+    assert "freezone_list_projects" in result["agent_instruction"]
+
+
+@pytest.mark.parametrize("mode", ["token", "internal", "bound", "local"])
+@pytest.mark.parametrize("canvas", [None, "canvas-1"])
+def test_project_required_compatibility_pins(external_unbound_write_env, monkeypatch, mode, canvas):
+    plugin = _load_plugin_module()
+    if mode == "token":
+        monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN", "test-token-placeholder")
+    elif mode == "internal":
+        monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP")
+    elif mode == "bound":
+        monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-1")
+    else:
+        monkeypatch.delenv("DRAMACLAW_AGENT_KEY")
+        monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "1")
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(path)
+        if path == "/api/v1/projects":
+            return {"ok": True, "data": [{"id": "project-1", "name": "Demo"}]}
+        assert path == "/api/v1/projects/project-1/freezone/canvases"
+        return {"ok": True, "data": [{"id": "canvas-1"}]}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    project = plugin._default_project_id() or None
+    assert plugin._resolve_canvas_scope_for_write(project, canvas) == ("project-1", "canvas-1", None)
+    assert ("/api/v1/projects" in calls) is (mode != "bound")
+
+
+@pytest.mark.parametrize("card", [False, True])
+def test_confirmation_project_name_preserved(external_unbound_write_env, monkeypatch, card):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_canvas_agent_identity", lambda: ("main", "turn-1" if card else None))
+    monkeypatch.setattr(plugin, "_request", lambda *a, **kw: {"ok": True, "data": {
+        "project_name": "Demo Project", "confirmation_id": "confirmation-1",
+        "browser_open": card, "kinds": ["paid_generation"], "targets": [], "expires_at": 12345,
+    }})
+    result = plugin._create_canvas_confirmation("project-1", "canvas-1", [])
+    assert result["project_name"] == "Demo Project"
+    assert "project_name" in result["agent_instruction"]
+    structured = plugin._structured_tool_result(result, tool_name="freezone_run_node_action")
+    assert structured["project_name"] == "Demo Project"
+    assert "project_name" in plugin._output_schema("freezone_run_node_action")["properties"]
+    Draft202012Validator(plugin._output_schema("freezone_run_node_action")).validate(structured)

@@ -430,6 +430,28 @@ def _default_project_id() -> str:
     return os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
 
 
+def _external_unbound_agent_key() -> bool:
+    return (
+        os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+        and _agent_key_configured()
+        and not _agent_token_configured()
+        and not _default_project_id()
+    )
+
+
+def _project_id_required() -> str:
+    instruction = (
+        "project_id is required for this connection; call freezone_list_projects first "
+        "and pass project_id on every call."
+    )
+    return tool_result({
+        "ok": False,
+        "code": "project_id_required",
+        "message": instruction,
+        "agent_instruction": instruction,
+    })
+
+
 def _default_canvas_id() -> str:
     return os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
 
@@ -812,6 +834,8 @@ def _resolve_canvas_scope_for_write(
     project: str | None,
     canvas: str | None,
 ) -> tuple[str | None, str | None, str | None]:
+    if not project and _external_unbound_agent_key():
+        return project, canvas, _project_id_required()
     if project and canvas:
         return project, canvas, None
 
@@ -6064,6 +6088,7 @@ def _create_canvas_confirmation(
             "or in this same turn. The confirmation expires in 30 minutes; after that, ask again. "
             "Do not tell the user that anything was started, sent, submitted or done."
         )
+    instruction += " Name the project (project_name) to the user when asking for confirmation."
     result = {
         "ok": True,
         "status": "confirmation_required",
@@ -6073,6 +6098,7 @@ def _create_canvas_confirmation(
         "applied": False,
         "project_id": project,
         "canvas_id": canvas,
+        **({"project_name": data["project_name"]} if "project_name" in data else {}),
         "confirmation_id": data["confirmation_id"],
         "kinds": data["kinds"],
         "targets": data["targets"],
@@ -10040,6 +10066,8 @@ def _request_canvas_context_from_frontend(
     canvas: str | None,
     requests: list[Any],
 ) -> str:
+    if not project and _external_unbound_agent_key():
+        return _project_id_required()
     mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
@@ -10160,6 +10188,7 @@ _CANVAS_RESULT_FIELDS = (
     "expires_at",
     "confirmation_via",
     "project_id",
+    "project_name",
     "canvas_id",
     "operation_id",
     "command_id",

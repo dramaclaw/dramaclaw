@@ -18333,7 +18333,7 @@ async def create_canvas_confirmation(
 
     if not is_writable_canvas_id(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+    ctx, _username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user, require_home_node=False,
     )
     state_dir = _canvas_state_project_dir(ctx, project_dir)
@@ -18525,6 +18525,7 @@ async def create_canvas_confirmation(
         raise HTTPException(409, {"code": exc.code, "message": str(exc)}) from exc
     browser_open = await asyncio.to_thread(canvas_browser_open, state_dir, canvas_id, now=now)
     data = {
+        "project_name": project_name,
         "confirmation_id": record["id"], "kinds": record["kinds"], "targets": record["targets"],
         "expires_at": record["expires_at"], "browser_open": browser_open,
     }

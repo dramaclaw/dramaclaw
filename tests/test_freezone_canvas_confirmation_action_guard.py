@@ -303,7 +303,9 @@ async def test_available_image_action_still_creates_the_same_card(guard, caplog,
 
     data = await _confirm([_run("i1", "generate_image")])
 
-    assert set(data) == {"confirmation_id", "kinds", "targets", "expires_at", "browser_open"}
+    assert set(data) == {
+        "confirmation_id", "kinds", "targets", "expires_at", "browser_open", "project_name",
+    }
     assert data["kinds"] == ["paid_generation"]
     assert data["targets"] == [{"node_id": "i1", "title": "海报", "node_type": "imageGenNode",
                                 "action": "generate_image"}]
@@ -339,3 +341,9 @@ async def test_external_translate_lists_only_settings_the_action_uses(guard, exe
     # The stored text node keeps its default model field; only the listing changes.
     stored = canvas_store.read_canvas(guard.root, CANVAS)
     assert stored["nodes"][0]["data"]["model"] == "newapi_gpt_image2"
+
+
+async def test_confirmation_project_name_response(guard):
+    _executor(guard, "browser")
+    data = await _confirm([_run("i1", "generate_image")])
+    assert data["project_name"] == "demo"

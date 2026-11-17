@@ -1834,3 +1834,13 @@ async def test_external_freezone_outside_gate_preserves_tools_and_instructions(
     assert names == expected
     assert "freezone_list_projects" not in names
     assert dramaclaw_mcp.SERVER.create_initialization_options().instructions is None
+
+
+@pytest.mark.asyncio
+async def test_project_required_external_canvas_write(external_unbound_freezone_env, monkeypatch):
+    plugin = dramaclaw_mcp._plugin("freezone")
+    monkeypatch.setattr(plugin, "_request", lambda *a, **kw: pytest.fail("unexpected HTTP call"))
+    result = await dramaclaw_mcp.call_tool("freezone_run_workflow", {"scope": "canvas"})
+    assert result.isError is True
+    text = "\n".join(block.text for block in result.content if block.type == "text")
+    assert "freezone_list_projects" in text
