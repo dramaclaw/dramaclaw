@@ -165,6 +165,8 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 ```
 
 可通过 `--api-url`、`--username`、`--port` 分别指定 API 地址、用户名和监听端口。
+`--api-url` 默认是 `http://127.0.0.1:8780`，必须使用 https 或回环地址 http。
+中继在启动会话前通过 API（`POST /api/v1/agent/sessions`）校验 Key；拒绝返回 401，校验不可用返回 503。
 
 使用 Streamable HTTP MCP 客户端连接 `http://127.0.0.1:8790/mcp/tools` 或
 `http://127.0.0.1:8790/mcp/workflows`，并携带请求头

@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import timedelta
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
@@ -13,6 +14,7 @@ import socket
 import subprocess
 import sys
 import time
+from threading import Thread
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
@@ -27,7 +29,8 @@ LAUNCHER = ROOT / "agent-kit/scripts/launch_mcp.py"
 FAKE = ROOT / "tests/fixtures/remote_mcp_fake_server.py"
 KEY = "fake-relay-key-DO-NOT-USE-7f3a9c"
 OTHER_KEY = "fake-relay-key-DO-NOT-USE-second"
-SECRETS = (KEY, OTHER_KEY, "poison-token-value", "poison-key-value")
+FAKE_TOKEN = "fake-exchange-token-DO-NOT-USE-91c2"
+SECRETS = (KEY, OTHER_KEY, FAKE_TOKEN, "poison-token-value", "poison-key-value")
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {
@@ -78,15 +81,63 @@ async def wait_reaped(pid):
     pytest.fail("Child still exists (including possible zombie) after 10 seconds")
 
 
+class Exchange:
+    def __init__(self, mode="ok"):
+        self.requests = []
+        exchange = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                matches = self.headers.get("Authorization") == f"Bearer {KEY}"
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                exchange.requests.append({
+                    "path": self.path, "body": body, "authorization_matches": matches,
+                    "content_type": self.headers.get("Content-Type"),
+                    "accept": self.headers.get("Accept"),
+                })
+                if self.path != "/api/v1/agent/sessions":
+                    status, payload = 404, {"ok": False}
+                elif mode == "ok" and matches:
+                    status, payload = 200, {
+                        "ok": True, "data": {"token": FAKE_TOKEN, "expires_at": time.time() + 60},
+                    }
+                else:
+                    status = 200 if mode == "bad-body" else 401 if mode == "ok" else int(mode)
+                    payload = {"ok": False}
+                encoded = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_port
+        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=3)
+
+
 class Relay:
-    def __init__(self, directory, *, idle=20, real=False, ignore_term=False):
+    def __init__(
+        self, directory, *, idle=20, real=False, ignore_term=False,
+        exchange_mode="ok", api_url=None, launch_script=None,
+    ):
         self.directory = directory
         self.ce_dir = ROOT if real else directory / "ce"
         if not real:
             self.ce_dir.mkdir()
         self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}"
-        self.api_url = f"http://127.0.0.1:{free_port()}" if real else "http://127.0.0.1:9"
+        self.exchange = Exchange(exchange_mode)
+        self.api_url = api_url or f"http://127.0.0.1:{self.exchange.port}"
         self.pid_log = directory / "children.txt"
         self.bodies = []
         self.env = clean_env() | {
@@ -110,15 +161,18 @@ class Relay:
         if real:
             self.command += ["--child-python", str(ROOT / ".venv/bin/python")]
         else:
-            self.command += ["--launch-script", str(FAKE)]
+            self.command += ["--launch-script", str(launch_script or FAKE)]
         self.stdout = (directory / "stdout.log").open("wb")
         self.stderr = (directory / "stderr.log").open("wb")
         self.process = None
 
-    def start(self):
+    def spawn(self):
         self.process = subprocess.Popen(
             self.command, env=self.env, stdout=self.stdout, stderr=self.stderr, cwd=ROOT,
         )
+
+    def start(self):
+        self.spawn()
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
@@ -140,6 +194,7 @@ class Relay:
                     self.process.kill()
                     self.process.wait(timeout=3)
         finally:
+            self.exchange.close()
             self.stdout.close()
             self.stderr.close()
             # Clean up leaked fake children even when a lifecycle assertion failed.
@@ -186,12 +241,15 @@ class Relay:
 def relay_factory(tmp_path):
     relays = []
 
-    def start(**kwargs):
+    def start(*, wait_ready=True, **kwargs):
         directory = tmp_path / str(len(relays))
         directory.mkdir()
         relay = Relay(directory, **kwargs)
         relays.append(relay)
-        relay.start()
+        if wait_ready:
+            relay.start()
+        else:
+            relay.spawn()
         return relay
 
     yield start
@@ -270,7 +328,8 @@ def test_tools_resources_and_child_environment(relay_factory):
             assert identity == {
                 "mode": "tools", "pid": identity["pid"], "key_matches": True,
                 "has_token_env": False, "has_key_file_env": False,
-                "ce_dir": str(relay.ce_dir), "api_url": "http://127.0.0.1:9",
+                "ce_dir": str(relay.ce_dir),
+                "api_url": f"http://127.0.0.1:{relay.exchange.port}",
                 "username": "relay-user",
             }
             assert relay.pid_log.read_text().splitlines() == [str(identity["pid"])]
@@ -450,6 +509,7 @@ def test_cli_help_and_defaults():
     try:
         spec.loader.exec_module(module)
         args = module.build_arg_parser().parse_args([])
+        assert args.api_url == "http://127.0.0.1:8780"
         assert args.host == "127.0.0.1"
         assert args.idle_timeout == 600
         assert str(args.launch_script) == str(LAUNCHER)
@@ -476,5 +536,107 @@ def test_real_launcher_tool_definitions_match_direct_stdio(relay_factory):
             assert json.loads(expected)["tools"]
             async with relay.session(mode) as (session, _, _):
                 assert serialized(await session.list_tools()) == expected
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["tools", "workflows"])
+def test_key_exchange_once_per_new_session(relay_factory, mode):
+    relay = relay_factory()
+
+    async def scenario():
+        for count in (1, 2):
+            async with relay.session(mode) as (session, _, _):
+                assert (await whoami(session))["key_matches"] is True
+                await session.list_tools()
+                assert relay.exchange.requests == [{
+                    "path": "/api/v1/agent/sessions",
+                    "body": {"scope": {"kind": "home"}, "ttl_seconds": 60},
+                    "authorization_matches": True,
+                    "content_type": "application/json", "accept": "application/json",
+                }] * count
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["tools", "workflows"])
+@pytest.mark.parametrize("exchange_mode", ["401", "403", "ok"])
+def test_rejected_exchange_never_starts_child(relay_factory, mode, exchange_mode):
+    relay = relay_factory(exchange_mode=exchange_mode)
+
+    async def scenario():
+        response = await relay.request(
+            "POST", f"/mcp/{mode}", key=OTHER_KEY if exchange_mode == "ok" else KEY,
+            json=INITIALIZE,
+        )
+        assert response.status_code == 401
+        assert "www-authenticate" not in response.headers
+        assert not relay.pid_log.exists() or relay.pid_log.read_text() == ""
+        assert len(relay.exchange.requests) == 1
+        assert relay.exchange.requests[0]["authorization_matches"] is (exchange_mode != "ok")
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["tools", "workflows"])
+@pytest.mark.parametrize("failure", ["404", "500", "bad-body", "unreachable"])
+def test_unavailable_exchange_never_starts_child(relay_factory, mode, failure):
+    kwargs = {"api_url": f"http://127.0.0.1:{free_port()}"} if failure == "unreachable" else {
+        "exchange_mode": failure,
+    }
+    relay = relay_factory(**kwargs)
+
+    async def scenario():
+        bodies = []
+        for key in (KEY, OTHER_KEY):
+            response = await relay.request("POST", f"/mcp/{mode}", key=key, json=INITIALIZE)
+            assert response.status_code == 503
+            bodies.append(response.text)
+            assert not relay.pid_log.exists() or relay.pid_log.read_text() == ""
+        assert bodies[0] == bodies[1]
+        assert bodies[0]
+
+    asyncio.run(scenario())
+
+
+def test_non_loopback_http_api_url_refused_at_startup(relay_factory):
+    relay = relay_factory(api_url="http://example.invalid:8780", wait_ready=False)
+    deadline = time.monotonic() + 5
+    while relay.process.poll() is None and time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", relay.port), timeout=0.1):
+                pytest.fail("Relay listened with an insecure non-loopback API URL")
+        except OSError:
+            time.sleep(0.05)
+    assert relay.process.poll() is not None, "Relay did not refuse the API URL within 5 seconds"
+    assert relay.process.returncode != 0
+    assert (relay.directory / "stderr.log").read_text().strip()
+
+
+def test_https_api_url_allowed_at_startup(relay_factory):
+    relay_factory(api_url="https://example.invalid")
+
+
+def test_child_exit_before_initialize_logs_fixed_message(relay_factory, tmp_path):
+    child_message = "untrusted-child-stderr-must-not-be-forwarded"
+    script = tmp_path / "exit_child.py"
+    script.write_text(f"import sys\nprint({child_message!r}, file=sys.stderr)\nsys.exit(1)\n")
+    relay = relay_factory(launch_script=script)
+
+    async def scenario():
+        response = await relay.request("POST", json=INITIALIZE)
+        assert response.status_code >= 500
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            logs = "\n".join(
+                (relay.directory / name).read_text() for name in ("stdout.log", "stderr.log")
+            )
+            if "child exited before initialize" in logs:
+                break
+            await asyncio.sleep(0.05)
+        assert "child exited before initialize" in logs
+        assert "(tools)" in logs
+        assert child_message not in logs
+        assert child_message not in response.text
 
     asyncio.run(scenario())

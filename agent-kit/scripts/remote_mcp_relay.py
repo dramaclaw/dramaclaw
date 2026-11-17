@@ -14,8 +14,10 @@ from pathlib import Path
 import sys
 import time
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 import anyio
+import httpx
 from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.server.streamable_http import StreamableHTTPServerTransport
@@ -29,12 +31,40 @@ import uvicorn
 logger = logging.getLogger("remote_mcp_relay")
 
 
+async def check_key(api_url, key):
+    try:
+        async with httpx.AsyncClient(
+            trust_env=False, timeout=10, follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                api_url.rstrip("/") + "/api/v1/agent/sessions",
+                json={"scope": {"kind": "home"}, "ttl_seconds": 60},
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json", "Accept": "application/json",
+                },
+            )
+        if response.status_code in (401, 403):
+            return 401
+        if response.is_success:
+            body = response.json()
+            if (isinstance(body, dict) and body.get("ok") is True
+                    and isinstance(body.get("data"), dict)
+                    and isinstance(body["data"].get("token"), str) and body["data"]["token"]):
+                return 200
+    except (httpx.HTTPError, ValueError):
+        pass
+    return 503
+
+
 @dataclass
 class Session:
     mode: str
     key_hash: bytes
     transport: StreamableHTTPServerTransport
     stop: anyio.Event = field(default_factory=anyio.Event)
+    child_outcome: anyio.Event = field(default_factory=anyio.Event)
+    child_received: bool = False
     posts: int = 0
     last_post_end: float = field(default_factory=time.monotonic)
 
@@ -63,13 +93,21 @@ class Relay:
     async def run_session(self, sid, session, params, *, task_status=anyio.TASK_STATUS_IGNORED):
         started = False
 
-        async def forward(reader, writer):
+        async def forward(reader, writer, from_child=False):
             try:
                 async for message in reader:
                     if isinstance(message, Exception):
                         break
+                    if from_child:
+                        session.child_received = True
+                        session.child_outcome.set()
                     await writer.send(message)
             finally:
+                if from_child and not session.child_received:
+                    logger.warning(
+                        "Session %s (%s) child exited before initialize", sid[:8], session.mode,
+                    )
+                    session.child_outcome.set()
                 # EOF from either side also ends outstanding HTTP requests.
                 session.stop.set()
 
@@ -82,7 +120,7 @@ class Relay:
                         try:
                             async with anyio.create_task_group() as bridge:
                                 bridge.start_soon(forward, http_read, child_write)
-                                bridge.start_soon(forward, child_read, http_write)
+                                bridge.start_soon(forward, child_read, http_write, True)
                                 started = True
                                 task_status.started(True)
                                 await session.stop.wait()
@@ -142,7 +180,13 @@ class Relay:
         key = authorization[1].strip()
         key_hash = hashlib.sha256(key.encode()).digest()
         sid = request.headers.get("mcp-session-id")
-        if sid is None and request.method == "POST":
+        new_session = sid is None and request.method == "POST"
+        if new_session:
+            status = await check_key(self.args.api_url, key)
+            if status != 200:
+                error = "Agent key rejected" if status == 401 else "Agent key check unavailable"
+                await JSONResponse({"error": error}, status)(scope, receive, send)
+                return
             sid = uuid4().hex
             session = Session(mode, key_hash, StreamableHTTPServerTransport(sid))
             self.sessions[sid] = session
@@ -164,13 +208,42 @@ class Relay:
                 session.posts += 1
         del key, authorization
         try:
-            await session.transport.handle_request(scope, receive, send)
+            if new_session:
+                await self.handle_initial_request(session, scope, receive, send)
+            else:
+                await session.transport.handle_request(scope, receive, send)
         finally:
             if request.method == "POST":
                 session.posts -= 1
                 session.last_post_end = time.monotonic()
             if session.transport.is_terminated:
                 session.stop.set()
+
+    async def handle_initial_request(self, session, scope, receive, send):
+        response_started = False
+
+        async def guarded_send(message):
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                if 200 <= message["status"] < 300:
+                    # SSE sends headers before the child answers; retain the option of a 503.
+                    await session.child_outcome.wait()
+                if session.child_outcome.is_set() and not session.child_received:
+                    await anyio.sleep_forever()
+                response_started = True
+            await send(message)
+
+        async with anyio.create_task_group() as tasks:
+            async def watch_child():
+                await session.child_outcome.wait()
+                if not session.child_received:
+                    tasks.cancel_scope.cancel()
+
+            tasks.start_soon(watch_child)
+            await session.transport.handle_request(scope, receive, guarded_send)
+            tasks.cancel_scope.cancel()
+        if not response_started and not session.child_received:
+            await JSONResponse({"error": "Child unavailable"}, 503)(scope, receive, send)
 
 
 def build_arg_parser():
@@ -179,7 +252,7 @@ def build_arg_parser():
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--idle-timeout", type=float, default=600)
     parser.add_argument("--ce-dir")
-    parser.add_argument("--api-url")
+    parser.add_argument("--api-url", default="http://127.0.0.1:8780")
     parser.add_argument("--username")
     parser.add_argument("--launch-script", default=str(Path(__file__).with_name("launch_mcp.py")))
     parser.add_argument("--child-python", default=sys.executable)
@@ -190,6 +263,17 @@ def build_arg_parser():
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
+    try:
+        api_url = urlsplit(args.api_url)
+        valid_url = bool(api_url.hostname) and (
+            api_url.scheme == "https" or (
+                api_url.scheme == "http" and api_url.hostname in {"127.0.0.1", "::1", "localhost"}
+            )
+        )
+    except ValueError:
+        valid_url = False
+    if not valid_url:
+        parser.error("--api-url must use https or loopback http")
     if not 0 < args.idle_timeout < float("inf"):
         parser.error("--idle-timeout must be finite and positive")
     # The SDK's malformed-stdio diagnostic includes raw child output in a traceback.
