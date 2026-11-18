@@ -1050,3 +1050,17 @@ def test_workflow_schema_contract_ignores_nested_annotations_only(
         ]
     }
     assert contract(schema) == expected
+
+
+def test_skill_search_finds_recipe_membership(monkeypatch):
+    monkeypatch.setattr(
+        registry, "list_user_agent_config_items",
+        lambda *_: [
+            {"id": "text-to-image", "allowed_recipe_ids": ["general-image"]},
+            {"id": "pixar-ip-ad-video", "allowed_recipe_ids": ["ad-product-prop-anchor"]},
+        ],
+    )
+    results = registry.search_catalog(
+        username="agent-a", kind="skills", query="ad-product-prop-anchor", limit=10
+    )
+    assert [result["id"] for result in results] == ["pixar-ip-ad-video"]

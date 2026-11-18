@@ -161,6 +161,15 @@ def confirmation_targets(
             if node is None:
                 missing.add(node_id)
                 continue
+            if (
+                kind == "run_node_action"
+                and node.get("type") == "videoComposeNode"
+                and action not in {"auto_compose_video", "open_video_compose_modal"}
+            ):
+                raise ValueError(
+                    f"Action {action!r} is unavailable on videoComposeNode {node_id!r}; "
+                    "use auto_compose_video to compose video"
+                )
             if (node_id, action) in seen:
                 continue
             seen.add((node_id, action))

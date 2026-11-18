@@ -262,8 +262,18 @@ def validate_workflow_plan(
                 _issue(f"{path}.node_type", f"unsupported node type: {node_type}")
             )
             continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        if node_type == "videoNode":
+            for alias, field in (
+                ("generation_mode", "genMode"),
+                ("generate_audio", "generateAudio"),
+            ):
+                if alias in data:
+                    errors.append(_issue(
+                        f"{path}.data.{alias}",
+                        f"Unknown video node field {alias!r}; use data.{field} instead",
+                    ))
         if node_type == "htmlArtifactNode":
-            data = node.get("data") if isinstance(node.get("data"), dict) else {}
             if not any(isinstance(value, str) and value.strip() for value in (node.get("prompt"), data.get("prompt"))):
                 errors.append(_issue(f"{path}.prompt", "HTML workflow step requires a generation prompt"))
             catalog = data.get("workflowCatalog")
