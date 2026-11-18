@@ -28,6 +28,17 @@ _UNSUPPORTED = (
 )
 
 
+def agent_key_mode() -> bool:
+    """Whether an agent key is configured without a turn token override."""
+    return any(
+        os.environ.get(name, "").strip()
+        for name in ("DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_KEY")
+    ) and not any(
+        os.environ.get(name, "").strip()
+        for name in ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE")
+    )
+
+
 def _remember(secret: str) -> None:
     if secret:
         with _GLOBAL_LOCK:
