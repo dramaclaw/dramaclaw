@@ -1951,6 +1951,14 @@ def _user_context_parts(
         if compose_node_id and openfilm_studio_enabled()
         else ""
     )
+    if not compose_context:
+        compose_context = (
+            "If the user asks for a finished video from existing canvas video or audio, "
+            "creating and wiring a videoComposeNode only sets up the inputs. Once the "
+            "inputs are connected, submit run_node_action with action auto_compose_video "
+            "on that node through the normal canvas confirmation flow. Do not stop at "
+            "the creation receipt. If the user asks only to set up the node, stop after setup.\n"
+        )
     canvas_context = (
         "\n\n[FREEZONE_CANVAS_CONTEXT]\n"
         f"canvas_id: {canvas_id}\n"
