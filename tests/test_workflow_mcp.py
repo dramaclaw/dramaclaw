@@ -67,7 +67,7 @@ async def test_workflow_resources_real_stdio_protocol_and_private_isolation(
         args=["-m", "novelvideo.chat.workflow_mcp"],
         cwd=str(workspace),
         env={
-            **os.environ,
+            **_workflow_env(),
             "PYTHONPATH": str(root / "src"),
             "ST_EDITION": "ce",
             "DRAMACLAW_USERNAME": username,
@@ -1030,3 +1030,230 @@ def test_workflow_schema_contract_ignores_nested_annotations_only(
         ]
     }
     assert contract(schema) == expected
+
+
+@pytest.fixture
+def workflow_catalog_api(tmp_path):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from types import SimpleNamespace
+    import time
+
+    builtin = Path(__file__).resolve().parents[1] / "src/novelvideo/freezone/agent_catalog/builtins"
+    catalogs = {user: {} for user in ("alice", "bob", "relay-user")}
+    output = tmp_path / "output"
+    for kind, source in (("skills", "text-to-image-video"), ("recipes", "general-image")):
+        builtins = [json.loads(path.read_text()) for path in sorted((builtin / kind).glob("*.json"))]
+        for user in catalogs:
+            item = json.loads((builtin / kind / f"{source}.json").read_text())
+            item.update(id=f"private-{user}", name=f"{user} private")
+            catalogs[user][kind] = [*builtins, item]
+            if user == "relay-user":
+                folder = output / user / "_account/freezone/agent_config" / kind
+                folder.mkdir(parents=True)
+                (folder / f"private-{user}.json").write_text(json.dumps(item))
+    api = SimpleNamespace(requests=[], fail=False, output=output)
+
+    class Handler(BaseHTTPRequestHandler):
+        def respond(self, status, payload):
+            encoded = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            user = next((user for user in ("alice", "bob")
+                         if self.headers.get("Authorization") == f"Bearer test-key-{user}"), None)
+            api.requests.append(("POST", self.path, user))
+            if self.path != "/api/v1/agent/sessions":
+                self.respond(404, {"ok": False})
+            elif user is None:
+                self.respond(401, {"ok": False})
+            else:
+                self.respond(200, {"ok": True, "data": {
+                    "token": f"session-{user}", "expires_at": time.time() + 3600,
+                }})
+
+        def do_GET(self):
+            user = next((user for user in ("alice", "bob")
+                         if self.headers.get("Authorization") == f"Bearer session-{user}"), None)
+            api.requests.append(("GET", self.path, user))
+            kind = self.path.rsplit("/", 1)[-1]
+            if user is None:
+                self.respond(401, {"ok": False})
+            elif self.path != f"/api/v1/freezone/agent-config/{kind}" or kind not in ("skills", "recipes"):
+                self.respond(404, {"ok": False})
+            elif api.fail:
+                self.respond(500, {"ok": False})
+            else:
+                self.respond(200, {"ok": True, "data": catalogs[user][kind]})
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    api.url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        yield api
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def _workflow_env():
+    env = os.environ.copy()
+    for name in (
+        "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_TOKEN",
+        "DRAMACLAW_AGENT_TOKEN_FILE", "DRAMACLAW_PROJECT_ID", "DRAMACLAW_USERNAME",
+        "DRAMACLAW_USER",
+    ):
+        env.pop(name, None)
+    return env
+
+
+@pytest.fixture
+def workflow_session(workflow_catalog_api, tmp_path):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def connect(**overrides):
+        env = _workflow_env() | {
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "ST_EDITION": "ce", "PYTHONDONTWRITEBYTECODE": "1",
+            "DRAMACLAW_USERNAME": "relay-user",
+            "DRAMACLAW_API_URL": workflow_catalog_api.url,
+            "NOVELVIDEO_OUTPUT_DIR": str(workflow_catalog_api.output),
+        }
+        for name, value in overrides.items():
+            if value is None:
+                env.pop(name, None)
+            else:
+                env[name] = value
+        parameters = StdioServerParameters(
+            command=sys.executable, args=["-m", "novelvideo.chat.workflow_mcp"],
+            cwd=str(tmp_path), env=env,
+        )
+        async with stdio_client(parameters) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                yield session
+
+    return connect
+
+
+def _catalog_tool_payload(result):
+    for content in result.content:
+        if hasattr(content, "text"):
+            assert not any(secret in content.text for secret in (
+                "test-key-alice", "test-key-bob", "test-key-unknown",
+                "session-alice", "session-bob", "test-turn-token",
+            )), "Credential leaked in tool result"
+    return _result_payload(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["alice", "bob"])
+async def test_workflow_agent_key_owns_catalog(workflow_session, workflow_catalog_api, owner):
+    peer = "bob" if owner == "alice" else "alice"
+    async with workflow_session(DRAMACLAW_AGENT_KEY=f"test-key-{owner}") as session:
+        for kind in ("skills", "recipes"):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_catalog_search", {"kind": kind, "query": "private"},
+            ))
+            assert result["ok"] is True
+            assert {item["id"] for item in result["items"]} == {f"private-{owner}"}
+        for other in (peer, "relay-user"):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_recipe_get", {"recipe_id": f"private-{other}"},
+            ))
+            assert result["ok"] is False
+        resource = await session.read_resource(f"dramaclaw-workflow://recipes/private-{owner}")
+        assert json.loads(resource.contents[0].text)["recipe"]["id"] == f"private-{owner}"
+        with pytest.raises(McpError):
+            await session.read_resource(f"dramaclaw-workflow://recipes/private-{peer}")
+        for user, expected in ((owner, True), (peer, False)):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_skill_get", {"skill_id": f"private-{user}"},
+            ))
+            assert result["ok"] is expected
+    for kind in ("skills", "recipes"):
+        assert ("GET", f"/api/v1/freezone/agent-config/{kind}", owner) in workflow_catalog_api.requests
+    assert ("POST", "/api/v1/agent/sessions", owner) in workflow_catalog_api.requests
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("username", [None, "local", "relay-user", "bob"])
+@pytest.mark.parametrize("key_source", ["env", "file"])
+async def test_workflow_agent_key_ignores_username(workflow_session, tmp_path, username, key_source):
+    credentials = {"DRAMACLAW_AGENT_KEY": "test-key-alice"}
+    if key_source == "file":
+        key_file = tmp_path / "agent-key"
+        key_file.write_text("test-key-alice")
+        credentials = {"DRAMACLAW_AGENT_KEY_FILE": str(key_file)}
+    async with workflow_session(DRAMACLAW_USERNAME=username, **credentials) as session:
+        for kind in ("skills", "recipes"):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_catalog_search", {"kind": kind, "query": "private"},
+            ))
+            assert result["ok"] is True
+            assert {item["id"] for item in result["items"]} == {"private-alice"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["catalog-500", "exchange-401"])
+async def test_workflow_agent_key_catalog_fails_closed(workflow_session, workflow_catalog_api, failure):
+    workflow_catalog_api.fail = failure == "catalog-500"
+    key = "test-key-alice" if failure == "catalog-500" else "test-key-unknown"
+    async with workflow_session(DRAMACLAW_AGENT_KEY=key) as session:
+        for kind in ("skills", "recipes"):
+            response = await session.call_tool("workflow_catalog_search", {"kind": kind, "query": "private"})
+            result = _catalog_tool_payload(response)
+            assert result["ok"] is False
+            assert "private-relay-user" not in "".join(c.text for c in response.content if hasattr(c, "text"))
+        with pytest.raises(McpError):
+            await session.read_resource("dramaclaw-workflow://recipes/private-relay-user")
+    assert ("POST", "/api/v1/agent/sessions", "alice" if failure == "catalog-500" else None) in workflow_catalog_api.requests
+    if failure == "catalog-500":
+        assert any(method == "GET" for method, _, _ in workflow_catalog_api.requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [None, "test-key-alice"])
+async def test_workflow_model_cannot_choose_catalog_user(workflow_session, key):
+    async with workflow_session(DRAMACLAW_AGENT_KEY=key) as session:
+        for tool, arguments in (
+            ("workflow_catalog_search", {"kind": "recipes", "query": "private", "username": "bob"}),
+            ("workflow_skill_get", {"skill_id": "private-bob", "username": "bob"}),
+        ):
+            result = _catalog_tool_payload(await session.call_tool(tool, arguments))
+            assert result["ok"] is False
+            assert result["status"] == "tool_arguments_invalid"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["no-key", "token", "token-and-key", "token-file-and-key"])
+async def test_workflow_local_catalog_without_agent_key_mode(workflow_session, workflow_catalog_api, tmp_path, mode):
+    env = {}
+    if mode != "no-key":
+        env["DRAMACLAW_AGENT_TOKEN"] = "test-turn-token"
+    if mode in ("token-and-key", "token-file-and-key"):
+        env["DRAMACLAW_AGENT_KEY"] = "test-key-alice"
+    if mode == "token-file-and-key":
+        token_file = tmp_path / "turn-token"
+        token_file.write_text("test-turn-token")
+        env.pop("DRAMACLAW_AGENT_TOKEN")
+        env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(token_file)
+    async with workflow_session(**env) as session:
+        for kind in ("skills", "recipes"):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_catalog_search", {"kind": kind, "query": "private"},
+            ))
+            assert result["ok"] is True
+            assert {item["id"] for item in result["items"]} == {"private-relay-user"}
+    assert workflow_catalog_api.requests == []

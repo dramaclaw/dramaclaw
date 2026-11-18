@@ -49,10 +49,19 @@ def workflow_catalog_scope(username: str):
     """Use one authenticated catalog snapshot without changing process environment."""
     if not username.strip() or list_user_agent_config_items is None:
         raise ValueError("workflow catalog identity is unavailable")
+    items_by_kind = {
+        kind: list_user_agent_config_items(username, kind)
+        for kind in ("skills", "recipes")
+    }
+    with workflow_catalog_items_scope(items_by_kind):
+        yield
+
+
+@contextmanager
+def workflow_catalog_items_scope(items_by_kind: dict[str, list[dict[str, Any]]]):
+    """Use supplied catalog items for all reads within this scope."""
     snapshot = {
-        kind: _normalize_agent_config_items(
-            kind, list_user_agent_config_items(username, kind)
-        )
+        kind: _normalize_agent_config_items(kind, items_by_kind[kind])
         for kind in ("skills", "recipes")
     }
     token = _REQUEST_CATALOG.set(snapshot)

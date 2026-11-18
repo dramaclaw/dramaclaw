@@ -83,15 +83,20 @@ async def wait_reaped(pid, timeout=10):
 
 
 class Exchange:
-    def __init__(self, mode="ok", projects=None):
+    def __init__(self, mode="ok", projects=None, catalogs=None):
         self.requests = []
         self.project_requests = []
+        self.catalog_requests = []
+        catalogs = {} if catalogs is None else catalogs
         projects = [] if projects is None else projects
         exchange = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
-                matches = self.headers.get("Authorization") == f"Bearer {KEY}"
+                key = self.headers.get("Authorization", "").removeprefix("Bearer ")
+                matches = self.headers.get("Authorization") == f"Bearer {KEY}" or (
+                    key in catalogs and self.headers.get("Authorization") == f"Bearer {key}"
+                )
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
                 exchange.requests.append({
                     "path": self.path, "body": body, "authorization_matches": matches,
@@ -102,7 +107,10 @@ class Exchange:
                     status, payload = 404, {"ok": False}
                 elif mode == "ok" and matches:
                     status, payload = 200, {
-                        "ok": True, "data": {"token": FAKE_TOKEN, "expires_at": time.time() + 60},
+                        "ok": True, "data": {
+                            "token": catalogs[key][0] if key in catalogs else FAKE_TOKEN,
+                            "expires_at": time.time() + 60,
+                        },
                     }
                 else:
                     status = 200 if mode == "bad-body" else 401 if mode == "ok" else int(mode)
@@ -115,6 +123,24 @@ class Exchange:
                 self.wfile.write(encoded)
 
             def do_GET(self):
+                if self.path.startswith("/api/v1/freezone/agent-config/"):
+                    kind = self.path.rsplit("/", 1)[-1]
+                    owner = next((key for key, (token, _) in catalogs.items()
+                                  if self.headers.get("Authorization") == f"Bearer {token}"), None)
+                    exchange.catalog_requests.append({"path": self.path, "owner": owner})
+                    if owner is None:
+                        status, payload = 401, {"ok": False}
+                    elif kind not in catalogs[owner][1]:
+                        status, payload = 404, {"ok": False}
+                    else:
+                        status, payload = 200, {"ok": True, "data": catalogs[owner][1][kind]}
+                    encoded = json.dumps(payload).encode()
+                    self.send_response(status)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
+                    return
                 matches = self.headers.get("Authorization") == f"Bearer {FAKE_TOKEN}"
                 exchange.project_requests.append({
                     "path": self.path, "authorization_matches": matches,
@@ -155,6 +181,7 @@ class Relay:
     def __init__(
         self, directory, *, idle=20, real=False, ignore_term=False,
         exchange_mode="ok", projects=None, api_url=None, launch_script=None,
+        catalogs=None, output_dir=None,
         max_children=None, max_children_per_key=None, disconnect_grace=None, extra_args=(),
     ):
         self.directory = directory
@@ -163,7 +190,7 @@ class Relay:
             self.ce_dir.mkdir()
         self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}"
-        self.exchange = Exchange(exchange_mode, projects=projects)
+        self.exchange = Exchange(exchange_mode, projects=projects, catalogs=catalogs)
         self.api_url = api_url or f"http://127.0.0.1:{self.exchange.port}"
         self.pid_log = directory / "children.txt"
         self.bodies = []
@@ -176,6 +203,9 @@ class Relay:
             "DRAMACLAW_AGENT_KEY_FILE": "poison-key-value",
             "DRAMACLAW_AGENT_TOKEN_FILE": "poison-token-value",
         }
+        if output_dir is not None:
+            self.env["NOVELVIDEO_OUTPUT_DIR"] = str(output_dir)
+            self.env["ST_EDITION"] = "ce"
         for name, value in (
             ("MAX_CHILDREN", max_children), ("MAX_CHILDREN_PER_KEY", max_children_per_key),
             ("IDLE_TIMEOUT", idle), ("DISCONNECT_GRACE", disconnect_grace),
@@ -267,10 +297,10 @@ class Relay:
         return response
 
     @asynccontextmanager
-    async def session(self, mode="tools", *, path=None, delete=True):
+    async def session(self, mode="tools", *, path=None, delete=True, key=KEY):
         async with streamablehttp_client(
             self.url + (path if path is not None else f"/mcp/{mode}"),
-            headers={"Authorization": f"Bearer {KEY}"},
+            headers={"Authorization": f"Bearer {key}"},
             timeout=8, sse_read_timeout=12, terminate_on_close=delete,
         ) as (reader, writer, get_id):
             async with ClientSession(
@@ -1212,5 +1242,49 @@ def test_real_launcher_home_with_several_projects_lists_freezone_tools(relay_fac
             assert len(names) > 4
             assert "freezone_list_projects" in (initialized.instructions or "")
             assert "project_id" in (initialized.instructions or "")
+
+    asyncio.run(scenario())
+
+
+def test_real_launcher_workflow_catalog_is_scoped_to_key(relay_factory, tmp_path):
+    if not (ROOT / ".venv/bin/python").exists():
+        pytest.skip("Real launcher requires the repository .venv/bin/python")
+    builtin = ROOT / "src/novelvideo/freezone/agent_catalog/builtins"
+    catalogs = {}
+    output = tmp_path / "output"
+    for user in ("alice", "bob", "relay-user"):
+        items = {}
+        for kind, source in (("skills", "text-to-image-video"), ("recipes", "general-image")):
+            item = json.loads((builtin / kind / f"{source}.json").read_text())
+            item.update(id=f"private-{user}", name=f"{user} private")
+            items[kind] = [
+                *(json.loads(path.read_text()) for path in sorted((builtin / kind).glob("*.json"))),
+                item,
+            ]
+            if user == "relay-user":
+                folder = output / user / "_account/freezone/agent_config" / kind
+                folder.mkdir(parents=True)
+                (folder / f"private-{user}.json").write_text(json.dumps(item))
+        if user != "relay-user":
+            catalogs[f"test-key-{user}"] = (f"session-{user}", items)
+    relay = relay_factory(real=True, catalogs=catalogs, output_dir=output)
+
+    async def scenario():
+        results = {}
+        for user in ("alice", "bob"):
+            async with relay.session("workflows", key=f"test-key-{user}") as (session, _, _):
+                result = await session.call_tool(
+                    "workflow_catalog_search", {"kind": "recipes", "query": "private"},
+                )
+                text = serialized(result)
+                assert not any(secret in text for secret in (
+                    "test-key-alice", "test-key-bob", "session-alice", "session-bob",
+                )), "Credential leaked in tool result"
+                results[user] = json.loads(result.content[0].text)
+        assert all(result["ok"] is True for result in results.values())
+        assert {user: {item["id"] for item in result["items"]} for user, result in results.items()} == {
+            "alice": {"private-alice"}, "bob": {"private-bob"},
+        }
+        assert {request["owner"] for request in relay.exchange.catalog_requests} == set(catalogs)
 
     asyncio.run(scenario())

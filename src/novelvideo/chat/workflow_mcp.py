@@ -7,10 +7,12 @@ the same deterministic plans without duplicating the protected write boundary.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -21,17 +23,22 @@ from mcp.server.stdio import stdio_server
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 
+from novelvideo.chat import agent_key_session
 from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
 from novelvideo.freezone.agent_workflows.catalog import (
     compile_workflow_intent,
     get_workflow_skill,
     validate_agent_workflow_plan,
+    workflow_catalog_items_scope,
 )
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.agent_workflows.registry import (
+    CatalogKind,
+    find_catalog_item,
     get_catalog_item,
     search_catalog,
+    search_catalog_items,
 )
 from novelvideo.freezone.workflow_schema import (
     normalize_workflow_tool_arguments,
@@ -185,6 +192,62 @@ def _username() -> str:
     return str(os.environ.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
 
 
+def _agent_key_mode() -> bool:
+    return any(
+        os.environ.get(name, "").strip()
+        for name in ("DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_KEY")
+    ) and not any(
+        os.environ.get(name, "").strip()
+        for name in ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE")
+    )
+
+
+def _server_catalog() -> dict[str, list[dict[str, Any]]] | None:
+    api_base = os.environ.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
+    if not api_base:
+        return None
+
+    def decode_success(status: int, body: str) -> dict[str, Any]:
+        obj = json.loads(body)
+        return {"status_code": status, **obj} if isinstance(obj, dict) else {"ok": False}
+
+    snapshot = {}
+    for kind in ("skills", "recipes"):
+        response = agent_key_session.protect(lambda: agent_key_session.request(
+            api_base=api_base,
+            api_path=f"/api/v1/freezone/agent-config/{kind}",
+            method="GET",
+            query_string="",
+            payload=None,
+            headers={"Accept": "application/json", "User-Agent": "dramaclaw-workflows/1.0.0"},
+            timeout=30,
+            opener=urllib.request.urlopen,
+            decode_success=decode_success,
+            shape_http_error=lambda code, body, reason: {"ok": False, "status_code": code},
+        ))
+        if response.get("ok") is not True or not isinstance(response.get("data"), list):
+            return None
+        snapshot[kind] = response["data"]
+    return snapshot
+
+
+def _search(
+    snapshot: dict[str, list[dict[str, Any]]] | None,
+    *, kind: CatalogKind, query: str, limit: int,
+) -> list[dict[str, Any]]:
+    if snapshot is not None:
+        return search_catalog_items(items=snapshot[kind], kind=kind, query=query, limit=limit)
+    return search_catalog(username=_username(), kind=kind, query=query, limit=limit)
+
+
+def _recipe(
+    snapshot: dict[str, list[dict[str, Any]]] | None, item_id: str,
+) -> dict[str, Any] | None:
+    if snapshot is not None:
+        return find_catalog_item(snapshot["recipes"], item_id)
+    return get_catalog_item(username=_username(), kind="recipes", item_id=item_id)
+
+
 def _text(payload: dict[str, Any]) -> list[types.TextContent]:
     return [
         types.TextContent(
@@ -336,6 +399,17 @@ async def read_resource(uri: Any) -> str:
     parsed = urlsplit(str(uri))
     if parsed.scheme != "dramaclaw-workflow":
         raise ValueError(UNSUPPORTED_RESOURCE_MESSAGE)
+    key_mode = _agent_key_mode()
+    snapshot = _server_catalog() if key_mode else None
+    if key_mode and snapshot is None:
+        raise ValueError("workflow catalog unavailable")
+    with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
+        return _read_catalog_resource(parsed, snapshot)
+
+
+def _read_catalog_resource(
+    parsed: Any, snapshot: dict[str, list[dict[str, Any]]] | None,
+) -> str:
     kind = parsed.netloc
     item_id = unquote(parsed.path.lstrip("/"))
     if kind == "skills":
@@ -349,11 +423,7 @@ async def read_resource(uri: Any) -> str:
             if not payload.get("ok"):
                 raise ValueError("workflow skill resource not found")
     elif kind == "recipes":
-        item = get_catalog_item(
-            username=_username(),
-            kind="recipes",
-            item_id=item_id,
-        )
+        item = _recipe(snapshot, item_id)
         if item is None:
             raise ValueError("workflow recipe resource not found")
         payload = {"ok": True, "recipe": item}
@@ -498,12 +568,27 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             **payload,
             "error": payload["message"],
         })
+    key_mode = _agent_key_mode()
+    snapshot = _server_catalog() if key_mode else None
+    if key_mode and snapshot is None:
+        return _result(name, {
+            "ok": False,
+            "status": "catalog_read_failed",
+            "error": "Workflow catalog is unavailable for this agent key",
+        })
+    with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
+        return _call_catalog_tool(name, args, snapshot)
+
+
+def _call_catalog_tool(
+    name: str, args: dict[str, Any], snapshot: dict[str, list[dict[str, Any]]] | None,
+) -> types.CallToolResult:
     if name == "workflow_catalog_search":
         kind = str(args.get("kind") or "")
         if kind not in {"skills", "recipes"}:
             return _result(name, {"ok": False, "status": "invalid_catalog_kind"})
-        items = search_catalog(
-            username=_username(),
+        items = _search(
+            snapshot,
             kind=kind,  # type: ignore[arg-type]
             query=str(args.get("query") or ""),
             limit=int(args.get("limit") or 12),
@@ -515,11 +600,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         result = get_workflow_skill({**args, "compact": True})
         return _result(name, result)
     if name == "workflow_recipe_get":
-        item = get_catalog_item(
-            username=_username(),
-            kind="recipes",
-            item_id=str(args.get("recipe_id") or ""),
-        )
+        item = _recipe(snapshot, str(args.get("recipe_id") or ""))
         return _result(
             name,
             (

@@ -164,7 +164,7 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 .venv/bin/python agent-kit/scripts/remote_mcp_relay.py --ce-dir "$PWD"
 ```
 
-可通过 `--api-url`、`--username`、`--port` 分别指定 API 地址、用户名和监听端口。
+可通过 `--api-url`、`--port` 指定 API 地址和监听端口。`/mcp/workflows` 读取的 Skills/Recipes 目录由 API 识别的 Agent Key 所有者决定，与 `--username` 无关；`--username` 只命名中继本机的本地状态（如 tools 子进程的画布命令桥接目录），未指定时沿用中继环境的 `DRAMACLAW_USERNAME`，否则为 `local`。
 `--api-url` 默认是 `http://127.0.0.1:8780`，必须使用 https 或回环地址 http。
 `--api-url` 指向的 API 必须提供 `POST /api/v1/agent/sessions`；缺少此接口会使每个新会话返回 503。
 中继在启动会话前通过 API（`POST /api/v1/agent/sessions`）校验 Key；拒绝返回 401，校验不可用返回 503。
