@@ -33,6 +33,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse
@@ -172,9 +173,9 @@ from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
 from novelvideo.freezone.canvas_creation import create_user_canvas, describe_project_canvases
-from novelvideo.freezone.canvas_links import canvas_page_url
+from novelvideo.freezone.canvas_links import canvas_page_url, public_origin
 from novelvideo.freezone.canvas_presence import canvas_browser_open
-from novelvideo.freezone import canvas_confirmations
+from novelvideo.freezone import canvas_confirmations, preview_media, upload_tickets
 from novelvideo.freezone.canvas_command_bridge import (
     canvas_command_idempotency_key,
     put_pending_canvas_command,
@@ -486,11 +487,12 @@ from novelvideo.project_config import (
 )
 from novelvideo.project_context import (
     ProjectContext,
+    is_record_home_node,
     require_project_home_node,
     resolve_project_context,
 )
 from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
-from novelvideo.ports import get_task_backend
+from novelvideo.ports import get_project_registry, get_task_backend
 from novelvideo.task_identity import (
     project_task_state_key,
     selection_scope,
@@ -517,7 +519,7 @@ from novelvideo.utils.path_resolver import (
     canonical_scene_reverse_master_path,
 )
 from novelvideo.utils.static_urls import project_static_url
-from novelvideo.utils.upload_safety import create_staged_upload_file
+from novelvideo.utils.upload_safety import MAX_PROJECT_UPLOAD_BYTES, create_staged_upload_file
 
 
 async def _resolve_freezone_project(
@@ -6127,6 +6129,52 @@ def _persist_freezone_upload(target: Path, contents: bytes) -> None:
         staged_path.unlink(missing_ok=True)
 
 
+@router.post("/projects/{project}/freezone/upload-address", tags=[TAG_FREEZONE_MEDIA])
+async def freezone_upload_address(project: str, user: dict = Depends(get_api_user)):
+    ctx, *_ = await _resolve_freezone_project(project, user)
+    origin = public_origin()
+    if origin is None:
+        return {
+            "ok": False,
+            "error": "Upload address unavailable",
+            "data": {"code": "upload_address_unavailable"},
+        }
+    key = await run_in_threadpool(preview_media.project_key, ctx.state_dir, create=True)
+    ticket = upload_tickets.issue(
+        key, project, ctx.requester_user_id, ctx.requester_username, int(time.time())
+    )
+    path = f"/api/v1/projects/{quote(project, safe='')}/freezone/upload"
+    return {
+        "ok": True,
+        "data": {
+            "upload_url": f"{origin}{path}?upload_ticket={ticket}",
+            "expires_in_seconds": upload_tickets.TTL,
+            "method": "POST",
+            "file_field": "file",
+            "max_bytes": MAX_PROJECT_UPLOAD_BYTES,
+        },
+    }
+
+
+async def _get_freezone_upload_user(project: str, request: Request) -> dict:
+    ticket = request.query_params.get("upload_ticket")
+    if ticket is None:
+        return await get_api_user(request)
+    invalid = HTTPException(status_code=401, detail={"code": "upload_ticket_invalid"})
+    record = await get_project_registry().get_project(project)
+    if record is None or record.status != "active" or not is_record_home_node(record):
+        raise invalid
+    try:
+        key = await run_in_threadpool(preview_media.project_key, Path(record.state_dir))
+    except (OSError, ValueError):
+        raise invalid from None
+    identity = upload_tickets.verify(key, project, ticket, int(time.time()))
+    if identity is None:
+        raise invalid
+    user_id, username = identity
+    return {"id": user_id, "user_id": user_id, "username": username, "credential_kind": "upload_ticket"}
+
+
 async def _save_freezone_upload(
     project: str,
     file: UploadFile,
@@ -6157,7 +6205,7 @@ async def _save_freezone_upload(
 async def freezone_upload(
     project: str,
     file: Annotated[UploadFile, File()],
-    user: dict = Depends(get_api_user),
+    user: dict = Depends(_get_freezone_upload_user),
 ):
     """把外部资源上传保存到 `freezone/_uploads/`。"""
     return await _save_freezone_upload(project, file, user)

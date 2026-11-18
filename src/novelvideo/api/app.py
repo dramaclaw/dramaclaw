@@ -414,7 +414,7 @@ def create_app() -> FastAPI:
         duration_ms = (time.perf_counter() - started_at) * 1000
         total_count, same_resource_count = _record_resource_request(resource_key)
 
-        query = request.url.query
+        query = "[redacted]" if "upload_ticket" in request.query_params else request.url.query
         range_header = request.headers.get("range", "")
         content_length = response.headers.get("content-length", "")
         content_type = response.headers.get("content-type", "")

@@ -9725,6 +9725,59 @@ def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
     })
 
 
+_UPLOAD_ADDRESS_FIELDS = {
+    "upload_url": str,
+    "expires_in_seconds": int,
+    "method": str,
+    "file_field": str,
+    "max_bytes": int,
+}
+_UPLOAD_NODE_INSTRUCTION = (
+    "Call freezone_get_upload_address, then send the file with a local command. "
+    "Use the JSON response's data.url as imageUrl and previewImageUrl in the uploadNode. "
+    "Set sourceFileName to the original filename and displayName to the node label."
+)
+
+
+def _handle_get_upload_address(args: dict[str, Any], **_: Any) -> str:
+    try:
+        project = _project_from_args(args)
+    except ValueError as exc:
+        return tool_error(str(exc))
+    preamble = _canvas_management_preamble(project)
+    if preamble is not None:
+        if preamble.get("code") == "canvas_server_executor_required":
+            return tool_result({
+                "ok": False, "status": "unsupported", "code": "canvas_server_executor_required",
+                "retryable": False, "message": "Ask the user to upload the file in the browser.",
+            })
+        return tool_result(preamble)
+    result = _request("POST", f"/api/v1/projects/{quote(project, safe='')}/freezone/upload-address")
+    data = result.get("data")
+    if (
+        not result.get("ok")
+        or not isinstance(data, dict)
+        or any(type(data.get(field)) is not kind for field, kind in _UPLOAD_ADDRESS_FIELDS.items())
+        or not data["upload_url"]
+    ):
+        return tool_result({
+            "ok": False, "status": "unavailable", "code": "upload_address_unavailable",
+            "message": "Ask the user to upload the file in the browser.",
+        })
+    return tool_result({
+        "ok": True,
+        "status": "ready",
+        "project_id": project,
+        **{field: data[field] for field in _UPLOAD_ADDRESS_FIELDS},
+        "usage_example": f'curl -sS -X POST -F "file=@/path/to/image.png" "{data["upload_url"]}"',
+        "agent_instruction": (
+            _UPLOAD_NODE_INSTRUCTION
+            + " The upload address can be reused until it expires. "
+            "Do not show the upload address to the user or put it in a node."
+        ),
+    })
+
+
 def _handle_list_canvases(args: dict[str, Any], **_: Any) -> str:
     try:
         project = _project_from_args(args)
@@ -10296,6 +10349,24 @@ def _request_canvas_context_from_frontend(
         if not response.get("ok"):
             return tool_result(_canvas_executor_failure(response, context=True))
         data = response["data"]
+        if _turnless_external_mcp_host():
+            for entry in data.get("responses", []):
+                schema = entry.get("data") if isinstance(entry, dict) else None
+                if (
+                    isinstance(schema, dict)
+                    and entry.get("type") == "node_create_schema"
+                    and entry.get("node_type") == "uploadNode"
+                    and isinstance(schema.get("create_schema"), dict)
+                ):
+                    fields = {
+                        "imageUrl": {"type": "string", "label": "图片地址"},
+                        "previewImageUrl": {"type": "string", "label": "预览图片地址"},
+                        "sourceFileName": {"type": "string", "label": "源文件名"},
+                    }
+                    schema["create_schema"].update(fields)
+                    for name in ("editable_fields", "stable_create_fields"):
+                        schema[name] = list(dict.fromkeys([*(schema.get(name) or []), *fields]))
+                    schema["instruction"] = _UPLOAD_NODE_INSTRUCTION
         return tool_result({
             **{key: value for key, value in data.items() if key != "canvas_url"},
             **_canvas_url_field(data),
@@ -14691,6 +14762,29 @@ def _bind_structured_result_input(handler, tool_name=""):
                     pass
 
     return bound
+
+
+# Listed for external MCP hosts only; the handler refuses under the browser executor.
+if _turnless_external_mcp_host():
+    _RESULT_FIELDS["freezone_get_upload_address"] = (
+        "project_id", *_UPLOAD_ADDRESS_FIELDS, "usage_example",
+    )
+    _RESULT_SUCCESS_REQUIRED["freezone_get_upload_address"] = (
+        *_RESULT_FIELDS["freezone_get_upload_address"], "agent_instruction",
+    )
+    _RESULT_SCHEMA_OVERRIDES["freezone_get_upload_address"] = {
+        field: {"type": "string" if kind is str else "integer"}
+        for field, kind in {**_UPLOAD_ADDRESS_FIELDS, "usage_example": str}.items()
+    }
+    TOOLS += ((
+        "freezone_get_upload_address",
+        _schema(
+            "freezone_get_upload_address",
+            "Get a temporary address for uploading a local file to this project.",
+            {"project_id": _SCOPE_PROPS["project_id"]}, [], reject_unknown=True,
+        ),
+        _handle_get_upload_address,
+    ),)
 
 
 TOOLS = tuple(

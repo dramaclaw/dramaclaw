@@ -19,6 +19,7 @@ from urllib.parse import unquote
 
 from fastapi import Depends, HTTPException, Request
 
+from novelvideo.freezone.upload_tickets import has_ticket_format
 from novelvideo.ports import get_auth_port, get_auth_session_port
 from novelvideo.ports import registry as port_registry
 from novelvideo.ports.auth_contract import AuthError, AuthFailureReason
@@ -43,7 +44,7 @@ AGENT_WRITE_SCOPES = {
 }
 PROJECT_PATH_RE = re.compile(r"/projects/([^/]+)")
 LOCAL_TRUST_HOSTS = {"127.0.0.1", "::1", "localhost"}
-UNSUPPORTED_QUERY_CREDENTIALS = {"token", "access_token", "api_key"}
+UNSUPPORTED_QUERY_CREDENTIALS = {"token", "access_token", "api_key", "upload_ticket"}
 _EFFECTIVE_ACCESS_DENIED = "effective access denied"
 
 
@@ -110,6 +111,8 @@ def _local_trusted_agent_user() -> dict:
 
 async def _verify_browser_session(raw_cookie: str | None) -> dict:
     """Verify the browser session cookie."""
+    if raw_cookie and has_ticket_format(raw_cookie):
+        raise HTTPException(status_code=401, detail="Unsupported credential")
     try:
         return await get_auth_port().verify_session(raw_cookie)
     except port_registry.PortNotRegistered:
@@ -133,6 +136,8 @@ async def _verify_browser_session(raw_cookie: str | None) -> dict:
 
 async def _verify_agent_bearer(token: str) -> dict:
     """Verify an agent session token. No legacy fallback by design."""
+    if token and has_ticket_format(token):
+        raise HTTPException(status_code=401, detail="Unsupported credential")
     try:
         return await get_auth_session_port().verify_agent_session(token)
     except port_registry.PortNotRegistered:
