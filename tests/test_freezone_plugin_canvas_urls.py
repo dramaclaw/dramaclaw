@@ -2,6 +2,8 @@
 # Copyright (c) 2026 ClaymoreLab
 """Canvas links in bound tool results and published MCP contracts."""
 
+import json
+
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -9,15 +11,26 @@ from novelvideo.chat import dramaclaw_mcp
 from novelvideo.freezone.workflow_observation import summarize_workflow_run
 from test_freezone_plugin import _load_plugin_module
 from test_freezone_plugin import _restore_tools_registry_modules as _restore_tools_registry_modules
-from test_freezone_plugin_server_executor import CONFIRMATION_ID, CREATE
+from test_freezone_plugin_server_executor import CONFIRMATION, CONFIRMATION_ID, CREATE, DELETE
 from test_freezone_plugin_server_executor import agent as agent
 
 LINK = "https://api-supplied.example/projects/p/freezone?canvas=c"
 FORGED = "https://forged.example"
 GUIDANCE = (
     " When the result has canvas_url, give that link to the user exactly as returned; "
-    "do not download images or send images as attachments."
+    "do not download images, send images as attachments, or compose image addresses. "
+    "To show an image, use the image_url returned by freezone_get_node_detail."
 )
+IMAGE_GUIDANCE = (
+    " When a node in the result has image_url, show that image in your reply as a Markdown image "
+    "using the address exactly as returned, and also give canvas_url exactly as returned. The "
+    "address is time-limited. When there is no image_url, give only canvas_url. Do not download "
+    "images, send images as attachments, or compose image addresses yourself."
+)
+LEGACY_GUIDANCE = "do not download images or send images as attachments."
+SIGNED_IMAGE = "https://objects.example.test/image.png?sig=a%2Fb&expires=123"
+SOURCE_IMAGE = "/static/projects/p/images/image.png"
+NODE_DETAIL_TOOL = "freezone_get_node_detail"
 NEW_NODE = {"node_type": "textAnnotationNode", "data": {"title": "Hello", "content": "hello"}}
 CASES = {
     "create_canvas": ("canvases:create", {"name": "Plan"}),
@@ -74,19 +87,26 @@ def host(agent, monkeypatch):
     original_request = plugin._request
     index = dramaclaw_mcp._tool_index(plugin)
 
-    def call(tool, *, api_link=False, product=False, extra=None, decision_status="executed"):
+    def call(
+        tool, *, api_link=False, product=False, extra=None, decision_status="executed",
+        image_url=None, pending=False,
+    ):
         if product:
             monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)
         else:
             monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
         suffix, args = (CASES | OUTSIDE)[tool]
+        if pending:
+            suffix, args = "/confirmations", {"commands": DELETE}
         calls = []
 
         def request(method, path, **kwargs):
             if not path.endswith(suffix):
                 return original_request(method, path, **kwargs)
             calls.append(kwargs)
-            if tool == "create_canvas":
+            if pending:
+                data = CONFIRMATION
+            elif tool == "create_canvas":
                 data = {"status": "created", "canvas_id": "c", "display_name": "Plan",
                         "revision": 7}
             elif tool == "list_canvases":
@@ -102,6 +122,11 @@ def host(agent, monkeypatch):
                     "canvas_context_status": "resolved",
                     "responses": [{"type": context_type, "data": {}}], "errors": [],
                 }
+                if tool == "get_node_detail":
+                    node = {"node_id": "n", "media_type": "image", "source_url": SOURCE_IMAGE}
+                    if image_url is not None:
+                        node["image_url"] = image_url
+                    data["responses"][0]["data"]["nodes"] = [node]
             elif tool == "observe_workflow_run":
                 data = {**summarize_workflow_run({
                     "run_id": "run_1", "status": "running", "actions": [],
@@ -226,8 +251,12 @@ def test_canvas_url_allowlist_and_description_guidance(monkeypatch, product):
     assert expected <= descriptions.keys()
     assert plugin._CANVAS_URL_TOOLS == expected
     guided = {name for name, desc in descriptions.items() if GUIDANCE in desc}
-    assert guided == (set() if product else expected)
-    assert all(descriptions[name].count(GUIDANCE) == 1 for name in guided)
+    image_guided = {name for name, desc in descriptions.items() if IMAGE_GUIDANCE in desc}
+    assert guided == (set() if product else expected - {NODE_DETAIL_TOOL})
+    assert image_guided == (set() if product else {NODE_DETAIL_TOOL})
+    assert not any(LEGACY_GUIDANCE in desc for desc in descriptions.values())
+    assert all(descriptions[name].endswith(GUIDANCE) for name in guided)
+    assert all(descriptions[name].endswith(IMAGE_GUIDANCE) for name in image_guided)
 
 
 @pytest.mark.parametrize("api_link", [True, False])
@@ -254,3 +283,59 @@ def test_create_canvas_product_chat_keeps_relative_link_instruction(host):
         f"Show the user this link to the new canvas exactly as given: {link}"
     )
     _assert_no_link(result)
+
+
+@pytest.mark.parametrize("tool", [
+    tool for tool, (suffix, _) in (CASES | OUTSIDE).items() if suffix == "agent-context"
+])
+def test_only_external_node_detail_requests_signed_images(host, tool):
+    _, _, call = host
+    external, [external_request] = call(tool)
+    product, [product_request] = call(tool, product=True)
+    assert external["ok"] and product["ok"]
+    assert "include_image_urls" not in product_request["body"]
+    if tool == "get_node_detail":
+        assert external_request["body"]["include_image_urls"] is True
+    else:
+        assert "include_image_urls" not in external_request["body"]
+
+
+@pytest.mark.parametrize("image_url", [None, SIGNED_IMAGE], ids=["absent", "signed"])
+def test_node_detail_forwards_only_api_image_and_schema_accepts_it(host, image_url):
+    _, index, call = host
+    result, [request] = call("get_node_detail", image_url=image_url, extra={"image_url": FORGED})
+    assert result["ok"] is True, result
+    assert '"image_url"' not in json.dumps(request["body"])
+    assert FORGED not in json.dumps(request["body"])
+    assert FORGED not in json.dumps(result)
+    node = {"node_id": "n", "media_type": "image", "source_url": SOURCE_IMAGE}
+    if image_url is not None:
+        node["image_url"] = image_url
+    assert result["responses"][0]["data"]["nodes"] == [node]
+
+    schema = dramaclaw_mcp._output_schema_for_tool(NODE_DETAIL_TOOL, index)
+    assert "image_url" not in schema["properties"]
+    structured = dramaclaw_mcp._normalize_structured_result(schema, result)
+    Draft202012Validator(schema).validate(structured)
+    assert structured["responses"][0]["data"]["nodes"] == [node]
+
+
+@pytest.mark.parametrize(("product", "api_link"), [
+    pytest.param(False, False, id="external-unset"),
+    pytest.param(False, True, id="external-configured"),
+    pytest.param(True, True, id="product-configured"),
+])
+def test_pending_confirmation_canvas_url_and_schema(host, product, api_link):
+    _, index, call = host
+    tool = "emit_canvas_command"
+    result, [_] = call(tool, pending=True, product=product, api_link=api_link)
+    assert result["ok"] is True and result["status"] == "confirmation_required", result
+    schema = dramaclaw_mcp._output_schema_for_tool(f"freezone_{tool}", index)
+    structured = dramaclaw_mcp._normalize_structured_result(schema, result)
+    Draft202012Validator(schema).validate(structured)
+
+    if api_link and not product:
+        assert result["canvas_url"] == structured["canvas_url"] == LINK
+    else:
+        assert "canvas_url" not in result
+        assert "canvas_url" not in structured

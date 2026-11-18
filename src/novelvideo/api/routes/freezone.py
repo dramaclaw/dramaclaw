@@ -15574,6 +15574,52 @@ def _canvas_url_field(project: str, canvas_id: str) -> dict[str, str]:
     return {"canvas_url": url} if url is not None else {}
 
 
+async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
+    from novelvideo.api.routes import files
+    from novelvideo.utils import oss_client
+
+    resolved = None
+    scope_attempted = False
+
+    def sign_image(rel: str) -> str | None:
+        requested = files._resolve_project_file(resolved, rel)
+        return oss_client.maybe_presign_static(requested, requested.stat().st_mtime_ns)
+
+    async def add_image_url(item: dict, url_key: str) -> None:
+        nonlocal resolved, scope_attempted
+        reference = item.get(url_key)
+        if item.get("media_type") != "image" or not isinstance(reference, str):
+            return
+        try:
+            asset = parse_project_asset_url(reference)
+            if asset is None or asset[0] != project:
+                return
+            if not scope_attempted:
+                scope_attempted = True
+                resolved = await files.resolve_project_scope(
+                    project, user, required_role="viewer", media_read=True,
+                )
+            if resolved is not None:
+                url = await asyncio.to_thread(sign_image, asset[1])
+                if url is not None:
+                    item["image_url"] = url
+        except Exception:
+            # Signing is optional and exceptions may contain sensitive addresses.
+            return
+
+    def dicts(value: object) -> list[dict]:
+        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+    for response in dicts(data.get("responses")):
+        detail = response.get("data")
+        if response.get("type") != "node_detail" or not isinstance(detail, dict):
+            continue
+        for node in dicts(detail.get("nodes")):
+            await add_image_url(node, "source_url")
+            for reference in dicts(node.get("reference_media")):
+                await add_image_url(reference, "url")
+
+
 @router.post("/projects/{project}/freezone/canvases:create", tags=[TAG_FREEZONE_CANVAS])
 async def create_canvas(
     project: str, body: CanvasCreateRequest,
@@ -18548,6 +18594,7 @@ async def create_canvas_confirmation(
         "project_name": project_name,
         "confirmation_id": record["id"], "kinds": record["kinds"], "targets": record["targets"],
         "expires_at": record["expires_at"], "browser_open": browser_open,
+        **_canvas_url_field(project, canvas_id),
     }
     if "pre_applied" in record:
         data["written"] = record["pre_applied"]["written"]
@@ -19047,6 +19094,8 @@ async def agent_canvas_context(
         raise HTTPException(503, {"code": exc.code}) from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
+    if body.include_image_urls:
+        await _add_canvas_image_urls(data, project, user)
     link = _canvas_url_field(project, canvas_id) if body.include_canvas_url else {}
     return {"ok": True, "data": {**data, **link}}
 

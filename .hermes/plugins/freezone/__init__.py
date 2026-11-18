@@ -64,11 +64,20 @@ _CANVAS_URL_TOOLS = frozenset({
     "freezone_get_node_detail",
     "freezone_summarize_canvas",
 })
+_IMAGE_URL_TOOLS = frozenset({"freezone_get_node_detail"})
 _CANVAS_URL_GUIDANCE = (
     " When the result has canvas_url, give that link to the user exactly as returned; "
-    "do not download images or send images as attachments."
+    "do not download images, send images as attachments, or compose image addresses. "
+    "To show an image, use the image_url returned by freezone_get_node_detail."
+)
+_IMAGE_URL_GUIDANCE = (
+    " When a node in the result has image_url, show that image in your reply as a Markdown image "
+    "using the address exactly as returned, and also give canvas_url exactly as returned. The "
+    "address is time-limited. When there is no image_url, give only canvas_url. Do not download "
+    "images, send images as attachments, or compose image addresses yourself."
 )
 _INCLUDE_CANVAS_URL: ContextVar[bool] = ContextVar("freezone_include_canvas_url", default=False)
+_INCLUDE_IMAGE_URL: ContextVar[bool] = ContextVar("freezone_include_image_url", default=False)
 
 
 def _canvas_url_field(data: dict[str, Any]) -> dict[str, str]:
@@ -6145,6 +6154,7 @@ def _create_canvas_confirmation(
         "confirmation_via": "card" if card else "conversation",
         "message": "尚未执行：已创建待确认请求，用户确认后才会执行。",
         "agent_instruction": instruction,
+        **_canvas_url_field(data),
     }
     if isinstance(data.get("generation_settings"), list):
         result["generation_settings"] = data["generation_settings"]
@@ -10278,6 +10288,7 @@ def _request_canvas_context_from_frontend(
             body={
                 "requests": requests,
                 **({"include_canvas_url": True} if _INCLUDE_CANVAS_URL.get() else {}),
+                **({"include_image_urls": True} if _INCLUDE_IMAGE_URL.get() else {}),
             },
         )
         if not response.get("ok"):
@@ -11488,7 +11499,7 @@ def _schema(
         "name": name,
         # Product chat renders its own relative links and keeps its descriptions unchanged.
         "description": description + (
-            _CANVAS_URL_GUIDANCE
+            (_IMAGE_URL_GUIDANCE if name in _IMAGE_URL_TOOLS else _CANVAS_URL_GUIDANCE)
             if name in _CANVAS_URL_TOOLS and _turnless_external_mcp_host() else ""
         ),
         "parameters": parameters,
@@ -14648,11 +14659,13 @@ def _bind_structured_result_input(handler, tool_name=""):
         completed = False
         include_url = tool_name in _CANVAS_URL_TOOLS and not _product_chat_session()
         url_token = _INCLUDE_CANVAS_URL.set(include_url)
+        image_url_token = _INCLUDE_IMAGE_URL.set(tool_name in _IMAGE_URL_TOOLS and include_url)
         try:
             result = handler(args, *handler_args, **handler_kwargs)
             completed = True
             return result
         finally:
+            _INCLUDE_IMAGE_URL.reset(image_url_token)
             _INCLUDE_CANVAS_URL.reset(url_token)
             _STRUCTURED_RESULT_INPUT_HASH.reset(token)
             if tool_name in {

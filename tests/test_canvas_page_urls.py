@@ -142,7 +142,7 @@ def test_invalid_public_origin_warns_at_startup_and_suppresses_request_warning(
     assert caplog.record_tuples == warnings
 
     canvas_links.warn_if_public_origin_invalid()
-    assert caplog.record_tuples == warnings * 2
+    assert caplog.record_tuples == warnings
 
 
 def test_startup_warning_names_studio_fallback(monkeypatch, caplog):
@@ -185,9 +185,10 @@ async def test_api_startup_warns_about_invalid_public_origin_before_bootstrap(mo
     monkeypatch.setattr(registry, "ensure_bootstrap", stop_bootstrap)
     app = import_module("novelvideo.api.app").create_app()
 
-    with pytest.raises(RuntimeError, match="stop at bootstrap"):
-        async with app.router.lifespan_context(app):
-            pytest.fail("Startup did not reach bootstrap")
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="stop at bootstrap"):
+            async with app.router.lifespan_context(app):
+                pytest.fail("Startup did not reach bootstrap")
 
     warnings = [message for _, level, message in caplog.record_tuples if level == logging.WARNING]
     assert len(warnings) == 1
@@ -383,3 +384,16 @@ def test_external_create_tool_returns_the_real_api_link(agent, monkeypatch):
     result = agent.call("freezone_create_canvas", {"name": "Plan"})
     assert result["ok"] is True, result
     assert result["canvas_url"] == _link("proj", result["canvas_id"])
+
+
+@pytest.mark.parametrize("origin", [None, ORIGIN], ids=["unset", "configured"])
+def test_confirmation_creation_route_includes_configured_canvas_link(setup, monkeypatch, origin):
+    if origin is not None:
+        monkeypatch.setenv(PUBLIC, origin)
+
+    data = create(setup)
+    assert data["confirmation_id"]
+    if origin is None:
+        assert "canvas_url" not in data
+    else:
+        assert data["canvas_url"] == _link("proj", "default")

@@ -2233,6 +2233,7 @@ class AgentCanvasContextRequest(BaseModel):
     requests: list[dict] = Field(min_length=1, max_length=20)
     locale: str | None = None
     include_canvas_url: bool = False
+    include_image_urls: bool = False
 
 
 class CanvasCreateOrigin(BaseModel):

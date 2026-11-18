@@ -12,15 +12,11 @@ _warned_values: set[str] = set()
 _warning_lock = Lock()
 
 
-def public_origin() -> str | None:
-    return _public_origin(warn_at_startup=False)
-
-
 def warn_if_public_origin_invalid() -> None:
-    _public_origin(warn_at_startup=True)
+    public_origin()
 
 
-def _public_origin(*, warn_at_startup: bool) -> str | None:
+def public_origin() -> str | None:
     name = "DRAMACLAW_PUBLIC_ORIGIN"
     value = os.environ.get(name, "")
     if not value.strip():
@@ -32,7 +28,7 @@ def _public_origin(*, warn_at_startup: bool) -> str | None:
     if reason is None:
         return value.removesuffix("/")
     with _warning_lock:
-        if warn_at_startup or value not in _warned_values:
+        if value not in _warned_values:
             _warned_values.add(value)
             _logger.warning(
                 "%s is invalid: %s. Canvas tools will not return canvas_url until this is fixed.",

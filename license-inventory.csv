@@ -4260,6 +4260,7 @@ tests/test_canvas_confirmation_routes.py,Elastic-2.0,2026 SuperTale contributors
 tests/test_canvas_confirmations.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_core_image.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_core_pool.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_canvas_image_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_inline_media.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_media_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_outcome.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
