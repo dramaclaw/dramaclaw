@@ -11923,6 +11923,29 @@ async def _prepare_video_upscale(
     return source_path, source_meta, processing_models, billing
 
 
+async def _quote_video_enhancement(body: FreezoneVideoUpscaleRequest, billing: dict, user: dict):
+    from novelvideo.ports import get_credit_quote
+
+    quote = await get_credit_quote().generation_credit_quote(
+        kind="feature", model="freezone.video_enhance", params=billing,
+        quantity=1, product_surface="freezone",
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
+    if body.enhancement_model == "claymore" and _media_model_catalog_is_authoritative():
+        stages = (quote.params or {}).get("pricing_stages", [])
+        if (
+            quote.unit != "video_enhance"
+            or not isinstance(stages, list)
+            or len(stages) != len(billing["pricing_stages"])
+            or any(
+                not isinstance(stage, dict) or stage.get("enhancement_model") != "claymore"
+                for stage in stages
+            )
+        ):
+            raise HTTPException(409, "虾驿视频增强的独立费率尚未生效，请联系管理员")
+    return quote
+
+
 @router.post(
     "/projects/{project}/freezone/video/upscale/quote",
     tags=[TAG_FREEZONE_VIDEO],
@@ -11932,19 +11955,13 @@ async def freezone_video_upscale_quote(
     body: FreezoneVideoUpscaleRequest,
     user: dict = Depends(get_api_user),
 ):
-    from novelvideo.ports import get_credit_quote
-
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user, required_role="viewer"
     )
     _source_path, _source_meta, _processing_models, billing = await _prepare_video_upscale(
         body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
     )
-    quote = await get_credit_quote().generation_credit_quote(
-        kind="feature", model="freezone.video_enhance", params=billing,
-        quantity=1, product_surface="freezone",
-        user_id=str(user.get("id") or user.get("user_id") or ""),
-    )
+    quote = await _quote_video_enhancement(body, billing, user)
     original_cost = quote.original_total_cost
     display = quote.display
     if quote.discount_amount > 0 and original_cost is not None:
@@ -11972,6 +11989,8 @@ async def freezone_video_upscale(
     source_path, source_meta, processing_models, billing = await _prepare_video_upscale(
         body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
     )
+    if body.enhancement_model == "claymore" and _media_model_catalog_is_authoritative():
+        await _quote_video_enhancement(body, billing, user)
 
     try:
         job_id = _new_job_id()

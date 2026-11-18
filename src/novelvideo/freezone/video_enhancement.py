@@ -38,6 +38,8 @@ def claymore_source_error(
         return "虾驿视频增强仅支持宽高为偶数、最小边至少 64 且长边不超过 1920 像素的视频"
     if source.get("hdr") is True or source.get("constant_frame_rate") is False:
         return "虾驿视频增强仅支持 SDR 恒定帧率视频"
+    if source.get("timestamps_aligned_to_zero") is False:
+        return "虾驿视频增强要求源视频从 0 秒开始"
     if source.get("pixel_format") and source["pixel_format"] not in {"yuv420p", "yuvj420p"}:
         return "虾驿视频增强仅支持 8 位 YUV420 视频"
     if source.get("field_order") not in {None, "unknown", "progressive"}:

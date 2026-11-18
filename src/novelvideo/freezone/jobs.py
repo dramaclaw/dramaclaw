@@ -614,15 +614,17 @@ async def probe_video_stream(
                 float(frame["best_effort_timestamp_time"])
                 for frame in data.get("frames", [])
             ]
-            result["constant_frame_rate"] = (
-                math.isfinite(fps)
-                and fps > 0
-                and 0 < len(timestamps) <= 3600
-                and abs(timestamps[0]) <= 0.002
-                and all(
-                    math.isfinite(timestamp) and abs(timestamp - index / fps) <= 0.002
-                    for index, timestamp in enumerate(timestamps)
-                )
+            timestamp_tolerance = 0.002
+            has_valid_timestamps = math.isfinite(fps) and fps > 0 and 0 < len(timestamps) <= 3600
+            first_timestamp = timestamps[0] if timestamps else 0.0
+            result["constant_frame_rate"] = has_valid_timestamps and all(
+                abs((timestamp - first_timestamp) - index / fps) <= timestamp_tolerance
+                for index, timestamp in enumerate(timestamps)
+            )
+            # The service validates timestamps against a separate zero-origin grid.
+            result["timestamps_aligned_to_zero"] = has_valid_timestamps and all(
+                abs(timestamp - index / fps) <= timestamp_tolerance
+                for index, timestamp in enumerate(timestamps)
             )
         return result
     except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as exc:
