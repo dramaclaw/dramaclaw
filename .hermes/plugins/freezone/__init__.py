@@ -9731,6 +9731,7 @@ _UPLOAD_ADDRESS_FIELDS = {
     "method": str,
     "file_field": str,
     "max_bytes": int,
+    "allowed_suffixes": list,
 }
 _UPLOAD_NODE_INSTRUCTION = (
     "Call freezone_get_upload_address, then send the file with a local command. "
@@ -9772,7 +9773,8 @@ def _handle_get_upload_address(args: dict[str, Any], **_: Any) -> str:
         "usage_example": f'curl -sS -X POST -F "file=@/path/to/image.png" "{data["upload_url"]}"',
         "agent_instruction": (
             _UPLOAD_NODE_INSTRUCTION
-            + " The upload address can be reused until it expires. "
+            + " Only file types listed in allowed_suffixes are accepted. "
+            "The upload address can be reused until it expires. "
             "Do not show the upload address to the user or put it in a node."
         ),
     })
@@ -10364,8 +10366,9 @@ def _request_canvas_context_from_frontend(
                         "sourceFileName": {"type": "string", "label": "源文件名"},
                     }
                     schema["create_schema"].update(fields)
-                    for name in ("editable_fields", "stable_create_fields"):
-                        schema[name] = list(dict.fromkeys([*(schema.get(name) or []), *fields]))
+                    schema["stable_create_fields"] = list(
+                        dict.fromkeys([*(schema.get("stable_create_fields") or []), *fields])
+                    )
                     schema["instruction"] = _UPLOAD_NODE_INSTRUCTION
         return tool_result({
             **{key: value for key, value in data.items() if key != "canvas_url"},
@@ -14773,8 +14776,12 @@ if _turnless_external_mcp_host():
         *_RESULT_FIELDS["freezone_get_upload_address"], "agent_instruction",
     )
     _RESULT_SCHEMA_OVERRIDES["freezone_get_upload_address"] = {
-        field: {"type": "string" if kind is str else "integer"}
-        for field, kind in {**_UPLOAD_ADDRESS_FIELDS, "usage_example": str}.items()
+        **{
+            field: {"type": "string" if kind is str else "integer"}
+            for field, kind in {**_UPLOAD_ADDRESS_FIELDS, "usage_example": str}.items()
+            if kind is not list
+        },
+        "allowed_suffixes": {"type": "array", "items": {"type": "string"}},
     }
     TOOLS += ((
         "freezone_get_upload_address",

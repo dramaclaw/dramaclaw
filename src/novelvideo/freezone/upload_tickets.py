@@ -8,11 +8,13 @@ import json
 import re
 
 TTL = 600
+# Mirrors canvas upload node image, video (including extra containers), and audio file-name suffixes only.
+ALLOWED_SUFFIXES = frozenset("""
+    .png .jpg .jpeg .webp .gif .bmp .avif
+    .mp4 .mov .webm .mxf .mkv .avi .ts .mts .m2ts .flv .wmv .m4v .mpg .mpeg
+    .mp3 .wav .m4a .aac .ogg .flac .opus
+""".split())
 _FORMAT = re.compile(r"([A-Za-z0-9_-]+)\.([0-9a-f]{64})")
-
-
-def has_ticket_format(value: str) -> bool:
-    return _FORMAT.fullmatch(value) is not None
 
 
 def _signature(key: bytes, segment: str) -> str:

@@ -31,6 +31,7 @@ ADDRESS_DATA = {
     "method": "POST",
     "file_field": "file",
     "max_bytes": 123456,
+    "allowed_suffixes": [".mxf", ".png"],
 }
 SCHEMA_ARGS = {"node_type": "uploadNode"}
 
@@ -217,8 +218,9 @@ def test_external_server_upload_node_schema_explains_upload_sequence(load_host):
     [response] = result["responses"]
     schema = response["data"]
     fields = {"imageUrl", "previewImageUrl", "sourceFileName"}
-    assert fields <= set(schema["editable_fields"])
     assert fields <= schema["create_schema"].keys()
+    assert fields <= set(schema["stable_create_fields"])
+    assert schema["editable_fields"] == ["displayName"]
     instruction = schema["instruction"]
     address = instruction.index(TOOL)
     upload = instruction.index("data.url", address)

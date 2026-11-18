@@ -29,11 +29,18 @@ UPLOAD = BASE + "/upload"
 MINT = BASE + "/upload-address"
 ALICE = "test-alice-session"
 BOB = "test-bob-session"
+AGENT = "test-alice-agent-session"
+AGENT_HEADERS = {"Authorization": f"Bearer {AGENT}"}
 USERS = {
     ALICE: {"id": "u-alice", "username": "alice"},
     BOB: {"id": "u-bob", "username": "bob"},
 }
 FILE = b"fake multipart file bytes"
+EXPECTED_SUFFIXES = sorted("""
+    .png .jpg .jpeg .webp .gif .bmp .avif
+    .mp4 .mov .webm .mxf .mkv .avi .ts .mts .m2ts .flv .wmv .m4v .mpg .mpeg
+    .mp3 .wav .m4a .aac .ogg .flac .opus
+""".split())
 
 
 @pytest.fixture
@@ -64,7 +71,20 @@ def api(tmp_path, monkeypatch):
         return USERS[cookie].copy()
 
     browser = AsyncMock(side_effect=verify_session)
-    bearer = AsyncMock(return_value=USERS[ALICE].copy())
+    agent_user = {
+        **USERS[ALICE],
+        "credential_kind": "agent_session",
+        "current_scope_kind": "project",
+        "current_project_id": "proj",
+        "scopes": ["projects:write"],
+    }
+
+    async def verify_agent_session(token):
+        if token != AGENT:
+            raise AuthError(AuthFailureReason.MISSING)
+        return agent_user.copy()
+
+    bearer = AsyncMock(side_effect=verify_agent_session)
     principals = AsyncMock(side_effect=lambda user: [Principal("user", user)])
     access = SimpleNamespace(
         resolve_requester_principals=principals,
@@ -84,7 +104,7 @@ def api(tmp_path, monkeypatch):
     try:
         yield SimpleNamespace(
             client=client, records=records, roles=roles, principals=principals,
-            browser=browser, bearer=bearer,
+            browser=browser, bearer=bearer, agent_user=agent_user,
         )
     finally:
         client.close()
@@ -169,6 +189,14 @@ def test_upload_ticket_is_reusable(api):
     api.bearer.assert_not_awaited()
 
 
+def test_mint_address_lists_allowed_suffixes(api):
+    suffixes = _data(_mint(api))["allowed_suffixes"]
+    assert suffixes == EXPECTED_SUFFIXES
+    from novelvideo.freezone.upload_tickets import ALLOWED_SUFFIXES
+
+    assert suffixes == sorted(ALLOWED_SUFFIXES)
+
+
 @pytest.mark.parametrize("seconds", [600, 601], ids=["at-expiry", "after-expiry"])
 def test_upload_ticket_expires(api, monkeypatch, seconds):
     now = int(time.time())
@@ -211,11 +239,20 @@ def test_ticket_query_is_refused_on_other_endpoints(api, method, path):
     assert_refused(_ticket(api))
 
 
-def test_upload_ticket_is_not_an_agent_bearer(api):
+@pytest.mark.parametrize("path", [UPLOAD, MINT], ids=["upload", "mint"])
+def test_upload_ticket_is_not_an_agent_bearer(api, path):
     ticket = _ticket(api)
-    response = _upload(api, headers={"Authorization": f"Bearer {ticket}"})
-    api.bearer.assert_not_awaited()
+    response = _upload(api, path, headers={"Authorization": f"Bearer {ticket}"})
     assert response.status_code == 401, response.text
+    api.bearer.assert_awaited_once_with(ticket)
+
+
+def test_upload_ticket_is_not_a_browser_session(api):
+    ticket = _ticket(api)
+    api.browser.reset_mock()
+    response = _upload(api, headers=_session(ticket))
+    assert response.status_code == 401, response.text
+    api.browser.assert_awaited_once_with(ticket)
 
 
 def _decode_payload(segment):
@@ -260,6 +297,11 @@ def test_invalid_ticket_does_not_fall_back_to_session(api, monkeypatch, kind):
     api.browser.assert_not_awaited()
 
 
+def test_invalid_ticket_does_not_fall_back_to_agent_bearer(api):
+    _invalid(_upload(api, ticket="!", headers=AGENT_HEADERS))
+    api.bearer.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "origin", [None, "https://invalid.example.test/with-path"], ids=["unset", "invalid"],
 )
@@ -299,6 +341,18 @@ def test_viewer_cannot_mint_upload_address(api):
     assert "upload_url" not in denied.text
 
 
+@pytest.mark.parametrize(("project", "scopes"), [
+    ("proj", ["projects:read"]),
+    ("other", ["projects:write"]),
+], ids=["no-write-scope", "different-project"])
+def test_agent_session_cannot_mint_outside_its_write_scope(api, project, scopes):
+    api.agent_user.update(current_project_id=project, scopes=scopes)
+    response = api.client.post(MINT, headers=AGENT_HEADERS)
+    assert response.status_code == 403, response.text
+    assert "upload_url" not in response.text
+    api.bearer.assert_awaited_once_with(AGENT)
+
+
 def test_valid_ticket_for_another_user_cannot_borrow_editor_session(api):
     api.roles["u-bob", "proj"] = "editor"
     ticket = _ticket(api, BOB)
@@ -320,19 +374,50 @@ def test_upload_address_keeps_existing_body_limit(api):
     }}
 
 
-def test_non_image_uses_same_storage_rule_for_session_and_ticket(api):
+@pytest.mark.parametrize("headers", [_session(), AGENT_HEADERS], ids=["browser", "agent"])
+def test_non_image_keeps_existing_storage_rule_for_sessions(api, headers):
     filename = "notes draft.exe"
-    session = _upload(api, headers=_session(), filename=filename)
+    session = _upload(api, headers=headers, filename=filename)
     session_data = _data(session)
     stored_name = r"\d{8}_\d{6}_\d{6}_notes_draft\.exe"
     assert re.fullmatch(stored_name, session_data["filename"])
     assert _stored(api, session_data).read_bytes() == FILE
 
-    ticket = _upload(api, ticket=_ticket(api), filename=filename)
-    assert ticket.status_code == session.status_code
-    data = _data(ticket)
-    assert re.fullmatch(stored_name, data["filename"])
+    same_file = _data(_upload(api, headers=headers, filename="notes.exe"))
+    assert re.fullmatch(r"\d{8}_\d{6}_\d{6}_notes\.exe", same_file["filename"])
+    assert _stored(api, same_file).read_bytes() == FILE
+
+
+@pytest.mark.parametrize("filename", ["notes.exe", "notes"], ids=["disallowed", "no-suffix"])
+def test_ticket_upload_refuses_unsupported_file_type(api, filename):
+    response = _upload(api, ticket=_ticket(api), filename=filename)
+    assert response.status_code == 415, response.text
+    detail = response.json()["detail"]
+    assert set(detail) == {"code", "message", "allowed_suffixes"}
+    assert detail["code"] == "upload_type_not_allowed"
+    assert detail["allowed_suffixes"] == EXPECTED_SUFFIXES
+    assert set(EXPECTED_SUFFIXES) <= set(re.findall(r"\.[a-z0-9]+\b", detail["message"]))
+    assert not any(path.is_file() for path in Path(api.records["proj"].output_dir).rglob("*"))
+
+
+def test_ticket_upload_accepts_uppercase_suffix(api):
+    data = _data(_upload(api, ticket=_ticket(api), filename="photo.PNG"))
     assert _stored(api, data).read_bytes() == FILE
+
+
+def test_ticket_suffixes_cover_canvas_upload_node():
+    canvas = Path(__file__).resolve().parents[1] / "frontend/src/features/canvas"
+    video_types = (canvas / "application/videoFileTypes.ts").read_text(encoding="utf-8")
+    extra = re.search(r"EXTRA_VIDEO_EXTENSIONS\s*=\s*/\\\.\(([^)]+)\)", video_types)
+    assert extra is not None
+    upload_node = (canvas / "nodes/UploadNode.tsx").read_text(encoding="utf-8")
+    assert '`image/*,${VIDEO_FILE_ACCEPT},audio/*`' in upload_node
+
+    from novelvideo.freezone.upload_tickets import ALLOWED_SUFFIXES
+
+    assert isinstance(ALLOWED_SUFFIXES, frozenset)
+    assert ALLOWED_SUFFIXES == frozenset(EXPECTED_SUFFIXES)
+    assert {f".{extension}" for extension in extra[1].split("|")} <= ALLOWED_SUFFIXES
 
 
 def test_application_logs_omit_upload_ticket(api, caplog):

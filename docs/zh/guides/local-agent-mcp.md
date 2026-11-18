@@ -188,7 +188,7 @@ Agent 应改正该命令后重试一次，不要原样重发。对同一对节�
 
 服务端配置了对象存储时，`freezone_get_node_detail` 会为图片节点及其图片参考项返回 `image_url`：有时效的对象存储签名地址，宿主界面无需登录即可加载。仅后缀为 `.png`、`.jpg`、`.jpeg`、`.webp`、`.gif`、`.bmp`、`.avif` 的文件会返回 `image_url`（不区分大小写），其他文件（如 TIFF）仅返回 `canvas_url`。有效期由服务端的 `OSS_STATIC_PRESIGN_EXPIRES` 控制，默认 3600 秒。任何持有该地址的人都可在过期前查看图片。未配置对象存储或对象尚不可读时，结果省略该字段。
 
-使用服务端画布执行器的外部 MCP 宿主可以调用 `freezone_get_upload_address`。该工具需要配置上文的公开访问源。成功时返回 `status: ready`、项目 ID `project_id`、上传地址 `upload_url`、有效秒数 `expires_in_seconds`、HTTP 方法 `method`（`POST`）、表单文件字段 `file_field`（`file`）、请求体大小上限 `max_bytes`、本地上传命令示例 `usage_example` 和操作说明 `agent_instruction`。没有可用的公开访问源时，工具会提示改用浏览器上传。地址有效期为 10 分钟，绑定到一个项目、该项目的上传端点和发起请求的用户，到期前可重复使用。任何持有该地址的人都能在过期前以该用户的身份向该项目上传文件。凭证位于查询字符串中，因此地址会出现在服务器访问日志中。上传成功后，将响应中的 `data.url` 填入上传节点的 `imageUrl` 和 `previewImageUrl`。
+使用服务端画布执行器的外部 MCP 宿主可以调用 `freezone_get_upload_address`。该工具需要配置上文的公开访问源。成功时返回 `status: ready`、项目 ID `project_id`、上传地址 `upload_url`、有效秒数 `expires_in_seconds`、HTTP 方法 `method`（`POST`）、表单文件字段 `file_field`（`file`）、请求体大小上限 `max_bytes`、本地上传命令示例 `usage_example` 和操作说明 `agent_instruction`。没有可用的公开访问源时，工具会提示改用浏览器上传。通过该地址上传时，仅按文件名后缀检查文件类型，只接受支持的图片、视频和音频后缀，其他文件会被拒绝。地址有效期为 10 分钟，绑定到一个项目、该项目的上传端点和发起请求的用户，到期前可重复使用。任何持有该地址的人都能在过期前以该用户的身份向该项目上传文件。凭证位于查询字符串中，因此地址会出现在服务器访问日志中。上传成功后，将响应中的 `data.url` 填入上传节点的 `imageUrl` 和 `previewImageUrl`。
 
 `run_workflow` / `run_node_action` 支持以下动作，仍受下表拒绝条件限制：
 

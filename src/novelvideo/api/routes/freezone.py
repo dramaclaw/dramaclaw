@@ -6152,6 +6152,7 @@ async def freezone_upload_address(project: str, user: dict = Depends(get_api_use
             "method": "POST",
             "file_field": "file",
             "max_bytes": MAX_PROJECT_UPLOAD_BYTES,
+            "allowed_suffixes": sorted(upload_tickets.ALLOWED_SUFFIXES),
         },
     }
 
@@ -6208,6 +6209,19 @@ async def freezone_upload(
     user: dict = Depends(_get_freezone_upload_user),
 ):
     """把外部资源上传保存到 `freezone/_uploads/`。"""
+    if (
+        user.get("credential_kind") == "upload_ticket"
+        and Path(file.filename or "").suffix.lower() not in upload_tickets.ALLOWED_SUFFIXES
+    ):
+        allowed_suffixes = sorted(upload_tickets.ALLOWED_SUFFIXES)
+        raise HTTPException(
+            status_code=415,
+            detail={
+                "code": "upload_type_not_allowed",
+                "message": f"Accepted file suffixes are {', '.join(allowed_suffixes)}.",
+                "allowed_suffixes": allowed_suffixes,
+            },
+        )
     return await _save_freezone_upload(project, file, user)
 
 
