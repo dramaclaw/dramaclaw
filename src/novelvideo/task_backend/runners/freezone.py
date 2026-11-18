@@ -1449,6 +1449,7 @@ async def _run_freezone_video_upscale_async(
         frame_rate_backend=payload.get("frame_rate_backend"),
         frame_rate_model_params=payload.get("frame_rate_model_params"),
         frame_rate_request_schema=payload.get("frame_rate_request_schema"),
+        enhancement_model=str(payload.get("enhancement_model") or "standard"),
     )
     rel = output_path.relative_to(project_dir).as_posix()
     return {

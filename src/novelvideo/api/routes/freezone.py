@@ -9926,13 +9926,28 @@ def _video_processing_entry(
     mode: str,
     scheme: str | None = None,
 ) -> dict[str, Any] | None:
+    from novelvideo.freezone.video_enhancement import (
+        CLAYMORE_PROCESSING_MODELS,
+        is_claymore_processing_model,
+        processing_model_name,
+    )
     from novelvideo.freezone.video_slowdown import is_topaz_backend
 
+    if scheme == "claymore":
+        matches = [
+            item for item in catalog or []
+            if mode in (item.get("supportedModes") or [])
+            and processing_model_name(item.get("apiModel") or item.get("api_model"))
+            == CLAYMORE_PROCESSING_MODELS.get(mode)
+        ]
+        # Ambiguous catalog identities cannot silently change pricing or execution.
+        return matches[0] if len(matches) == 1 else None
     return next(
         (
             item
             for item in catalog or []
             if mode in (item.get("supportedModes") or [])
+            and not is_claymore_processing_model(item.get("apiModel") or item.get("api_model"))
             and (
                 scheme is None
                 or is_topaz_backend(
@@ -9945,8 +9960,17 @@ def _video_processing_entry(
     )
 
 
-def _video_processing_resolutions(entry: dict[str, Any] | None) -> list[str]:
+def _video_processing_resolutions(
+    entry: dict[str, Any] | None, mode: str = "video_upscale",
+) -> list[str]:
+    from novelvideo.freezone.video_enhancement import (
+        CLAYMORE_PROCESSING_RESOLUTIONS,
+        is_claymore_processing_model,
+    )
+
     options = _catalog_resolution_options(entry)
+    if entry and is_claymore_processing_model(entry.get("apiModel") or entry.get("api_model")):
+        options = [value for value in options or [] if value in CLAYMORE_PROCESSING_RESOLUTIONS[mode]]
     return [
         value for value in VIDEO_UPSCALE_TARGET_LONG_EDGES if value in (options or [])
     ]
@@ -9975,12 +9999,17 @@ async def _resolve_video_processing_model(
         requester_user_id=requester_user_id,
     )
     selected = resolved or entry
+    if scheme == "claymore":
+        from novelvideo.freezone.video_enhancement import CLAYMORE_PROCESSING_MODELS, processing_model_name
+
+        if processing_model_name(selected.get("apiModel") or selected.get("api_model")) != CLAYMORE_PROCESSING_MODELS[mode]:
+            raise HTTPException(409, "视频增强模型配置已变化，请刷新后重试")
     return {
         "catalog_id": identifier,
         "backend": str(selected.get("apiModel") or selected.get("api_model") or ""),
         "request_schema": schema,
         "model_params": params,
-        "resolution_options": _video_processing_resolutions(selected),
+        "resolution_options": _video_processing_resolutions(selected, mode),
     }
 
 
@@ -10022,6 +10051,9 @@ def _video_enhance_billing(
             stages[0]["output_fps"] = body.target_fps or float(source_meta["fps"])
         else:
             stages[0]["output_fps"] = float(source_meta["fps"])
+    elif body.enhancement_model == "claymore":
+        for stage in stages:
+            stage["enhancement_model"] = "claymore"
     return {"feature_key": "freezone.video_enhance", "pricing_stages": stages}
 
 
@@ -11824,6 +11856,17 @@ async def _prepare_video_upscale(
     if max(int(source_meta["width"]), int(source_meta["height"])) >= target_long_edge:
         raise HTTPException(400, "目标分辨率必须高于源视频分辨率")
 
+    if body.enhancement_model == "claymore":
+        from novelvideo.freezone.video_enhancement import claymore_source_error
+
+        if body.slowdown != "auto" or body.face_enhance or body.scene != "realistic":
+            raise HTTPException(400, "虾驿视频增强不支持慢放、场景切换或人脸增强")
+        if body.target_fps is not None and (body.target_fps != 60 or body.resolution != "1080p"):
+            raise HTTPException(400, "虾驿补帧仅支持 1080P 和 60 FPS")
+        source_error = claymore_source_error(source_meta, body.resolution, frame_rate=body.target_fps is not None)
+        if source_error:
+            raise HTTPException(400, source_error)
+
     if body.enhancement_model == "topaz":
         if not 0 < float(source_meta["fps"]) <= 120:
             raise HTTPException(400, "Topaz 仅支持 1–120 FPS 的源视频")
@@ -11871,6 +11914,7 @@ async def _prepare_video_upscale(
         "frame_rate_request_schema": (
             frame_rate["request_schema"] if frame_rate else None
         ),
+        **({"enhancement_model": "claymore"} if body.enhancement_model == "claymore" else {}),
     }
     billing = _video_enhance_billing(body, source_meta, upscale, frame_rate)
     return source_path, source_meta, processing_models, billing
@@ -11983,7 +12027,7 @@ async def freezone_video_upscale(
 async def freezone_video_upscale_probe(
     project: str,
     source_url: str = Query(...),
-    enhancement_model: Literal["standard", "topaz"] = Query("standard"),
+    enhancement_model: Literal["standard", "topaz", "claymore"] = Query("standard"),
     user: dict = Depends(get_api_user),
 ):
     """读取源视频参数，供增强面板过滤无效的目标档位。"""
@@ -12010,11 +12054,11 @@ async def freezone_video_upscale_probe(
         _video_processing_entry(catalog, "video_upscale", enhancement_model)
     )
     metadata["frame_rate_resolutions"] = _video_processing_resolutions(
-        _video_processing_entry(catalog, "video_frame_rate", enhancement_model)
+        _video_processing_entry(catalog, "video_frame_rate", enhancement_model), "video_frame_rate",
     )
     metadata["enhancement_models"] = [
         scheme
-        for scheme in ("topaz", "standard")
+        for scheme in ("topaz", "standard", "claymore")
         if _video_processing_entry(catalog, "video_upscale", scheme) is not None
     ]
     if enhancement_model == "topaz":
@@ -12024,6 +12068,19 @@ async def freezone_video_upscale_probe(
             for value in metadata["upscale_resolutions"]
             if VIDEO_UPSCALE_TARGET_LONG_EDGES[value] / source_long_edge <= 4
         ]
+    elif enhancement_model == "claymore":
+        from novelvideo.freezone.video_enhancement import claymore_source_error
+
+        configured = metadata["upscale_resolutions"]
+        metadata["upscale_resolutions"] = [
+            value for value in configured if claymore_source_error(metadata, value) is None
+        ]
+        metadata["frame_rate_resolutions"] = [
+            value for value in metadata["frame_rate_resolutions"]
+            if claymore_source_error(metadata, value, frame_rate=True) is None
+        ]
+        if configured and not metadata["upscale_resolutions"]:
+            metadata["enhancement_error"] = claymore_source_error(metadata, configured[0])
     return {"ok": True, "data": metadata}
 
 

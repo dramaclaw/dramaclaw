@@ -460,6 +460,7 @@ async def run_freezone_video_upscale(
     frame_rate_model_params: Optional[dict[str, Any]] = None,
     frame_rate_request_schema: Optional[dict[str, Any]] = None,
     egress_context: TrustedEgressContext | None = None,
+    enhancement_model: str = "standard",
 ) -> tuple[Path, dict]:
     """Enhance a video through configured gateway models.
 
@@ -485,6 +486,7 @@ async def run_freezone_video_upscale(
             frame_rate_model_params=frame_rate_model_params,
             frame_rate_request_schema=frame_rate_request_schema,
             egress_context=egress_context,
+            enhancement_model=enhancement_model,
         )
     if frame_interpolation != "none":
         raise ValueError("basic video upscale only supports frame_interpolation='none'")
@@ -533,7 +535,7 @@ async def probe_video_stream(
     *,
     cwd: Path | None = None,
     egress_context: TrustedEgressContext | None = None,
-) -> dict[str, float | int]:
+) -> dict[str, Any]:
     """Return the first video stream geometry, frame rate, and duration."""
     if not shutil.which("ffprobe"):
         raise RuntimeError("ffprobe not found on PATH; install via brew/apt")
@@ -544,7 +546,7 @@ async def probe_video_stream(
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height,avg_frame_rate:format=duration",
+        "stream=width,height,avg_frame_rate,pix_fmt,color_transfer,field_order,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation:format=duration",
         "-of",
         "json",
         source_path,
@@ -587,6 +589,12 @@ async def probe_video_stream(
             "height": int(stream["height"]),
             "fps": fps,
             "duration": max(0.1, float(data["format"]["duration"])),
+            **({"hdr": stream["color_transfer"] in {"smpte2084", "arib-std-b67"}} if stream.get("color_transfer") else {}),
+            **({"pixel_format": stream["pix_fmt"]} if stream.get("pix_fmt") else {}),
+            **({"field_order": stream["field_order"]} if stream.get("field_order") else {}),
+            **({"sample_aspect_ratio": stream["sample_aspect_ratio"]} if stream.get("sample_aspect_ratio") else {}),
+            "rotated": (stream.get("tags") or {}).get("rotate") not in {None, "0"}
+            or any(item.get("rotation") for item in stream.get("side_data_list") or []),
         }
     except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as exc:
         raise RuntimeError("unable to parse video stream metadata") from exc
@@ -716,6 +724,7 @@ async def _run_model_video_enhancement(
     frame_rate_model_params: Optional[dict[str, Any]],
     frame_rate_request_schema: Optional[dict[str, Any]],
     egress_context: TrustedEgressContext | None,
+    enhancement_model: str = "standard",
 ) -> tuple[Path, dict]:
     src = Path(source_path)
     if not src.exists():
@@ -727,6 +736,25 @@ async def _run_model_video_enhancement(
     from novelvideo.freezone.video_slowdown import is_topaz_backend, topaz_requires_frame_rate
 
     topaz = is_topaz_backend(upscale_backend)
+    claymore = enhancement_model == "claymore"
+    if claymore:
+        from novelvideo.freezone.video_enhancement import (
+            CLAYMORE_PROCESSING_MODELS,
+            claymore_source_error,
+            processing_model_name,
+        )
+
+        if (
+            processing_model_name(upscale_backend) != CLAYMORE_PROCESSING_MODELS["video_upscale"]
+            or (frame_rate_backend and processing_model_name(frame_rate_backend) != CLAYMORE_PROCESSING_MODELS["video_frame_rate"])
+            or slowdown != "auto" or face_enhance or scene != "realistic"
+            or (target_fps is not None and target_fps != 60)
+            or (target_fps is not None and not frame_rate_backend)
+        ):
+            raise RuntimeError("unsupported Claymore video enhancement parameters")
+        error = claymore_source_error(probe, resolution, frame_rate=target_fps is not None)
+        if error:
+            raise RuntimeError(error)
     topaz_frame_rate = topaz and topaz_requires_frame_rate(target_fps, slowdown)
     if topaz_frame_rate and not frame_rate_backend:
         raise RuntimeError("video frame-rate model is not configured")
@@ -751,7 +779,7 @@ async def _run_model_video_enhancement(
                 ),
                 **(
                     {}
-                    if topaz
+                    if topaz or claymore
                     else {"scene": scene, "face_enhance": bool(face_enhance)}
                 ),
             },
@@ -794,11 +822,9 @@ async def _run_model_video_enhancement(
                         if topaz
                         else {"smart_interpolation": smart_interpolation}
                     ),
-                    "resolution_tier": {
-                        "1080p": "fhd",
-                        "2k": "2k",
-                        "4k": "4k",
-                    }.get(resolution, resolution),
+                    **({"resolution_tier": {
+                        "1080p": "fhd", "2k": "2k", "4k": "4k",
+                    }.get(resolution, resolution)} if not claymore else {}),
                 },
                 model_params=frame_rate_model_params,
                 request_schema=frame_rate_request_schema,

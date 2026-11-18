@@ -97,4 +97,46 @@ describe('saved video enhancement selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'node.videoUpscale.panel.resolution' }));
     expect(screen.queryByRole('option', { name: '2K' })).toBeNull();
   });
+
+  it('offers Claymore as a third workflow with only its supported options', async () => {
+    mocks.probe.mockResolvedValue({
+      width: 720, height: 1280, fps: 24, duration: 10,
+      enhancement_models: ['topaz', 'standard', 'claymore'],
+      upscale_resolutions: ['1080p', '2k', '4k'], frame_rate_resolutions: ['1080p'],
+    });
+    render(<VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: 'claymore' })} />);
+    await waitFor(() => expect(mocks.quote).toHaveBeenCalledWith('project', expect.objectContaining({
+      enhancementModel: 'claymore', slowdown: 'auto', faceEnhance: false,
+    })));
+    expect(screen.queryByRole('button', { name: 'node.videoUpscale.panel.scene' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'node.videoUpscale.panel.slowdown' })).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'node.videoUpscale.panel.faceEnhance' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'node.videoUpscale.panel.targetFps' }));
+    expect(screen.getByRole('option', { name: '60fps' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: '30fps' })).toBeNull();
+    expect(screen.queryByRole('option', { name: '90fps' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'node.videoUpscale.panel.targetFps' }));
+    fireEvent.click(screen.getByRole('button', { name: 'node.videoUpscale.panel.model' }));
+    expect(screen.getByRole('option', { name: 'node.videoUpscale.panel.claymoreModel' })).toBeTruthy();
+  });
+
+  it('keeps pure Claymore upscale available when interpolation is not configured', async () => {
+    mocks.probe.mockResolvedValue({
+      width: 854, height: 480, fps: 24, duration: 10,
+      enhancement_models: ['claymore'], upscale_resolutions: ['1080p', '2k'], frame_rate_resolutions: [],
+    });
+    render(<VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: 'claymore' })} />);
+    await waitFor(() => expect((screen.getByTitle('node.videoUpscale.panel.submit') as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'node.videoUpscale.panel.targetFps' }));
+    expect(screen.queryByRole('option', { name: '60fps' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'node.videoUpscale.panel.targetFpsAuto' })).toBeTruthy();
+  });
+
+  it('disables submission until the quote matches changed workflow parameters', async () => {
+    const { rerender } = render(<VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: 'standard' })} />);
+    await waitFor(() => expect((screen.getByTitle('node.videoUpscale.panel.submit') as HTMLButtonElement).disabled).toBe(false));
+    mocks.quote.mockImplementation(() => new Promise(() => {}));
+    rerender(<VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: 'standard', upscaleResolution: '2k' })} />);
+    expect((screen.getByTitle('node.videoUpscale.panel.submit') as HTMLButtonElement).disabled).toBe(true);
+  });
 });

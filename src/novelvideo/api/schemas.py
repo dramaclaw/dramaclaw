@@ -1631,7 +1631,7 @@ class FreezoneVideoEraseRequest(BaseModel):
 class FreezoneVideoUpscaleRequest(BaseModel):
     """视频增强请求。模型由媒体目录能力动态选择。"""
 
-    enhancement_model: Literal["standard", "topaz"] = Field(
+    enhancement_model: Literal["standard", "topaz", "claymore"] = Field(
         default="standard",
         description="增强方案；旧请求保持标准方案",
     )
