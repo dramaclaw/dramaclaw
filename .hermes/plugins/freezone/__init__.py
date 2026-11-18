@@ -10,7 +10,9 @@ import json
 import base64
 import hashlib
 import importlib.util
+from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import wraps
 import math
 import os
 import re
@@ -131,6 +133,7 @@ try:
         compile_workflow_intent,
         get_workflow_skill,
         validate_agent_workflow_plan,
+        workflow_catalog_items_scope,
     )
 except Exception as exc:
     _JSON_WORKFLOW_CATALOG_IMPORT_ERROR = exc
@@ -139,6 +142,7 @@ except Exception as exc:
     compile_workflow_intent = None
     get_workflow_skill = None
     validate_agent_workflow_plan = None
+    workflow_catalog_items_scope = None
 
 try:
     from novelvideo.freezone.workflow_planning import (
@@ -2215,17 +2219,20 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     ):
         return result
     assert draft is not None
-    return tool_result(_apply_workflow_generation_answers(
-        project=project,
-        canvas=canvas,
-        draft_id=draft_id,
-        expected_revision=draft_revision,
-        draft=draft,
-        question_ids=[str(question["id"]) for question in questions if isinstance(question, dict)],
-        answers=response.get("answers"),
-        clarification_result=response,
-        missing_only=generation_required_choices is not None,
-    ))
+    with _key_owner_catalog() as failure:
+        if failure is not None:
+            return tool_result(failure)
+        return tool_result(_apply_workflow_generation_answers(
+            project=project,
+            canvas=canvas,
+            draft_id=draft_id,
+            expected_revision=draft_revision,
+            draft=draft,
+            question_ids=[str(question["id"]) for question in questions if isinstance(question, dict)],
+            answers=response.get("answers"),
+            clarification_result=response,
+            missing_only=generation_required_choices is not None,
+        ))
 
 
 def _handle_present_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
@@ -7003,6 +7010,48 @@ def _handle_get_skill_import(args: dict[str, Any], **_: Any) -> str:
         return tool_result({"ok": False, "status": "skill_import_error", "error": str(exc)})
 
 
+@contextmanager
+def _key_owner_catalog():
+    """In agent-key mode, run local catalog code on the key owner's server catalog.
+
+    Yields a failure result instead of falling back to the local catalog when the
+    owner's catalog cannot be read. Other modes are unchanged.
+    """
+    if not (_agent_key_configured() and not _agent_token_configured()):
+        yield None
+        return
+    failure = {
+        "ok": False,
+        "status": "catalog_read_failed",
+        "code": "catalog_read_failed",
+        "error": "Workflow catalog is unavailable for this agent key",
+    }
+    if workflow_catalog_items_scope is None:
+        yield failure
+        return
+    snapshot = {}
+    for kind in ("skills", "recipes"):
+        response = _request("GET", f"/api/v1/freezone/agent-config/{kind}")
+        if response.get("ok") is not True or not isinstance(response.get("data"), list):
+            yield failure
+            return
+        snapshot[kind] = response["data"]
+    with workflow_catalog_items_scope(snapshot):
+        yield None
+
+
+def _with_key_owner_catalog(handler):
+    @wraps(handler)
+    def wrapped(args, **kwargs):
+        with _key_owner_catalog() as failure:
+            if failure is not None:
+                return tool_result(failure)
+            return handler(args, **kwargs)
+
+    return wrapped
+
+
+@_with_key_owner_catalog
 def _handle_get_workflow_skill(args: dict[str, Any], **_: Any) -> str:
     if get_workflow_skill is None:
         return tool_error(
@@ -7084,6 +7133,7 @@ def _workflow_plan_operation_admission_error(
     return None
 
 
+@_with_key_owner_catalog
 def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     turnless = _turnless_external_mcp_host()
     if turnless:
@@ -8123,6 +8173,7 @@ def _handle_get_workflow(args: dict[str, Any], **_: Any) -> str:
     return _handle_workflow_operation(args, action="get")
 
 
+@_with_key_owner_catalog
 def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     turnless = _turnless_external_mcp_host()
     if turnless:
@@ -8240,6 +8291,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     return tool_result(result)
 
 
+@_with_key_owner_catalog
 def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if not _workflow_draft_dependencies_available():
         return _workflow_draft_unavailable()

@@ -1288,3 +1288,54 @@ def test_real_launcher_workflow_catalog_is_scoped_to_key(relay_factory, tmp_path
         assert {request["owner"] for request in relay.exchange.catalog_requests} == set(catalogs)
 
     asyncio.run(scenario())
+
+
+def test_real_launcher_tools_catalog_is_scoped_to_key(relay_factory, tmp_path):
+    if not (ROOT / '.venv/bin/python').exists():
+        pytest.skip('Real launcher requires the repository .venv/bin/python')
+    builtin = ROOT / 'src/novelvideo/freezone/agent_catalog/builtins'
+    catalogs = {}
+    output = tmp_path / 'output'
+    for user in ('alice', 'bob', 'relay-user'):
+        items = {}
+        for kind, source in (('skills', 'text-to-image-video'), ('recipes', 'general-image')):
+            item = json.loads((builtin / kind / f'{source}.json').read_text())
+            item.update(id=f'private-{user}', name=f'{user} private')
+            if kind == 'skills':
+                item['allowed_recipe_ids'] = [f'private-{user}']
+            items[kind] = [
+                *(json.loads(path.read_text()) for path in sorted((builtin / kind).glob('*.json'))),
+                item,
+            ]
+            if user == 'relay-user':
+                folder = output / user / '_account/freezone/agent_config' / kind
+                folder.mkdir(parents=True)
+                (folder / f'private-{user}.json').write_text(json.dumps(item))
+        if user != 'relay-user':
+            catalogs[f'test-key-{user}'] = (f'session-{user}', items)
+    relay = relay_factory(real=True, catalogs=catalogs, output_dir=output)
+
+    async def scenario():
+        results = {}
+        for owner in ('alice', 'bob'):
+            async with relay.session('tools', key=f'test-key-{owner}') as (session, _, _):
+                results[owner] = {}
+                for user in ('alice', 'bob', 'relay-user'):
+                    result = await session.call_tool('freezone_get_workflow_skill', {
+                        'skill_id': f'private-{user}',
+                    })
+                    text = serialized(result)
+                    assert not any(secret in text for secret in (
+                        'test-key-alice', 'test-key-bob', 'session-alice', 'session-bob',
+                    )), 'Credential leaked in tool result'
+                    results[owner][user] = json.loads(result.content[0].text)['ok']
+        assert results == {
+            'alice': {'alice': True, 'bob': False, 'relay-user': False},
+            'bob': {'alice': False, 'bob': True, 'relay-user': False},
+        }
+        assert {(request['owner'], request['path']) for request in relay.exchange.catalog_requests} == {
+            (key, f'/api/v1/freezone/agent-config/{kind}')
+            for key in catalogs for kind in ('skills', 'recipes')
+        }
+
+    asyncio.run(scenario())

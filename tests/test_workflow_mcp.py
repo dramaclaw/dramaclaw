@@ -1072,7 +1072,7 @@ def workflow_catalog_api(tmp_path):
                 folder = output / user / "_account/freezone/agent_config" / kind
                 folder.mkdir(parents=True)
                 (folder / f"private-{user}.json").write_text(json.dumps(item))
-    api = SimpleNamespace(requests=[], fail=False, output=output)
+    api = SimpleNamespace(requests=[], fail=False, output=output, catalogs=catalogs)
 
     class Handler(BaseHTTPRequestHandler):
         def respond(self, status, payload):
@@ -1086,7 +1086,8 @@ def workflow_catalog_api(tmp_path):
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length", 0)))
             user = next((user for user in ("alice", "bob")
-                         if self.headers.get("Authorization") == f"Bearer test-key-{user}"), None)
+                         if self.headers.get("Authorization") in (
+                             f"Bearer test-key-{user}", f"Bearer session-{user}")), None)
             api.requests.append(("POST", self.path, user))
             if self.path != "/api/v1/agent/sessions":
                 self.respond(404, {"ok": False})
