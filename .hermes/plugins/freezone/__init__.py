@@ -128,6 +128,7 @@ except Exception as exc:
 _JSON_WORKFLOW_CATALOG_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.agent_workflows.catalog import (
+        CatalogUnavailableError,
         _recipe_node_type,
         canonical_recipe_stage,
         compile_workflow_intent,
@@ -136,6 +137,7 @@ try:
         workflow_catalog_items_scope,
     )
 except Exception as exc:
+    CatalogUnavailableError = ()
     _JSON_WORKFLOW_CATALOG_IMPORT_ERROR = exc
     _recipe_node_type = None
     canonical_recipe_stage = None
@@ -7010,6 +7012,14 @@ def _handle_get_skill_import(args: dict[str, Any], **_: Any) -> str:
         return tool_result({"ok": False, "status": "skill_import_error", "error": str(exc)})
 
 
+_CATALOG_READ_FAILURE = {
+    "ok": False,
+    "status": "catalog_read_failed",
+    "code": "catalog_read_failed",
+    "error": "Workflow catalog is unavailable for this agent key",
+}
+
+
 @contextmanager
 def _key_owner_catalog():
     """In agent-key mode, run local catalog code on the key owner's server catalog.
@@ -7020,12 +7030,7 @@ def _key_owner_catalog():
     if not (_agent_key_configured() and not _agent_token_configured()):
         yield None
         return
-    failure = {
-        "ok": False,
-        "status": "catalog_read_failed",
-        "code": "catalog_read_failed",
-        "error": "Workflow catalog is unavailable for this agent key",
-    }
+    failure = _CATALOG_READ_FAILURE
     if workflow_catalog_items_scope is None:
         yield failure
         return
@@ -7043,10 +7048,13 @@ def _key_owner_catalog():
 def _with_key_owner_catalog(handler):
     @wraps(handler)
     def wrapped(args, **kwargs):
-        with _key_owner_catalog() as failure:
-            if failure is not None:
-                return tool_result(failure)
-            return handler(args, **kwargs)
+        try:
+            with _key_owner_catalog() as failure:
+                if failure is not None:
+                    return tool_result(failure)
+                return handler(args, **kwargs)
+        except CatalogUnavailableError:
+            return tool_result(_CATALOG_READ_FAILURE)
 
     return wrapped
 

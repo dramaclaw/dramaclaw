@@ -15,7 +15,7 @@ import socket
 import subprocess
 import sys
 import time
-from threading import Thread
+from threading import Event, Thread
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
@@ -83,7 +83,7 @@ async def wait_reaped(pid, timeout=10):
 
 
 class Exchange:
-    def __init__(self, mode="ok", projects=None, catalogs=None):
+    def __init__(self, mode="ok", projects=None, catalogs=None, reject_gate=None):
         self.requests = []
         self.project_requests = []
         self.catalog_requests = []
@@ -103,6 +103,8 @@ class Exchange:
                     "content_type": self.headers.get("Content-Type"),
                     "accept": self.headers.get("Accept"),
                 })
+                if not matches and reject_gate is not None:
+                    reject_gate.wait(timeout=8)
                 if self.path != "/api/v1/agent/sessions":
                     status, payload = 404, {"ok": False}
                 elif mode == "ok" and matches:
@@ -1044,7 +1046,8 @@ def test_concurrent_new_sessions_never_exceed_cap(relay_factory):
         ]
         session_ids = [r.headers["mcp-session-id"] for r in responses if r.status_code == 200]
         assert len(set(session_ids)) == 2
-        assert len(relay.exchange.requests) == 2
+        # Concurrent requests can pass the pre-check before either slot is reserved.
+        assert 2 <= len(relay.exchange.requests) <= len(responses)
         assert len(relay.child_pids()) == len(relay.live_children()) == 2
 
     asyncio.run(scenario())
@@ -1339,3 +1342,122 @@ def test_real_launcher_tools_catalog_is_scoped_to_key(relay_factory, tmp_path):
         }
 
     asyncio.run(scenario())
+
+
+def test_unverified_keys_do_not_reserve_session_slots(relay_factory):
+    reject_gate = Event()
+    api = Exchange(reject_gate=reject_gate)
+    relay = relay_factory(
+        api_url=f"http://127.0.0.1:{api.port}", max_children=2, max_children_per_key=8,
+    )
+
+    async def scenario():
+        async with httpx.AsyncClient(timeout=12, trust_env=False) as client:
+            bogus = [asyncio.create_task(client.post(
+                relay.url + "/mcp/tools", json=INITIALIZE, headers={
+                    "Authorization": f"Bearer fake-bogus-key-{index}",
+                    "Accept": "application/json, text/event-stream",
+                },
+            )) for index in range(2)]
+            try:
+                deadline = time.monotonic() + 5
+                while len(api.requests) < 2 and time.monotonic() < deadline:
+                    await asyncio.sleep(0.01)
+                assert len(api.requests) == 2, "Both bogus key checks must reach the API"
+                assert relay.child_pids() == []
+                response = await relay.request("POST", json=INITIALIZE)
+            finally:
+                reject_gate.set()
+                rejected = await asyncio.gather(*bogus)
+            assert [result.status_code for result in rejected] == [401, 401]
+            assert response.status_code == 200, "Unverified keys occupied the global session cap"
+            sid = response.headers["mcp-session-id"]
+            notified = await relay.request("POST", sid=sid, json={
+                "jsonrpc": "2.0", "method": "notifications/initialized",
+            })
+            assert notified.status_code == 202
+            identity = await relay.request("POST", sid=sid, json={
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "whoami", "arguments": {}},
+            })
+            payload = next(json.loads(line.removeprefix("data: "))
+                           for line in identity.text.splitlines() if line.startswith("data: "))
+            assert json.loads(payload["result"]["content"][0]["text"])["key_matches"] is True
+            assert len(relay.child_pids()) == 1
+            await relay.request("DELETE", sid=sid)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        reject_gate.set()
+        api.close()
+
+
+def relay_mode_env(result_dir):
+    return {
+        "DRAMACLAW_EXTERNAL_MCP": "0",
+        "DRAMACLAW_TURN_ID": "turn-from-relay-env",
+        "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR": str(result_dir),
+        "DRAMACLAW_CHAT_SURFACE": "other",
+        "DRAMACLAW_TOOL_MODE": "other",
+        "DRAMACLAW_AGENT_PROFILE": "other:agent",
+        "DRAMACLAW_LOCAL_AGENT_TRUST": "1",
+    }
+
+
+def test_child_does_not_inherit_relay_mode_env(tmp_path):
+    relay = Relay(tmp_path)
+    poisoned = relay_mode_env(tmp_path / "tool-results")
+    relay.env.update(poisoned)
+    relay.env["REMOTE_MCP_FAKE_REPORT_ENV_NAMES"] = "1"
+
+    async def scenario():
+        async with relay.session() as (session, _, _):
+            identity = await whoami(session)
+            assert identity["key_matches"] is True
+            assert set(identity["env_names"]).isdisjoint(poisoned)
+
+    try:
+        relay.start()
+        asyncio.run(scenario())
+    finally:
+        relay.close()
+
+
+def test_real_launcher_ignores_relay_mode_env(relay_factory, tmp_path):
+    if not (ROOT / ".venv/bin/python").exists():
+        pytest.skip("Real launcher requires the repository .venv/bin/python")
+    baseline = relay_factory(real=True, projects=["project-a", "project-b"])
+    directory = tmp_path / "poisoned"
+    directory.mkdir()
+    relay = Relay(directory, real=True, projects=["project-a", "project-b"])
+    result_dir = tmp_path / "tool-results"
+    result_dir.mkdir()
+    relay.env.update(relay_mode_env(result_dir))
+
+    async def observe(target):
+        async with target.session(path="/mcp/tools") as (session, _, initialized):
+            names = sorted(tool.name for tool in (await session.list_tools()).tools)
+            result = await session.call_tool("freezone_create_node", {"node_type": "textGeneration"})
+            return names, bool(initialized.instructions), result
+
+    async def scenario():
+        clean_names, clean_instructions, clean_result = await observe(baseline)
+        names, instructions, result = await observe(relay)
+        assert "freezone_list_projects" in clean_names
+        assert "freezone_create_node" in clean_names
+        assert clean_instructions is True
+        assert names == clean_names
+        assert instructions == clean_instructions
+        clean_payload = json.loads(clean_result.content[0].text)
+        payload = json.loads(result.content[0].text)
+        assert (result.isError, payload.get("status"), payload.get("code")) == (
+            clean_result.isError, clean_payload.get("status"), clean_payload.get("code"),
+        )
+        assert list(result_dir.iterdir()) == []
+
+    try:
+        relay.start()
+        asyncio.run(scenario())
+    finally:
+        relay.close()

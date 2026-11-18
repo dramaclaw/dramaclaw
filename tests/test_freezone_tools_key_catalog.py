@@ -1,6 +1,6 @@
 """Key-owned catalog contracts for the Freezone tools MCP entry point."""
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from copy import deepcopy
 import json
 import os
@@ -13,7 +13,10 @@ import pytest
 
 from test_workflow_mcp import _catalog_tool_payload
 from test_workflow_mcp import workflow_catalog_api  # noqa: F401 - shared pytest fixture
-from test_freezone_plugin import _load_plugin_module
+from test_freezone_plugin import (
+    _load_plugin_module,
+    _restore_tools_registry_modules,  # noqa: F401 - shared autouse fixture
+)
 from novelvideo.freezone.agent_workflows import catalog
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -253,3 +256,105 @@ def test_plugin_catalog_at_compile_boundary(monkeypatch, tmp_path, tools_catalog
     else:
         assert catalog_calls == []
     assert catalog._REQUEST_CATALOG.get() is None
+
+
+@pytest.fixture
+def local_catalog_env(monkeypatch, tools_catalog_api):
+    for name in IDENTITY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in (TOOLS_ENV | {
+        'DRAMACLAW_USERNAME': 'relay-user',
+        'NOVELVIDEO_OUTPUT_DIR': str(tools_catalog_api.output),
+    }).items():
+        monkeypatch.setenv(name, value)
+    from novelvideo.freezone import agent_config_store
+    monkeypatch.setattr(agent_config_store, 'OUTPUT_DIR', tools_catalog_api.output)
+    assert catalog._REQUEST_CATALOG.get() is None
+    calls = []
+    original = catalog.list_user_agent_config_items
+
+    def read_local(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(catalog, 'list_user_agent_config_items', read_local)
+    return calls
+
+
+def configure_catalog_key(monkeypatch, tmp_path, key_source):
+    if key_source == 'DRAMACLAW_AGENT_KEY_FILE':
+        path = tmp_path / 'agent-key'
+        path.write_text('test-key-alice')
+        monkeypatch.setenv(key_source, str(path))
+    else:
+        monkeypatch.setenv(key_source, 'test-key-alice')
+
+
+@pytest.mark.parametrize('key_source', ['DRAMACLAW_AGENT_KEY', 'DRAMACLAW_AGENT_KEY_FILE'])
+@pytest.mark.parametrize('skill_id', ['private-relay-user', 'text-to-image-video'])
+def test_catalog_key_without_snapshot_fails_closed(
+    monkeypatch, tmp_path, local_catalog_env, key_source, skill_id,
+):
+    configure_catalog_key(monkeypatch, tmp_path, key_source)
+    builtin_reads = []
+    original = catalog._load_json_dir
+
+    def read_builtin(*args, **kwargs):
+        builtin_reads.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(catalog, '_load_json_dir', read_builtin)
+    error_type = getattr(catalog, 'CatalogUnavailableError', RuntimeError)
+    with pytest.raises(error_type) as raised:
+        catalog.get_workflow_skill({'skill_id': skill_id})
+    assert type(raised.value) is getattr(catalog, 'CatalogUnavailableError', None)
+    assert isinstance(raised.value, RuntimeError)
+    message = str(raised.value).lower()
+    assert all(term in message for term in ('workflow catalog', 'agent key', 'server'))
+    assert local_catalog_env == []
+    assert builtin_reads == []
+
+
+@pytest.mark.parametrize('key_source', ['DRAMACLAW_AGENT_KEY', 'DRAMACLAW_AGENT_KEY_FILE'])
+def test_catalog_key_snapshot_uses_owner_items(
+    monkeypatch, tmp_path, tools_catalog_api, local_catalog_env, key_source,
+):
+    configure_catalog_key(monkeypatch, tmp_path, key_source)
+    with catalog.workflow_catalog_items_scope(tools_catalog_api.catalogs['alice']):
+        result = catalog.get_workflow_skill({'skill_id': 'private-alice'})
+    assert result['ok'] is True
+    assert result['skill_id'] == 'private-alice'
+    assert local_catalog_env == []
+    assert catalog._REQUEST_CATALOG.get() is None
+
+
+@pytest.mark.parametrize('mode', ['local', 'token', 'token-and-key', 'token-file-and-key'])
+def test_catalog_non_key_mode_keeps_local_items(monkeypatch, tmp_path, local_catalog_env, mode):
+    for name, value in mode_env(mode, tmp_path).items():
+        monkeypatch.setenv(name, value)
+    result = catalog.get_workflow_skill({'skill_id': 'private-relay-user'})
+    assert result['ok'] is True
+    assert result['skill_id'] == 'private-relay-user'
+    assert local_catalog_env
+    assert all(args[0] == 'relay-user' for args, _ in local_catalog_env)
+
+
+def test_plugin_catalog_without_entry_snapshot_fails_closed(monkeypatch, local_catalog_env):
+    monkeypatch.setenv('DRAMACLAW_AGENT_KEY', 'test-key-alice')
+    # Restore the registry modules replaced by the shared harness after this test.
+    for name in ('tools', 'tools.registry'):
+        monkeypatch.setitem(sys.modules, name, sys.modules.get(name))
+    plugin = _load_plugin_module()
+
+    @contextmanager
+    def missing_snapshot():
+        yield None
+
+    monkeypatch.setattr(plugin, '_key_owner_catalog', missing_snapshot)
+    result = plugin._handle_get_workflow_skill({'skill_id': 'private-relay-user'})
+    # The shared plugin harness leaves tool_result dictionaries unencoded.
+    payload = json.loads(result) if isinstance(result, str) else result
+    assert payload['ok'] is False
+    assert payload['status'] == 'catalog_read_failed'
+    assert 'private-relay-user' not in json.dumps(payload)
+    assert local_catalog_env == []

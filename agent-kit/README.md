@@ -184,7 +184,11 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 
 ID 仅允许 `[A-Za-z0-9._-]`，长度为 1–128 个字符。路径包含项目时，Key 校验使用项目 scope。
 tools 服务无需带画布的项目路径也可提供 Freezone 画布工具；带画布路径用于预先绑定项目和画布。
-子进程的项目和画布不继承中继环境中的值。
+子进程的项目和画布不继承中继环境中的值。也不继承以下回合／模式变量：
+`DRAMACLAW_EXTERNAL_MCP`、`DRAMACLAW_TURN_ID`、`DRAMACLAW_FREEZONE_TOOL_RESULT_DIR`、
+`DRAMACLAW_CHAT_SURFACE`（含 `SUPERTALE_CHAT_SURFACE` 回退）、`DRAMACLAW_TOOL_MODE`、
+`DRAMACLAW_TOOL_MODE_FILE`、`DRAMACLAW_AGENT_PROFILE`、`DRAMACLAW_LOCAL_AGENT_TRUST`；
+模式由子进程启动器设置。
 
 home 路径先以 home scope 校验 Key，再用交换得到的 Token 请求 `GET /api/v1/projects`。
 恰好有一个可见项目且 ID 有效时，子进程绑定该项目 scope，画布保持未设置。
@@ -213,8 +217,10 @@ Token 仅在内存中用于此次查询，查询结束即丢弃，不写入 Sess
 两个上限必须是 ≥ 1 的整数，两个时间必须是有限正数。总会话数或单 Key 会话数达到上限时，
 新初始化请求返回 HTTP 429，JSON-RPC 错误保留请求 id，并说明限额；现有会话不受影响。
 限额包含正在创建的会话，单 Key 按 SHA-256 摘要计数，不保存原始 Key 用于计数。
-限额仅作用于单个中继进程，不排队、不跨实例计数。因限额拒绝或无效的请求均不调用
-Key 交换接口（`POST /api/v1/agent/sessions`），也不启动子进程。
+限额仅作用于单个中继进程，不排队、不跨实例计数。未验证的 Key 不占名额。
+无效的初始请求或预检查时限额已满的请求不调用 Key 交换接口（`POST /api/v1/agent/sessions`）。
+通过预检查的请求会调用一次 Key 交换；验证成功后若名额已被其他请求占满，仍返回 429，
+丢弃交换所得 Token，不启动子进程。
 
 空闲时间从最后一次 POST 结束时开始计算；没有 POST 请求进行时，即使 GET 流保持打开，
 达到 idle timeout 也会结束会话。曾打开 GET 流的会话，在所有 GET 流关闭且没有 POST
@@ -223,3 +229,15 @@ GET 流的会话按 idle timeout 回收。DELETE 请求、子进程退出和中�
 回收后释放名额。
 
 中继默认只监听回环地址，仅用于本地验证，不用于生产环境。
+
+### 对外入口的必要限制
+
+如需通过反向代理对外暴露中继，公共入口必须同时设置：
+- 所有请求的请求体大小上限（包括已建立会话的请求）。
+- 每个客户端及全局的并发连接上限，并建议设置请求速率限制。
+- 请求头和请求体的读取超时，避免慢速上传长期占用连接。
+
+中继在验证 Key 前读取 initialize 请求体（最多 4 MiB）；大量或缓慢的未认证上传会占用缓冲内存。
+会话建立后，后续请求体直接交给 MCP SDK，中继不再限制其大小。
+每个通过预检查的新 initialize 请求还会向 API 发起一次 Key 校验。
+会话数量上限不能替代这些入口限制；默认仍只监听回环地址，用于本地验证。

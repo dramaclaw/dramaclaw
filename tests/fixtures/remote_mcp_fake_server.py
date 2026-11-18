@@ -57,6 +57,8 @@ async def main():
     async def call_tool(name, arguments):
         if name == "whoami":
             value = json.dumps({
+                **({"env_names": sorted(os.environ)}
+                   if os.environ.get("REMOTE_MCP_FAKE_REPORT_ENV_NAMES") else {}),
                 "mode": args.mode,
                 "project_id": os.environ.get("DRAMACLAW_PROJECT_ID"),
                 "canvas_id": os.environ.get("DRAMACLAW_CANVAS_ID"),

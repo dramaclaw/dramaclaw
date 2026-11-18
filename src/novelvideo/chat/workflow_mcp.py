@@ -193,13 +193,7 @@ def _username() -> str:
 
 
 def _agent_key_mode() -> bool:
-    return any(
-        os.environ.get(name, "").strip()
-        for name in ("DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_KEY")
-    ) and not any(
-        os.environ.get(name, "").strip()
-        for name in ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE")
-    )
+    return agent_key_session.agent_key_mode()
 
 
 def _server_catalog() -> dict[str, list[dict[str, Any]]] | None:

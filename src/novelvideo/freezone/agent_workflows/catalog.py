@@ -12,6 +12,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from novelvideo.chat.agent_key_session import agent_key_mode
 from novelvideo.freezone.workflow_schema import (
     EXTERNAL_INPUT_NODE_TYPES,
     PORTABLE_VIDEO_GENERATION_MODES,
@@ -42,6 +43,10 @@ except Exception:  # pragma: no cover - Hermes can run before app imports are av
 _REQUEST_CATALOG: ContextVar[dict[str, list[dict[str, Any]]] | None] = ContextVar(
     "workflow_request_catalog", default=None
 )
+
+
+class CatalogUnavailableError(RuntimeError):
+    """The key owner's server catalog has not been loaded."""
 
 
 @contextmanager
@@ -4988,6 +4993,11 @@ def _load_agent_config_items(
     snapshot = _REQUEST_CATALOG.get()
     if snapshot is not None:
         return deepcopy(snapshot[kind])
+    if agent_key_mode():
+        raise CatalogUnavailableError(
+            "In agent key mode, the workflow catalog must be read from the server "
+            "for the key owner; local catalog reads are not allowed"
+        )
     if list_user_agent_config_items is not None:
         username = _catalog_username()
         if username:

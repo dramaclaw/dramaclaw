@@ -160,7 +160,7 @@ class Relay:
         self.reservations: Counter[bytes] = Counter()
         self.tasks = None
 
-    def reserve(self, key_hash):
+    def reserve(self, key_hash, *, commit=True):
         per_key = self.reservations[key_hash] + sum(
             session.key_hash == key_hash for session in self.sessions.values()
         )
@@ -175,14 +175,21 @@ class Relay:
                 "The relay has too many open MCP sessions "
                 f"(limit {self.args.max_children}). Try again later."
             )
-        self.reservations[key_hash] += 1
+        if commit:
+            self.reservations[key_hash] += 1
         return None
 
     def child_parameters(self, mode, key, project_id, canvas_id):
         env = {
             name: value for name, value in os.environ.items()
             if not name.startswith(("DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_TOKEN"))
-            and name not in ("DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID")
+            and name not in {
+                "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID",
+                "DRAMACLAW_EXTERNAL_MCP", "DRAMACLAW_TURN_ID",
+                "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "DRAMACLAW_CHAT_SURFACE",
+                "SUPERTALE_CHAT_SURFACE", "DRAMACLAW_TOOL_MODE", "DRAMACLAW_TOOL_MODE_FILE",
+                "DRAMACLAW_AGENT_PROFILE", "DRAMACLAW_LOCAL_AGENT_TRUST",
+            }
         }
         if project_id is not None:
             env["DRAMACLAW_PROJECT_ID"] = project_id
@@ -311,7 +318,7 @@ class Relay:
             if validated is None:
                 return
             body, request_id = validated
-            error = self.reserve(key_hash)
+            error = self.reserve(key_hash, commit=False)
             if error is not None:
                 await JSONResponse({
                     "jsonrpc": "2.0", "id": request_id,
@@ -329,12 +336,21 @@ class Relay:
                 return await original_receive()
 
             receive = replay_receive
+            status, token = await check_key(self.args.api_url, key, project_id)
+            if status != 200:
+                del token
+                error = "Agent key rejected" if status == 401 else "Agent key check unavailable"
+                await JSONResponse({"error": error}, status)(scope, receive, send)
+                return
+            error = self.reserve(key_hash)
+            if error is not None:
+                del token
+                await JSONResponse({
+                    "jsonrpc": "2.0", "id": request_id,
+                    "error": {"code": -32000, "message": error},
+                }, 429)(scope, receive, send)
+                return
             try:
-                status, token = await check_key(self.args.api_url, key, project_id)
-                if status != 200:
-                    error = "Agent key rejected" if status == 401 else "Agent key check unavailable"
-                    await JSONResponse({"error": error}, status)(scope, receive, send)
-                    return
                 child_project_id = project_id
                 try:
                     if project_id is None:
