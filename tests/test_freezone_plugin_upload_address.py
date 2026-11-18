@@ -5,6 +5,7 @@
 import hashlib
 import json
 import logging
+import re
 import sys
 import urllib.request
 from types import SimpleNamespace
@@ -161,6 +162,15 @@ async def test_external_upload_address_unavailable_falls_back_to_browser(load_ho
     assert "user" in result["message"].lower()
     assert "browser" in result["message"].lower()
     assert host.requests.count(("POST", MINT)) == 1
+
+
+async def test_external_upload_instruction_explains_request_limit(load_host):
+    result = await _call(load_host())
+    assert result["max_bytes"] == ADDRESS_DATA["max_bytes"]
+    instruction = result["agent_instruction"].lower()
+    assert "max_bytes" in instruction
+    assert re.search(r"(?:whole|entire|total|full) (?:multipart )?(?:upload )?(?:request|body)", instruction)
+    assert re.search(r"file(?: itself| size)?[^.!?]*(?:smaller|below|less than)", instruction)
 
 
 def test_product_chat_tool_list_matches_pre_upload_contract(load_host):

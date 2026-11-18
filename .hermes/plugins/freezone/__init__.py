@@ -9774,6 +9774,7 @@ def _handle_get_upload_address(args: dict[str, Any], **_: Any) -> str:
         "agent_instruction": (
             _UPLOAD_NODE_INSTRUCTION
             + " Only file types listed in allowed_suffixes are accepted. "
+            "max_bytes is the limit for the whole upload request, so the file itself must be slightly smaller. "
             "The upload address can be reused until it expires. "
             "Do not show the upload address to the user or put it in a node."
         ),

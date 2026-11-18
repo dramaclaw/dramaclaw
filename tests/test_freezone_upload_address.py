@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from novelvideo.api import auth
+from novelvideo.api import app as api_app
 from novelvideo.api.app import MAX_UPLOAD_REQUEST_BODY_BYTES, create_app
 from novelvideo.freezone import preview_media
 from novelvideo.ports import registry as ports
@@ -36,6 +37,8 @@ USERS = {
     BOB: {"id": "u-bob", "username": "bob"},
 }
 FILE = b"fake multipart file bytes"
+TEST_BODY_LIMIT = 4096
+MULTIPART_HEADERS = {"Content-Type": "multipart/form-data; boundary=upload-test"}
 EXPECTED_SUFFIXES = sorted("""
     .png .jpg .jpeg .webp .gif .bmp .avif
     .mp4 .mov .webm .mxf .mkv .avi .ts .mts .m2ts .flv .wmv .m4v .mpg .mpeg
@@ -363,14 +366,66 @@ def test_valid_ticket_for_another_user_cannot_borrow_editor_session(api):
     api.principals.assert_awaited_once_with("u-bob")
 
 
-def test_upload_address_keeps_existing_body_limit(api):
+def _multipart_chunks(file_bytes):
+    yield (
+        b'--upload-test\r\nContent-Disposition: form-data; name="file"; filename="sketch.png"\r\n'
+        b"Content-Type: image/png\r\n\r\n"
+    )
+    yield file_bytes
+    yield b"\r\n--upload-test--\r\n"
+
+
+@pytest.mark.parametrize("credential", ["ticket", "browser", "agent"])
+def test_chunked_upload_under_body_limit(api, monkeypatch, credential):
+    monkeypatch.setattr(api_app, "MAX_UPLOAD_REQUEST_BODY_BYTES", TEST_BODY_LIMIT)
+    params = {"upload_ticket": _ticket(api)} if credential == "ticket" else None
+    session_headers = {"ticket": {}, "browser": _session(), "agent": AGENT_HEADERS}
+    response = api.client.post(
+        UPLOAD,
+        params=params,
+        headers={**MULTIPART_HEADERS, **session_headers[credential]},
+        content=_multipart_chunks(FILE),
+    )
+    assert response.request.headers["transfer-encoding"] == "chunked"
+    assert "content-length" not in response.request.headers
+    assert _stored(api, _data(response)).read_bytes() == FILE
+
+
+@pytest.mark.parametrize("credential", ["ticket", "browser", "agent"])
+def test_chunked_upload_over_body_limit_is_refused(api, monkeypatch, credential):
+    monkeypatch.setattr(api_app, "MAX_UPLOAD_REQUEST_BODY_BYTES", TEST_BODY_LIMIT)
+    params = {"upload_ticket": _ticket(api)} if credential == "ticket" else None
+    session_headers = {"ticket": {}, "browser": _session(), "agent": AGENT_HEADERS}
+    response = api.client.post(
+        UPLOAD,
+        params=params,
+        headers={**MULTIPART_HEADERS, **session_headers[credential]},
+        content=_multipart_chunks(b"x" * TEST_BODY_LIMIT),
+    )
+    assert "content-length" not in response.request.headers
+    assert response.status_code == 413, response.text
+    detail = response.json()["detail"]
+    assert set(detail) == {"code", "field", "limit", "got"}
+    assert detail["code"] == "canvas_payload_too_large"
+    assert detail["field"] == "body"
+    assert detail["limit"] == TEST_BODY_LIMIT
+    assert detail["got"] > TEST_BODY_LIMIT
+    assert not any(path.is_file() for path in Path(api.records["proj"].output_dir).rglob("*"))
+
+
+def test_upload_address_keeps_existing_body_limit(api, monkeypatch):
+    monkeypatch.setattr(api_app, "MAX_UPLOAD_REQUEST_BODY_BYTES", TEST_BODY_LIMIT)
     ticket = _ticket(api)
-    size = MAX_UPLOAD_REQUEST_BODY_BYTES + 1
-    response = _upload(api, ticket=ticket, headers={"Content-Length": str(size)})
+    body = b"".join(_multipart_chunks(b"x" * TEST_BODY_LIMIT))
+    size = len(body)
+    response = api.client.post(
+        UPLOAD, params={"upload_ticket": ticket}, headers=MULTIPART_HEADERS, content=body,
+    )
+    assert response.request.headers["content-length"] == str(size)
     assert response.status_code == 413, response.text
     assert response.json() == {"detail": {
         "code": "canvas_payload_too_large", "field": "body",
-        "limit": MAX_UPLOAD_REQUEST_BODY_BYTES, "got": size,
+        "limit": TEST_BODY_LIMIT, "got": size,
     }}
 
 
