@@ -660,6 +660,9 @@ def _call_catalog_tool(
             validation.setdefault("agent_instruction", instruction)
             return _result(name, validation)
         result = build_workflow_graph_commands(args)
+        # run_target names the plan's client ids for the in-process draft runner; this
+        # read-only check creates nothing, so it is not part of the published result.
+        result.pop("run_target", None)
         if result.get("ok") is True:
             result.update(
                 canvas_changed=False,

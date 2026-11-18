@@ -136,6 +136,16 @@ class LiveTurnProjector:
             return None
         return self._frame(item["id"], card)
 
+    def discard(self) -> list[dict[str, Any]]:
+        frames = (
+            [self._frame(item_id, None) for item_id in self.item_ids]
+            if self.message_id is not None else []
+        )
+        self._open.clear()
+        self._seen.clear()
+        self._item_ids.clear()
+        return frames
+
     def finish(self) -> list[dict[str, Any]]:
         if self.message_id is None:
             return []

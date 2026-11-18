@@ -369,6 +369,7 @@ and `freezone_patch_workflow_draft`; do not fall back to another write after an 
   reuse the returned `observation_token` as `after` for a later bounded wait. The backend reconciles
   tasks and artifacts and returns compact progress and recovery decisions. A query timeout permits
   another read of the same run, not resubmission of generation.
+- To run a just-landed draft, call `freezone_run_workflow` with the receipt's `run_arguments` (its own node ids); `scope=canvas` runs every unfinished node on the whole canvas, including earlier work.
 - To continue or resume an existing workflow, call `freezone_run_workflow`; do not traverse and run
   nodes individually.
 - A workflow containing exactly one executable node is still a workflow. If the user calls the

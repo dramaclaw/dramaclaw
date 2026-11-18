@@ -160,11 +160,50 @@ def test_delete_and_mixed_targets(canvas):
     {"type": "run_workflow", "scope": "canvas", "node_ids": []},
 ])
 def test_whole_canvas_targets(canvas, command):
+    planned = confirmation_targets(canvas, [command], ["n2"])
+    assert [item["node_id"] for item in planned] == (
+        ["n1", "n2", "n3"] if command["type"] == "clear_canvas" else ["n2"]
+    )
     assert confirmation_targets(canvas, [command]) == [
         {"node_id": "n1", "title": "海报", "node_type": "imageGenNode", "action": command["type"]},
         {"node_id": "n2", "title": "片头", "node_type": "videoNode", "action": command["type"]},
         {"node_id": "n3", "title": "", "node_type": "textNode", "action": command["type"]},
     ]
+
+
+def test_whole_canvas_run_card_does_not_list_completed_image_as_run_target(tmp_path):
+    canvas = {"nodes": [
+        {"id": "old-prompt", "type": "textAnnotationNode", "data": {
+            "displayName": "提示词", "content": "橘猫在窗边看雨",
+        }},
+        {"id": "old-image", "type": "imageGenNode", "data": {
+            "displayName": "橘猫看雨", "imageUrl": "/static/old-image.png", "status": "completed",
+        }},
+        {"id": "draft-group", "type": "groupNode", "data": {"displayName": "文生图（动态）"}},
+        {"id": "draft-input", "type": "textAnnotationNode", "parentId": "draft-group", "data": {
+            "displayName": "用户需求 / 输入素材", "workflowCatalogRole": "user_input",
+            "content": "画一片雨后的森林",
+        }},
+        {"id": "draft-image", "type": "imageGenNode", "parentId": "draft-group", "data": {
+            "displayName": "内容段 1画面", "prompt": "雨后的森林",
+        }},
+    ], "edges": [
+        {"id": "old-edge", "source": "old-prompt", "target": "old-image"},
+        {"id": "draft-edge", "source": "draft-input", "target": "draft-image"},
+    ]}
+    commands = [{"type": "run_workflow", "direction": "connected", "scope": "canvas"}]
+    directory = tmp_path / CONFIRMATIONS_DIRNAME
+    record = create_confirmation(
+        directory, project_id="p1", canvas_id="c1", agent_id="a1",
+        username="user1", turn_id="t1", commands=commands,
+        targets=confirmation_targets(canvas, commands, ["draft-image"]), now=1000.0,
+    )
+    targets = read_confirmation(directory, record["id"])["targets"]
+    assert any(target["node_id"] == "draft-image" for target in targets), f"targets={targets!r}"
+    assert not any(
+        target["node_id"] == "old-image" and target["action"] == "run_workflow"
+        for target in targets
+    ), f"targets={targets!r}"
 
 
 def test_target_order_deduplication_and_title_fallbacks():
@@ -346,7 +385,7 @@ def test_changed_targets(canvas, create):
     assert changed_targets({"nodes": canvas["nodes"][1:]}, record) == ["n1"]
     added = {"nodes": canvas["nodes"] + [{"id": "n4", "type": "textNode", "data": {}}]}
     for command in [{"type": "clear_canvas"}, {"type": "run_workflow", "scope": "canvas"}]:
-        whole = create(commands=[command])
+        whole = create(commands=[command], canvas_node_ids=["n1", "n2", "n3"])
         assert changed_targets(canvas, whole) == []
         assert changed_targets(added, whole) == ["n4"]
         assert changed_targets({"nodes": added["nodes"][1:]}, whole) == ["n1", "n4"]
@@ -664,3 +703,58 @@ def test_generation_settings_names_where_each_value_came_from():
         {"node_id": "n2", "title": "片头", "node_type": "videoNode", "action": "run_workflow",
          "quality": "720P", "sources": {"quality": "canvas"}},
     ]
+
+
+@pytest.mark.parametrize("data", [{"status": "completed", "imageUrl": "/old.png"},
+                                  {"workflowResultStale": True}])
+def test_planned_targets_preserve_order_and_results(canvas, data):
+    canvas["nodes"][0]["data"].update(data)
+    commands = [{"type": "run_workflow", "scope": "canvas", "regenerate": True}]
+    targets = confirmation_targets(canvas, commands, ["n2", "n1", "n2"])
+    assert [target["node_id"] for target in targets] == ["n2", "n1"]
+    assert all(target["action"] == "run_workflow" for target in targets)
+
+
+@pytest.mark.parametrize("planned,expected", [([], []), (["missing"], ["n1", "n2", "n3"])])
+def test_empty_or_unknown_planned_targets(canvas, planned, expected):
+    assert [item["node_id"] for item in confirmation_targets(
+        canvas, [{"type": "run_workflow", "scope": "canvas"}], planned,
+    )] == expected
+
+
+def test_planned_targets_still_validate_seeds(canvas):
+    with pytest.raises(CanvasConfirmationError) as error:
+        confirmation_targets(canvas, [{"type": "run_workflow", "node_ids": ["missing"]}], [])
+    assert error.value.code == "targets_missing"
+
+
+def test_filtered_targets_drift_snapshot(canvas):
+    record = {"commands": [{"type": "run_workflow", "scope": "canvas"}],
+              "targets": [{"node_id": "n1"}], "canvas_node_ids": ["n1", "n2", "n3"]}
+    assert changed_targets(canvas, record) == []
+    assert changed_targets({"nodes": canvas["nodes"] + [{"id": "new"}]}, record) == ["new"]
+    assert changed_targets({"nodes": canvas["nodes"][:2]}, record) == ["n3"]
+    del record["canvas_node_ids"]
+    assert changed_targets(canvas, record) == ["n2", "n3"]
+    record.update(commands=[{"type": "run_workflow", "node_ids": ["n2"]}], targets=[])
+    assert changed_targets({"nodes": canvas["nodes"][:1]}, record) == ["n2"]
+
+
+@pytest.mark.parametrize("whole", [True, False])
+def test_request_stores_canvas_snapshot_only_for_whole_canvas(tmp_path, monkeypatch, canvas, whole):
+    from novelvideo.freezone import canvas_store
+
+    monkeypatch.setattr(canvas_confirmations, "confirmations_dir", lambda *args: tmp_path / "cards")
+    canvas_store.save_canvas(tmp_path, "c1", base_revision=None, build_payload=lambda _: canvas)
+    command = {"type": "run_workflow", "scope": "canvas"} if whole else {
+        "type": "run_workflow", "node_ids": ["n1"], "scope": "selection",
+    }
+    record = canvas_confirmations.request_confirmation(
+        username="u", agent_id="a", project_id="p", canvas_id="c1", project_state_dir=tmp_path,
+        turn_id="t", commands=[command], now=1000, planned_workflow_node_ids=["n1"],
+    )
+    if whole:
+        assert record["canvas_node_ids"] == ["n1", "n2", "n3"]
+    else:
+        assert "canvas_node_ids" not in record
+    assert [target["node_id"] for target in record["targets"]] == ["n1"]

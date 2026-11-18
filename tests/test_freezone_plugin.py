@@ -12675,3 +12675,69 @@ def test_confirmation_project_name_external_only(
     assert "project_name" not in result["agent_instruction"]
     structured = plugin._structured_tool_result(result, tool_name="freezone_run_node_action")
     assert "project_name" not in structured
+
+
+_LANDED_RUN_INSTRUCTION = (
+    "To run or continue only this workflow later, call freezone_run_workflow with run_arguments; do "
+    "not use scope=canvas, which also runs unfinished nodes from earlier work on the canvas."
+)
+_LANDED_SCOPE_DESCRIPTION = (
+    "canvas runs every unfinished node on the whole canvas, including earlier work. "
+    "Prefer node_ids; for a just-landed draft, use run_arguments from freezone_confirm_workflow_draft."
+)
+_LANDED_SKILL_LINE = "- To run a just-landed draft, call `freezone_run_workflow` with the receipt's `run_arguments` (its own node ids); `scope=canvas` runs every unfinished node on the whole canvas, including earlier work."
+
+
+@pytest.mark.parametrize("status", ["ready", "confirmed", "confirming", "submitted"])
+@pytest.mark.parametrize("mapping", ["complete", "missing", "unreadable", "old_revision"])
+@pytest.mark.parametrize("story", [False, True])
+def test_landed_draft_run_arguments(monkeypatch, status, mapping, story):
+    plugin = _load_plugin_module()
+    plan = {"nodes": [{"id": name, "node_type": "imageGenNode", "data": {"prompt": name}} for name in ("a", "b")], "edges": []}
+    if story:
+        plan["source_context"] = {"story_id": "s", "targets": [{"plan_node_id": "a", "story_segment_id": "seg", "video_node_id": "v"}]}
+    draft = {"status": status, "revision": 2, "run_after_create": False, "compiled": {"plan": plan}, "task_id": "task"}
+    graph = plugin.build_workflow_graph_commands({"plan": plan, "workflow_instance_id": "draft", "run_after_create": False})
+    creates = [c for c in graph["commands"] if c["type"] == "create_node"]
+    nodes = [{"id": f"real-{i}", "data": {**c["data"], "workflowDraftRevision": 1 if mapping == "old_revision" else 2}} for i, c in enumerate(creates)]
+    nodes.insert(0, {"id": "unrelated", "data": {"workflowInstanceId": "other", "workflowPlanNodeId": "a"}})
+    receipt = {"ok": True, "status": "canvas_commands_applied", "agent_instruction": "Existing instruction.", "command_results": [
+        {"type": "create_node", "nodeId": c["client_id"], "createdNodeId": f"real-{i}"} for i, c in reversed(list(enumerate(creates)))
+    ]}
+    if mapping == "missing":
+        nodes.pop()
+        receipt["command_results"].pop()
+    calls = []
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        if path == "/api/v1/projects/p/freezone/canvases/c":
+            return {"ok": False} if mapping == "unreadable" else {"ok": True, "data": {"nodes": nodes}}
+        return {"ok": True, "data": draft}
+    monkeypatch.setattr(plugin, "_request", request)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda _: ("p", "c", None))
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *a: None)
+    monkeypatch.setattr(plugin, "_workflow_runtime_preflight", lambda *a, **kw: {"blockers": []})
+    monkeypatch.setattr(plugin, "_emit_canvas_commands", lambda *a, **kw: receipt)
+    monkeypatch.setattr(plugin, "_finish_workflow_draft", lambda *a, **kw: None)
+    result = plugin._handle_confirm_workflow_draft({"project_id": "p", "canvas_id": "c", "draft_id": "draft", "revision": 2})
+    present = status == "ready" and mapping != "missing" or status == "confirmed" and mapping == "complete"
+    if present:
+        assert result["run_arguments"] == {"project_id": "p", "canvas_id": "c", "node_ids": ["real-0", "real-1"], "scope": "selection", "direction": "node" if story else "connected", "regenerate": False}
+        assert result["agent_instruction"].endswith(" " + _LANDED_RUN_INSTRUCTION)
+        if status == "ready":
+            assert result["agent_instruction"] == "Existing instruction. " + _LANDED_RUN_INSTRUCTION
+    else:
+        assert "run_arguments" not in result
+        assert _LANDED_RUN_INSTRUCTION not in result["agent_instruction"]
+    if status in {"confirming", "submitted"}:
+        assert len(calls) == 1
+    Draft202012Validator(plugin._output_schema("freezone_confirm_workflow_draft")).validate(result)
+
+
+def test_landed_draft_scope_and_skill_guidance():
+    plugin = _load_plugin_module()
+    schema = next(s for name, s, _ in plugin.TOOLS if name == "freezone_run_workflow")
+    assert schema["parameters"]["properties"]["scope"]["description"] == _LANDED_SCOPE_DESCRIPTION
+    skill = Path("src/novelvideo/agent_skills/dramaclaw-workflows/SKILL.md").read_text()
+    assert _LANDED_SKILL_LINE in skill.splitlines()

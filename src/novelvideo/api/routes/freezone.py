@@ -18411,6 +18411,7 @@ async def create_canvas_confirmation(
                     if any(target["node_id"] not in node_ids for target in record["targets"]):
                         record = None
             pre_applied = None
+            planned_workflow_node_ids = None
             commands = commands_in
             if split and record is None:
                 canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
@@ -18433,6 +18434,7 @@ async def create_canvas_confirmation(
                 check = await check_server_workflow(
                     ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands,
                 )
+                planned_workflow_node_ids = check.get("workflow_node_ids")
                 if check["status"] == "invalid":
                     raise HTTPException(409, {
                         "code": "workflow_plan_invalid", "message": check["message"],
@@ -18457,6 +18459,10 @@ async def create_canvas_confirmation(
                             or "Canvas structural commands were not applied.",
                         })
                     mapping = created_node_mapping(data["receipt"], structural)
+                    if planned_workflow_node_ids is not None:
+                        planned_workflow_node_ids = [
+                            mapping.get(node_id, node_id) for node_id in planned_workflow_node_ids
+                        ]
                     if sources is not None:
                         sources = {mapping.get(key, key): value for key, value in sources.items()}
                     commands = rewrite_run_commands(run_commands, mapping)
@@ -18485,7 +18491,7 @@ async def create_canvas_confirmation(
                         written=written, commands=commands, canvas=canvas or {}, now=now,
                     )
             if record is None and executor != "server":
-                await check_node_actions_available(
+                planned_workflow_node_ids = await check_node_actions_available(
                     ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands,
                 )
             if record is None:
@@ -18494,6 +18500,7 @@ async def create_canvas_confirmation(
                     username=str(user["username"]), agent_id=body.agent_id, project_id=project,
                     canvas_id=canvas_id, project_state_dir=state_dir, turn_id=body.turn_id,
                     commands=commands, now=now,
+                    planned_workflow_node_ids=planned_workflow_node_ids,
                     **({"generation_sources": sources} if sources is not None else {}),
                     **({"pre_applied": pre_applied} if pre_applied is not None else {}),
                 )

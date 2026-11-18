@@ -17,6 +17,7 @@ class ChatBackendEvent:
         "thread_started",
         "turn_started",
         "turn_completed",
+        "turn_retrying",
         "assistant_delta",
         "thought_delta",
         "plan_update",

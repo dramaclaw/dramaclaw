@@ -184,3 +184,68 @@ async def test_real_bundle_resolves_add_next_alias_in_later_commands(executor):
     assert created["data"]["displayName"] == "Watercolor result"
     assert created["id"] in result["receipt"]["created_node_ids"]
     assert saved["edges"][0]["target"] == created["id"]
+
+
+async def test_real_bundle_workflow_confirmation_targets(executor, monkeypatch):
+    from novelvideo.api import freezone_server_workflow_start as start
+    from novelvideo.freezone import canvas_confirmations
+
+    pool, _, _, root = executor
+    monkeypatch.setattr(start, "get_canvas_core_pool", lambda: pool)
+    monkeypatch.setattr(canvas_confirmations, "confirmations_dir", lambda *args: root / "cards")
+
+    async def catalog(_user):
+        return []
+
+    monkeypatch.setattr(routes, "_freezone_image_models_data", catalog)
+    monkeypatch.setattr(routes, "_freezone_video_models_data", catalog)
+    canvas = {"nodes": [
+        {"id": "old-prompt", "type": "textAnnotationNode", "data": {
+            "displayName": "提示词", "content": "橘猫在窗边看雨",
+        }},
+        {"id": "old-image", "type": "imageGenNode", "data": {
+            "displayName": "橘猫看雨", "imageUrl": "/static/old-image.png", "status": "completed",
+        }},
+        {"id": "draft-group", "type": "groupNode", "data": {"displayName": "文生图（动态）"}},
+        {"id": "draft-input", "type": "textAnnotationNode", "parentId": "draft-group", "data": {
+            "displayName": "用户需求 / 输入素材", "workflowCatalogRole": "user_input",
+            "content": "画一片雨后的森林",
+        }},
+        {"id": "draft-image", "type": "imageGenNode", "parentId": "draft-group", "data": {
+            "displayName": "内容段 1画面", "prompt": "雨后的森林",
+        }},
+    ], "edges": [
+        {"id": "old-edge", "source": "old-prompt", "target": "old-image"},
+        {"id": "draft-edge", "source": "draft-input", "target": "draft-image"},
+    ]}
+    for index, node in enumerate(canvas["nodes"]):
+        node["position"] = {"x": index * 200, "y": 0}
+    canvas_store.save_canvas(
+        root, "default", base_revision=canvas_store.read_canvas(root, "default")["revision"],
+        build_payload=lambda revision: {**canvas, "revision": revision},
+    )
+    commands = [{"type": "run_workflow", "direction": "connected", "scope": "canvas"}]
+    kwargs = dict(ctx=SimpleNamespace(project_id="project", requester_user_id="owner"),
+                  state_dir=root, canvas_id="default")
+    planned = await start.check_node_actions_available(**kwargs, commands=commands)
+    assert planned is not None
+    assert "draft-image" in planned, planned
+    assert not set(planned) & {"old-image", "draft-group", "draft-input", "old-prompt"}, planned
+    regenerated = await start.check_node_actions_available(
+        **kwargs, commands=[{**commands[0], "regenerate": True}],
+    )
+    assert regenerated is not None and "old-image" in regenerated, regenerated
+    canvas["nodes"][1]["data"]["workflowResultStale"] = True
+    canvas_store.save_canvas(
+        root, "default", base_revision=canvas_store.read_canvas(root, "default")["revision"],
+        build_payload=lambda revision: {**canvas, "revision": revision},
+    )
+    stale = await start.check_node_actions_available(**kwargs, commands=commands)
+    assert stale is not None and "old-image" in stale, stale
+    card = canvas_confirmations.request_confirmation(
+        username="owner", agent_id="main", project_id="project", canvas_id="default",
+        project_state_dir=root, turn_id="t1", commands=commands, now=1000,
+        planned_workflow_node_ids=planned,
+    )
+    assert card["targets"] == [{"node_id": "draft-image", "title": "内容段 1画面",
+                                "node_type": "imageGenNode", "action": "run_workflow"}]
