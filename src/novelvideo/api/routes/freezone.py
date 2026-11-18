@@ -426,6 +426,7 @@ from novelvideo.freezone.skill_registry import (
     list_skills,
 )
 from novelvideo.freezone.slots import (
+    IMAGE_SUFFIXES,
     SCENE_ASSET_KINDS,
     IdentityTarget,
     PushTarget,
@@ -15583,11 +15584,13 @@ async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
 
     def sign_image(rel: str) -> str | None:
         requested = files._resolve_project_file(resolved, rel)
+        if requested.suffix.lower() not in IMAGE_SUFFIXES:
+            return None
         return oss_client.maybe_presign_static(requested, requested.stat().st_mtime_ns)
 
-    async def add_image_url(item: dict, url_key: str) -> None:
+    async def add_image_url(item: dict) -> None:
         nonlocal resolved, scope_attempted
-        reference = item.get(url_key)
+        reference = item.get("source_url")
         if item.get("media_type") != "image" or not isinstance(reference, str):
             return
         try:
@@ -15615,9 +15618,9 @@ async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
         if response.get("type") != "node_detail" or not isinstance(detail, dict):
             continue
         for node in dicts(detail.get("nodes")):
-            await add_image_url(node, "source_url")
+            await add_image_url(node)
             for reference in dicts(node.get("reference_media")):
-                await add_image_url(reference, "url")
+                await add_image_url(reference)
 
 
 @router.post("/projects/{project}/freezone/canvases:create", tags=[TAG_FREEZONE_CANVAS])

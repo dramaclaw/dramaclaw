@@ -73,7 +73,9 @@ _CANVAS_URL_GUIDANCE = (
 _IMAGE_URL_GUIDANCE = (
     " When a node in the result has image_url, show that image in your reply as a Markdown image "
     "using the address exactly as returned, and also give canvas_url exactly as returned. The "
-    "address is time-limited. When there is no image_url, give only canvas_url. Do not download "
+    "address is time-limited. source_url and preview_url are internal references that need login: "
+    "never give them to the user, link them, or turn them into an address. When there is no "
+    "image_url, give only canvas_url and say the image can be viewed there. Do not download "
     "images, send images as attachments, or compose image addresses yourself."
 )
 _INCLUDE_CANVAS_URL: ContextVar[bool] = ContextVar("freezone_include_canvas_url", default=False)
