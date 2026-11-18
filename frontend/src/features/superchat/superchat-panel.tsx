@@ -142,6 +142,7 @@ import {
 } from "@/features/superchat/director-run-mode";
 import { ComposerWaitingStatus } from "@/features/superchat/composer-waiting-status";
 import { ChatTaskStatusBar } from "@/features/superchat/chat-task-status-bar";
+import { ChatHistoryNotice } from "@/features/superchat/chat-history-notice";
 import { calculateTimelineContextDelta } from "@/features/superchat/timeline-scroll";
 import { useEventBus } from "@/task-center/event-bus-context";
 import { useTaskCenterStore } from "@/task-center/store";
@@ -16376,6 +16377,7 @@ export function SuperChatPanel({
             {chat.error}
           </div>
         )}
+        {chat.historyIncomplete && <ChatHistoryNotice />}
 
         {chat.approvals.map((approval) => (
           <ApprovalCard

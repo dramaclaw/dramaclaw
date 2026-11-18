@@ -1,7 +1,17 @@
 {
   "chatSnapshot": {
     "saveFailed": "Não foi possível salvar o histórico do chat. Tente novamente mais tarde; a mensagem atual continua disponível localmente.",
-    "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico."
+    "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico.",
+    "ceHistory": {
+      "title": "Parte do histórico não pôde ser carregada por completo",
+      "description": "Esta conversa contém registros grandes ou inválidos, por isso parte do raciocínio e dos registros de ferramentas não foi carregada. O texto das mensagens continua disponível. Isso não significa que uma chamada ao modelo falhou.",
+      "help": "Ver instruções de resolução",
+      "support": "Contatar o suporte da comunidade",
+      "continue": "Se ainda consegue enviar mensagens normalmente, pode continuar nesta conversa. Não é necessário limpar o chat nem excluir o projeto.",
+      "backup": "Para recuperar o histórico completo, pare primeiro o aplicativo e os serviços relacionados, faça uma cópia completa do banco de dados do chat (chat.db, incluindo os arquivos WAL existentes) e siga o guia para verificar e compactar os registros. A compactação não corrige todos os registros grandes ou inválidos.",
+      "privacy": "Ao pedir ajuda, informe a versão do aplicativo, o sistema operacional, capturas de tela e logs sem dados sensíveis. O banco de dados pode conter conversas privadas e informações sensíveis. Não o envie diretamente para uma issue pública.",
+      "recoveryGuide": "Abrir o guia detalhado de recuperação do histórico"
+    }
   },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirmar criação do fluxo de trabalho",
