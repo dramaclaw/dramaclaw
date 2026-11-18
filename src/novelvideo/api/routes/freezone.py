@@ -172,6 +172,7 @@ from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
 from novelvideo.freezone.agent_canvas_metrics import count as count_canvas_metric
 from novelvideo.freezone.canvas_core_pool import CanvasCoreError
 from novelvideo.freezone.canvas_creation import create_user_canvas, describe_project_canvases
+from novelvideo.freezone.canvas_links import canvas_page_url
 from novelvideo.freezone.canvas_presence import canvas_browser_open
 from novelvideo.freezone import canvas_confirmations
 from novelvideo.freezone.canvas_command_bridge import (
@@ -15568,6 +15569,11 @@ def _raise_canvas_creation_core_http(exc: CanvasCoreError) -> None:
     }) from exc
 
 
+def _canvas_url_field(project: str, canvas_id: str) -> dict[str, str]:
+    url = canvas_page_url(project, canvas_id)
+    return {"canvas_url": url} if url is not None else {}
+
+
 @router.post("/projects/{project}/freezone/canvases:create", tags=[TAG_FREEZONE_CANVAS])
 async def create_canvas(
     project: str, body: CanvasCreateRequest,
@@ -15616,6 +15622,8 @@ async def create_canvas(
         data["rejection"] = {
             keys.get(key, key): value for key, value in result.rejection.items()
         }
+    if result.status in {"created", "exists"}:
+        data.update(_canvas_url_field(project, result.canvas_id))
     return {"ok": True, "data": data}
 
 
@@ -15650,7 +15658,10 @@ async def get_canvas_agent_view(
     }
     return {"ok": True, "data": {
         "canvases": [
-            {target: row[source] for source, target in keys.items()}
+            {
+                **{target: row[source] for source, target in keys.items()},
+                **_canvas_url_field(project, row["canvasId"]),
+            }
             for row in description["canvases"]
         ],
         "quota": description["quota"],
@@ -17778,6 +17789,7 @@ async def get_canvas_workflow_run(
     view: str = Query("full"),
     wait_seconds: int = Query(0, ge=0, le=20),
     after: str = Query("", max_length=64),
+    include_canvas_url: bool = Query(False),
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
@@ -17809,7 +17821,8 @@ async def get_canvas_workflow_run(
         remaining = deadline - asyncio.get_running_loop().time()
         if not wait_seconds or summary["terminal"] or changed or remaining <= 0:
             if view == "summary":
-                return {"ok": True, "data": {**summary, "changed": changed}}
+                link = _canvas_url_field(project, canvas_id) if include_canvas_url is True else {}
+                return {"ok": True, "data": {**summary, "changed": changed, **link}}
             return {"ok": True, "data": run}
         token = summary["observation_token"]
         await asyncio.sleep(min(2, remaining))
@@ -18239,7 +18252,7 @@ async def agent_canvas_commands(
         project=project, canvas_id=canvas_id, user=user, ctx=ctx,
         canvas_project_dir=canvas_project_dir, envelopes=body.envelopes, locale=body.locale,
     )
-    return {"ok": True, "data": data}
+    return {"ok": True, "data": {**data, **_canvas_url_field(project, canvas_id)}}
 
 
 async def execute_agent_canvas_envelopes(
@@ -18784,7 +18797,7 @@ async def decide_canvas_confirmation(
         _log_canvas_confirmation_decision(record, "executed", body.via, now)
         if body.via == "card":
             await append_canvas_confirmation_notice(user, record, "executed", detail)
-        return {"ok": True, "data": response}
+        return {"ok": True, "data": {**response, **_canvas_url_field(project, canvas_id)}}
 
     envelope = {
         "schema_version": "canvas_chat_commands.v1", "project_id": project,
@@ -18916,6 +18929,7 @@ async def decide_canvas_confirmation(
         _log_canvas_confirmation_decision(record, "server_run", body.via, now)
         return {"ok": True, "data": {
             "confirmation_id": confirmation_id, "status": "running", "run_id": run_id,
+            **_canvas_url_field(project, canvas_id),
             **({"result": data} if mixed else {}),
             "actions": [{key: action[key] for key in ("node_id", "action", "label")}
                         for action in plan["actions"]],
@@ -18934,6 +18948,7 @@ async def decide_canvas_confirmation(
     _log_canvas_confirmation_decision(record, "submitted", body.via, now)
     return {"ok": True, "data": {
         "confirmation_id": confirmation_id, "status": "submitted", "bridge_key": key,
+        **_canvas_url_field(project, canvas_id),
     }}
 
 
@@ -19032,7 +19047,8 @@ async def agent_canvas_context(
         raise HTTPException(503, {"code": exc.code}) from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
-    return {"ok": True, "data": data}
+    link = _canvas_url_field(project, canvas_id) if body.include_canvas_url else {}
+    return {"ok": True, "data": {**data, **link}}
 
 
 @router.put(

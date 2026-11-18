@@ -51,6 +51,31 @@ _STRUCTURED_RESULT_INPUT_HASH: ContextVar[Any] = ContextVar(
 )
 
 
+_CANVAS_URL_TOOLS = frozenset({
+    "freezone_create_canvas",
+    "freezone_list_canvases",
+    "freezone_emit_canvas_command",
+    "freezone_create_node",
+    "freezone_add_next_node",
+    "freezone_run_node_action",
+    "freezone_run_workflow",
+    "freezone_confirm_canvas_action",
+    "freezone_observe_workflow_run",
+    "freezone_get_node_detail",
+    "freezone_summarize_canvas",
+})
+_CANVAS_URL_GUIDANCE = (
+    " When the result has canvas_url, give that link to the user exactly as returned; "
+    "do not download images or send images as attachments."
+)
+_INCLUDE_CANVAS_URL: ContextVar[bool] = ContextVar("freezone_include_canvas_url", default=False)
+
+
+def _canvas_url_field(data: dict[str, Any]) -> dict[str, str]:
+    url = data.get("canvas_url")
+    return {"canvas_url": url} if _INCLUDE_CANVAS_URL.get() and isinstance(url, str) and url else {}
+
+
 def _tool_input_hash(value: Any) -> str:
     encoded = json.dumps(
         value,
@@ -6457,7 +6482,10 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
     data = response["data"]
     if data["status"] == "executed":
         payload = {
-            **_server_canvas_command_result(project, canvas, data["result"], [], slim_result=True),
+            **_server_canvas_command_result(
+                project, canvas, {**data["result"], "canvas_url": data.get("canvas_url")},
+                [], slim_result=True,
+            ),
             "confirmation_id": confirmation_id,
         }
         if run := data.get("run"):
@@ -6494,6 +6522,7 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
                 "created_node_ids": data["result"]["receipt"].get("created_node_ids", []),
             } if data.get("result") else {}),
             "run_id": data["run_id"], "actions": data["actions"],
+            **_canvas_url_field(data),
             **({"refused": data["refused"]} if data.get("refused") else {}),
             "agent_instruction": (
                 f"The confirmed workflow is running on the server as {data['run_id']}. "
@@ -6517,6 +6546,7 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
             "ok": True, "status": "submitted", "tool_call_status": "completed",
             "canvas_apply_status": "submitted", "applied": False, **scope,
             "bridge_key": data["bridge_key"],
+            **_canvas_url_field(data),
             "agent_instruction": (
                 "The confirmed command was handed to the open canvas. Do not call it again. "
                 "Read the canvas or wait for the canvas background result before reporting "
@@ -6723,9 +6753,8 @@ def _server_canvas_command_result(
     }
     if slim_result:
         summarized = _summarize_canvas_command_result(resolved, bridge_key="", commands=commands)
-        summarized["revision"] = data["revision"]
-        return summarized
-    return resolved
+        return {**summarized, "revision": data["revision"], **_canvas_url_field(data)}
+    return {**resolved, **_canvas_url_field(data)}
 
 
 def _emit_canvas_commands(
@@ -8118,6 +8147,7 @@ def _handle_observe_workflow_run(args: dict[str, Any], **_: Any) -> str:
                 "view": "summary",
                 "wait_seconds": wait_seconds,
                 "after": str(args.get("after") or ""),
+                **({"include_canvas_url": "true"} if _INCLUDE_CANVAS_URL.get() else {}),
             },
         )
     except TimeoutError:
@@ -8132,7 +8162,12 @@ def _handle_observe_workflow_run(args: dict[str, Any], **_: Any) -> str:
             }
         )
     payload, error = _workflow_draft_response(response)
-    return tool_result(payload if payload is not None else error)
+    if payload is None:
+        return tool_result(error)
+    return tool_result({
+        **{key: value for key, value in payload.items() if key != "canvas_url"},
+        **_canvas_url_field(payload),
+    })
 
 
 def _handle_cancel_workflow_run(args: dict[str, Any], **_: Any) -> str:
@@ -9653,17 +9688,27 @@ def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
     canvas_id = data["canvas_id"]
     path = f"/projects/{project}/freezone?canvas={canvas_id}"
     link = _canvas_link_markdown(data["display_name"], path) if _product_chat_session() else None
+    url_field = _canvas_url_field(data)
+    if link is not None:
+        link_instruction = f"Show the user this link to the new canvas exactly as given: {link}"
+    elif url_field:
+        link_instruction = f"Give the user this link exactly as given: {url_field['canvas_url']}"
+    else:
+        link_instruction = (
+            "No page link is available. Do not compose an address; tell the user the canvas name "
+            "and canvas_id instead."
+        )
     return tool_result({
         "ok": True, "status": data["status"], "project_id": project,
         "canvas_id": canvas_id, "display_name": data["display_name"], "revision": data["revision"],
         "canvas_path": path,
+        **url_field,
         **({"canvas_link_markdown": link} if link is not None else {}),
         "agent_instruction": (
             f"Pass canvas_id={canvas_id} explicitly on every later canvas call for this canvas. "
             f"Calls without canvas_id still go to the bound canvas{(' ' + bound) if bound else ''}. "
             "Paid generation on it still follows the normal confirmation rules. "
-            + (f"Show the user this link to the new canvas exactly as given: {link}"
-               if link is not None else f"Give the user the link {path}.")
+            + link_instruction
         ),
     })
 
@@ -9686,7 +9731,10 @@ def _handle_list_canvases(args: dict[str, Any], **_: Any) -> str:
     data = result["data"]
     fields = ("canvas_id", "display_name", "kind", "creator_username", "created_by_viewer",
               "created_from_this_chat", "modified_at")
-    canvases = [{key: row[key] for key in fields} for row in data["canvases"]]
+    canvases = [
+        {**{key: row[key] for key in fields}, **_canvas_url_field(row)}
+        for row in data["canvases"]
+    ]
     if _product_chat_session():
         for row in canvases:
             if row["created_from_this_chat"] is True:
@@ -10227,9 +10275,18 @@ def _request_canvas_context_from_frontend(
         response = _request(
             "POST",
             f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}/agent-context",
-            body={"requests": requests},
+            body={
+                "requests": requests,
+                **({"include_canvas_url": True} if _INCLUDE_CANVAS_URL.get() else {}),
+            },
         )
-        return tool_result(response["data"] if response.get("ok") else _canvas_executor_failure(response, context=True))
+        if not response.get("ok"):
+            return tool_result(_canvas_executor_failure(response, context=True))
+        data = response["data"]
+        return tool_result({
+            **{key: value for key, value in data.items() if key != "canvas_url"},
+            **_canvas_url_field(data),
+        })
     envelope = {
         "schema_version": "canvas_context_request.v1",
         **({"canvas_id": canvas} if canvas else {}),
@@ -10532,6 +10589,8 @@ _RESULT_STRING_FIELDS = frozenset(
 
 
 def _result_field_schema(field: str) -> dict[str, Any]:
+    if field == "canvas_url":
+        return {"type": "string"}
     if field == "example":
         return {"type": "object"}
     if field == "kinds":
@@ -10966,6 +11025,8 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "freezone_get_link_type_catalog": ("link_types", "count"),
     **(_STUDIO_RESULT_FIELDS if _OPENFILM_STUDIO_ENABLED else {}),
 }
+for _tool_name in _CANVAS_URL_TOOLS:
+    _RESULT_FIELDS[_tool_name] += ("canvas_url",)
 
 
 _SKILL_STUDIO_PROGRESS_REQUIRED = (
@@ -11425,7 +11486,11 @@ def _schema(
         parameters["oneOf"] = [{"required": [field]} for field in one_of_required]
     return {
         "name": name,
-        "description": description,
+        # Product chat renders its own relative links and keeps its descriptions unchanged.
+        "description": description + (
+            _CANVAS_URL_GUIDANCE
+            if name in _CANVAS_URL_TOOLS and _turnless_external_mcp_host() else ""
+        ),
         "parameters": parameters,
         "output_schema": _output_schema(name),
     }
@@ -14581,11 +14646,14 @@ def _bind_structured_result_input(handler, tool_name=""):
         started = time.perf_counter()
         result = None
         completed = False
+        include_url = tool_name in _CANVAS_URL_TOOLS and not _product_chat_session()
+        url_token = _INCLUDE_CANVAS_URL.set(include_url)
         try:
             result = handler(args, *handler_args, **handler_kwargs)
             completed = True
             return result
         finally:
+            _INCLUDE_CANVAS_URL.reset(url_token)
             _STRUCTURED_RESULT_INPUT_HASH.reset(token)
             if tool_name in {
                 "freezone_prepare_workflow",

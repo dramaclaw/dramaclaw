@@ -3740,6 +3740,7 @@ src/novelvideo/freezone/canvas_core_pool.py,Elastic-2.0,2026 SuperTale contribut
 src/novelvideo/freezone/canvas_creation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_events.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_inline_media.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/canvas_links.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_lock.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_media_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/canvas_presence.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4262,6 +4263,7 @@ tests/test_canvas_core_pool.py,Elastic-2.0,2026 SuperTale contributors,REUSE.tom
 tests/test_canvas_inline_media.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_media_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_outcome.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_canvas_page_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_presence.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_push_evidence_collection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_scene_refs_override.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4395,6 +4397,7 @@ tests/test_freezone_node_action_catalog_results.py,Elastic-2.0,2026 SuperTale co
 tests/test_freezone_paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_plugin.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_plugin_canvas_create_tools.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_freezone_plugin_canvas_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_plugin_server_executor.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_projection_merge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_recipe_timeout_message.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

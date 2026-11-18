@@ -445,7 +445,9 @@ def create_app() -> FastAPI:
             canvas_core_unavailable_reason,
             get_canvas_core_pool,
         )
+        from novelvideo.freezone.canvas_links import warn_if_public_origin_invalid
 
+        warn_if_public_origin_invalid()
         reason = canvas_core_unavailable_reason()
         if reason:
             logger.warning(

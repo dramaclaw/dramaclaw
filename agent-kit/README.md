@@ -136,6 +136,8 @@ python3 /path/to/dramaclaw-agent-kit/scripts/launch_mcp.py tools
 
 在 API 服务端同时设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server` 和 `DRAMACLAW_CANVAS_PATCH_PUSH=1`（默认执行器为 `browser`），服务端可处理结构修改、上下文读取，并在无需打开画布的情况下运行受支持的节点动作和工作流，包括图片、文本、音频、视频生成及部分图片工具，3D 世界生成通过 `run_node_action` 启动。部分动作或参数组合仍会被拒绝，需要用户打开对应画布运行。支持列表、拒绝原因及恢复限制见[本机 Agent MCP 指南的“服务端执行器”](../docs/zh/guides/local-agent-mcp.md#服务端执行器)。
 
+API 服务端可设置 `DRAMACLAW_PUBLIC_ORIGIN`（例如 `https://app.example.com`），让外部 MCP 画布工具返回可打开的页面链接。留空时使用 `SUPERTALE_OPENFILM_STUDIO_PUBLIC_ORIGIN`。
+
 服务端执行器还支持 `freezone_list_canvases` 和 `freezone_create_canvas`；默认 `browser`
 执行器拒绝这两个工具。列表返回 `bound_canvas_id`、各画布的 `created_from_this_chat` 和
 `quota`。创建接收非空、最多 100 字符的 `name`，返回 `canvas_id`、`display_name`、

@@ -604,7 +604,10 @@ def test_turnless_non_key_host_texts_are_unchanged(monkeypatch, credentials):
     description = _advertised_descriptions(plugin)["freezone_create_canvas"]
     no_ui = plugin._clarification_no_ui_result("p", "c", chat_created=False)
 
-    assert description == _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION + _TURNLESS_CREATE_CANVAS_GUIDANCE
+    assert description == (
+        _IN_PRODUCT_CREATE_CANVAS_DESCRIPTION + _TURNLESS_CREATE_CANVAS_GUIDANCE
+        + plugin._CANVAS_URL_GUIDANCE
+    )
     assert no_ui["agent_instruction"] == _TURNLESS_NO_UI_INSTRUCTION
 
 

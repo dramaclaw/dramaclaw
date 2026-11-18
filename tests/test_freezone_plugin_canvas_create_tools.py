@@ -1160,14 +1160,20 @@ def test_markdown_link_escapes_the_canvas_name(agent):
     assert result["canvas_path"] == f"/projects/proj/freezone?canvas={canvas_id}"
 
 
-def test_external_agent_keeps_the_plain_canvas_path(external):
+def test_external_agent_keeps_the_plain_canvas_path(external, monkeypatch):
+    monkeypatch.delenv("DRAMACLAW_PUBLIC_ORIGIN", raising=False)
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_PUBLIC_ORIGIN", raising=False)
     result = _created(external, "Autumn poem")
     canvas_id = result["canvas_id"]
     path = f"/projects/proj/freezone?canvas={canvas_id}"
     assert result["canvas_path"] == path
     assert "canvas_link_markdown" not in result
-    assert path in result["agent_instruction"]
-    assert "exactly as given" not in result["agent_instruction"]
+    assert "canvas_url" not in result
+    assert path not in result["agent_instruction"]
+    assert result["agent_instruction"].endswith(
+        "No page link is available. Do not compose an address; tell the user the canvas name "
+        "and canvas_id instead."
+    )
     listed = external.call(LIST, {})
     assert listed["ok"] is True, listed
     assert all("canvas_link_markdown" not in row for row in listed["canvases"])
