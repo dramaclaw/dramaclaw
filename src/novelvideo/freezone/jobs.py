@@ -535,10 +535,17 @@ async def probe_video_stream(
     *,
     cwd: Path | None = None,
     egress_context: TrustedEgressContext | None = None,
+    verify_constant_frame_rate: bool = False,
 ) -> dict[str, Any]:
     """Return the first video stream geometry, frame rate, and duration."""
     if not shutil.which("ffprobe"):
         raise RuntimeError("ffprobe not found on PATH; install via brew/apt")
+    entries = (
+        "stream=width,height,avg_frame_rate,pix_fmt,color_transfer,field_order,"
+        "sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation:format=duration"
+    )
+    if verify_constant_frame_rate:
+        entries += ":frame=best_effort_timestamp_time"
     cmd = [
         "ffprobe",
         "-v",
@@ -546,11 +553,17 @@ async def probe_video_stream(
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height,avg_frame_rate,pix_fmt,color_transfer,field_order,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation:format=duration",
+        entries,
+    ]
+    if verify_constant_frame_rate:
+        # Read past the supported 120s * 30fps cap so an incomplete prefix
+        # cannot be accepted as a complete constant-rate source.
+        cmd.extend(["-show_frames", "-read_intervals", "%+#3632"])
+    cmd.extend([
         "-of",
         "json",
         source_path,
-    ]
+    ])
     if egress_context is None:
         proc = await asyncio.to_thread(
             subprocess.run,
@@ -584,7 +597,7 @@ async def probe_video_stream(
         stream = data["streams"][0]
         numerator, denominator = str(stream.get("avg_frame_rate") or "0/1").split("/", 1)
         fps = float(numerator) / max(float(denominator), 1.0)
-        return {
+        result = {
             "width": int(stream["width"]),
             "height": int(stream["height"]),
             "fps": fps,
@@ -596,6 +609,22 @@ async def probe_video_stream(
             "rotated": (stream.get("tags") or {}).get("rotate") not in {None, "0"}
             or any(item.get("rotation") for item in stream.get("side_data_list") or []),
         }
+        if verify_constant_frame_rate:
+            timestamps = [
+                float(frame["best_effort_timestamp_time"])
+                for frame in data.get("frames", [])
+            ]
+            result["constant_frame_rate"] = (
+                math.isfinite(fps)
+                and fps > 0
+                and 0 < len(timestamps) <= 3600
+                and abs(timestamps[0]) <= 0.002
+                and all(
+                    math.isfinite(timestamp) and abs(timestamp - index / fps) <= 0.002
+                    for index, timestamp in enumerate(timestamps)
+                )
+            )
+        return result
     except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as exc:
         raise RuntimeError("unable to parse video stream metadata") from exc
 
@@ -731,7 +760,8 @@ async def _run_model_video_enhancement(
         raise FileNotFoundError(f"video source not found: {src}")
     factor = slowdown_factor(slowdown)
     probe = await probe_video_stream(
-        str(src), cwd=project_dir, egress_context=egress_context
+        str(src), cwd=project_dir, egress_context=egress_context,
+        **({"verify_constant_frame_rate": True} if enhancement_model == "claymore" else {}),
     )
     from novelvideo.freezone.video_slowdown import is_topaz_backend, topaz_requires_frame_rate
 

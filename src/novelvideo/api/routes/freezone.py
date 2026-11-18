@@ -11849,7 +11849,10 @@ async def _prepare_video_upscale(
     from novelvideo.freezone.jobs import probe_video_stream
 
     try:
-        source_meta = await probe_video_stream(str(source_path))
+        source_meta = await probe_video_stream(
+            str(source_path),
+            **({"verify_constant_frame_rate": True} if body.enhancement_model == "claymore" else {}),
+        )
     except RuntimeError as exc:
         raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
     target_long_edge = VIDEO_UPSCALE_TARGET_LONG_EDGES[body.resolution]
@@ -12043,7 +12046,10 @@ async def freezone_video_upscale_probe(
     from novelvideo.freezone.jobs import probe_video_stream
 
     try:
-        metadata = await probe_video_stream(str(source_path))
+        metadata = await probe_video_stream(
+            str(source_path),
+            **({"verify_constant_frame_rate": True} if enhancement_model == "claymore" else {}),
+        )
     except RuntimeError as exc:
         raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
     catalog = await _scoped_media_model_catalog(

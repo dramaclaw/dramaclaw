@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -54,6 +57,144 @@ def test_enhancement_plans_select_their_own_models(catalog, mode, suffix):
 @pytest.fixture
 def source_meta():
     return {"width": 720, "height": 1280, "fps": 24, "duration": 4.064}
+
+
+@pytest.fixture
+def timestamp_video(tmp_path, request):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg and ffprobe are required for real timestamp coverage")
+    source = tmp_path / "source.mp4"
+    video_filter = "settb=1/24000,setpts=N*1000"
+    if request.param == "vfr":
+        # Keep 24 frames over exactly one second while delaying alternate frames.
+        video_filter += r"+if(lt(N\,23)*mod(N\,2)\,250\,0)"
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+            "testsrc2=size=128x96:rate=24:duration=1", "-vf", video_filter,
+            "-c:v", "libx264", "-preset", "ultrafast", "-bf", "0",
+            "-enc_time_base", "1/24000", "-fps_mode", "vfr",
+            "-video_track_timescale", "24000", "-y", str(source),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    return source, request.param == "cfr"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timestamp_video", ["cfr", "vfr"], indirect=True)
+async def test_claymore_probe_checks_real_frame_pts(timestamp_video):
+    source, expected = timestamp_video
+    ordinary = await jobs.probe_video_stream(str(source))
+    checked = await jobs.probe_video_stream(
+        str(source), verify_constant_frame_rate=True,
+    )
+    assert ordinary["fps"] == checked["fps"] == 24
+    assert "constant_frame_rate" not in ordinary
+    assert checked["constant_frame_rate"] is expected
+
+
+@pytest.fixture
+def timestamp_catalog(timestamp_video, tmp_path, monkeypatch, catalog):
+    source, constant_frame_rate = timestamp_video
+    monkeypatch.setattr(routes, "resolve_static_url_to_path", lambda *_: source)
+
+    async def scoped_catalog(*_args, **_kwargs):
+        return catalog
+
+    async def resolve(_kind, identifier, _params, **_kwargs):
+        entry = next(item for item in catalog if item["catalogId"] == identifier)
+        return {"endpoint": "video/generations", "parameters": []}, {}, entry
+
+    async def project(*_args, **_kwargs):
+        return (
+            SimpleNamespace(requester_user_id="viewer"),
+            "viewer", "project", tmp_path, str(tmp_path),
+        )
+
+    monkeypatch.setattr(routes, "_scoped_media_model_catalog", scoped_catalog)
+    monkeypatch.setattr(routes, "_resolve_catalog_request", resolve)
+    monkeypatch.setattr(routes, "_resolve_freezone_project", project)
+    return source, constant_frame_rate
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timestamp_video", ["cfr", "vfr"], indirect=True)
+async def test_claymore_quote_rejects_real_vfr_before_model_resolution(
+    timestamp_catalog, tmp_path, monkeypatch,
+):
+    _source, constant_frame_rate = timestamp_catalog
+    if not constant_frame_rate:
+        async def unexpected(*_args, **_kwargs):
+            pytest.fail("VFR must fail before model selection and pricing")
+
+        monkeypatch.setattr(routes, "_resolve_video_processing_model", unexpected)
+    request = routes.FreezoneVideoUpscaleRequest(
+        enhancement_model="claymore", source_url="/source.mp4",
+    )
+    if constant_frame_rate:
+        _path, metadata, _models, _billing = await routes._prepare_video_upscale(
+            body=request, project_dir=tmp_path, requester_user_id="viewer",
+        )
+        assert metadata["constant_frame_rate"] is True
+    else:
+        with pytest.raises(HTTPException) as raised:
+            await routes._prepare_video_upscale(
+                body=request, project_dir=tmp_path, requester_user_id="viewer",
+            )
+        assert raised.value.status_code == 400
+        assert "恒定帧率" in raised.value.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timestamp_video", ["cfr", "vfr"], indirect=True)
+async def test_claymore_panel_probe_disables_real_vfr_options(timestamp_catalog):
+    _source, constant_frame_rate = timestamp_catalog
+    response = await routes.freezone_video_upscale_probe(
+        project="project", source_url="/source.mp4", enhancement_model="claymore", user={},
+    )
+    metadata = response["data"]
+    assert metadata["constant_frame_rate"] is constant_frame_rate
+    if constant_frame_rate:
+        assert metadata["upscale_resolutions"] == ["1080p", "2k", "4k"]
+        assert metadata["frame_rate_resolutions"] == ["1080p"]
+        assert "enhancement_error" not in metadata
+    else:
+        assert metadata["upscale_resolutions"] == metadata["frame_rate_resolutions"] == []
+        assert "恒定帧率" in metadata["enhancement_error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timestamp_video", ["cfr", "vfr"], indirect=True)
+async def test_claymore_execution_rechecks_real_source_pts_before_egress(
+    timestamp_video, tmp_path, monkeypatch,
+):
+    source, constant_frame_rate = timestamp_video
+    calls = []
+
+    async def process(**kwargs):
+        calls.append(kwargs)
+        Path(kwargs["output_path"]).write_bytes(b"enhanced")
+
+    monkeypatch.setattr(jobs, "_run_video_processing_model", process)
+    parameters = {
+        "project_dir": tmp_path,
+        "job_id": "timestamp-validation",
+        "source_path": str(source),
+        "resolution": "1080p",
+        "enhancement_model": "claymore",
+        "upscale_backend": "newapi_claymore-video-upscale",
+    }
+    if constant_frame_rate:
+        output, _metadata = await jobs.run_freezone_video_upscale(**parameters)
+        assert output.exists()
+        assert len(calls) == 1
+    else:
+        with pytest.raises(RuntimeError, match="恒定帧率"):
+            await jobs.run_freezone_video_upscale(**parameters)
+        assert calls == []
 
 
 @pytest.mark.parametrize(
