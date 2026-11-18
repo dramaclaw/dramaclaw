@@ -426,7 +426,6 @@ from novelvideo.freezone.skill_registry import (
     list_skills,
 )
 from novelvideo.freezone.slots import (
-    IMAGE_SUFFIXES,
     SCENE_ASSET_KINDS,
     IdentityTarget,
     PushTarget,
@@ -15575,6 +15574,10 @@ def _canvas_url_field(project: str, canvas_id: str) -> dict[str, str]:
     return {"canvas_url": url} if url is not None else {}
 
 
+# Formats a browser renders inline; TIFF is not one of them.
+_CANVAS_IMAGE_URL_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"})
+
+
 async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
     from novelvideo.api.routes import files
     from novelvideo.utils import oss_client
@@ -15584,7 +15587,7 @@ async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
 
     def sign_image(rel: str) -> str | None:
         requested = files._resolve_project_file(resolved, rel)
-        if requested.suffix.lower() not in IMAGE_SUFFIXES:
+        if requested.suffix.lower() not in _CANVAS_IMAGE_URL_SUFFIXES:
             return None
         return oss_client.maybe_presign_static(requested, requested.stat().st_mtime_ns)
 

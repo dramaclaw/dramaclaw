@@ -138,7 +138,7 @@ python3 /path/to/dramaclaw-agent-kit/scripts/launch_mcp.py tools
 
 API 服务端可设置 `DRAMACLAW_PUBLIC_ORIGIN`（例如 `https://app.example.com`），让外部 MCP 画布工具返回可打开的页面链接。留空时使用 `SUPERTALE_OPENFILM_STUDIO_PUBLIC_ORIGIN`。
 
-服务端配置了对象存储时，`freezone_get_node_detail` 会为图片节点及其图片参考项返回 `image_url`：有时效的对象存储签名地址，宿主界面无需登录即可加载。有效期由服务端的 `OSS_STATIC_PRESIGN_EXPIRES` 控制，默认 3600 秒。任何持有该地址的人都可在过期前查看图片。未配置对象存储或对象尚不可读时，结果省略该字段。
+服务端配置了对象存储时，`freezone_get_node_detail` 会为图片节点及其图片参考项返回 `image_url`：有时效的对象存储签名地址，宿主界面无需登录即可加载。仅后缀为 `.png`、`.jpg`、`.jpeg`、`.webp`、`.gif`、`.bmp`、`.avif` 的文件会返回 `image_url`（不区分大小写），其他文件（如 TIFF）仅返回 `canvas_url`。有效期由服务端的 `OSS_STATIC_PRESIGN_EXPIRES` 控制，默认 3600 秒。任何持有该地址的人都可在过期前查看图片。未配置对象存储或对象尚不可读时，结果省略该字段。
 
 服务端执行器还支持 `freezone_list_canvases` 和 `freezone_create_canvas`；默认 `browser`
 执行器拒绝这两个工具。列表返回 `bound_canvas_id`、各画布的 `created_from_this_chat` 和

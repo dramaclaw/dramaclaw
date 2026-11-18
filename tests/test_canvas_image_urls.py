@@ -63,9 +63,14 @@ def media(setup, monkeypatch):
 @pytest.fixture
 def request_detail():
     with client_for() as client:
-        def request(flag=None, *, extra=None):
+        def request(flag=None, *, extra=None, node_ids=("n",)):
             extra = extra or {}
-            body = {**extra, "requests": [{"type": "node_detail", "node_id": "n", **extra}]}
+            body = {
+                **extra,
+                "requests": [
+                    {"type": "node_detail", "node_id": node_id, **extra} for node_id in node_ids
+                ],
+            }
             if flag is not None:
                 body["include_image_urls"] = flag
             response = client.post("/projects/proj/freezone/canvases/default/agent-context", json=body)
@@ -89,8 +94,14 @@ def context(media, request_detail, monkeypatch):
 
 
 @requires_canvas_core_bundle
-def test_opt_in_signs_reference_from_real_node_detail(setup, media, request_detail, monkeypatch):
+@pytest.mark.parametrize("suffix", [".png", ".gif", ".avif", ".bmp"])
+def test_opt_in_signs_reference_from_real_node_detail(
+    setup, media, request_detail, monkeypatch, suffix,
+):
     root, _ = setup
+    filename = f"reference{suffix}"
+    source_url = f"/static/projects/proj/images/{filename}"
+    (media.project_dir / "images" / filename).touch()
     canvas_store.save_canvas(
         root,
         "default",
@@ -98,7 +109,7 @@ def test_opt_in_signs_reference_from_real_node_detail(setup, media, request_deta
         build_payload=lambda _: {
             "nodes": [
                 {"id": "upload", "type": "uploadNode", "position": {"x": 0, "y": 0},
-                 "data": {"imageUrl": REFERENCE}},
+                 "data": {"imageUrl": source_url}},
                 {"id": "n", "type": "imageGenNode", "position": {"x": 300, "y": 0}, "data": {}},
             ],
             "edges": [{"id": "edge", "source": "upload", "target": "n"}],
@@ -108,20 +119,23 @@ def test_opt_in_signs_reference_from_real_node_detail(setup, media, request_deta
     pool = CanvasCorePool(CANVAS_CORE_BUNDLE, size=1)
     monkeypatch.setattr(agent_canvas, "get_canvas_core_pool", lambda: pool)
     try:
-        baseline = request_detail(False).json()
-        result = request_detail(True).json()
+        baseline = request_detail(False, node_ids=("n", "upload")).json()
+        result = request_detail(True, node_ids=("n", "upload")).json()
     finally:
         pool.close()
 
-    [item] = result["data"]["responses"][0]["data"]["nodes"][0]["reference_media"]
+    generated, uploaded = result["data"]["responses"]
+    [upload] = uploaded["data"]["nodes"]
+    [item] = generated["data"]["nodes"][0]["reference_media"]
+    assert (upload["media_type"], item["media_type"]) == ("image", "image")
     assert "url" not in item
     assert item.keys() - {"image_url"} == {
         "mention", "node_id", "label", "media_type", "source_url", "preview_url", "link_type",
     }
-    assert item["source_url"] == REFERENCE
-    signed_url = item.pop("image_url", None)
+    assert item["source_url"] == source_url
+    signed_urls = (upload.pop("image_url", None), item.pop("image_url", None))
     assert result == baseline
-    assert signed_url == SIGNED_REFERENCE
+    assert signed_urls == (f"{SIGNED_ORIGIN}/{filename}?sig=fake",) * 2
 
 
 def test_opt_in_signs_stored_node_and_reference_without_changing_other_fields(context):
@@ -191,26 +205,35 @@ def test_only_existing_same_project_images_are_signed(context):
     context.signer.assert_called_once_with(source, source.stat().st_mtime_ns)
 
 
-def test_image_media_type_requires_an_image_file_suffix(context):
-    images = ("sample.png", "sample.jpg", "sample.jpeg", "sample.webp", "uppercase.PNG")
-    non_images = ("notes.jsonl", "data.bin", "no_suffix")
-    urls = {}
-    for filename in (*images, *non_images):
-        (context.project_dir / "images" / filename).touch()
-        urls[filename] = f"/static/projects/proj/images/{filename}"
+@pytest.mark.parametrize(
+    "suffix",
+    [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif",
+     ".PNG", ".JPG", ".JPEG", ".WEBP", ".GIF", ".BMP", ".AVIF"],
+)
+def test_image_suffix_is_signed(context, suffix):
+    filename = f"sample{suffix}"
+    (context.project_dir / "images" / filename).touch()
+    url = f"/static/projects/proj/images/{filename}"
+    context.nodes[:] = [node(url, reference_media=[reference(url)])]
 
-    context.nodes[:] = [
-        *[node(urls[name]) for name in images],
-        *[node(urls[name]) for name in non_images],
-        node(None, reference_media=[reference(urls[name]) for name in non_images]),
-    ]
     expected = context.request(False).json()
-    for item, filename in zip(expected["data"]["responses"][0]["data"]["nodes"], images):
-        item["image_url"] = f"{SIGNED_ORIGIN}/{filename}?sig=fake"
+    [item] = expected["data"]["responses"][0]["data"]["nodes"]
+    item["image_url"] = item["reference_media"][0]["image_url"] = (
+        f"{SIGNED_ORIGIN}/{filename}?sig=fake"
+    )
+    assert context.request(True).json() == expected
 
-    actual = context.request(True).json()
-    assert sorted(call.args[0].name for call in context.signer.call_args_list) == sorted(images)
-    assert actual == expected
+
+@pytest.mark.parametrize("suffix", [".tif", ".tiff", ".TIFF", ".jsonl", ".bin", ""],
+                         ids=["tif", "tiff", "TIFF", "jsonl", "bin", "no-suffix"])
+def test_unsupported_image_suffix_is_refused(context, suffix):
+    filename = f"sample{suffix}"
+    (context.project_dir / "images" / filename).touch()
+    url = f"/static/projects/proj/images/{filename}"
+    context.nodes[:] = [node(url, reference_media=[reference(url)])]
+
+    assert context.request(True).content == context.request(False).content
+    context.signer.assert_not_called()
 
 
 def test_body_and_request_items_cannot_select_image_files(context):
