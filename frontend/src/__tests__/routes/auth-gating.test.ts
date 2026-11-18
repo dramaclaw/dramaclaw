@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import { createElement, Fragment, type ComponentProps, type ComponentType, type PropsWithChildren } from "react";
 
-const runtimeState = vi.hoisted(() => ({ authRequired: true }));
+const runtimeState = vi.hoisted(() => ({ authRequired: true, isCe: false }));
 const navigateMock = vi.hoisted(() => vi.fn());
 const authState = vi.hoisted(() => ({
   username: null as string | null,
@@ -27,6 +27,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@/lib/runtime-config", () => ({
   authRequired: () => runtimeState.authRequired,
+  isCeRuntime: () => runtimeState.isCe,
 }));
 
 const useAuthStoreMock = Object.assign(
@@ -97,6 +98,7 @@ describe("runtime auth gating", () => {
   beforeEach(() => {
     vi.resetModules();
     runtimeState.authRequired = true;
+    runtimeState.isCe = false;
     authState.username = null;
     authState.getCurrentUser.mockReset();
     authState.validateSession.mockReset();
@@ -104,6 +106,21 @@ describe("runtime auth gating", () => {
     navigateMock.mockReset();
     clusterState.mode = "none";
     regionState.cookie = "region-a";
+  });
+
+  it("redirects direct Piko Town links home in CE and admits authenticated EE users", async () => {
+    const { Route } = await import("@/routes/piko-world");
+    authState.username = "local";
+    runtimeState.isCe = true;
+    await expect(Route.options.beforeLoad?.({} as never)).rejects.toMatchObject({
+      options: { to: "/", replace: true },
+    });
+    runtimeState.isCe = false;
+    await expect(Route.options.beforeLoad?.({} as never)).resolves.toBeUndefined();
+    authState.username = null;
+    await expect(Route.options.beforeLoad?.({} as never)).rejects.toMatchObject({
+      options: { to: "/login", replace: true },
+    });
   });
 
   it("login beforeLoad redirects CE/no-auth runtime to the app without probing auth", async () => {
