@@ -3560,6 +3560,7 @@ src/novelvideo/freezone/studio_proxy.py,Elastic-2.0,2026 SuperTale contributors,
 src/novelvideo/freezone/style_templates.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/style_templates.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/text_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/video_enhancement.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/video_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/video_slowdown.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/vision_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4040,6 +4041,7 @@ tests/test_chat_ws_dropped_frame_log.py,Elastic-2.0,2026 SuperTale contributors,
 tests/test_chat_ws_home_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_ws_project_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_check_dco.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_claymore_video_enhancement.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cli_cognee_commands.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cli_store_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_codex_app_server.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
