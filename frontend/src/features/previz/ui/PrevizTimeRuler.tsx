@@ -17,20 +17,20 @@ export function PrevizTimeRuler({
   return (
     <div
       data-testid="previz-ruler"
-      className="relative h-6 shrink-0 border-b border-[#232833]"
+      className="relative h-6 shrink-0 border-b border-white/[0.06]"
       style={{ width: seconds * pxPerSecond }}
     >
       {rulerTicks(seconds, pxPerSecond).map((tick) => (
         <div
           key={tick.seconds}
           className={`absolute bottom-0 w-px ${
-            tick.major ? 'h-2 bg-[#4a5262]' : 'h-1 bg-[#333b48]'
+            tick.major ? 'h-2 bg-white/25' : 'h-1 bg-white/[0.12]'
           }`}
           style={{ left: tick.seconds * pxPerSecond }}
         >
           {tick.label !== null && (
             // 标签挂在刻度线右边一点，压着线读不清；最后一根挪不动，让它出界。
-            <span className="absolute -top-[2px] left-1 whitespace-nowrap text-[10px] leading-none text-[#6d7585]">
+            <span className="absolute -top-[2px] left-1 whitespace-nowrap text-[10px] leading-none text-white/40">
               {tick.label}
             </span>
           )}

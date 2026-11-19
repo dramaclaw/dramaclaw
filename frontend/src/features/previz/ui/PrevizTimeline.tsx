@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Clapperboard,
   ChevronFirst,
   ChevronLast,
   ChevronLeft,
@@ -37,7 +38,20 @@ import { PrevizSelect } from './PrevizSelect';
 
 /** 传输条上每个图标按钮的样式。 */
 const BUTTON_CLASS =
-  'flex h-7 w-7 shrink-0 items-center justify-center rounded text-[#c7cedb] hover:bg-[#2a2f3a] disabled:opacity-40';
+  'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white/70 transition-colors duration-150 hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25 disabled:opacity-40';
+
+/** 播放键：传输条上唯一带强调色的一颗，眼睛扫过来先落在它上面。 */
+const PLAY_CLASS =
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-50 text-neutral-950 transition-colors duration-150 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-900';
+
+/** 传输条上的数值框与下拉：同一套输入框底，静止无描边，聚焦给强调色 ring。 */
+const FIELD_CLASS =
+  'h-7 rounded-lg border border-white/[0.06] bg-white/[0.04] px-2 text-[12px] text-white/85 outline-none transition-colors duration-150 hover:border-white/[0.12] focus-visible:border-white/25 focus-visible:ring-[3px] focus-visible:ring-white/10';
+
+/** 传输条里分隔几段的竖线。 */
+function TransportDivider() {
+  return <span aria-hidden="true" className="mx-1.5 h-4 w-px shrink-0 bg-white/[0.08]" />;
+}
 
 /** 缩放按钮一次走多少倍。1.5 大约是「按三下翻一番」，手感不至于太跳。 */
 const ZOOM_STEP = 1.5;
@@ -228,7 +242,7 @@ export function PrevizTimeline({
 
   return (
     <TooltipProvider delay={120}>
-      <div className="flex flex-col border-t border-[#232833] bg-[#15181f]">
+      <div className="flex flex-col border-t border-white/[0.06] bg-neutral-900">
         {/*
           面板顶边就是把手。做成 `role="separator"` 而不是一颗按钮：它分的是视口与轨道
           两块区域，且可聚焦、能用上下键调——只能拖的话，触控板上精确到几像素很难受。
@@ -242,7 +256,7 @@ export function PrevizTimeline({
           aria-valuemin={PREVIZ_TIMELINE_HEIGHT.min}
           aria-valuemax={PREVIZ_TIMELINE_HEIGHT.max}
           tabIndex={0}
-          className="h-1.5 w-full shrink-0 cursor-row-resize hover:bg-[#5b8cff]/50 focus-visible:bg-[#5b8cff]/50 focus-visible:outline-none"
+          className="group/resize flex h-2.5 w-full shrink-0 cursor-row-resize items-center justify-center focus-visible:outline-none"
           onPointerDown={resizeFrom}
           onKeyDown={(event) => {
             if (event.key === 'ArrowUp') resizeBy(RESIZE_STEP_PX);
@@ -251,17 +265,26 @@ export function PrevizTimeline({
             // 上下键在这条面板里本来会滚动轨道区，按一下既调高度又滚一截很难受。
             event.preventDefault();
           }}
-        />
+        >
+          <span
+            aria-hidden="true"
+            className="h-[3px] w-10 rounded-full bg-white/[0.12] transition-colors duration-150 group-hover/resize:bg-white/40 group-focus-visible/resize:bg-white/40"
+          />
+        </div>
 
-        <div className="flex items-center gap-1 px-3 py-1.5">
+        <div className="flex items-center gap-0.5 border-b border-white/[0.06] px-3 pb-2">
           <PrevizHoverTip label={playing ? t('previz.timeline.pause') : t('previz.timeline.play')}>
             <button
               type="button"
-              className={BUTTON_CLASS}
+              className={PLAY_CLASS}
               aria-label={playing ? t('previz.timeline.pause') : t('previz.timeline.play')}
               onClick={() => setTimelinePlaying(!playing)}
             >
-              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              {playing ? (
+                <Pause className="h-3.5 w-3.5 fill-current" />
+              ) : (
+                <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
+              )}
             </button>
           </PrevizHoverTip>
           <PrevizHoverTip label={t('previz.timeline.stop')}>
@@ -315,19 +338,23 @@ export function PrevizTimeline({
             </button>
           </PrevizHoverTip>
 
+          <TransportDivider />
+
           <span
             data-testid="previz-timecode"
-            className="ml-2 font-mono text-xs tabular-nums text-[#c7cedb]"
+            className="flex h-7 items-center rounded-lg bg-white/[0.04] px-2.5 font-mono text-[12px] tabular-nums text-white/85 ring-1 ring-inset ring-white/[0.06]"
           >
             {/* 帧号、已走的秒数、总长一起报：只报帧号的话「这个镜头几秒」每次都得心算。 */}
             <Timecode /> / {(durationFrames / PREVIZ_FPS).toFixed(2)}s
           </span>
 
-          <label className="ml-3 flex items-center gap-1 text-xs text-[#8b93a3]">
+          <TransportDivider />
+
+          <label className="flex items-center gap-1.5 text-[12px] text-white/50">
             {t('previz.timeline.rate')}
             <PrevizSelect
               aria-label={t('previz.timeline.rate')}
-              className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
+              className={FIELD_CLASS}
               value={String(rate)}
               options={PREVIZ_PLAYBACK_RATES.map((option) => ({
                 value: String(option),
@@ -337,33 +364,35 @@ export function PrevizTimeline({
             />
           </label>
 
-          <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
+          <label className="ml-2 flex items-center gap-1.5 text-[12px] text-white/50">
             {t('previz.timeline.duration')}
             <input
               type="number"
               aria-label={t('previz.timeline.duration')}
-              className="w-16 rounded bg-[#1d222b] px-1 py-0.5 text-right text-[#c7cedb]"
+              className={`${FIELD_CLASS} w-16 text-right font-mono tabular-nums`}
               defaultValue={durationFrames}
               key={durationFrames}
               onBlur={(event) => setDurationFrames(Number(event.target.value))}
             />
           </label>
 
-          <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
+          <TransportDivider />
+
+          <label className="flex items-center gap-1 text-[12px] text-white/50">
             <Plus className="h-3.5 w-3.5" />
             <span className="sr-only">{t('previz.timeline.addObject')}</span>
             {/* 已经有轨道的对象不列：一个对象一条轨道，再加一次只会加到原来那条上。 */}
             <PrevizSelect
               aria-label={t('previz.timeline.addObject')}
               placeholder={t('previz.timeline.addObject')}
-              className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
+              className={FIELD_CLASS}
               value={null}
               options={untracked.map((object) => ({ value: object.id, label: object.name }))}
               onChange={addObjectToTimeline}
             />
           </label>
 
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex items-center gap-0.5 rounded-lg p-0.5">
             <PrevizHoverTip label={t('previz.timeline.zoomOut')}>
               <button
                 type="button"
@@ -411,7 +440,7 @@ export function PrevizTimeline({
         <div
           ref={scrollRef}
           data-testid="previz-timeline-tracks"
-          className="relative overflow-auto"
+          className="ui-scrollbar relative overflow-auto bg-neutral-950"
           style={resized ? { height: trackHeightPx } : { maxHeight: trackHeightPx }}
         >
           <div className="relative min-w-max">
@@ -421,9 +450,9 @@ export function PrevizTimeline({
               横向滚动时片段和播放头从头列底下穿过去。这样播放头那根线就被标尺盖住了，
               把手于是画在标尺自己的轨槽里——参照实现里正是抓着那个把手拖的。
             */}
-            <div className="sticky top-0 z-40 flex items-stretch bg-[#15181f]">
+            <div className="sticky top-0 z-40 flex items-stretch bg-neutral-900">
               <div
-                className="sticky left-0 z-30 shrink-0 border-b border-[#232833] bg-[#15181f]"
+                className="sticky left-0 z-30 shrink-0 border-r border-b border-white/[0.06] bg-neutral-900"
                 style={{ width: PREVIZ_TRACK_HEADER_PX }}
               />
               <div
@@ -516,24 +545,30 @@ export function PrevizTimeline({
             </ul>
 
             {tracks.length === 0 && (
-              <div className="sticky left-0 flex flex-col items-center gap-2 px-4 py-8 text-center">
+              <div className="sticky left-0 flex flex-col items-center gap-1.5 px-4 py-8 text-center">
+                <span
+                  aria-hidden="true"
+                  className="mb-1.5 grid h-10 w-10 place-items-center rounded-xl border border-white/[0.06] bg-white/[0.03] text-white/35"
+                >
+                  <Clapperboard className="h-4.5 w-4.5" />
+                </span>
                 {objects.length === 0 ? (
                   <>
-                    <p className="text-xs text-[#c7cedb]">{t('previz.timeline.emptyNoObjects')}</p>
-                    <p className="text-[11px] text-[#6d7585]">
+                    <p className="text-[13px] font-medium text-white/85">{t('previz.timeline.emptyNoObjects')}</p>
+                    <p className="text-[12px] text-white/45">
                       {t('previz.timeline.emptyNoObjectsHint')}
                     </p>
-                    <div className="flex items-center gap-2">
+                    <div className="mt-2 flex items-center gap-2">
                       <button
                         type="button"
-                        className="rounded-full border border-[#2f3542] px-3 py-1 text-xs text-[#c7cedb] hover:border-[#5b8cff]"
+                        className="h-7 rounded-full border border-white/[0.08] bg-white/[0.03] px-3.5 text-[12px] text-white/85 transition-colors duration-150 hover:border-white/25 hover:bg-white/[0.08] hover:text-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
                         onClick={() => create('character')}
                       >
                         {t('previz.timeline.createCharacter')}
                       </button>
                       <button
                         type="button"
-                        className="rounded-full border border-[#2f3542] px-3 py-1 text-xs text-[#c7cedb] hover:border-[#5b8cff]"
+                        className="h-7 rounded-full border border-white/[0.08] bg-white/[0.03] px-3.5 text-[12px] text-white/85 transition-colors duration-150 hover:border-white/25 hover:bg-white/[0.08] hover:text-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
                         onClick={() => create('camera')}
                       >
                         {t('previz.timeline.createCamera')}
@@ -542,8 +577,8 @@ export function PrevizTimeline({
                   </>
                 ) : (
                   <>
-                    <p className="text-xs text-[#8b93a3]">{t('previz.timeline.empty')}</p>
-                    <p className="text-[11px] text-[#6d7585]">{t('previz.timeline.emptyHint')}</p>
+                    <p className="text-[13px] font-medium text-white/85">{t('previz.timeline.empty')}</p>
+                    <p className="text-[12px] text-white/45">{t('previz.timeline.emptyHint')}</p>
                   </>
                 )}
               </div>

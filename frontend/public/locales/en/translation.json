@@ -10202,9 +10202,9 @@
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Picture check",
-      "pictureCheckHint": "Project the blockout back onto the picture and check that positions, sizes and camera agree; one or two extra model rounds, so slower",
+      "pictureCheckHint": "Align positions and sizes to the picture; 1–2 extra rounds",
       "renderCheck": "Render check",
-      "renderCheckHint": "Render the blockout and let the model compare it with the picture and rewrite, twice; two extra model rounds, so slower",
+      "renderCheckHint": "Render and refine against the picture; 2 extra rounds",
       "model": "Model",
       "modelDefault": "{{name}} (default)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
@@ -10219,13 +10219,7 @@
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
-      "guide": {
-        "title": "Images that work well",
-        "space": "A scene whose layout is readable: a room, a street, a courtyard",
-        "floor": "The floor is visible, along with at least one wall or clear boundary",
-        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
-        "occlusion": "People or foreground objects do not cover the main pieces"
-      },
+      "guide": "Works best with a wide, eye-level shot that shows the floor and walls",
       "hint": {
         "title": "This image may affect the result; you can still continue",
         "small": "The image is small (short edge under 512 px), so details may be hard to read",
@@ -10262,6 +10256,7 @@
       "close": "Close model library",
       "categories": "Categories",
       "all": "All",
+      "recent": "Recent",
       "category": {
         "primitive": "Primitives",
         "furniture": "Furniture",

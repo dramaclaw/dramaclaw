@@ -2,9 +2,13 @@
 // Copyright (c) 2026 ClaymoreLab
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PREVIZ_LIBRARY_ENTRIES } from "@/features/previz/domain/modelLibrary";
+import {
+  PREVIZ_LIBRARY_DRAG_TYPE,
+  PREVIZ_LIBRARY_ENTRIES,
+} from "@/features/previz/domain/modelLibrary";
+import { rememberRecentLibraryId } from "@/features/previz/domain/recentLibrary";
 import { PrevizModelLibraryDialog } from "@/features/previz/ui/PrevizModelLibraryDialog";
 
 vi.mock("react-i18next", () => ({
@@ -47,6 +51,51 @@ function rail(name: RegExp): HTMLElement {
 }
 
 describe("PrevizModelLibraryDialog", () => {
+  afterEach(() => localStorage.clear());
+
+  it("hides the Recent rail until something has been placed", () => {
+    setup();
+
+    expect(screen.queryByRole("button", { name: /^previz\.library\.recent/ })).toBeNull();
+  });
+
+  it("lists recently placed entries, newest first, under Recent", async () => {
+    const user = userEvent.setup();
+    const [first, second] = PREVIZ_LIBRARY_ENTRIES;
+    rememberRecentLibraryId(first.id);
+    rememberRecentLibraryId(second.id);
+    setup();
+
+    const recentRail = rail(/^previz\.library\.recent/);
+    expect(within(recentRail).getByText("2")).toBeInTheDocument();
+    await user.click(recentRail);
+
+    const list = within(screen.getByRole("dialog")).getAllByRole("listitem");
+    expect(list).toHaveLength(2);
+    expect(list[0]).toHaveTextContent(second.nameKey);
+    expect(list[1]).toHaveTextContent(first.nameKey);
+  });
+
+  it("carries the entry id when a card is dragged, and steps aside until the drag ends", () => {
+    setup();
+    const setData = vi.fn();
+    const dataTransfer = { setData, setDragImage: vi.fn(), effectAllowed: "" };
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 0;
+    });
+
+    fireEvent.dragStart(card("cube"), { dataTransfer });
+
+    const cube = PREVIZ_LIBRARY_ENTRIES.find((entry) => entry.assetUrl === "cube");
+    expect(setData).toHaveBeenCalledWith(PREVIZ_LIBRARY_DRAG_TYPE, cube?.id);
+    expect(screen.getByRole("dialog")).toHaveClass("pointer-events-none");
+
+    fireEvent.dragEnd(card("cube"));
+    expect(screen.getByRole("dialog")).not.toHaveClass("pointer-events-none");
+    raf.mockRestore();
+  });
+
   it("renders nothing while closed", () => {
     setup(false);
 
@@ -60,7 +109,7 @@ describe("PrevizModelLibraryDialog", () => {
     expect(cards()).toHaveLength(25);
     const cube = card("cube");
     expect(within(cube).getByText('previz.library.triangles:{"count":12}')).toBeInTheDocument();
-    expect(cube.querySelector('svg[data-shape="cube"]')).not.toBeNull();
+    expect(cube.querySelector("img")).toHaveAttribute("src", "/previz/primitives/cube.webp");
   });
 
   it("counts entries in the category rail, with All selected first", () => {

@@ -104,13 +104,7 @@ describe("PrevizBlockoutDialog", () => {
     const dialog = screen.getByRole("dialog", { name: "previz.blockout.title" });
     expect(dialog).toHaveAttribute("tabindex", "-1");
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    const guide = screen.getByRole("list", { name: "previz.blockout.guide.title" });
-    expect(within(guide).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      "previz.blockout.guide.space",
-      "previz.blockout.guide.floor",
-      "previz.blockout.guide.framing",
-      "previz.blockout.guide.occlusion",
-    ]);
+    expect(within(dialog).getByText("previz.blockout.guide")).toBeInTheDocument();
   });
 
   it("offers the four formats the backend takes", () => {
@@ -350,6 +344,7 @@ describe("PrevizBlockoutDialog note", () => {
 
     const note = screen.getByLabelText("previz.blockout.description");
     expect(note).toHaveAttribute("maxlength", "2000");
+    expect(screen.queryByText("0 / 2000")).toBeNull();
     await user.type(note, "门宽 0.9");
 
     expect(screen.getByText("6 / 2000")).toBeInTheDocument();
