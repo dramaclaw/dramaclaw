@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from novelvideo.shared.failure_signals import upstream_status_of
 from novelvideo.config import get_tts_config
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports.authz import AdmissionContext
@@ -173,6 +174,7 @@ class TTSResult(BaseModel):
     subtitle_path: Optional[str] = None
     duration_seconds: float = 0.0
     error: Optional[str] = None
+    upstream_status: Optional[int] = None
 
 
 class VoiceInfo(BaseModel):
@@ -354,7 +356,7 @@ class EdgeTTSGenerator:
             else:
                 await reject_audio_operation(lease)
             raise
-        except Exception:
+        except Exception as exc:
             if transport_started:
                 await mark_audio_operation_unknown(lease)
             else:
@@ -362,6 +364,7 @@ class EdgeTTSGenerator:
             return TTSResult(
                 success=False,
                 error="Edge TTS generation failed",
+                upstream_status=upstream_status_of(exc),
             )
 
     async def _get_audio_duration(self, audio_path: str) -> float:

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.config import (
     HUIMENG_IMAGE_MODEL,
     NEWAPI_IMAGE_MODEL,
@@ -1120,7 +1121,10 @@ async def run(args: argparse.Namespace) -> int:
     if not image_bytes and not (
         provider == "newapi" and image_delivery_state.get("copied")
     ):
-        raise RuntimeError(error or "image generation returned no image")
+        raise with_upstream_status(
+            RuntimeError(str(error or "image generation returned no image")),
+            error,
+        )
     if not (provider == "newapi" and image_delivery_state.get("copied")):
         result_path.write_bytes(image_bytes)
 

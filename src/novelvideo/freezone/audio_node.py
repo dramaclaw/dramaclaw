@@ -18,6 +18,7 @@ from typing import Any
 
 import portalocker
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, OUTPUT_DIR
 from novelvideo.media_archive_copy import copy_archived_result
 from novelvideo.generators.indextts2_fal import IndexTTS2FalClient
@@ -748,7 +749,10 @@ async def generate_freezone_audio_speech(
         or narration_style_prompt(narration_style),
     )
     if not result.success:
-        raise RuntimeError(result.error or "IndexTTS2 generation failed")
+        raise with_upstream_status(
+            RuntimeError(result.error or "IndexTTS2 generation failed"),
+            result,
+        )
 
     duration_ms = int((result.duration_seconds or 0) * 1000) or _duration_ms(
         output_path
@@ -781,7 +785,10 @@ async def _write_edge_tts_speech(
         generate_subtitle=False,
     )
     if not result.success:
-        raise RuntimeError(result.error or "Edge TTS generation failed")
+        raise with_upstream_status(
+            RuntimeError(result.error or "Edge TTS generation failed"),
+            result,
+        )
 
 
 def _newapi_audio_endpoint(base_url: str | None = None) -> str:
@@ -1015,7 +1022,10 @@ async def _write_newapi_audio_speech(
             else:
                 await reject_audio_operation(lease)
         if isinstance(exc, Exception):
-            raise RuntimeError("NewAPI audio generation failed") from None
+            raise with_upstream_status(
+                RuntimeError("NewAPI audio generation failed"),
+                exc,
+            ) from None
         raise
 
 

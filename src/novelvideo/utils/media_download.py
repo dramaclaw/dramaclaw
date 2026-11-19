@@ -12,6 +12,7 @@ from pathlib import Path
 import aiohttp
 
 from novelvideo.ports.video_delivery import VideoDeliveryError, VideoDeliveryReceipt
+from novelvideo.shared.failure_signals import with_upstream_status
 
 _CHUNK_SIZE = 1024 * 1024
 
@@ -55,8 +56,11 @@ async def download_to_path(
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(url) as response:
                         if response.status < 200 or response.status >= 300:
-                            raise VideoDeliveryError(
-                                f"VIDEO_DOWNLOAD_HTTP_{response.status}", retryable=True
+                            raise with_upstream_status(
+                                VideoDeliveryError(
+                                    f"VIDEO_DOWNLOAD_HTTP_{response.status}", retryable=True
+                                ),
+                                response.status,
                             )
                         async for chunk in response.content.iter_chunked(_CHUNK_SIZE):
                             stream.write(chunk)

@@ -17,6 +17,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import BaseModel, Field
 
+from novelvideo.shared.failure_signals import upstream_status_of, with_upstream_status
 from novelvideo.config import (
     IMAGE_GENERATION_SELECTIONS,
     get_character_image_selection,
@@ -182,6 +183,7 @@ class ImageGenResult(BaseModel):
     image_base64: Optional[str] = None
     error: Optional[str] = None
     generation_time: float = 0.0
+    upstream_status: Optional[int] = None
 
 
 class VolcengineImageGenerator:
@@ -349,6 +351,7 @@ class VolcengineImageGenerator:
             return ImageGenResult(
                 success=False,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -414,7 +417,10 @@ class VolcengineImageGenerator:
                 )
 
                 if response.status_code != 200:
-                    raise Exception(f"API error: {response.status_code} - {response.text}")
+                    raise with_upstream_status(
+                        Exception(f"API error: {response.status_code} - {response.text}"),
+                        response.status_code,
+                    )
 
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
@@ -577,7 +583,10 @@ class VolcengineImageGenerator:
                 if response.status_code != 200:
                     print(f"[Seedream] API 错误: {response.status_code}", flush=True)
                     print(f"[Seedream] 错误响应: {response.text[:500]}", flush=True)
-                    raise Exception(f"API error: {response.status_code} - {response.text}")
+                    raise with_upstream_status(
+                        Exception(f"API error: {response.status_code} - {response.text}"),
+                        response.status_code,
+                    )
 
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
@@ -671,6 +680,7 @@ class VolcengineImageGenerator:
             return ImageGenResult(
                 success=False,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -773,7 +783,10 @@ class VolcengineImageGenerator:
                 )
 
                 if response.status_code != 200:
-                    raise Exception(f"API error: {response.status_code} - {response.text}")
+                    raise with_upstream_status(
+                        Exception(f"API error: {response.status_code} - {response.text}"),
+                        response.status_code,
+                    )
 
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
@@ -825,6 +838,7 @@ class VolcengineImageGenerator:
             return ImageGenResult(
                 success=False,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -896,7 +910,10 @@ class VolcengineImageGenerator:
                 if response.status_code != 200:
                     error_text = response.text[:500]
                     print(f"[SeedEdit] API 错误: {response.status_code} - {error_text}", flush=True)
-                    raise Exception(f"API error: {response.status_code} - {error_text}")
+                    raise with_upstream_status(
+                        Exception(f"API error: {response.status_code} - {error_text}"),
+                        response.status_code,
+                    )
 
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
@@ -921,7 +938,10 @@ class VolcengineImageGenerator:
                     print(f"[SeedEdit] 从 URL 下载结果图...", flush=True)
                     dl_response = await client.get(image_url, timeout=60.0)
                     if dl_response.status_code != 200:
-                        raise Exception(f"下载结果图失败: {dl_response.status_code}")
+                        raise with_upstream_status(
+                            Exception(f"下载结果图失败: {dl_response.status_code}"),
+                            dl_response.status_code,
+                        )
                     image_bytes = dl_response.content
                     image_base64 = base64.b64encode(image_bytes).decode()
                 elif not image_base64:
@@ -964,6 +984,7 @@ class VolcengineImageGenerator:
             return ImageGenResult(
                 success=False,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -1237,7 +1258,7 @@ async def generate_character_reference_unified(
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or "NanoBanana 生成失败")
+                    raise with_upstream_status(RuntimeError(result.error or "NanoBanana 生成失败"), result)
                 return []  # 失败就是失败，不回退
         except ImportError as e:
             print(f"[Character] 无法导入 NanoBanana 生成器: {e}")
@@ -1276,7 +1297,7 @@ async def generate_character_reference_unified(
             if is_insufficient_credits_error(message=result.error or ""):
                 raise RuntimeError("INSUFFICIENT_CREDITS")
             if raise_on_error:
-                raise RuntimeError(result.error or f"{model} 生成失败")
+                raise with_upstream_status(RuntimeError(result.error or f"{model} 生成失败"), result)
             return []
         except ImportError as e:
             print(f"[Character] 无法导入统一角色生成器: {e}")
@@ -1404,7 +1425,7 @@ async def generate_identity_image_unified(
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or "身份图生成失败")
+                    raise with_upstream_status(RuntimeError(result.error or "身份图生成失败"), result)
             return result.success
 
         except ImportError as e:
@@ -1448,7 +1469,10 @@ async def generate_identity_image_unified(
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or f"{model} 身份图生成失败")
+                    raise with_upstream_status(
+                        RuntimeError(result.error or f"{model} 身份图生成失败"),
+                        result,
+                    )
             return result.success
         except ImportError as e:
             print(f"[Identity] 无法导入统一角色生成器: {e}")

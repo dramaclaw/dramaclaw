@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.generators.tts_generator import EdgeTTSGenerator
 from novelvideo.project_config import (
     load_effective_narration_style_for_voice,
@@ -75,7 +76,7 @@ async def _system_voice_content(
             generate_subtitle=False,
         )
         if not result.success or not output_path.exists():
-            raise RuntimeError(result.error or f"系统声线生成失败：{voice}")
+            raise with_upstream_status(RuntimeError(result.error or f"系统声线生成失败：{voice}"), result)
     content = output_path.read_bytes()
     if not content:
         raise RuntimeError(f"系统声线生成结果为空：{voice}")

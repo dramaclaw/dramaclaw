@@ -8,6 +8,7 @@ import hashlib
 from pathlib import Path
 from typing import Literal
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.config import (
     HUIMENGI_API_KEY,
     HUIMENG_IMAGE_MODEL,
@@ -739,7 +740,10 @@ async def generate_scene_reference_image(
     if error or not (
         image_bytes or (provider == "newapi" and image_delivery_state.get("copied"))
     ):
-        raise RuntimeError(error or "Image API returned no image bytes")
+        raise with_upstream_status(
+            RuntimeError(str(error or "Image API returned no image bytes")),
+            error,
+        )
 
     if not (provider == "newapi" and image_delivery_state.get("copied")):
         _archive_existing(output_path)

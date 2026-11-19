@@ -4432,6 +4432,7 @@ tests/test_freezone_workflow_drafts.py,Elastic-2.0,2026 SuperTale contributors,R
 tests/test_freezone_workflow_drive_task.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_workflow_runs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_frontend_i18n_scanner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_generation_upstream_status.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_global_prop_marker_colors.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_graph_build_progress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_graph_preview.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

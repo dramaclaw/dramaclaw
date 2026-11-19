@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 CONFIGURATION = "configuration"
 FAILURE_KINDS = frozenset({CONFIGURATION})
@@ -18,26 +18,81 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return links
 
 
+def _valid_status(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and 400 <= value <= 599:
+        return value
+    return None
+
+
+def upstream_status_of(source: object) -> int | None:
+    if isinstance(source, int):
+        return _valid_status(source)
+    if not isinstance(source, BaseException):
+        return _valid_status(getattr(source, "upstream_status", None))
+
+    try:
+        from httpx import HTTPStatusError
+    except ImportError:
+        HTTPStatusError = None
+    try:
+        from pydantic_ai.exceptions import ModelHTTPError
+    except ImportError:
+        ModelHTTPError = None
+    try:
+        from openai import APIStatusError
+    except ImportError:
+        APIStatusError = None
+
+    for link in _chain(source):
+        status = _valid_status(vars(link).get("upstream_status"))
+        if status is not None:
+            return status
+        if HTTPStatusError is not None and isinstance(link, HTTPStatusError):
+            status = _valid_status(getattr(getattr(link, "response", None), "status_code", None))
+        elif (ModelHTTPError is not None and isinstance(link, ModelHTTPError)) or (
+            APIStatusError is not None and isinstance(link, APIStatusError)
+        ):
+            status = _valid_status(link.status_code)
+        if status is not None:
+            return status
+    return None
+
+
+_ExceptionT = TypeVar("_ExceptionT", bound=BaseException)
+
+
+def with_upstream_status(exc: _ExceptionT, source: object) -> _ExceptionT:
+    status = upstream_status_of(source)
+    if status is not None:
+        setattr(exc, "upstream_status", status)
+    return exc
+
+
+class UpstreamErrorText(str):
+    upstream_status: int
+
+
+def upstream_error_text(text: str, source: object) -> str:
+    status = upstream_status_of(source)
+    if status is None:
+        return str(text)
+    error = UpstreamErrorText(text)
+    error.upstream_status = status
+    return error
+
+
 def exception_failure_signal(exc: BaseException) -> dict[str, Any]:
     """Describe a failure by exception type and HTTP status; the message text is never parsed.
 
     An exception class opts in to a kind by declaring ``failure_kind`` as a class attribute.
     """
     signal: dict[str, Any] = {"failure_exception": type(exc).__name__}
-    try:
-        from httpx import HTTPStatusError
-    except ImportError:
-        HTTPStatusError = None
     for link in _chain(exc):
         kind = getattr(type(link), "failure_kind", None)
-        if "failure_kind" not in signal and isinstance(kind, str) and kind in FAILURE_KINDS:
+        if isinstance(kind, str) and kind in FAILURE_KINDS:
             signal["failure_kind"] = kind
-        if (
-            "upstream_status" not in signal
-            and HTTPStatusError is not None
-            and isinstance(link, HTTPStatusError)
-        ):
-            status = getattr(getattr(link, "response", None), "status_code", None)
-            if type(status) is int:
-                signal["upstream_status"] = status
+            break
+    status = upstream_status_of(exc)
+    if status is not None:
+        signal["upstream_status"] = status
     return signal

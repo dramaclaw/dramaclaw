@@ -21,6 +21,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from novelvideo.shared.failure_signals import upstream_status_of, with_upstream_status
 from novelvideo.shared.provider_errors import (
     classify_provider_video_task_error,
     provider_video_error_code_from_text,
@@ -241,6 +242,7 @@ class VideoGenResult:
     provider_task_id: Optional[str] = None
     error: Optional[str] = None
     duration_seconds: float = 0.0
+    upstream_status: Optional[int] = None
 
 
 class VideoGeneratorBase(ABC):
@@ -673,6 +675,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
                         error=f"Submit failed: HTTP {resp.status_code} - {error_text[:200]}",
+                        upstream_status=upstream_status_of(resp.status_code),
                     )
 
                 data = resp.json()
@@ -692,6 +695,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=f"Submit exception: {e}",
+                upstream_status=upstream_status_of(e),
             )
 
         # 2. 轮询结果
@@ -1059,6 +1063,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
                         error=f"Submit failed: HTTP {resp.status_code} - {error_text[:200]}",
+                        upstream_status=upstream_status_of(resp.status_code),
                     )
                 data = resp.json()
                 task_id = data.get("id")
@@ -1074,6 +1079,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=f"Submit exception: {e}",
+                upstream_status=upstream_status_of(e),
             )
 
         # 轮询结果
@@ -1299,12 +1305,14 @@ class GrokVideoGenerator(VideoGeneratorBase):
                         return VideoGenResult(
                             status=VideoGenStatus.FAILED,
                             error=f"Submit failed: HTTP {resp.status} - {error_text[:200]}",
+                            upstream_status=upstream_status_of(resp.status),
                         )
                     data = await resp.json()
         except Exception as e:
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=f"Submit exception: {e}",
+                upstream_status=upstream_status_of(e),
             )
 
         request_id = data.get("request_id")
@@ -1894,6 +1902,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=str(exc),
+                upstream_status=upstream_status_of(exc),
                 task_id=task_id,
             )
 
@@ -1911,6 +1920,7 @@ class NewApiVideoError(RuntimeError):
         super().__init__(message)
         self.request_id = request_id
         self.status_code = status_code
+        with_upstream_status(self, status_code)
 
 
 class NewApiVideoGenerator(VideoGeneratorBase):
@@ -3721,6 +3731,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         return VideoGenResult(
                             status=VideoGenStatus.FAILED,
                             error=last_delivery_error,
+                            upstream_status=upstream_status_of(exc),
                             task_id=task_id,
                         )
                     provider_task_id = self._extract_provider_task_id(
@@ -3989,6 +4000,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=safe_exception_error,
+                upstream_status=upstream_status_of(exc.status_code),
                 task_id=task_id,
             )
         except Exception as exc:
@@ -4031,6 +4043,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=safe_exception_error,
+                upstream_status=upstream_status_of(exc),
                 task_id=task_id,
             )
 
@@ -4212,7 +4225,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
                 f"{self.http_url}/upload/image", data=data
             ) as response:
                 if response.status != 200:
-                    raise Exception(f"上传图片失败: {await response.text()}")
+                    raise with_upstream_status(
+                        Exception(f"上传图片失败: {await response.text()}"),
+                        response.status,
+                    )
                 return await response.json()
 
     async def _queue_prompt(self, workflow: dict, client_id: str) -> dict:
@@ -4221,7 +4237,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{self.http_url}/prompt", json=p) as response:
                 if response.status != 200:
-                    raise Exception(f"提交工作流失败: {await response.text()}")
+                    raise with_upstream_status(
+                        Exception(f"提交工作流失败: {await response.text()}"),
+                        response.status,
+                    )
                 return await response.json()
 
     async def _get_history(self, prompt_id: str) -> dict:
@@ -4229,7 +4248,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{self.http_url}/history/{prompt_id}") as response:
                 if response.status != 200:
-                    raise Exception(f"获取历史失败: {await response.text()}")
+                    raise with_upstream_status(
+                        Exception(f"获取历史失败: {await response.text()}"),
+                        response.status,
+                    )
                 return await response.json()
 
     async def _download_video(self, filename: str, subfolder: str = "") -> bytes:
@@ -4239,7 +4261,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status != 200:
-                    raise Exception(f"下载视频失败: {await response.text()}")
+                    raise with_upstream_status(
+                        Exception(f"下载视频失败: {await response.text()}"),
+                        response.status,
+                    )
                 return await response.read()
 
     async def generate(
@@ -4555,6 +4580,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
             )
 
 

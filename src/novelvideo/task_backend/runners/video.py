@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
     TaskTimedOut,
@@ -234,7 +235,7 @@ async def _run_single_video_async(
 
     result = await video_gen.generate(**generate_kwargs)
     if result.status.value != "done":
-        raise RuntimeError(result.error or "视频生成失败")
+        raise with_upstream_status(RuntimeError(result.error or "视频生成失败"), result)
 
     video_pool_id = None
     try:

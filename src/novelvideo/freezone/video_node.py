@@ -23,6 +23,7 @@ from typing import Any
 
 import portalocker
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.freezone.paths import freezone_root
 from novelvideo.video_duration import (
     normalize_video_duration_for_backend as normalize_video_duration_for_backend,
@@ -836,7 +837,10 @@ async def run_trusted_freezone_video_gen(
     result = await generator.generate(**generate_kwargs)
     if not result or result.status is not VideoGenStatus.DONE:
         error = result.error if result else "video generation failed"
-        raise RuntimeError(f"freezone video generation failed: {error}")
+        raise with_upstream_status(
+            RuntimeError(f"freezone video generation failed: {error}"),
+            result,
+        )
     if not output_path.exists():
         raise RuntimeError("video generation returned success without output")
     return output_path

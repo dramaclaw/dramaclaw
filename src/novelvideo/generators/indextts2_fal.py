@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from novelvideo.shared.failure_signals import upstream_status_of
 from novelvideo.media_archive_copy import copy_archived_result
 
 from novelvideo.ports import get_usage_meter, update_current_model_call_log
@@ -364,7 +365,9 @@ class IndexTTS2FalClient:
             if is_fatal_billing_error(exc):
                 raise
             return TTSResult(
-                success=False, error=f"{exc.__class__.__name__}: Fal audio failed"
+                success=False,
+                error=f"{exc.__class__.__name__}: Fal audio failed",
+                upstream_status=upstream_status_of(exc),
             )
 
     async def _generate_via_newapi(
@@ -462,7 +465,10 @@ class IndexTTS2FalClient:
                 return TTSResult(
                     success=False,
                     error=f"{exc.__class__.__name__}: {exc}",
+                    upstream_status=upstream_status_of(exc),
                 )
             return TTSResult(
-                success=False, error=f"{exc.__class__.__name__}: NewAPI audio failed"
+                success=False,
+                error=f"{exc.__class__.__name__}: NewAPI audio failed",
+                upstream_status=upstream_status_of(exc),
             )

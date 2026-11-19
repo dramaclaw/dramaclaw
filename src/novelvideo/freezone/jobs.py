@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import numpy as np
 from PIL import Image
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
 from novelvideo.freezone.video_slowdown import slowdown_factor
 from novelvideo.egress_context import (
@@ -267,7 +268,7 @@ async def run_freezone_upscale(
     )
     if not result or not result.success:
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"upscale failed: {err}")
+        raise with_upstream_status(RuntimeError(f"upscale failed: {err}"), result)
     if not out.exists():
         if result.image_base64:
             import base64
@@ -298,7 +299,10 @@ async def _run_volcengine_text_to_image(
     )
     if not result or not result.success:
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"Volcengine text→image generation failed: {err}")
+        raise with_upstream_status(
+            RuntimeError(f"Volcengine text→image generation failed: {err}"),
+            result,
+        )
     if not out.exists():
         if result.image_base64:
             import base64
@@ -696,7 +700,10 @@ async def _run_video_processing_model(
         project_output_dir=str(project_dir),
     )
     if not result or result.status.value != "done":
-        raise RuntimeError(result.error if result else f"{mode} failed")
+        raise with_upstream_status(
+            RuntimeError(result.error if result else f"{mode} failed"),
+            result,
+        )
     if not output_path.exists():
         raise RuntimeError(f"{mode} completed without an output file")
 
@@ -1863,7 +1870,7 @@ async def run_freezone_video_gen(
         )
     if not result or result.status.value != "done":
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"freezone video generation failed: {err}")
+        raise with_upstream_status(RuntimeError(f"freezone video generation failed: {err}"), result)
     if not out.exists():
         raise RuntimeError(
             "video generation returned success but no output file was written"

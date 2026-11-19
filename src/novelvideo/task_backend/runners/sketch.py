@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
 from novelvideo.task_backend.projection import read_projection
@@ -560,7 +561,7 @@ async def _run_sketch_generation_async(
             scene_refs_override=scene_refs_override,
         )
         if not result.success:
-            raise RuntimeError(f"草图生成失败 (Pass 1): {result.error}")
+            raise with_upstream_status(RuntimeError(f"草图生成失败 (Pass 1): {result.error}"), result)
         log(f"[Two-Pass] Pass 1 完成，耗时 {_format_generation_time(result.generation_time)}")
         target_size = REGEN_MODE_CONFIGS.get(effective_mk, {}).get("image_size", "1K")
         result2 = await generator.reformat_sketch(
@@ -602,7 +603,7 @@ async def _run_sketch_generation_async(
             scene_refs_override=scene_refs_override,
         )
         if not result.success:
-            raise RuntimeError(f"草图生成失败: {result.error}")
+            raise with_upstream_status(RuntimeError(f"草图生成失败: {result.error}"), result)
 
     log(
         f"[NanoBananaPro] 网格图生成完成，耗时 "
