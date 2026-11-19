@@ -1633,7 +1633,7 @@ class FreezoneVideoUpscaleRequest(BaseModel):
 
     canvas_id: str = Field(default="", max_length=64, description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", max_length=128, description="可选：来源节点 id，用于记录节点生成历史")
-    enhancement_model: Literal["standard", "topaz"] = Field(
+    enhancement_model: Literal["standard", "topaz", "claymore"] = Field(
         default="standard",
         description="增强方案；旧请求保持标准方案",
     )
