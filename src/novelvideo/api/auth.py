@@ -43,7 +43,7 @@ AGENT_WRITE_SCOPES = {
 }
 PROJECT_PATH_RE = re.compile(r"/projects/([^/]+)")
 LOCAL_TRUST_HOSTS = {"127.0.0.1", "::1", "localhost"}
-UNSUPPORTED_QUERY_CREDENTIALS = {"token", "access_token", "api_key"}
+UNSUPPORTED_QUERY_CREDENTIALS = {"token", "access_token", "api_key", "upload_ticket"}
 _EFFECTIVE_ACCESS_DENIED = "effective access denied"
 
 

@@ -68,6 +68,59 @@ async def test_real_bundle_rejects_inline_media_without_saving(executor):
     assert canvas_store.read_canvas(root, "default")["revision"] == before["revision"]
 
 
+UPLOADS = "/static/projects/project/freezone/uploads/"
+# What the web canvas saves after an upload; sizes and duration are filled in by a browser later.
+WEB_UPLOAD_SHAPES = {
+    "uploadNode": (
+        {"imageUrl": UPLOADS + "a.png", "previewImageUrl": UPLOADS + "a.png",
+         "sourceFileName": "a.png", "displayName": "a.png"},
+        {"aspectRatio": "1:1"},
+    ),
+    "videoNode": (
+        {"videoUrl": UPLOADS + "v.mp4", "referenceOnly": True,
+         "sourceFileName": "v.mp4", "displayName": "v.mp4"},
+        {"previewImageUrl": None, "widthPx": None, "heightPx": None, "durationMs": None},
+    ),
+    "audioNode": (
+        {"audioUrl": UPLOADS + "s.mp3", "sourceFileName": "s.mp3", "displayName": "s.mp3"},
+        {"durationMs": None, "voicePolicyConfirmed": True},
+    ),
+}
+
+
+@pytest.mark.parametrize("node_type", list(WEB_UPLOAD_SHAPES))
+async def test_real_bundle_creates_uploaded_media_node_in_web_shape(executor, node_type):
+    _, apply, _, root = executor
+    data, defaults = WEB_UPLOAD_SHAPES[node_type]
+    result = await apply([{"type": "create_node", "node_type": node_type, "data": data}])
+    assert result["status"] == "applied", result
+    [node] = [
+        node for node in canvas_store.read_canvas(root, "default")["nodes"]
+        if node["type"] == node_type
+    ]
+    expected = {**data, **defaults}
+    assert {field: node["data"].get(field, "<absent>") for field in expected} == expected
+    other_media = {"imageUrl", "videoUrl", "audioUrl"} - data.keys()
+    assert not any(node["data"].get(field) for field in other_media)
+
+
+@pytest.mark.parametrize("node_type,field", [("videoNode", "videoUrl"), ("audioNode", "audioUrl")])
+async def test_real_bundle_refuses_out_of_scope_video_and_audio(executor, node_type, field):
+    _, apply, saved_bodies, root = executor
+    before = canvas_store.read_canvas(root, "default")["revision"]
+    foreign = "/static/projects/other/freezone/uploads/file.bin"
+    with pytest.raises(agent_canvas.CanvasMediaScopeError) as scope:
+        await apply([{"type": "create_node", "node_type": node_type, "data": {field: foreign}}])
+    [ref] = scope.value.refs
+    assert (ref.field, ref.url, ref.source_project_id) == (field, foreign, "other")
+    with pytest.raises(agent_canvas.CanvasInlineMediaError) as inline:
+        await apply([{"type": "create_node", "node_type": node_type,
+                      "data": {field: "data:application/octet-stream;base64,AAAA"}}])
+    assert [entry["field"] for entry in inline.value.fields] == [field]
+    assert saved_bodies == []
+    assert canvas_store.read_canvas(root, "default")["revision"] == before
+
+
 async def test_real_bundle_saves_structural_batch_and_reads_host_context(executor):
     pool, apply, saved_bodies, root = executor
     result = await apply([

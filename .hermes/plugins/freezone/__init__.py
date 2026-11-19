@@ -4489,6 +4489,23 @@ def _text_annotation_tool_refusal(args: dict[str, Any]) -> str | None:
     return tool_result({**refusal, **_scope_meta(project or "", canvas)})
 
 
+def _upload_node_media_kind_error(command: dict[str, Any]) -> str | None:
+    data = command.get("data")
+    if (
+        command.get("type") in ("create_node", "add_next_node")
+        and command.get("node_type") == "uploadNode"
+        and isinstance(data, dict)
+        and _turnless_external_mcp_host()
+    ):
+        video_url = data.get("videoUrl")
+        audio_url = data.get("audioUrl")
+        if isinstance(video_url, str) and video_url:
+            return "create a videoNode with videoUrl and referenceOnly true"
+        if isinstance(audio_url, str) and audio_url:
+            return "create an audioNode with audioUrl"
+    return None
+
+
 def _validate_write_commands_shape(
     project: str | None,
     canvas: str | None,
@@ -4563,6 +4580,12 @@ def _validate_write_commands_shape(
                     f"commands[{index}].data.nodeType is invalid. Put the canvas node type at "
                     "commands[index].node_type."
                 ),
+            )
+        media_error = _upload_node_media_kind_error(command)
+        if media_error:
+            return _emit_command_error(
+                project, canvas, "upload_node_media_kind",
+                f"commands[{index}] uploadNode holds images only. For this file, {media_error}.",
             )
         if "imageGenerationParams" in command or (
             isinstance(data, dict) and "imageGenerationParams" in data
@@ -9548,6 +9571,11 @@ def _position_from_args(args: dict[str, Any]) -> dict[str, Any] | None:
 def _single_write_command(args: dict[str, Any], command: dict[str, Any]) -> str:
     project = str(args.get("project_id") or _default_project_id()).strip() or None
     canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    # Refuse invalid media before a missing scope can trigger an API lookup.
+    if (not project or not canvas) and _upload_node_media_kind_error(command):
+        refusal = _validate_write_commands_shape(project, canvas, [command])
+        if refusal:
+            return refusal
     return _emit_canvas_commands(project, canvas, [command], slim_result=True)
 
 
@@ -9780,6 +9808,84 @@ def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
             f"Calls without canvas_id still go to the bound canvas{(' ' + bound) if bound else ''}. "
             "Paid generation on it still follows the normal confirmation rules. "
             + link_instruction
+        ),
+    })
+
+
+_UPLOAD_ADDRESS_FIELDS = {
+    "upload_url": str,
+    "expires_in_seconds": int,
+    "method": str,
+    "file_field": str,
+    "max_bytes": int,
+    "allowed_suffixes": list,
+}
+_UPLOAD_NODE_INSTRUCTION = (
+    "Call freezone_get_upload_address, then send the file with a local command. "
+    "Use the JSON response's data.url to create one node with freezone_create_node. "
+    "For an image, use uploadNode with imageUrl and previewImageUrl. "
+    "For a video, use videoNode with videoUrl and set referenceOnly to true. "
+    "For audio, use audioNode with audioUrl. "
+    "An uploadNode must never carry videoUrl or audioUrl. "
+    "Set sourceFileName to the original filename and displayName to the node label."
+)
+
+
+_UPLOAD_NODE_CREATE_FIELDS = {
+    "uploadNode": {
+        "imageUrl": {"type": "string", "label": "图片地址"},
+        "previewImageUrl": {"type": "string", "label": "预览图片地址"},
+        "sourceFileName": {"type": "string", "label": "源文件名"},
+    },
+    "videoNode": {
+        "videoUrl": {"type": "string", "label": "视频地址"},
+        "sourceFileName": {"type": "string", "label": "源文件名"},
+        "referenceOnly": {"type": "boolean", "label": "仅作参考"},
+    },
+    "audioNode": {
+        "audioUrl": {"type": "string", "label": "音频地址"},
+        "sourceFileName": {"type": "string", "label": "源文件名"},
+    },
+}
+
+
+def _handle_get_upload_address(args: dict[str, Any], **_: Any) -> str:
+    try:
+        project = _project_from_args(args)
+    except ValueError as exc:
+        return tool_error(str(exc))
+    preamble = _canvas_management_preamble(project)
+    if preamble is not None:
+        if preamble.get("code") == "canvas_server_executor_required":
+            return tool_result({
+                "ok": False, "status": "unsupported", "code": "canvas_server_executor_required",
+                "retryable": False, "message": "Ask the user to upload the file in the browser.",
+            })
+        return tool_result(preamble)
+    result = _request("POST", f"/api/v1/projects/{quote(project, safe='')}/freezone/upload-address")
+    data = result.get("data")
+    if (
+        not result.get("ok")
+        or not isinstance(data, dict)
+        or any(type(data.get(field)) is not kind for field, kind in _UPLOAD_ADDRESS_FIELDS.items())
+        or not data["upload_url"]
+    ):
+        return tool_result({
+            "ok": False, "status": "unavailable", "code": "upload_address_unavailable",
+            "message": "Ask the user to upload the file in the browser.",
+        })
+    return tool_result({
+        "ok": True,
+        "status": "ready",
+        "project_id": project,
+        **{field: data[field] for field in _UPLOAD_ADDRESS_FIELDS},
+        "usage_example": f'curl -sS -X POST -F "file=@/path/to/image.png" "{data["upload_url"]}"',
+        "agent_instruction": (
+            _UPLOAD_NODE_INSTRUCTION
+            + " Only file types listed in allowed_suffixes are accepted. "
+            "max_bytes is the limit for the whole upload request, so the file itself must be slightly smaller. "
+            "The upload address can be reused until it expires. "
+            "Do not show the upload address to the user or put it in a node."
         ),
     })
 
@@ -10426,6 +10532,24 @@ def _request_canvas_context_from_frontend(
         if not response.get("ok"):
             return tool_result(_canvas_executor_failure(response, context=True))
         data = response["data"]
+        if _turnless_external_mcp_host():
+            for entry in data.get("responses", []):
+                if not isinstance(entry, dict) or entry.get("type") != "node_create_schema":
+                    continue
+                schema = entry.get("data")
+                node_type = entry.get("node_type")
+                fields = _UPLOAD_NODE_CREATE_FIELDS.get(node_type) if isinstance(node_type, str) else None
+                if fields and isinstance(schema, dict) and isinstance(schema.get("create_schema"), dict):
+                    schema["create_schema"].update(fields)
+                    schema["stable_create_fields"] = list(
+                        dict.fromkeys([*(schema.get("stable_create_fields") or []), *fields])
+                    )
+                    original = schema.get("instruction")
+                    schema["instruction"] = (
+                        f"{original} {_UPLOAD_NODE_INSTRUCTION}"
+                        if node_type != "uploadNode" and original
+                        else _UPLOAD_NODE_INSTRUCTION
+                    )
         if _REWRITE_IMAGE_URLS.get():
             _mark_unavailable_canvas_images(data)
         return tool_result({
@@ -14838,6 +14962,33 @@ def _bind_structured_result_input(handler, tool_name=""):
                     pass
 
     return bound
+
+
+# Listed for external MCP hosts only; the handler refuses under the browser executor.
+if _turnless_external_mcp_host():
+    _RESULT_FIELDS["freezone_get_upload_address"] = (
+        "project_id", *_UPLOAD_ADDRESS_FIELDS, "usage_example",
+    )
+    _RESULT_SUCCESS_REQUIRED["freezone_get_upload_address"] = (
+        *_RESULT_FIELDS["freezone_get_upload_address"], "agent_instruction",
+    )
+    _RESULT_SCHEMA_OVERRIDES["freezone_get_upload_address"] = {
+        **{
+            field: {"type": "string" if kind is str else "integer"}
+            for field, kind in {**_UPLOAD_ADDRESS_FIELDS, "usage_example": str}.items()
+            if kind is not list
+        },
+        "allowed_suffixes": {"type": "array", "items": {"type": "string"}},
+    }
+    TOOLS += ((
+        "freezone_get_upload_address",
+        _schema(
+            "freezone_get_upload_address",
+            "Get a temporary address for uploading a local image, video or audio file to this project.",
+            {"project_id": _SCOPE_PROPS["project_id"]}, [], reject_unknown=True,
+        ),
+        _handle_get_upload_address,
+    ),)
 
 
 TOOLS = tuple(

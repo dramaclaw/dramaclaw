@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import threading
 import time
 from collections import Counter
@@ -13,6 +14,8 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.exceptions import HTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from novelvideo.api import OPENAPI_TAGS, api_router, register_verification_routes
 from novelvideo.api.auth import get_api_user
@@ -47,6 +50,7 @@ logger = logging.getLogger("novelvideo.api.app")
 # bigger is almost certainly a runaway client / DoS attempt.
 MAX_REQUEST_BODY_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_REQUEST_BODY_BYTES = MAX_PROJECT_UPLOAD_BYTES
+_FREEZONE_UPLOAD_PATH = re.compile(r"/api/v1/projects/[^/]+/freezone/upload")
 _RESOURCE_REQUEST_COUNTS: Counter[str] = Counter()
 _RESOURCE_REQUEST_TOTAL = 0
 _RESOURCE_REQUEST_LOCK = threading.Lock()
@@ -119,6 +123,46 @@ def _request_body_limit(request: Request) -> int:
     return MAX_REQUEST_BODY_BYTES
 
 
+class _UploadBodyTooLarge(HTTPException, OSError):
+    # OSError triggers multipart spool cleanup. HTTPException preserves the
+    # status and detail through FastAPI's body parsing and exception handling.
+    def __init__(self, limit: int, received: int) -> None:
+        super().__init__(status_code=413, detail={
+            "code": "canvas_payload_too_large",
+            "field": "body",
+            "limit": limit,
+            "got": received,
+        })
+
+
+class _FreezoneUploadBodyLimit:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or not _FREEZONE_UPLOAD_PATH.fullmatch(scope["path"])
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        limit = _request_body_limit(Request(scope))
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise _UploadBodyTooLarge(limit, received)
+            return message
+
+        await self.app(scope, limited_receive, send)
+
+
 def _is_freezone_audio_voice_upload(request: Request) -> bool:
     return (
         request.method.upper() == "POST"
@@ -167,6 +211,9 @@ def create_app() -> FastAPI:
 
     application = FastAPI(title="NovelVideo API", openapi_tags=OPENAPI_TAGS)
     mount_api_coverage_middleware(application)
+    # Later HTTP middleware wraps this limiter, so the routing exception
+    # handler converts the refusal before it reaches their task groups.
+    application.add_middleware(_FreezoneUploadBodyLimit)
 
     @application.exception_handler(ProjectTaskLimitExceeded)
     async def _project_task_limit_exceeded(
@@ -414,7 +461,7 @@ def create_app() -> FastAPI:
         duration_ms = (time.perf_counter() - started_at) * 1000
         total_count, same_resource_count = _record_resource_request(resource_key)
 
-        query = request.url.query
+        query = "[redacted]" if "upload_ticket" in request.query_params else request.url.query
         range_header = request.headers.get("range", "")
         content_length = response.headers.get("content-length", "")
         content_type = response.headers.get("content-type", "")

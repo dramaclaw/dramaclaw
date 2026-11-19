@@ -150,6 +150,8 @@ API 服务端可设置 `DRAMACLAW_PUBLIC_ORIGIN`（例如 `https://app.example.c
 `freezone_get_selection` 和 `freezone_get_neighbor_graph` 同样处理，
 并在原因中提示使用 `freezone_get_node_detail` 获取可分享的地址。
 
+使用服务端画布执行器的外部 MCP 宿主可以调用 `freezone_get_upload_address`。该工具需要配置上文的公开访问源。成功时返回 `status: ready`、项目 ID `project_id`、上传地址 `upload_url`、有效秒数 `expires_in_seconds`、HTTP 方法 `method`（`POST`）、表单文件字段 `file_field`（`file`）、请求体大小上限 `max_bytes`、本地上传命令示例 `usage_example` 和操作说明 `agent_instruction`。没有可用的公开访问源时，工具会提示改用浏览器上传。通过该地址上传时，仅按文件名后缀检查文件类型，只接受支持的图片、视频和音频后缀，其他文件会被拒绝。地址有效期为 10 分钟，绑定到一个项目、该项目的上传端点和发起请求的用户，到期前可重复使用。任何持有该地址的人都能在过期前以该用户的身份向该项目上传文件。凭证位于查询字符串中，因此地址会出现在服务器访问日志中。上传成功后，用响应中的 `data.url` 调用 `freezone_create_node` 创建一个节点。图片用 `uploadNode`，填写 `imageUrl` 和 `previewImageUrl`。视频用 `videoNode`，填写 `videoUrl` 并设置 `referenceOnly: true`。音频用 `audioNode`，填写 `audioUrl`。三种节点都要用 `sourceFileName` 记录原始文件名。上传节点不能包含 `videoUrl` 或 `audioUrl`，外部 MCP 宿主发出的此类创建命令会被拒绝。宽度、高度和时长在创建时为空，之后在浏览器中打开画布并加载该媒体时补齐。视频按原样保存，不会转码。
+
 服务端执行器还支持 `freezone_list_canvases` 和 `freezone_create_canvas`；默认 `browser`
 执行器拒绝这两个工具。列表返回 `bound_canvas_id`、各画布的 `created_from_this_chat` 和
 `quota`。创建接收非空、最多 100 字符的 `name`，返回 `canvas_id`、`display_name`、
