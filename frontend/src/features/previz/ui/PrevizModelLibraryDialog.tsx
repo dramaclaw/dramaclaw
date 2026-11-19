@@ -55,7 +55,7 @@ const STEP_BUTTON =
   "flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-white/45 transition-colors hover:bg-white/10 hover:text-white/90";
 // 圆角一律写死像素：全局主题把 rounded-md / lg 放大到 14–16px，压在 32px 高的控件上就成了扁胶囊。
 const RAIL_ITEM =
-  "flex h-9 items-center justify-between gap-2 rounded-[10px] px-3 text-left text-[13px] text-white/55 transition-colors hover:bg-white/[0.05] hover:text-white/90 aria-pressed:bg-white/10 aria-pressed:text-white";
+  "flex h-9 shrink-0 whitespace-nowrap items-center justify-between gap-2 rounded-[10px] px-3 text-left text-[13px] text-white/55 transition-colors hover:bg-white/[0.05] hover:text-white/90 aria-pressed:bg-white/10 aria-pressed:text-white";
 /** 卡片本身不画框，框给缩略图那一格：一屏几十张卡，每张再套一圈边就是满屏格子线。 */
 const CARD =
   "group flex w-full flex-col gap-2 rounded-[14px] p-1.5 text-left text-white/75 transition-colors hover:bg-white/[0.05] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25";
@@ -155,11 +155,13 @@ function LibraryPanel({
       aria-label={t("previz.library.title")}
       className={cn(
         // 左侧多留一截给工具栏：它是 z-30 压在浮层上面的，视口窄（侧栏展开）时面板左缘会钻到它底下。
-        "absolute inset-0 z-20 flex items-center justify-center bg-black/60 py-6 pl-[120px] pr-6 transition-opacity duration-150",
+        // 按浮层（即视口）宽度切布局：双侧栏都开时视口可能只剩三四百 px，横排分类栏 +
+        // 图标导入按钮把宽度让给结果网格。
+        "@container absolute inset-0 z-20 flex items-center justify-center bg-black/60 py-3 pl-[108px] pr-3 transition-opacity duration-150 @min-[720px]:py-6 @min-[720px]:pl-[120px] @min-[720px]:pr-6",
         dragging && "pointer-events-none opacity-0",
       )}
     >
-      <div className="flex h-full max-h-[640px] w-full max-w-[880px] flex-col gap-4 rounded-[20px] border border-white/10 bg-neutral-900 p-5 shadow-2xl shadow-black/50">
+      <div className="flex h-full max-h-[640px] w-full max-w-[880px] flex-col gap-3 rounded-[16px] border border-white/10 bg-neutral-900 p-3 shadow-2xl shadow-black/50 @min-[720px]:gap-4 @min-[720px]:rounded-[20px] @min-[720px]:p-5">
         <header className="flex h-7 items-center justify-between">
           {pending ? (
             <div className="flex min-w-0 items-center gap-1">
@@ -200,10 +202,10 @@ function LibraryPanel({
             onPick={handlePick}
           />
         ) : (
-          <div className="flex min-h-0 flex-1 gap-5">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 @min-[720px]:flex-row @min-[720px]:gap-5">
             <nav
               aria-label={t("previz.library.categories")}
-              className="flex w-40 shrink-0 flex-col gap-0.5"
+              className="-mx-1 flex shrink-0 gap-0.5 overflow-auto px-1 @min-[720px]:mx-0 @min-[720px]:w-40 @min-[720px]:flex-col @min-[720px]:px-0"
             >
               {railButton("all", t("previz.library.all"), COUNTS.all)}
               {recent.length > 0 &&
@@ -217,7 +219,7 @@ function LibraryPanel({
               )}
             </nav>
 
-            <div className="flex min-w-0 flex-1 flex-col gap-3">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
               {/* 导入跟搜索并排：都是「找一个模型」的入口，单独给它一条底栏只剩一大片空白。 */}
               <div className="flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
@@ -259,16 +261,20 @@ function LibraryPanel({
                 />
                 <label
                   htmlFor={fileInputId}
-                  className={cn(SECONDARY_BUTTON, "cursor-pointer peer-focus-visible:border-ring peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50")}
+                  className={cn(
+                    SECONDARY_BUTTON,
+                    "cursor-pointer peer-focus-visible:border-ring peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50 @max-[720px]:w-9 @max-[720px]:justify-center @max-[720px]:px-0",
+                  )}
                 >
                   <Upload className="h-3.5 w-3.5" />
-                  {t("previz.library.importLocal")}
+                  {/* 窄时只留图标；文字用 sr-only 藏起来而不是删掉，无障碍名字仍来自它。 */}
+                  <span className="@max-[720px]:sr-only">{t("previz.library.importLocal")}</span>
                 </label>
               </div>
               </div>
               {matches.length > 0 ? (
                 // 负边距加回内边距：悬停底色与焦点环贴着滚动区边缘时不被裁掉。
-                <ul className="-mx-1.5 grid min-h-0 grid-cols-[repeat(auto-fill,minmax(124px,1fr))] content-start gap-1 overflow-y-auto px-0 pb-1">
+                <ul className="-mx-1.5 grid min-h-0 grid-cols-[repeat(auto-fill,minmax(96px,1fr))] @min-[720px]:grid-cols-[repeat(auto-fill,minmax(124px,1fr))] content-start gap-1 overflow-y-auto px-0 pb-1">
                   {matches.map((entry) => (
                     <li key={entry.id}>
                       <button
