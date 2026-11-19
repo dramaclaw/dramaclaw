@@ -187,6 +187,16 @@ Agent 应改正该命令后重试一次，不要原样重发。对同一对节�
 在 API 服务端将 `DRAMACLAW_PUBLIC_ORIGIN` 设为浏览器访问应用时使用的源，例如 `https://app.example.com`。外部 MCP 画布工具会在结果中返回可打开的 `canvas_url`。该变量未设置或留空时，使用 `SUPERTALE_OPENFILM_STUDIO_PUBLIC_ORIGIN`。没有可用的源时，结果省略链接。API 会忽略无效值，并在启动时记录包含变量名和无效原因的警告。
 
 服务端配置了对象存储时，`freezone_get_node_detail` 会为图片节点及其图片参考项返回 `image_url`：有时效的对象存储签名地址，宿主界面无需登录即可加载。仅后缀为 `.png`、`.jpg`、`.jpeg`、`.webp`、`.gif`、`.bmp`、`.avif` 的文件会返回 `image_url`（不区分大小写），其他文件（如 TIFF）仅返回 `canvas_url`。有效期由服务端的 `OSS_STATIC_PRESIGN_EXPIRES` 控制，默认 3600 秒。任何持有该地址的人都可在过期前查看图片。未配置对象存储或对象尚不可读时，结果省略该字段。此时，在不经产品聊天的外部宿主连接中，`freezone_get_node_detail` 不返回该图片的 `source_url` 与 `preview_url`（需登录的内部引用），改为返回 `image_unavailable_reason`（含 `code` 与 `message`），说明没有可分享的图片地址、图片可在画布页面查看；`freezone_get_selection` 与 `freezone_get_neighbor_graph` 对图片项同样处理。
+视频和音频节点及其参考项在相同条件下会返回 `media_url`，
+也是有时效的签名地址，使用同一个有效期设置。
+视频支持 `.mp4`、`.mov`、`.webm`，音频支持
+`.mp3`、`.wav`、`.m4a`、`.aac`、`.ogg`、`.webm`、`.flac`、`.opus`，
+后缀不区分大小写。视频的 `preview_url` 封面不会单独签名。
+非图片项有 `source_url` 或 `preview_url`、但没有可分享的地址时，
+外部宿主收到的结果会省略这两个字段，
+并返回 `media_unavailable_reason`（含 `code` 与 `message`）。
+`freezone_get_selection` 和 `freezone_get_neighbor_graph` 同样处理，
+并在原因中提示使用 `freezone_get_node_detail` 获取可分享的地址。
 
 `run_workflow` / `run_node_action` 支持以下动作，仍受下表拒绝条件限制：
 

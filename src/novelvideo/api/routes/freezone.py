@@ -426,7 +426,9 @@ from novelvideo.freezone.skill_registry import (
     list_skills,
 )
 from novelvideo.freezone.slots import (
+    AUDIO_SUFFIXES,
     SCENE_ASSET_KINDS,
+    VIDEO_SUFFIXES,
     IdentityTarget,
     PushTarget,
     backup_slot_if_exists,
@@ -15576,6 +15578,11 @@ def _canvas_url_field(project: str, canvas_id: str) -> dict[str, str]:
 
 # Formats a browser renders inline; TIFF is not one of them.
 _CANVAS_IMAGE_URL_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"})
+_CANVAS_MEDIA_URL_FIELDS = {
+    "image": (_CANVAS_IMAGE_URL_SUFFIXES, "image_url"),
+    "video": (VIDEO_SUFFIXES, "media_url"),
+    "audio": (AUDIO_SUFFIXES, "media_url"),
+}
 
 
 async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
@@ -15585,17 +15592,22 @@ async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
     resolved = None
     scope_attempted = False
 
-    def sign_image(rel: str) -> str | None:
+    def sign_media(rel: str, suffixes: set[str] | frozenset[str]) -> str | None:
         requested = files._resolve_project_file(resolved, rel)
-        if requested.suffix.lower() not in _CANVAS_IMAGE_URL_SUFFIXES:
+        if requested.suffix.lower() not in suffixes:
             return None
         return oss_client.maybe_presign_static(requested, requested.stat().st_mtime_ns)
 
-    async def add_image_url(item: dict) -> None:
+    async def add_media_url(item: dict) -> None:
         nonlocal resolved, scope_attempted
         reference = item.get("source_url")
-        if item.get("media_type") != "image" or not isinstance(reference, str):
+        media_type = item.get("media_type")
+        if not isinstance(media_type, str) or not isinstance(reference, str):
             return
+        fields = _CANVAS_MEDIA_URL_FIELDS.get(media_type)
+        if fields is None:
+            return
+        suffixes, address_field = fields
         try:
             asset = parse_project_asset_url(reference)
             if asset is None or asset[0] != project:
@@ -15606,9 +15618,9 @@ async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
                     project, user, required_role="viewer", media_read=True,
                 )
             if resolved is not None:
-                url = await asyncio.to_thread(sign_image, asset[1])
+                url = await asyncio.to_thread(sign_media, asset[1], suffixes)
                 if url is not None:
-                    item["image_url"] = url
+                    item[address_field] = url
         except Exception:
             # Signing is optional and exceptions may contain sensitive addresses.
             return
@@ -15621,9 +15633,9 @@ async def _add_canvas_image_urls(data: dict, project: str, user: dict) -> None:
         if response.get("type") != "node_detail" or not isinstance(detail, dict):
             continue
         for node in dicts(detail.get("nodes")):
-            await add_image_url(node)
+            await add_media_url(node)
             for reference in dicts(node.get("reference_media")):
-                await add_image_url(reference)
+                await add_media_url(reference)
 
 
 @router.post("/projects/{project}/freezone/canvases:create", tags=[TAG_FREEZONE_CANVAS])

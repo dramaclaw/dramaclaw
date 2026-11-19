@@ -65,7 +65,7 @@ _CANVAS_URL_TOOLS = frozenset({
     "freezone_summarize_canvas",
 })
 _IMAGE_URL_TOOLS = frozenset({"freezone_get_node_detail"})
-# Tools whose results list image nodes with login-only file references.
+# Tools whose results list items with login-only media references.
 _IMAGE_REFERENCE_TOOLS = frozenset({
     "freezone_get_node_detail",
     "freezone_get_selection",
@@ -82,8 +82,10 @@ _IMAGE_URL_GUIDANCE = (
     "address is time-limited. source_url and preview_url are internal references that need "
     "login: never give them to the user, link them, or turn them into an address. When a node has "
     "image_unavailable_reason instead of image_url, give only canvas_url and say the image can "
-    "be viewed there. Do not download images, send images as attachments, or compose image "
-    "addresses yourself."
+    "be viewed there. When a node has media_url, give that time-limited address as a link exactly "
+    "as returned; when it has media_unavailable_reason instead, give only canvas_url and say the "
+    "file can be opened there. Do not download images, send images as attachments, or compose "
+    "image addresses yourself."
 )
 _INCLUDE_CANVAS_URL: ContextVar[bool] = ContextVar("freezone_include_canvas_url", default=False)
 _INCLUDE_IMAGE_URL: ContextVar[bool] = ContextVar("freezone_include_image_url", default=False)
@@ -10280,20 +10282,35 @@ def _mark_unavailable_canvas_images(data: dict[str, Any]) -> None:
     for response in dicts(data.get("responses")):
         response_type = response.get("type")
         if response_type == "node_detail":
-            reason = {
+            image_reason = {
                 "code": "no_shareable_image_address",
                 "message": (
                     "No shareable image address is available for this image. "
                     "It can be seen on the canvas page."
                 ),
             }
+            media_reason = {
+                "code": "no_shareable_media_address",
+                "message": (
+                    "No shareable address is available for this file. "
+                    "It can be opened on the canvas page."
+                ),
+            }
         elif response_type in {"selection_detail", "neighbor_graph"}:
-            reason = {
+            image_reason = {
                 "code": "image_address_not_included",
                 "message": (
                     "This result does not include image addresses. freezone_get_node_detail "
                     "returns image_url when a shareable address is available; "
                     "the image can also be seen on the canvas page."
+                ),
+            }
+            media_reason = {
+                "code": "media_address_not_included",
+                "message": (
+                    "This result does not include media addresses. freezone_get_node_detail "
+                    "returns media_url when a shareable address is available; "
+                    "the file can also be opened on the canvas page."
                 ),
             }
         else:
@@ -10310,17 +10327,23 @@ def _mark_unavailable_canvas_images(data: dict[str, Any]) -> None:
         else:
             items = [*nodes, *dicts(details.get("display_nodes"))]
         for item in items:
-            if item.get("media_type") != "image":
-                continue
-            image_url = item.get("image_url")
-            if isinstance(image_url, str) and image_url:
+            if item.get("media_type") == "image":
+                address_field, reason_field, reason = (
+                    "image_url", "image_unavailable_reason", image_reason,
+                )
+            else:
+                address_field, reason_field, reason = (
+                    "media_url", "media_unavailable_reason", media_reason,
+                )
+            address = item.get(address_field)
+            if isinstance(address, str) and address:
                 continue
             if any(isinstance(url, str) and url for url in (
                 item.get("source_url"), item.get("preview_url"),
             )):
                 item.pop("source_url", None)
                 item.pop("preview_url", None)
-                item["image_unavailable_reason"] = reason
+                item[reason_field] = reason
 
 
 def _request_canvas_context_from_frontend(

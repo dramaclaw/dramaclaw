@@ -28,8 +28,10 @@ IMAGE_GUIDANCE = (
     "address is time-limited. source_url and preview_url are internal references that need "
     "login: never give them to the user, link them, or turn them into an address. When a node has "
     "image_unavailable_reason instead of image_url, give only canvas_url and say the image can "
-    "be viewed there. Do not download images, send images as attachments, or compose image "
-    "addresses yourself."
+    "be viewed there. When a node has media_url, give that time-limited address as a link exactly "
+    "as returned; when it has media_unavailable_reason instead, give only canvas_url and say the "
+    "file can be opened there. Do not download images, send images as attachments, or compose "
+    "image addresses yourself."
 )
 LEGACY_GUIDANCE = "do not download images or send images as attachments."
 SIGNED_IMAGE = "https://objects.example.test/image.png?sig=a%2Fb&expires=123"
@@ -44,6 +46,20 @@ IMAGE_ADDRESS_NOT_INCLUDED = {
     "message": (
         "This result does not include image addresses. freezone_get_node_detail returns "
         "image_url when a shareable address is available; the image can also be seen on the canvas page."
+    ),
+}
+SIGNED_MEDIA = "https://objects.example.test/clip.mp4?sig=a%2Fb&expires=123"
+SOURCE_MEDIA = "/static/projects/p/media/clip.mp4"
+NO_SHAREABLE_MEDIA = {
+    "code": "no_shareable_media_address",
+    "message": "No shareable address is available for this file. It can be opened on the canvas page.",
+}
+MEDIA_ADDRESS_NOT_INCLUDED = {
+    "code": "media_address_not_included",
+    "message": (
+        "This result does not include media addresses. freezone_get_node_detail returns "
+        "media_url when a shareable address is available; the file can also be opened on the "
+        "canvas page."
     ),
 }
 NODE_DETAIL_TOOL = "freezone_get_node_detail"
@@ -342,14 +358,18 @@ def test_node_detail_forwards_only_api_image_and_schema_accepts_it(host, image_u
     assert structured["responses"][0]["data"]["nodes"] == [node]
 
 
-@pytest.mark.parametrize(("tool", "response_type", "reason"), [
-    ("get_node_detail", "node_detail", NO_SHAREABLE_IMAGE),
-    ("get_selection", "selection_detail", IMAGE_ADDRESS_NOT_INCLUDED),
-    ("get_neighbor_graph", "neighbor_graph", IMAGE_ADDRESS_NOT_INCLUDED),
-    ("summarize_canvas", "canvas_summary", None),
+CONTEXT_REASONS = pytest.mark.parametrize(("tool", "response_type", "reason", "media_reason"), [
+    ("get_node_detail", "node_detail", NO_SHAREABLE_IMAGE, NO_SHAREABLE_MEDIA),
+    ("get_selection", "selection_detail", IMAGE_ADDRESS_NOT_INCLUDED, MEDIA_ADDRESS_NOT_INCLUDED),
+    ("get_neighbor_graph", "neighbor_graph", IMAGE_ADDRESS_NOT_INCLUDED,
+     MEDIA_ADDRESS_NOT_INCLUDED),
+    ("summarize_canvas", "canvas_summary", None, None),
 ], ids=["node-detail", "selection", "neighbor-graph", "canvas-summary"])
+
+
+@CONTEXT_REASONS
 @pytest.mark.parametrize("product", [False, True], ids=["external", "product"])
-def test_canvas_context_image_addresses(host, tool, response_type, reason, product):
+def test_canvas_context_image_addresses(host, tool, response_type, reason, media_reason, product):
     _, index, call = host
     image = {"media_type": "image"}
     addresses = {"source_url": SOURCE_IMAGE, "preview_url": PREVIEW_IMAGE}
@@ -360,10 +380,6 @@ def test_canvas_context_image_addresses(host, tool, response_type, reason, produ
         {**image, "node_id": "signed", **addresses, "image_url": SIGNED_IMAGE},
         {**image, "node_id": "null", "source_url": None, "preview_url": None},
         {**image, "node_id": "absent"},
-        *[
-            {"node_id": f"media-{media_type}", "media_type": media_type, **addresses}
-            for media_type in ("video", "audio", "model", None)
-        ],
     ]
     items = [
         {**both, **addresses},
@@ -422,3 +438,79 @@ def test_pending_confirmation_canvas_url_and_schema(host, product, api_link):
     else:
         assert "canvas_url" not in result
         assert "canvas_url" not in structured
+
+
+@CONTEXT_REASONS
+@pytest.mark.parametrize("product", [False, True], ids=["external", "product"])
+@pytest.mark.parametrize("media_type", ["video", "audio", "model", "future-kind", None])
+def test_canvas_context_media_addresses(
+    host, tool, response_type, reason, media_reason, product, media_type,
+):
+    _, index, call = host
+    kind = {"media_type": media_type}
+    addresses = {"source_url": SOURCE_MEDIA, "preview_url": PREVIEW_IMAGE}
+    both = {**kind, "node_id": "both", "title": "Keep this", "metadata": {"duration": 4}}
+    preview = {**kind, "node_id": "preview", "media_url": ""}
+    source = {**kind, "node_id": "source", "media_url": None}
+    # image_url is the shareable address of image items only.
+    wrong_field = {**kind, "node_id": "wrong-field"}
+    unchanged = [
+        {**kind, "node_id": "signed", **addresses, "media_url": SIGNED_MEDIA},
+        {**kind, "node_id": "null", "source_url": None, "preview_url": None},
+        {**kind, "node_id": "absent"},
+    ]
+    items = [
+        {**both, **addresses},
+        unchanged[0],
+        {**preview, "source_url": "", "preview_url": PREVIEW_IMAGE},
+        {**source, "source_url": SOURCE_MEDIA},
+        {**wrong_field, **addresses, "image_url": SIGNED_IMAGE},
+        *unchanged[1:],
+    ]
+    expected_items = items
+    if media_reason is not None and not product:
+        expected_items = [
+            {**both, "media_unavailable_reason": media_reason},
+            unchanged[0],
+            {**preview, "media_unavailable_reason": media_reason},
+            {**source, "media_unavailable_reason": media_reason},
+            {**wrong_field, "image_url": SIGNED_IMAGE, "media_unavailable_reason": media_reason},
+            *unchanged[1:],
+        ]
+
+    def response_data(rows):
+        if response_type == "node_detail":
+            return {"nodes": [{**rows[0], "reference_media": rows}, *rows[1:]]}
+        if response_type in {"selection_detail", "neighbor_graph"}:
+            return {"nodes": rows, "display_nodes": deepcopy(rows)}
+        return {"nodes": rows}
+
+    result, [_] = call(tool, context_data=response_data(items), product=product)
+    expected = {
+        "ok": True, "tool_call_status": "completed", "canvas_context_status": "resolved",
+        "responses": [{"type": response_type, "data": response_data(expected_items)}],
+        "errors": [],
+    }
+    if media_reason is not None:
+        schema = dramaclaw_mcp._output_schema_for_tool(f"freezone_{tool}", index)
+        structured = dramaclaw_mcp._normalize_structured_result(schema, result)
+        Draft202012Validator(schema).validate(structured)
+        assert structured["responses"] == expected["responses"]
+    assert result == expected
+    if not product:
+        assert "image_unavailable_reason" not in json.dumps(result)
+        if media_reason is not None:
+            leaked = [
+                item for item in _context_items(result)
+                if not item.get("media_url")
+                and (item.get("source_url") or item.get("preview_url"))
+            ]
+            assert leaked == []
+
+
+def _context_items(result):
+    for response in result["responses"]:
+        for name in ("nodes", "display_nodes"):
+            for node in response["data"].get(name, []):
+                yield node
+                yield from node.get("reference_media", [])
