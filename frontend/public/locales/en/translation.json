@@ -6889,6 +6889,7 @@
         "submit": "Generate HD video",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "claymoreModel": "RelayClaw Video Enhancement",
         "modelUnavailable": "The saved enhancement model is unavailable. Select an available model to continue."
       }
     },
