@@ -6763,6 +6763,7 @@
         "submit": "Tạo video HD",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "claymoreModel": "Tăng cường video RelayClaw",
         "modelUnavailable": "Mô hình tăng cường đã lưu hiện không khả dụng. Hãy chọn mô hình khả dụng để tiếp tục."
       }
     },

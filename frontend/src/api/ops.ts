@@ -506,10 +506,11 @@ export type FreezoneVideoTargetFps = "auto" | number;
 export type FreezoneVideoSlowdown = "auto" | "2x" | "3x" | "4x" | "5x";
 export type FreezoneVideoScene = "realistic" | "anime";
 
-export type VideoEnhancementModel = "standard" | "topaz";
+export type VideoEnhancementModel = "standard" | "topaz" | "claymore";
 
 export interface FreezoneVideoProbe {
   enhancement_models?: VideoEnhancementModel[];
+  enhancement_error?: string;
   width: number;
   height: number;
   fps: number;
