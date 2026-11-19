@@ -12,6 +12,7 @@ import {
   probeFreezoneVideoUpscale,
   quoteFreezoneVideoUpscale,
   submitFreezoneVideoUpscale,
+  type FreezoneGenerationHistoryRecord,
   type FreezoneVideoProbe,
   type VideoEnhancementModel,
   type FreezoneVideoScene,
@@ -21,10 +22,15 @@ import {
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
+import { nodeMediaViewerUrls, openNodeVideoViewer } from '@/features/canvas/application/nodeMediaViewer';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { historyRecordOutputUrl } from '@/features/canvas/domain/generationHistory';
 import { availableVideoUpscaleResolutions } from '@/features/canvas/domain/videoUpscaleResolutions';
+import { useNodeGenerationHistory } from '@/features/canvas/hooks/useNodeGenerationHistory';
 import { readUrl } from '@/lib/url-params';
 import { CreditCostPill, type CreditPromotionDisplay } from '@/components/credits/credit-visual';
+import { hasCompletedHistoryRecords } from './NodeGenerationHistory';
+import { NodeHistoryRail } from './NodeHistoryRail';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_OPS_PANEL_CLASS } from './nodeFrameStyles';
 import { ZoomScaledToolbar } from './ZoomScaledToolbar';
@@ -63,6 +69,13 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   const persisted = node.data as PersistedFields;
   const sourceUrl = persisted.upscaleSourceUrl ?? '';
   const project = readUrl().project;
+  const generating = node.data.isGenerating === true;
+  const videoUrl = node.data.videoUrl;
+  const { records, isLoading: historyLoading, refresh: refreshHistory } = useNodeGenerationHistory(node.id);
+  const historyRecords = useMemo(() => records.filter((record) =>
+    record.media_type === 'video' && record.task_type === 'freezone_video_upscale',
+  ), [records]);
+  const lastVideoUrl = useRef(videoUrl);
   const [probe, setProbe] = useState<FreezoneVideoProbe | null>(null);
   const [probeError, setProbeError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -87,6 +100,33 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   const modelUnavailable = Boolean(
     probe?.enhancement_models && !probe.enhancement_models.includes(enhancementModel),
   );
+
+  useEffect(() => {
+    // Direct submission and resumed jobs both write the completed output URL to the node.
+    if (historyLoading || generating || !videoUrl || lastVideoUrl.current === videoUrl) return;
+    lastVideoUrl.current = videoUrl;
+    void refreshHistory();
+  }, [generating, historyLoading, refreshHistory, videoUrl]);
+
+  const handleHistorySelect = useCallback((record: FreezoneGenerationHistoryRecord) => {
+    const url = historyRecordOutputUrl(record);
+    if (!url) return;
+    if (generating) {
+      void openNodeVideoViewer(
+        url, node.id, nodeMediaViewerUrls(url, [], historyRecords, 'video'),
+        node.data.displayName ?? undefined,
+      );
+      return;
+    }
+    lastVideoUrl.current = url;
+    updateNodeData(node.id, {
+      videoUrl: url,
+      sourceFileName: null,
+      generationError: null,
+      generationErrorDetails: null,
+      generationErrorRequestId: null,
+    });
+  }, [generating, historyRecords, node.data.displayName, node.id, updateNodeData]);
 
   useEffect(() => {
     let active = true;
@@ -206,7 +246,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   return (
     <ReactFlowNodeToolbar nodeId={node.id} isVisible position={Position.Bottom} align="center" offset={12} className={NODE_TOOLBAR_CLASS}>
       <ZoomScaledToolbar origin="top center">
-        <div className={`w-[440px] max-w-[calc(100vw-32px)] rounded-[var(--node-radius)] p-4 ${CANVAS_NODE_OPS_PANEL_CLASS}`} onClick={(event) => event.stopPropagation()}>
+        <div className={`relative w-[440px] max-w-[calc(100vw-32px)] rounded-[var(--node-radius)] p-4 ${CANVAS_NODE_OPS_PANEL_CLASS}`} onClick={(event) => event.stopPropagation()}>
           <div className="space-y-3">
             <SelectRow
               label={t('node.videoUpscale.panel.model')}
@@ -293,6 +333,15 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
             <CreditCostPill display={creditQuote?.display} promotion={creditQuote?.promotion} className={NODE_CREDIT_PILL_FLAT_CLASS} />
             <button type="button" onClick={handleSubmit} disabled={disabled} className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${disabled ? NODE_GENERATE_BUTTON_DISABLED_CLASS : NODE_GENERATE_BUTTON_ENABLED_CLASS}`} title={t('node.videoUpscale.panel.submit')}><ArrowUp className="h-4 w-4" /></button>
           </div>
+          {hasCompletedHistoryRecords(historyRecords) && (
+            <NodeHistoryRail
+              records={historyRecords}
+              isLoading={historyLoading}
+              onRestore={handleHistorySelect}
+              onRefresh={() => { if (!historyLoading) void refreshHistory(); }}
+              isActive={(record) => !generating && historyRecordOutputUrl(record) === videoUrl}
+            />
+          )}
         </div>
       </ZoomScaledToolbar>
     </ReactFlowNodeToolbar>
