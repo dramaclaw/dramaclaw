@@ -147,6 +147,8 @@ docker run --rm -v dramaclaw-ce_newapi-data:/data -v "$PWD":/backup alpine \
 
 ## 6. 升级
 
+**声线设计控费。** 升级前，如果你用旧环境变量控制声线设计费用，请核对所用网关的模型访问权限和预算。升级后，`VOICE_DESIGN_ENABLED=0` 将无法关闭声线设计，`VOICE_DESIGN_DAILY_LIMIT` 和 `VOICE_DESIGN_CHANNEL_DAILY_LIMIT` 也将无法限制调用次数。当前模型目录有可用的声线设计模型且网关允许调用时，生成可能产生费用。
+
 源码构建（两个 checkout 都拉）：
 
 ```bash
