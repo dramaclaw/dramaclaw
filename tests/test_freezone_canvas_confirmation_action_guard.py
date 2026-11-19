@@ -305,7 +305,9 @@ async def test_available_image_action_still_creates_the_same_card(guard, caplog,
 
     assert set(data) == {
         "confirmation_id", "kinds", "targets", "expires_at", "browser_open", "project_name",
+        "price",
     }
+    assert data["price"] == {"status": "not_metered"}
     assert data["kinds"] == ["paid_generation"]
     assert data["targets"] == [{"node_id": "i1", "title": "海报", "node_type": "imageGenNode",
                                 "action": "generate_image"}]

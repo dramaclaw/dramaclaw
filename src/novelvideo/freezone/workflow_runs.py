@@ -210,6 +210,8 @@ def classify_workflow_error(error: str | None) -> tuple[str, bool]:
     normalized = str(error or "").strip().lower()
     if not normalized:
         return "unknown", False
+    if normalized.startswith("generation_input_missing["):
+        return "input_missing", False
     if RECIPE_ATTEMPT_ENDED_MARKER in normalized:
         return "attempt_ended", False
     if (
@@ -256,7 +258,9 @@ def workflow_error_diagnostics(error: str | None) -> dict[str, Any]:
         if request_id
         else f"{category}:{normalized_message[:500]}"
     )
-    if category == "authentication":
+    if category == "input_missing":
+        user_message = "节点缺少生成所需的输入：" + raw_error.partition("]:")[2].strip()[:500]
+    elif category == "authentication":
         user_message = "模型服务认证失败，请检查渠道地址和密钥后重试。"
     elif category == "model_unavailable":
         user_message = "当前渠道没有可用的目标模型，请更换模型或配置渠道。"

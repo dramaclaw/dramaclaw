@@ -4,6 +4,12 @@ import pytest
 
 from novelvideo.freezone.workflow_observation import summarize_workflow_run
 from novelvideo.freezone.workflow_runs import classify_workflow_error
+from test_freezone_workflow_runs import MISSING_INPUT_ERROR
+
+FIX_CAUSE_INSTRUCTION = (
+    "Tell the user this reason. Do not ask the user to confirm another paid run for this "
+    "node, and do not change the canvas to try a different approach, until this cause is fixed."
+)
 
 
 @pytest.mark.parametrize(
@@ -37,6 +43,10 @@ def test_recovery_does_not_automatically_repeat_generation(
     assert problem["retryable"] is retryable
     assert problem["automatic_retry"] is False
     assert result["terminal"] is True
+    if retryable:
+        assert "agent_instruction" not in problem
+    else:
+        assert problem["agent_instruction"] == FIX_CAUSE_INSTRUCTION
 
 
 def test_progress_token_ignores_heartbeats_and_sensitive_provider_error_text():
@@ -64,3 +74,24 @@ def test_progress_token_ignores_heartbeats_and_sensitive_provider_error_text():
 )
 def test_numeric_identifiers_are_not_http_statuses(message):
     assert classify_workflow_error(message) == ("execution", False)
+
+
+def test_missing_input_problem_explains_recovery_without_changing_summary_shape():
+    summary = summarize_workflow_run({
+        "run_id": "run_1", "status": "failed", "actions": [
+            {"node_id": "video", "action": "generate_video", "status": "failed",
+             "error": MISSING_INPUT_ERROR},
+            {"node_id": "image", "action": "generate_image", "status": "failed",
+             "error": "HTTP 503 upstream unavailable"},
+        ],
+    })
+    assert summary.keys() == {
+        "ok", "status", "run_id", "run_status", "terminal", "counts", "total_count",
+        "progress", "problems", "observation_token", "next_action", "automatic_retry",
+    }
+    missing, transient = summary["problems"]
+    assert transient["retryable"] is True
+    assert "agent_instruction" not in transient
+    assert missing["next_action"] == "fix_input_before_retry"
+    assert missing["retryable"] is False
+    assert missing["agent_instruction"] == FIX_CAUSE_INSTRUCTION

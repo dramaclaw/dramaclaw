@@ -19,6 +19,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Mapping
+from contextvars import ContextVar
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
@@ -848,6 +849,16 @@ async def _cancel_claimed_media_if_run_cancelled(
         raise HTTPException(503, "workflow media task cancellation is pending") from exc
 
 
+_generation_billing_probe = ContextVar("freezone_generation_billing_probe", default=False)
+
+
+class _GenerationBillingProbe(Exception):
+    def __init__(self, feature_key: str, params: dict, quantity: int):
+        self.feature_key = feature_key
+        self.params = params
+        self.quantity = quantity
+
+
 async def _start_or_enqueue_freezone_video_gen(
     *,
     ctx: ProjectContext | None,
@@ -1000,18 +1011,19 @@ async def _start_or_enqueue_freezone_video_gen(
             requester_user_id=ctx.requester_user_id,
         )
 
-    billing = freezone_video_generate_task_billing(
-        {
-            "video_backend": backend,
-            "resolution": resolution,
-            "pricing_quantity": effective_duration_seconds,
-            "operation": requested_gen_mode or gen_mode or "textToVideo",
-            "generate_audio": effective_generate_audio,
-            "video_input_present": bool(video_input_paths),
-            "input_video_duration_seconds": input_video_duration_seconds,
-            **({"catalog_id": catalog_id} if catalog_id else {}),
-        }
-    )
+    raw_params = {
+        "video_backend": backend,
+        "resolution": resolution,
+        "pricing_quantity": effective_duration_seconds,
+        "operation": requested_gen_mode or gen_mode or "textToVideo",
+        "generate_audio": effective_generate_audio,
+        "video_input_present": bool(video_input_paths),
+        "input_video_duration_seconds": input_video_duration_seconds,
+        **({"catalog_id": catalog_id} if catalog_id else {}),
+    }
+    if _generation_billing_probe.get():
+        raise _GenerationBillingProbe("freezone.video_generate", raw_params, 1)
+    billing = freezone_video_generate_task_billing(raw_params)
     payload = {
         "job_id": job_id,
         "canvas_id": canvas_id or "",
@@ -1172,16 +1184,17 @@ async def _start_or_enqueue_freezone_gen_job(
         freezone_image_generate_billing_params,
     )
 
-    billing = freezone_image_generate_billing_params(
-        {
-            "image_selection": image_selection,
-            "size": image_size,
-            "pricing_quantity": variant_count,
-            **({"quality": quality} if quality else {}),
-            **({"catalog_id": catalog_id} if catalog_id else {}),
-            **({"pricing_model": resolved_model} if catalog_id else {}),
-        }
-    )
+    raw_params = {
+        "image_selection": image_selection,
+        "size": image_size,
+        "pricing_quantity": variant_count,
+        **({"quality": quality} if quality else {}),
+        **({"catalog_id": catalog_id} if catalog_id else {}),
+        **({"pricing_model": resolved_model} if catalog_id else {}),
+    }
+    if _generation_billing_probe.get():
+        raise _GenerationBillingProbe("freezone.image_generate", raw_params, variant_count)
+    billing = freezone_image_generate_billing_params(raw_params)
     prompt_text = _merge_prompt_with_style_and_camera(prompt, style, camera)
     display_payload = {
         "task_family": "freezone_canvas",
@@ -18387,6 +18400,10 @@ async def create_canvas_confirmation(
 ):
     from contextlib import AsyncExitStack
 
+    from novelvideo.api.freezone_confirmation_price import (
+        check_generation_inputs,
+        confirmation_price,
+    )
     from novelvideo.api.freezone_server_workflow_start import (
         canvas_open_required_detail,
         check_node_actions_available,
@@ -18406,6 +18423,8 @@ async def create_canvas_confirmation(
     external_turnless = is_external_agent_key_session(user) and body.turn_id is None
     executor = agent_canvas_executor()
     record = None
+    planning, generation_requests = {}, {}
+    reused_commands = None
     try:
         commands_in = body.commands
         fill_sources = {}
@@ -18475,6 +18494,8 @@ async def create_canvas_confirmation(
                     node_ids = {node["id"] for node in (canvas or {}).get("nodes", [])}
                     if any(target["node_id"] not in node_ids for target in record["targets"]):
                         record = None
+            if record is not None:
+                reused_commands = record["commands"]
             pre_applied = None
             planned_workflow_node_ids = None
             commands = commands_in
@@ -18498,6 +18519,7 @@ async def create_canvas_confirmation(
             if record is None and executor == "server":
                 check = await check_server_workflow(
                     ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands,
+                    planning_result=planning,
                 )
                 planned_workflow_node_ids = check.get("workflow_node_ids")
                 if check["status"] == "invalid":
@@ -18508,6 +18530,10 @@ async def create_canvas_confirmation(
                     canvas_browser_open, state_dir, canvas_id, now=now,
                 ):
                     raise HTTPException(409, canvas_open_required_detail(check))
+                if check["status"] == "runnable":
+                    generation_requests = await check_generation_inputs(
+                        ctx, canvas_id, planning, check.get("refused", []),
+                    )
                 if split and pre_applied is None and check["status"] == "runnable":
                     envelope = {
                         "schema_version": "canvas_chat_commands.v1", "project_id": project,
@@ -18524,6 +18550,10 @@ async def create_canvas_confirmation(
                             or "Canvas structural commands were not applied.",
                         })
                     mapping = created_node_mapping(data["receipt"], structural)
+                    planning["client_ids"] = {
+                        preview_id: mapping.get(client_id, client_id)
+                        for preview_id, client_id in planning.get("client_ids", {}).items()
+                    }
                     if planned_workflow_node_ids is not None:
                         planned_workflow_node_ids = [
                             mapping.get(node_id, node_id) for node_id in planned_workflow_node_ids
@@ -18558,6 +18588,7 @@ async def create_canvas_confirmation(
             if record is None and executor != "server":
                 planned_workflow_node_ids = await check_node_actions_available(
                     ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands,
+                    planning_result=planning,
                 )
             if record is None:
                 record = await asyncio.to_thread(
@@ -18611,6 +18642,15 @@ async def create_canvas_confirmation(
             sources=record.get("generation_sources", {}),
             created=record.get("pre_applied", {}).get("written", {}).get("created_node_ids", []),
         )
+    if "paid_generation" in record["kinds"]:
+        try:
+            data["price"] = await confirmation_price(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, planning=planning,
+                requests=generation_requests, reused_commands=reused_commands,
+            )
+        except Exception as exc:
+            logger.warning("Confirmation price plan unavailable: %s", type(exc).__name__)
+            data["price"] = {"status": "unknown", "reason": "plan_unavailable", "items": []}
     return {"ok": True, "data": data}
 
 

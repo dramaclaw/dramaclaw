@@ -229,11 +229,13 @@ def _has_unavailable_saved_node_action(
 async def check_node_actions_available(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
     commands: list[dict], locale: str | None = None,
+    planning_result: dict | None = None,
 ) -> list[str] | None:
     """Refuse a card only when a node saved in the canvas file does not offer the action.
 
     Return planned workflow ids when available, otherwise None for the legacy listing.
     Other planner failures continue with a warning because the browser validates again.
+    When provided, planning_result receives the preview and action plan for confirmation pricing.
     """
     if not any(is_run_command(command) for command in commands):
         return
@@ -258,6 +260,8 @@ async def check_node_actions_available(
     except Exception as exc:
         logger.warning("canvas action availability check skipped reason=%s", type(exc).__name__)
         return
+    if planning_result is not None:
+        planning_result.update(result)
     if result["status"] == "invalid":
         logger.warning("canvas action availability check skipped reason=%s", "plan_invalid")
     return result.get("workflow_node_ids") if result["status"] == "planned" else None
@@ -266,10 +270,13 @@ async def check_node_actions_available(
 async def check_server_workflow(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
     commands: list[dict], locale: str | None = None,
+    planning_result: dict | None = None,
 ) -> dict:
     result = await _plan_run_commands(
         ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, commands=commands, locale=locale,
     )
+    if planning_result is not None:
+        planning_result.update(result)
     if result["status"] != "planned":
         return result
     plan, canvas, client_ids = result["plan"], result["canvas"], result["client_ids"]

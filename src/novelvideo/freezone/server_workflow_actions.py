@@ -13,6 +13,7 @@ import time
 import uuid
 from typing import Any, Protocol
 
+from novelvideo.freezone.generation_inputs import generation_guard_error
 
 logger = logging.getLogger(__name__)
 
@@ -549,7 +550,9 @@ class _ActionExecution:
         built = await self.core("image_generation_request", payload)
         compile_input = built["compile_input"]
         if compile_input.get("ok") is False:
-            return {"status": "failed", "error": compile_input["message"]}
+            return {"status": "failed", "error": generation_guard_error(
+                compile_input, canvas, self.node_id,
+            )}
         if not existing_task:
             await self.start("image_generation_patch")
         plan = await self.core("recipe_compile_request", {
@@ -589,7 +592,8 @@ class _ActionExecution:
         needs_submission = task is None or await self.host.task_status(task) is None
         if not request["ok"] and needs_submission:
             return await self.image_outcome(
-                {"kind": "failed", "message": request["message"]}, None, 1,
+                {"kind": "failed", "message": generation_guard_error(request, canvas, self.node_id)},
+                None, 1,
             )
         total = request["requests"][0]["body"].get("variant_count", 1) if request["ok"] else 1
         if needs_submission:
@@ -679,13 +683,17 @@ class _ActionExecution:
         built = await self.core("video_generation_request", payload)
         compile_input = built["compile_input"]
         if compile_input.get("ok") is False:
-            return {"status": "failed", "error": compile_input["message"]}
+            return {"status": "failed", "error": generation_guard_error(
+                compile_input, canvas, self.node_id,
+            )}
         if built["trim_requirement"] is not None:
             return {"status": "failed", "error": "工作流动作 generate_video 需要打开画布运行"}
         request = built["request"]
         # Guard refusals are failed actions, as in the browser subscriber.
         if not request["ok"] and request["code"] != "no_effective_prompt":
-            return {"status": "failed", "error": request["message"]}
+            return {"status": "failed", "error": generation_guard_error(
+                request, canvas, self.node_id,
+            )}
         if request["ok"] and len(request["requests"]) != 1:
             return {"status": "failed", "error": "工作流动作 generate_video 需要打开画布运行"}
         if not existing_task:
@@ -724,8 +732,10 @@ class _ActionExecution:
         request = (await self.core("video_generation_request", payload))["request"]
         if not request["ok"] or len(request["requests"]) != 1:
             await self.patch({"isGenerating": False, "generationStartedAt": None, **_CLEAR_OWNER})
-            return {"status": "failed", "error": request["message"] if not request["ok"]
-                    else "工作流动作 generate_video 需要打开画布运行"}
+            return {"status": "failed", "error": (
+                generation_guard_error(request, canvas, self.node_id) if not request["ok"]
+                else "工作流动作 generate_video 需要打开画布运行"
+            )}
         task = existing_task
         if task is None or await self.host.task_status(task) is None:
             await self.phase("submitting")
@@ -799,11 +809,13 @@ class _ActionExecution:
 
     async def video_upscale(self, existing_task):
         deadline = self.runner.monotonic() + self.runner.task_timeout_seconds
-        payload = await self.video_payload(await self.host.read_canvas(), existing_task)
+        canvas = await self.host.read_canvas()
+        payload = await self.video_payload(canvas, existing_task)
         request = (await self.core("video_generation_request", payload))["request"]
         if not request["ok"]:
-            return {"status": "failed", "error": "缺少高清视频源"
-                    if request["code"] == "missing_upscale_source" else request["message"]}
+            return {"status": "failed", "error": generation_guard_error(
+                request, canvas, self.node_id,
+            )}
         if len(request["requests"]) != 1:
             return {"status": "failed", "error": "工作流动作 generate_video 需要打开画布运行"}
         if not existing_task:

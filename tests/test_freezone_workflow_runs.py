@@ -1651,3 +1651,21 @@ def test_created_metrics_count_insert_only(tmp_path, owner_kind, caplog):
     assert [record.getMessage() for record in caplog.records] == [
         f"workflow_run_created run_id={run['run_id']} owner_kind={owner_kind} actions=1"
     ]
+
+
+MISSING_INPUT_ERROR = (
+    'generation_input_missing[missing_media]: A source keyframe is required. '
+    'Empty inputs: "首帧" (uploadNode n1, uploading)'
+)
+
+
+def test_missing_input_error_is_not_retryable():
+    assert classify_workflow_error(MISSING_INPUT_ERROR) == ("input_missing", False)
+
+
+def test_missing_input_diagnostics_preserve_guard_message_and_source_title():
+    diagnostics = workflow_error_diagnostics(MISSING_INPUT_ERROR)
+    assert diagnostics["user_error"] == (
+        '节点缺少生成所需的输入：A source keyframe is required. '
+        'Empty inputs: "首帧" (uploadNode n1, uploading)'
+    )

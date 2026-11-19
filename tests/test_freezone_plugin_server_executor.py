@@ -462,6 +462,13 @@ def _tool(plugin, name, args):
     return result
 
 
+PRICE_INSTRUCTION = (
+    "Tell the user the price by quoting price_text exactly as returned. "
+    "If it says the price is unknown, tell the user the price is unknown. "
+    "Never estimate, compute or guess a price yourself."
+)
+
+
 def _confirmation_result(data, via, instruction):
     return {
         "ok": True, "status": "confirmation_required", "code": "canvas_confirmation_required",
@@ -471,6 +478,10 @@ def _confirmation_result(data, via, instruction):
         "expires_at": 1900001800.0, "confirmation_via": via,
         "message": "尚未执行：已创建待确认请求，用户确认后才会执行。",
         "agent_instruction": instruction,
+        **({
+            "price": {"status": "unknown", "reason": "not_provided"},
+            "price_text": "The price is unknown: the server could not price this generation.",
+        } if "paid_generation" in data["kinds"] else {}),
     }
 
 
@@ -522,7 +533,7 @@ def test_clear_and_paid_commands_create_confirmation(agent, monkeypatch, command
     instruction = CARD_INSTRUCTION
     if kinds == ["paid_generation"]:
         instruction = instruction.replace(
-            "type. Then", "type. Say that it will consume credits; do not give any estimate. Then",
+            "type. Then", f"type. {PRICE_INSTRUCTION} Then",
         )
     result = _tool(plugin, "freezone_emit_canvas_command", {"commands": commands})
     assert result == _confirmation_result(data, "card", instruction)
@@ -532,7 +543,7 @@ def test_clear_and_paid_commands_create_confirmation(agent, monkeypatch, command
     assert list(directory.iterdir()) == []
 
 
-def test_paid_conversation_mentions_credits_without_estimate(agent, monkeypatch):
+def test_paid_conversation_quotes_server_price_text(agent, monkeypatch):
     plugin, _, _, _ = agent
     _respond(agent, monkeypatch, "/presence", {"ok": True, "data": {"browser_open": True}})
     data = {**CONFIRMATION, "kinds": ["paid_generation"]}
@@ -541,7 +552,7 @@ def test_paid_conversation_mentions_credits_without_estimate(agent, monkeypatch)
         "node_id": "n1", "action": "generate_image",
     })
     assert result == _confirmation_result(data, "conversation", CONVERSATION_INSTRUCTION.replace(
-        "type, and", "type, say that it will consume credits without giving any estimate, and",
+        "type, and ask them to confirm.", f"type. {PRICE_INSTRUCTION} Ask them to confirm.",
     ))
 
 
@@ -1042,11 +1053,11 @@ def test_run_workflow_confirmation_is_a_valid_tool_result(agent, monkeypatch, ar
     _respond(agent, monkeypatch, "/confirmations", {"ok": True, "data": data})
     if via == "card":
         instruction = CARD_INSTRUCTION.replace(
-            "type. Then", "type. Say that it will consume credits; do not give any estimate. Then",
+            "type. Then", f"type. {PRICE_INSTRUCTION} Then",
         )
     else:
         instruction = CONVERSATION_INSTRUCTION.replace(
-            "type, and", "type, say that it will consume credits without giving any estimate, and",
+            "type, and ask them to confirm.", f"type. {PRICE_INSTRUCTION} Ask them to confirm.",
         )
 
     result = _tool(plugin, "freezone_run_workflow", args)

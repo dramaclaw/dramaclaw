@@ -30,36 +30,37 @@ def summarize_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
                 "504",
             )
         )
-        next_action = (
-            "reconcile_before_retry"
-            if ambiguous
-            else (
-                "retry_after_confirmation"
-                if diagnostics["retryable"]
-                else (
-                    "resolve_dependency"
-                    if action.get("status") == "blocked"
-                    else (
-                        "correct_parameters"
-                        if category == "invalid_request"
-                        else (
-                            "resolve_access_or_quota"
-                            if category in {"authentication", "quota_exhausted"}
-                            else "review_failure"
-                        )
-                    )
-                )
-            )
-        )
+        retryable = diagnostics["retryable"] and not ambiguous
+        if category == "input_missing":
+            next_action = "fix_input_before_retry"
+        elif ambiguous:
+            next_action = "reconcile_before_retry"
+        elif retryable:
+            next_action = "retry_after_confirmation"
+        elif action.get("status") == "blocked":
+            next_action = "resolve_dependency"
+        elif category == "invalid_request":
+            next_action = "correct_parameters"
+        elif category in {"authentication", "quota_exhausted"}:
+            next_action = "resolve_access_or_quota"
+        else:
+            next_action = "review_failure"
         problems.append(
             {
                 "node_id": action.get("node_id"),
                 "action": action.get("action"),
                 "error_category": category,
                 "message": diagnostics["user_error"],
-                "retryable": diagnostics["retryable"] and not ambiguous,
+                "retryable": retryable,
                 "automatic_retry": False,
                 "next_action": next_action,
+                **({
+                    "agent_instruction": (
+                        "Tell the user this reason. Do not ask the user to confirm another paid "
+                        "run for this node, and do not change the canvas to try a different "
+                        "approach, until this cause is fixed."
+                    ),
+                } if not retryable else {}),
             }
         )
     state = str(run.get("status") or "unknown")

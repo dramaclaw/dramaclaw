@@ -1039,7 +1039,9 @@ async def test_video_builder_refusal_before_start(setup_runner, upscale):
     else:
         host.data["genMode"] = "videoExtend"
     assert await run("generate_video") == {"status": "failed", "error": (
-        "缺少高清视频源" if upscale else "An upstream source video is required."
+        "generation_input_missing[missing_upscale_source]: 缺少高清视频源"
+        if upscale else
+        "generation_input_missing[missing_source_video]: An upstream source video is required."
     )}
     assert host.patches == []
     assert host.requests == []

@@ -1538,7 +1538,8 @@ def test_in_product_paid_batches_still_wait_whole(setup, user, turn_id):
     setup.pool.plan = mixed_plan()
     setup.user[0] = user
     confirmation = create(setup, commands=SPLIT, turn_id=turn_id)
-    assert set(confirmation) == BASE_RESPONSE_KEYS
+    assert set(confirmation) == BASE_RESPONSE_KEYS | {"price"}
+    assert confirmation["price"] == {"status": "not_metered"}
     assert nodes(setup) == ["n1", "n2", "n3"]
     stored = record(setup, confirmation)
     assert stored["commands"] == SPLIT

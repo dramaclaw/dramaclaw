@@ -741,7 +741,7 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
             if message:
                 result["message"] = message
     if status_code == 409 and result.get("code") in {
-        "canvas_open_required", "workflow_already_running",
+        "canvas_open_required", "workflow_already_running", "generation_input_not_ready",
     }:
         data = _maybe_json(text)
         detail = data.get("detail") if isinstance(data, dict) else None
@@ -754,6 +754,10 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
                 ]
             if isinstance(detail.get("run_id"), str):
                 result["run_id"] = detail["run_id"]
+            if result.get("code") == "generation_input_not_ready" and isinstance(
+                detail.get("not_ready"), list
+            ):
+                result["not_ready"] = detail["not_ready"]
     return result
 
 
@@ -6058,6 +6062,31 @@ def _canvas_generation_summary(settings: list[dict]) -> str:
     return "; ".join(summaries)
 
 
+_CONFIRMATION_PRICE_INSTRUCTION = (
+    "Tell the user the price by quoting price_text exactly as returned. "
+    "If it says the price is unknown, tell the user the price is unknown. "
+    "Never estimate, compute or guess a price yourself."
+)
+
+
+def _confirmation_price_text(price: dict) -> str:
+    if price.get("status") == "known":
+        return f'This will cost {price["display"]} credits.'
+    if price.get("status") == "not_metered":
+        return (
+            "This deployment does not deduct credits; the model provider's own cost "
+            "is not known here."
+        )
+    if "known_credits" in price:
+        items = price["items"]
+        unknown = sum(item.get("status") == "unknown" for item in items)
+        return (
+            f"The price is unknown: {unknown} of {len(items)} actions could not be priced; "
+            f'the priced part costs {price["known_credits"]} credits.'
+        )
+    return "The price is unknown: the server could not price this generation."
+
+
 def _create_canvas_confirmation(
     project: str, canvas: str, commands: list[Any],
     *, fill_standard_tiers: list[str] | None = None,
@@ -6094,7 +6123,19 @@ def _create_canvas_confirmation(
             return tool_result(_generation_parameters_required_result(items))
         failure = _canvas_executor_failure(response)
         code = response.get("code")
-        if code in {"canvas_open_required", "workflow_plan_invalid"}:
+        if code == "generation_input_not_ready":
+            failure.update(
+                canvas_apply_status="not_applied", blockers=response.get("not_ready", []),
+                retryable=False,
+                agent_instruction=(
+                    "Nothing was created, no confirmation exists and no credits will be spent. "
+                    "Tell the user which node lacks which input. Do not ask for a paid "
+                    "confirmation for these nodes until the input is present (the upload "
+                    "finished or the source was generated). Do not try different wiring to "
+                    "get around it."
+                ),
+            )
+        elif code in {"canvas_open_required", "workflow_plan_invalid"}:
             failure["canvas_apply_status"] = "not_applied"
             if "blocked" in response:
                 failure["blocked"] = response["blocked"]
@@ -6108,7 +6149,7 @@ def _create_canvas_confirmation(
     card = bool(turn_id) and data["browser_open"] is True
     paid = "paid_generation" in data["kinds"]
     if card:
-        credits = " Say that it will consume credits; do not give any estimate." if paid else ""
+        credits = f" {_CONFIRMATION_PRICE_INSTRUCTION}" if paid else ""
         instruction = (
             "Nothing has been executed yet: no canvas change was made, no generation was submitted "
             "and no credits were spent. "
@@ -6122,12 +6163,15 @@ def _create_canvas_confirmation(
             "Do not tell the user that anything was started, sent, submitted or done."
         )
     else:
-        credits = " say that it will consume credits without giving any estimate," if paid else ""
+        ask = (
+            f"type. {_CONFIRMATION_PRICE_INSTRUCTION} Ask them to confirm."
+            if paid else "type, and ask them to confirm."
+        )
         instruction = (
             "Nothing has been executed yet: no canvas change was made, no generation was submitted "
             "and no credits were spent. "
-            "Tell the user what will happen, naming each target node by title and type,"
-            f"{credits} and ask them to confirm. Only after the user explicitly confirms in a "
+            f"Tell the user what will happen, naming each target node by title and {ask} "
+            "Only after the user explicitly confirms in a "
             "later message, call freezone_confirm_canvas_action with this confirmation_id; "
             "if they decline, call freezone_cancel_canvas_action. Never confirm on your own "
             "or in this same turn. The confirmation expires in 30 minutes; after that, ask again. "
@@ -6158,6 +6202,11 @@ def _create_canvas_confirmation(
         "agent_instruction": instruction,
         **_canvas_url_field(data),
     }
+    if paid:
+        price = data.get("price")
+        if not isinstance(price, dict):
+            price = {"status": "unknown", "reason": "not_provided"}
+        result.update(price=price, price_text=_confirmation_price_text(price))
     if isinstance(data.get("generation_settings"), list):
         result["generation_settings"] = data["generation_settings"]
         if data["generation_settings"]:
@@ -6170,8 +6219,8 @@ def _create_canvas_confirmation(
             "The nodes and links in this batch are already on the canvas (see written); only the "
             "paid generation is waiting for confirmation. Nothing has been generated and no "
             "credits were spent. Tell the user which nodes were added, then list the generation "
-            "settings from generation_summary and say that it will consume credits without "
-            "giving any estimate, and ask them to confirm. Only after the user explicitly "
+            f"settings from generation_summary. {_CONFIRMATION_PRICE_INSTRUCTION} "
+            "Ask them to confirm. Only after the user explicitly "
             "confirms in a later message, call freezone_confirm_canvas_action with this "
             "confirmation_id; if they decline, call freezone_cancel_canvas_action. The added "
             "nodes stay on the canvas either way. Never confirm on your own or in this same "
@@ -10534,6 +10583,7 @@ _RESULT_OBJECT_FIELDS = frozenset(
     {
         "run_arguments",
         "written",
+        "price",
         "story",
         "outline",
         "counts",
@@ -10551,6 +10601,7 @@ _RESULT_OBJECT_FIELDS = frozenset(
 _RESULT_STRING_FIELDS = frozenset(
     {
         "generation_summary",
+        "price_text",
         "story_id",
         "current_stage_id",
         "run_status",
@@ -11040,6 +11091,14 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 }
 for _tool_name in _CANVAS_URL_TOOLS:
     _RESULT_FIELDS[_tool_name] += ("canvas_url",)
+for _tool_name in (
+    "freezone_emit_canvas_command",
+    "freezone_confirm_workflow_draft",
+    "freezone_delete_nodes",
+    "freezone_run_node_action",
+    "freezone_run_workflow",
+):
+    _RESULT_FIELDS[_tool_name] += ("price", "price_text")
 
 
 _SKILL_STUDIO_PROGRESS_REQUIRED = (
