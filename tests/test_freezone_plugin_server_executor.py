@@ -873,10 +873,12 @@ def test_running_decision_reports_only_nonempty_refusals(agent, monkeypatch, ref
     )
     if refused:
         instruction += (
-            " The refused actions are recorded as failed in this run. "
-            "These actions lack server Recipe admission: generate_text. Inspect their node details "
+            " These actions lack server Recipe admission: generate_text. Inspect their node details "
             "and use the selected Workflow Skill's compatible Recipe before retrying. "
-            "Do not retry the unchanged commands. Tell the user; do not retry them on your own."
+            "Do not retry the unchanged commands. "
+            "These actions were not run because they need the open canvas: Compose. "
+            "The refused actions are recorded as failed in this run. "
+            "Tell the user; do not retry them on your own."
         )
     assert result == {
         "ok": True, "status": "running", "tool_call_status": "completed",
@@ -1012,7 +1014,7 @@ def test_running_decision_after_edits_reports_applied_nodes(agent, monkeypatch):
           "node_id": "n2", "action": "auto_compose_video", "label": "Compose",
           "reason": "action_not_on_server",
       }]},
-     "The canvas edits were applied, but the workflow run did not start because these actions "
+     "The canvas edits were applied, but the workflow run did not start. These actions "
      "only run in the open canvas: Compose. Ask the user to open this canvas and run them there. "
      "Do not call this confirmation again."),
     ({"status": "not_started", "code": "workflow_plan_invalid", "message": "环"},
@@ -1180,3 +1182,33 @@ def test_recipe_blocker_does_not_request_open_canvas(agent, monkeypatch):
     assert result["applied"] is False
     assert "recipe" in result["agent_instruction"].lower()
     assert "ask the user to open" not in result["agent_instruction"].lower()
+
+
+@pytest.mark.parametrize("stage", ["create", "confirm", "executed"])
+def test_mixed_recipe_and_browser_blockers_both_reach_agent(agent, monkeypatch, stage):
+    plugin, _, _, _ = agent
+    blocked = [
+        {"node_id": "n1", "action": "generate_image", "label": "Poster", "reason": "recipe_required"},
+        {"node_id": "n2", "action": "auto_compose_video", "label": "Compose",
+         "reason": "action_not_on_server"},
+    ]
+    refusal = {"code": "canvas_open_required", "message": "Workflow blocked", "blocked": blocked}
+    if stage == "create":
+        _respond(agent, monkeypatch, "/confirmations", {"ok": False, **refusal})
+        result = _tool(plugin, "freezone_emit_canvas_command", {"commands": DELETE})
+    else:
+        if stage == "executed":
+            reply = {"ok": True, "data": {
+                "status": "executed", "result": applied_edit_result(),
+                "run": {"status": "not_started", **refusal},
+            }}
+        else:
+            reply = {"ok": False, **refusal}
+        _respond(agent, monkeypatch, "/decision", reply)
+        result = _tool(plugin, "freezone_confirm_canvas_action", {"confirmation_id": CONFIRMATION_ID})
+
+    guidance = result["agent_instruction"]
+    assert "Recipe admission: Poster" in guidance
+    assert "Compose" in guidance
+    assert "open this canvas" in guidance
+    assert result["applied"] is (stage == "executed")

@@ -6401,21 +6401,20 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
     if not response.get("ok"):
         code = response.get("code") or "confirmation_failed"
         message = response.get("message") or response.get("error") or "画布确认失败，未执行。"
+        instruction = _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS.get(
+            code,
+            "This confirmation cannot be used here and nothing was executed. Do not retry.",
+        )
+        if code == "canvas_open_required":
+            instruction = _canvas_open_required_instruction(response.get("blocked", []), instruction)
+        else:
+            instruction = instruction.format(run_id=response.get("run_id", ""))
         return tool_result({
             "ok": False, "status": "confirmation_failed", "code": code,
             "tool_call_status": "failed", "canvas_apply_status": "not_applied", "applied": False,
             **scope, "errors": [message], "message": message,
             **{key: response[key] for key in ("blocked", "run_id") if key in response},
-            "agent_instruction": (
-                _recipe_blocker_instruction(response.get("blocked", []))
-                if code == "canvas_open_required" else ""
-            ) or _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS.get(
-                code,
-                "This confirmation cannot be used here and nothing was executed. Do not retry.",
-            ).format(
-                actions=", ".join(item["label"] for item in response.get("blocked", [])),
-                run_id=response.get("run_id", ""),
-            ),
+            "agent_instruction": instruction,
         })
     data = response["data"]
     if data["status"] == "executed":
@@ -6425,20 +6424,15 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
         }
         if run := data.get("run"):
             payload["run"] = run
-            recipe_instruction = _recipe_blocker_instruction(run.get("blocked", []))
-            if recipe_instruction:
+            if run["code"] == "canvas_open_required":
+                guidance = _canvas_open_required_instruction(
+                    run.get("blocked", []),
+                    "These actions only run in the open canvas: {actions}. "
+                    "Ask the user to open this canvas and run them there.",
+                )
                 payload["agent_instruction"] = (
                     "The canvas edits were applied, but the workflow run did not start. "
-                    + recipe_instruction + " Do not call this confirmation again."
-                )
-            elif run["code"] == "canvas_open_required":
-                labels = ", ".join(
-                    item.get("label") or item["action"] for item in run.get("blocked", [])
-                )
-                payload["agent_instruction"] = (
-                    "The canvas edits were applied, but the workflow run did not start because "
-                    f"these actions only run in the open canvas: {labels}. Ask the user to open "
-                    "this canvas and run them there. Do not call this confirmation again."
+                    f"{guidance} Do not call this confirmation again."
                 )
             else:
                 payload["agent_instruction"] = (
@@ -6448,17 +6442,13 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
         return tool_result(payload)
     if data["status"] == "running":
         refusal_instruction = ""
-        recipe_instruction = _recipe_blocker_instruction(data.get("refused", []))
-        if recipe_instruction:
-            refusal_instruction = (
-                " The refused actions are recorded as failed in this run. "
-                + recipe_instruction + " Tell the user; do not retry them on your own."
+        if data.get("refused"):
+            guidance = _canvas_open_required_instruction(
+                data["refused"],
+                "These actions were not run because they need the open canvas: {actions}.",
             )
-        elif data.get("refused"):
-            labels = ", ".join(item.get("label") or item["action"] for item in data["refused"])
             refusal_instruction = (
-                " These actions were not run because they need the open canvas: "
-                f"{labels}. They are recorded as failed in this run. "
+                f" {guidance} The refused actions are recorded as failed in this run. "
                 "Tell the user; do not retry them on your own."
             )
         return tool_result({
@@ -6583,30 +6573,32 @@ def _canvas_browser_required_error(project: str, canvas: str) -> dict[str, Any] 
     }
 
 
-def _recipe_blocker_instruction(blocked: list[dict[str, Any]]) -> str:
-    labels = ", ".join(
-        item.get("label") or item["action"]
-        for item in blocked if item.get("reason") == "recipe_required"
-    )
-    if not labels:
-        return ""
-    return (
-        f"These actions lack server Recipe admission: {labels}. Inspect their node details "
-        "and use the selected Workflow Skill's compatible Recipe before retrying. "
-        "Do not retry the unchanged commands."
-    )
-
-
-def _canvas_open_required_instruction(blocked: list[dict[str, Any]]) -> str:
-    recipe_instruction = _recipe_blocker_instruction(blocked)
-    if recipe_instruction:
-        return recipe_instruction
-    actions = ", ".join(item["label"] for item in blocked)
-    return (
-        f"These actions only run in the open canvas: {actions}. "
+def _canvas_open_required_instruction(
+    blocked: list[dict[str, Any]],
+    browser_instruction: str = (
+        "These actions only run in the open canvas: {actions}. "
         "Ask the user to open this canvas, then call the tool again afterwards. "
         "Do not retry on your own."
-    )
+    ),
+) -> str:
+    recipe = []
+    browser = []
+    for item in blocked:
+        label = item.get("label") or item["action"]
+        if item.get("reason") == "recipe_required":
+            recipe.append(label)
+        else:
+            browser.append(label)
+    guidance = []
+    if recipe:
+        guidance.append(
+            f"These actions lack server Recipe admission: {', '.join(recipe)}. Inspect their "
+            "node details and use the selected Workflow Skill's compatible Recipe before "
+            "retrying. Do not retry the unchanged commands."
+        )
+    if browser or not blocked:
+        guidance.append(browser_instruction.format(actions=", ".join(browser)))
+    return " ".join(guidance)
 
 
 def _dispatch_server_host_commands(
