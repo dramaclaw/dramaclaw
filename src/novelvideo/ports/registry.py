@@ -7,9 +7,12 @@ from importlib.metadata import entry_points
 from typing import Any
 
 from novelvideo.shared import runtime_env
+from novelvideo.shared.failure_signals import CONFIGURATION
 
 
 class PortNotRegistered(RuntimeError):
+    failure_kind = CONFIGURATION
+
     def __init__(self, name: str) -> None:
         super().__init__(
             f"port {name!r} is not registered; call ensure_bootstrap() first"

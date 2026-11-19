@@ -17881,7 +17881,29 @@ async def get_canvas_workflow_run(
         )
         if run is None:
             raise HTTPException(404, "workflow run not found")
-        summary = summarize_workflow_run(run)
+        # The task record holds the cause of a failed action; the summary degrades without it.
+        task_keys = sorted(
+            {
+                action["task_key"]
+                for action in run.get("actions") or []
+                if action.get("status") in {"failed", "blocked"} and action.get("task_key")
+            }
+        )
+        tasks_by_key = {}
+        if task_keys:
+            try:
+                tasks = await asyncio.to_thread(
+                    get_task_manager().get_tasks_for_project, ctx, task_keys, include_logs=False
+                )
+                tasks_by_key = {
+                    key: {"error": task.error, "metadata": task.metadata}
+                    for key, task in tasks.items()
+                }
+            except Exception:
+                logger.warning(
+                    "Could not read task records for workflow run %s", run_id, exc_info=True
+                )
+        summary = summarize_workflow_run(run, tasks_by_key=tasks_by_key)
         changed = bool(token and summary["observation_token"] != token)
         remaining = deadline - asyncio.get_running_loop().time()
         if not wait_seconds or summary["terminal"] or changed or remaining <= 0:

@@ -32,6 +32,7 @@ from novelvideo.shared.billing_errors import (
     insufficient_credits_payload,
     is_insufficient_credits_error,
 )
+from novelvideo.shared.failure_signals import exception_failure_signal
 from novelvideo.task_backend.consumer import VerifiedTaskDelivery
 from novelvideo.task_backend.envelope import (
     InvalidTaskEnvelope,
@@ -1254,7 +1255,11 @@ def run_project_task_core_sync(
                     beat_num=beat_num,
                     scope=scope,
                     error=error,
-                    metadata={**run_metadata, **failure_payload},
+                    metadata={
+                        **run_metadata,
+                        **failure_payload,
+                        **exception_failure_signal(exc),
+                    },
                     expected_task_id=run_task_id,
                 )
                 asyncio.run(

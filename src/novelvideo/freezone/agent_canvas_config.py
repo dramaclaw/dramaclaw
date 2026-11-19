@@ -5,9 +5,13 @@
 import os
 from typing import Literal
 
+from novelvideo.shared.failure_signals import CONFIGURATION
+
 
 class AgentCanvasConfigError(RuntimeError):
     """An invalid Agent canvas execution configuration."""
+
+    failure_kind = CONFIGURATION
 
 
 def agent_canvas_executor() -> Literal["browser", "server"]:

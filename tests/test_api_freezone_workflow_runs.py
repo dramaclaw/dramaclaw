@@ -6251,3 +6251,94 @@ async def test_browser_upscale_plain_enqueue(video_media):
     ]
     assert video_media.enqueued[0]["payload"]["canvas_id"] == ""
     assert video_media.enqueued[0]["payload"]["node_id"] == ""
+
+
+def test_run_summary_joins_the_task_record_for_failure_reasons(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    """The agent-facing summary carries what the task centre shows, after redaction."""
+    from novelvideo.api.routes import freezone
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    task_key = "task:freezone_video_generate:project:proj_demo:0:video-1"
+    created = workflow_run_client.post(
+        base, json={"actions": [{"node_id": "video-1", "action": "generate_video"}]}
+    ).json()["data"]
+    patched = workflow_run_client.patch(
+        f"{base}/{created['run_id']}",
+        json={
+            "status": "failed",
+            "action_updates": [{
+                "node_id": "video-1", "action": "generate_video", "status": "failed",
+                "error": "视频生成失败", "task_key": task_key,
+                "task_type": "freezone_video_generate", "job_id": "job-1",
+            }],
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    requested: list[set[str]] = []
+
+    class Manager:
+        def get_tasks_for_project(self, _ctx, keys, *, include_logs=True):
+            requested.append(set(keys))
+            return {
+                task_key: SimpleNamespace(
+                    status="failed", progress=0.0, current_task="", result=None,
+                    error="unsupported MEDIA_RELAY_PROVIDER: -",
+                    metadata={
+                        "failure_kind": "configuration",
+                        "failure_exception": "MediaRelayConfigError",
+                    },
+                )
+            } if task_key in set(keys) else {}
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    response = workflow_run_client.get(f"{base}/{created['run_id']}?view=summary")
+    assert response.status_code == 200, response.text
+    (problem,) = response.json()["data"]["problems"]
+    assert problem["error_category"] == "configuration"
+    assert problem["fixable_by"] == "operator"
+    assert problem["detail"] == "unsupported MEDIA_RELAY_PROVIDER: -"
+    assert problem["diagnostics"] == {
+        "run_id": created["run_id"], "task_key": task_key, "job_id": "job-1",
+        "exception": "MediaRelayConfigError",
+    }
+    assert {task_key} in requested
+    # The stored record that the canvas reads is not rewritten.
+    full = workflow_run_client.get(f"{base}/{created['run_id']}").json()["data"]
+    assert full["actions"][0]["error"] == "视频生成失败"
+    assert full["actions"][0]["error_category"] == "execution"
+
+
+def test_run_summary_survives_an_unavailable_task_record(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base, json={"actions": [{"node_id": "video-1", "action": "generate_video"}]}
+    ).json()["data"]
+    workflow_run_client.patch(
+        f"{base}/{created['run_id']}",
+        json={
+            "status": "failed",
+            "action_updates": [{
+                "node_id": "video-1", "action": "generate_video", "status": "failed",
+                "error": "boom: widget exploded",
+                "task_key": "task:freezone_video_generate:project:proj_demo:0:video-1",
+            }],
+        },
+    )
+
+    class Manager:
+        def get_tasks_for_project(self, *_args, **_kwargs):
+            raise RuntimeError("task store unavailable")
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    response = workflow_run_client.get(f"{base}/{created['run_id']}?view=summary")
+    assert response.status_code == 200, response.text
+    (problem,) = response.json()["data"]["problems"]
+    assert problem["error_category"] == "execution"
+    assert problem["fixable_by"] == "unknown"
+    assert problem["detail"] == "boom: widget exploded"
