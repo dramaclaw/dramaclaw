@@ -5,12 +5,11 @@
 
 import asyncio
 import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from novelvideo.shared.failure_signals import upstream_status_of
 from novelvideo.config import get_tts_config
@@ -716,8 +715,6 @@ class MockTTSGenerator:
 
             # 创建一个简单的静音 MP3（用 ffmpeg）
             try:
-                import subprocess
-
                 run_project_subprocess(
                     [
                         "ffmpeg",
@@ -725,7 +722,7 @@ class MockTTSGenerator:
                         "-f",
                         "lavfi",
                         "-i",
-                        f"anullsrc=r=44100:cl=stereo",
+                        "anullsrc=r=44100:cl=stereo",
                         "-t",
                         str(duration),
                         "-acodec",

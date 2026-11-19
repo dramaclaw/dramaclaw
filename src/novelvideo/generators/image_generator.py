@@ -3,16 +3,10 @@
 使用 Seedream 4.0 生成图像，SeedEdit 3.0 进行编辑。
 """
 
-import asyncio
 import base64
-import hashlib
-import hmac
-import json
 import os
 import time
-from datetime import datetime
 from typing import Any, Optional
-from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, Field
@@ -492,7 +486,7 @@ class VolcengineImageGenerator:
             if request.skip_prompt_enhancement:
                 # 跳过提示词增强，直接使用传入的 prompt
                 enhanced_prompt = request.prompt
-                print(f"[Seedream] 使用原始提示词（skip_prompt_enhancement=True）", flush=True)
+                print("[Seedream] 使用原始提示词（skip_prompt_enhancement=True）", flush=True)
                 if image_urls:
                     print(f"[Seedream] 参考图数量: {len(image_urls)}, strength={request.reference_scale}", flush=True)
             elif image_urls and request.reference_prompts:
@@ -531,7 +525,7 @@ class VolcengineImageGenerator:
             # Seedream 草图渲染模式：完全禁用 negative_prompt
             # 避免任何词汇与草图参考产生语义冲突（仅 Seedream 模型适用此策略）
             if request.is_sketch_render:
-                print(f"[Seedream] 草图渲染模式: 完全禁用 negative_prompt (Seedream专用)", flush=True)
+                print("[Seedream] 草图渲染模式: 完全禁用 negative_prompt (Seedream专用)", flush=True)
                 # 不设置 negative_prompt
             else:
                 style_negative = style_preset.get("avoid_instructions", "")
@@ -613,7 +607,7 @@ class VolcengineImageGenerator:
 
                     # 验证 image_base64 不为空
                     if not image_base64:
-                        print(f"[Seedream] 警告: API 响应缺少图片数据!", flush=True)
+                        print("[Seedream] 警告: API 响应缺少图片数据!", flush=True)
                         print(f"[Seedream] 完整响应: {result}", flush=True)
                         await _refund_image_model_call(
                             reservation_id,
@@ -935,7 +929,7 @@ class VolcengineImageGenerator:
                 image_url = image_data.get("url", "")
 
                 if not image_base64 and image_url:
-                    print(f"[SeedEdit] 从 URL 下载结果图...", flush=True)
+                    print("[SeedEdit] 从 URL 下载结果图...", flush=True)
                     dl_response = await client.get(image_url, timeout=60.0)
                     if dl_response.status_code != 200:
                         raise with_upstream_status(

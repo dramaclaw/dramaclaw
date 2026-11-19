@@ -34,7 +34,6 @@ from novelvideo.generators.nanobanana_grid import (
     _prepare_organization_image_egress,
 )
 from novelvideo.egress_context import TrustedEgressContext
-from novelvideo.director_world.paths import safe_name
 from novelvideo.models import NovelScene, build_scene_effective_prompt
 
 SceneReferenceKind = Literal["master", "spatial_layout", "reverse_master"]

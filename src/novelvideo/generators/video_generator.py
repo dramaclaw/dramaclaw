@@ -15,8 +15,8 @@ import re
 import subprocess
 import urllib.parse
 import uuid
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from abc import ABC
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -2932,7 +2932,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 transition_token=claim.transition_token,
                 expected_version=expected_version,
             )
-        except Exception as exc:
+        except Exception:
             raise VideoEgressError("EGRESS_OPERATION_TRANSITION_FAILED") from None
 
     @staticmethod
@@ -2943,7 +2943,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 transition_token=claim.transition_token,
                 expected_version=claim.operation.version,
             )
-        except Exception as exc:
+        except Exception:
             raise VideoEgressError("EGRESS_OPERATION_TRANSITION_FAILED") from None
 
     async def generate(
@@ -4185,14 +4185,6 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         ws_scheme = "wss" if self.use_ssl else "ws"
         self.http_url = f"{http_scheme}://{self.server_address}"
         self.ws_url = f"{ws_scheme}://{self.server_address}"
-
-        # 根据类型选择工作流路径
-        if self.workflow_type == "fp8":
-            workflow_path = self.FP8_I2V_WORKFLOW_PATH
-        elif self.workflow_type == "ltx23":
-            workflow_path = self.LTX23_I2V_WORKFLOW_PATH
-        else:
-            workflow_path = self.GGUF_WORKFLOW_PATH
 
         # 加载工作流模板
         self._workflow_templates = {}

@@ -14,7 +14,6 @@
 """
 
 import asyncio
-import base64
 import mimetypes
 import os
 import tempfile
@@ -296,7 +295,7 @@ class NanoBananaCharacterGenerator:
 
             # Prompt-Only 模式：只生成提示词，跳过 API 调用
             if prompt_only:
-                print(f"[NanoBanana Character] Prompt-Only 模式，跳过 API 调用")
+                print("[NanoBanana Character] Prompt-Only 模式，跳过 API 调用")
                 return CharacterReferenceResult(
                     success=True,
                     character_name=character_name,
@@ -537,7 +536,7 @@ class NanoBananaCharacterGenerator:
 
             # Dry Run 模式：仅生成 Prompt，不生成图片
             if dry_run:
-                print(f"[NanoBanana Character] Dry Run 模式，跳过图片生成")
+                print("[NanoBanana Character] Dry Run 模式，跳过图片生成")
                 return CharacterReferenceResult(
                     success=True,
                     character_name=character_name,
@@ -575,7 +574,7 @@ class NanoBananaCharacterGenerator:
                 with open(reference_image_path, "rb") as f:
                     ref_image_bytes = f.read()
             else:
-                print(f"[NanoBanana Character] 无参考图，从文字描述独立生成")
+                print("[NanoBanana Character] 无参考图，从文字描述独立生成")
 
             # 加载服装参考图（如果有）
             costume_image = None
@@ -1334,7 +1333,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                         print(f"[NanoBanana Character] API 文本响应: {part.text[:300]}")
 
             if not image_bytes:
-                print(f"[NanoBanana Character] API 未返回图像数据")
+                print("[NanoBanana Character] API 未返回图像数据")
                 return None
 
             # 保存文件
@@ -1611,7 +1610,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                         print(f"[NanoBanana Character] API 文本响应: {part.text[:300]}")
 
             if not image_bytes:
-                print(f"[NanoBanana Character] API 未返回图像数据")
+                print("[NanoBanana Character] API 未返回图像数据")
                 return None
 
             # 保存文件
