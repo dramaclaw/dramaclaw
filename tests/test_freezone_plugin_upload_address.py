@@ -48,6 +48,71 @@ PRODUCT_SCHEMA_BYTES = (
     'choosing model-dependent parameters. Use only fields declared in create_schema."}}], '
     '"errors": [], "message": "Frontend returned requested canvas context."}'
 ).encode()
+ORIGINAL_INSTRUCTION = json.loads(PRODUCT_SCHEMA_BYTES)["responses"][0]["data"]["instruction"]
+# Trimmed from the canvas worker's answers for the two node types at 63e8a0298.
+MEDIA_NODE_SCHEMAS = {
+    "videoNode": {
+        "node_type": "videoNode",
+        "editable_fields": ["displayName", "prompt", "generateAudio"],
+        "create_schema": {
+            "displayName": {"type": "string", "label": "显示名称"},
+            "prompt": {"type": "string", "label": "提示词"},
+            "generateAudio": {"type": "boolean", "label": "生成音频"},
+        },
+        "stable_create_fields": ["displayName", "prompt"],
+        "dynamic_or_enum_fields": [],
+        "instruction": ORIGINAL_INSTRUCTION,
+    },
+    "audioNode": {
+        "node_type": "audioNode",
+        "editable_fields": ["displayName", "text", "prompt"],
+        "create_schema": {
+            "displayName": {"type": "string", "label": "显示名称"},
+            "text": {"type": "string", "label": "文本"},
+            "prompt": {"type": "string", "label": "提示词"},
+        },
+        "stable_create_fields": ["displayName", "text", "prompt"],
+        "dynamic_or_enum_fields": [],
+        "instruction": ORIGINAL_INSTRUCTION,
+    },
+}
+UPLOAD_FIELDS = {
+    "uploadNode": {"imageUrl": "string", "previewImageUrl": "string", "sourceFileName": "string"},
+    "videoNode": {"videoUrl": "string", "sourceFileName": "string", "referenceOnly": "boolean"},
+    "audioNode": {"audioUrl": "string", "sourceFileName": "string"},
+}
+MEDIA_TERMS = (
+    "uploadNode", "imageUrl", "previewImageUrl", "videoNode", "videoUrl", "referenceOnly",
+    "audioNode", "audioUrl", "sourceFileName", "displayName",
+)
+
+
+def _server_schema_answer(node_type):
+    answer = json.loads(PRODUCT_SCHEMA_BYTES)
+    if node_type != "uploadNode":
+        answer["responses"] = [{
+            "type": "node_create_schema", "node_type": node_type,
+            "data": json.loads(json.dumps(MEDIA_NODE_SCHEMAS[node_type])),
+        }]
+    return answer
+
+
+def _assert_media_kinds_explained(instruction):
+    for term in MEDIA_TERMS:
+        assert term in instruction, term
+    address = instruction.index(TOOL)
+    upload = instruction.index("data.url", address)
+    assert upload < instruction.index("freezone_create_node", upload)
+    assert re.search(r"referenceOnly\W+(?:to |set to |is |= ?)?true", instruction)
+    # An upload node holds images only.
+    [rule] = [
+        sentence for sentence in re.split(r"(?<=[.!?])\s+", instruction)
+        if re.search(r"\b(?:never|must not|do not)\b", sentence, re.IGNORECASE)
+        and "uploadNode" in sentence
+    ]
+    assert "videoUrl" in rule and "audioUrl" in rule
+
+
 # SHA-256 of the ordered list of every tool name, description, and parameters.
 PRODUCT_TOOLS_SHA256 = "1fb620a572005ae8054657d819e6303b7a79004b8d4c8364e7f9cac1d791c3d8"
 
@@ -99,10 +164,10 @@ def load_host(monkeypatch):
                         "data": {"code": "upload_address_unavailable"},
                     }
             elif (method, parts.path) == ("POST", CONTEXT):
-                assert json.loads(request.data)["requests"] == [
-                    {"type": "node_create_schema", **SCHEMA_ARGS},
-                ]
-                response = {"ok": True, "data": json.loads(PRODUCT_SCHEMA_BYTES)}
+                [context_request] = json.loads(request.data)["requests"]
+                assert context_request["type"] == "node_create_schema"
+                assert set(context_request) == {"type", "node_type"}
+                response = {"ok": True, "data": _server_schema_answer(context_request["node_type"])}
             else:
                 pytest.fail(f"Unexpected API request {method} {parts.path}")
             return _Response(200, json.dumps(response).encode())
@@ -144,9 +209,7 @@ async def test_external_server_publishes_upload_tool_and_returns_address(load_ho
     assert {key: result[key] for key in ADDRESS_DATA} == ADDRESS_DATA
     assert result["usage_example"] == f'curl -sS -X POST -F "file=@/path/to/image.png" "{ADDRESS}"'
     instruction = result["agent_instruction"]
-    for term in ("data.url", "uploadNode", "imageUrl", "previewImageUrl",
-                 "sourceFileName", "displayName"):
-        assert term in instruction
+    _assert_media_kinds_explained(instruction)
     for term in ("local", "reus", "expir", "user"):
         assert term in instruction.lower()
     assert host.requests.count(("POST", MINT)) == 1
@@ -236,3 +299,89 @@ def test_external_server_upload_node_schema_explains_upload_sequence(load_host):
     upload = instruction.index("data.url", address)
     assert upload < instruction.index("imageUrl", upload)
     assert "previewImageUrl" in instruction[upload:]
+
+
+@pytest.mark.parametrize("node_type", ["videoNode", "audioNode"])
+def test_external_server_media_node_schema_lists_upload_fields(load_host, node_type):
+    host = load_host()
+    result = _payload(host.index[SCHEMA_TOOL][1]({"node_type": node_type}))
+    assert result["ok"] is True
+    [response] = result["responses"]
+    schema = response["data"]
+    original = MEDIA_NODE_SCHEMAS[node_type]
+    fields = UPLOAD_FIELDS[node_type]
+    assert {name: schema["create_schema"][name]["type"] for name in fields} == fields
+    assert all(schema["create_schema"][name]["label"] for name in fields)
+    assert schema["stable_create_fields"] == [*original["stable_create_fields"], *fields]
+    # Node updates do not accept the upload fields.
+    assert schema["editable_fields"] == original["editable_fields"]
+    assert {
+        name: spec for name, spec in schema["create_schema"].items() if name not in fields
+    } == original["create_schema"]
+    # Generation guidance stays; the upload order is added to it.
+    assert schema["instruction"].startswith(original["instruction"])
+    _assert_media_kinds_explained(schema["instruction"])
+
+
+def test_external_server_upload_node_schema_names_every_media_kind(load_host):
+    host = load_host()
+    result = _payload(host.index[SCHEMA_TOOL][1](SCHEMA_ARGS))
+    schema = result["responses"][0]["data"]
+    assert set(UPLOAD_FIELDS["uploadNode"]) <= schema["create_schema"].keys()
+    assert not {"videoUrl", "audioUrl"} & schema["create_schema"].keys()
+    _assert_media_kinds_explained(schema["instruction"])
+
+
+@pytest.mark.parametrize("node_type", ["videoNode", "audioNode"])
+def test_product_chat_media_node_create_schema_is_passed_through(load_host, node_type):
+    host = load_host(product=True)
+    result = host.index[SCHEMA_TOOL][1]({"node_type": node_type})
+    expected = json.dumps(_server_schema_answer(node_type), ensure_ascii=False)
+    assert result.encode() == expected.encode()
+
+
+@pytest.mark.parametrize("command_type,extra", [
+    ("create_node", {}),
+    ("add_next_node", {"source_node_id": "source"}),
+])
+@pytest.mark.parametrize("field,node_type", [("videoUrl", "videoNode"), ("audioUrl", "audioNode")])
+def test_external_refuses_new_upload_node_holding_video_or_audio(
+    load_host, command_type, extra, field, node_type,
+):
+    host = load_host()
+    address = "/static/projects/proj/freezone/uploads/file.bin"
+    command = {"type": command_type, "node_type": "uploadNode", "data": {field: address}, **extra}
+    refusal = _payload(host.plugin._validate_write_commands_shape("proj", "default", [command]))
+    assert refusal["ok"] is False
+    assert refusal["status"] == "upload_node_media_kind"
+    assert "commands[0]" in refusal["error"]
+    assert node_type in refusal["error"] and field in refusal["error"]
+    # Refused before anything is sent to the server.
+    assert all(path == "/api/v1/config" for _, path in host.requests)
+
+    created = _payload(host.index["freezone_create_node"][1]({
+        "project_id": "proj", "canvas_id": "default", "node_type": "uploadNode",
+        "data": {field: address},
+    }))
+    assert created["ok"] is False
+    assert created["status"] == "upload_node_media_kind"
+    assert all(path == "/api/v1/config" for _, path in host.requests)
+
+
+def test_upload_node_media_kind_rule_leaves_other_commands_alone(load_host):
+    address = "/static/projects/proj/freezone/uploads/file.bin"
+    host = load_host()
+    accepted = [
+        {"type": "create_node", "node_type": "uploadNode",
+         "data": {"imageUrl": address, "previewImageUrl": address, "videoUrl": None, "audioUrl": ""}},
+        {"type": "create_node", "node_type": "videoNode",
+         "data": {"videoUrl": address, "referenceOnly": True}},
+        {"type": "create_node", "node_type": "audioNode", "data": {"audioUrl": address}},
+        # Stored nodes are not rewritten or refused.
+        {"type": "update_node_data", "node_id": "old", "data": {"displayName": "Old"}},
+    ]
+    assert host.plugin._validate_write_commands_shape("proj", "default", accepted) is None
+    # Product chat keeps its behaviour.
+    product = load_host(product=True)
+    legacy = [{"type": "create_node", "node_type": "uploadNode", "data": {"videoUrl": address}}]
+    assert product.plugin._validate_write_commands_shape("proj", "default", legacy) is None

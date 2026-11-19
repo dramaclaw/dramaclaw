@@ -4475,6 +4475,23 @@ def _text_annotation_tool_refusal(args: dict[str, Any]) -> str | None:
     return tool_result({**refusal, **_scope_meta(project or "", canvas)})
 
 
+def _upload_node_media_kind_error(command: dict[str, Any]) -> str | None:
+    data = command.get("data")
+    if (
+        command.get("type") in ("create_node", "add_next_node")
+        and command.get("node_type") == "uploadNode"
+        and isinstance(data, dict)
+        and _turnless_external_mcp_host()
+    ):
+        video_url = data.get("videoUrl")
+        audio_url = data.get("audioUrl")
+        if isinstance(video_url, str) and video_url:
+            return "create a videoNode with videoUrl and referenceOnly true"
+        if isinstance(audio_url, str) and audio_url:
+            return "create an audioNode with audioUrl"
+    return None
+
+
 def _validate_write_commands_shape(
     project: str | None,
     canvas: str | None,
@@ -4549,6 +4566,12 @@ def _validate_write_commands_shape(
                     f"commands[{index}].data.nodeType is invalid. Put the canvas node type at "
                     "commands[index].node_type."
                 ),
+            )
+        media_error = _upload_node_media_kind_error(command)
+        if media_error:
+            return _emit_command_error(
+                project, canvas, "upload_node_media_kind",
+                f"commands[{index}] uploadNode holds images only. For this file, {media_error}.",
             )
         if "imageGenerationParams" in command or (
             isinstance(data, dict) and "imageGenerationParams" in data
@@ -9489,6 +9512,11 @@ def _position_from_args(args: dict[str, Any]) -> dict[str, Any] | None:
 def _single_write_command(args: dict[str, Any], command: dict[str, Any]) -> str:
     project = str(args.get("project_id") or _default_project_id()).strip() or None
     canvas = str(args.get("canvas_id") or _default_canvas_id()).strip() or None
+    # Refuse invalid media before a missing scope can trigger an API lookup.
+    if (not project or not canvas) and _upload_node_media_kind_error(command):
+        refusal = _validate_write_commands_shape(project, canvas, [command])
+        if refusal:
+            return refusal
     return _emit_canvas_commands(project, canvas, [command], slim_result=True)
 
 
@@ -9735,9 +9763,31 @@ _UPLOAD_ADDRESS_FIELDS = {
 }
 _UPLOAD_NODE_INSTRUCTION = (
     "Call freezone_get_upload_address, then send the file with a local command. "
-    "Use the JSON response's data.url as imageUrl and previewImageUrl in the uploadNode. "
+    "Use the JSON response's data.url to create one node with freezone_create_node. "
+    "For an image, use uploadNode with imageUrl and previewImageUrl. "
+    "For a video, use videoNode with videoUrl and set referenceOnly to true. "
+    "For audio, use audioNode with audioUrl. "
+    "An uploadNode must never carry videoUrl or audioUrl. "
     "Set sourceFileName to the original filename and displayName to the node label."
 )
+
+
+_UPLOAD_NODE_CREATE_FIELDS = {
+    "uploadNode": {
+        "imageUrl": {"type": "string", "label": "图片地址"},
+        "previewImageUrl": {"type": "string", "label": "预览图片地址"},
+        "sourceFileName": {"type": "string", "label": "源文件名"},
+    },
+    "videoNode": {
+        "videoUrl": {"type": "string", "label": "视频地址"},
+        "sourceFileName": {"type": "string", "label": "源文件名"},
+        "referenceOnly": {"type": "boolean", "label": "仅作参考"},
+    },
+    "audioNode": {
+        "audioUrl": {"type": "string", "label": "音频地址"},
+        "sourceFileName": {"type": "string", "label": "源文件名"},
+    },
+}
 
 
 def _handle_get_upload_address(args: dict[str, Any], **_: Any) -> str:
@@ -10354,23 +10404,22 @@ def _request_canvas_context_from_frontend(
         data = response["data"]
         if _turnless_external_mcp_host():
             for entry in data.get("responses", []):
-                schema = entry.get("data") if isinstance(entry, dict) else None
-                if (
-                    isinstance(schema, dict)
-                    and entry.get("type") == "node_create_schema"
-                    and entry.get("node_type") == "uploadNode"
-                    and isinstance(schema.get("create_schema"), dict)
-                ):
-                    fields = {
-                        "imageUrl": {"type": "string", "label": "图片地址"},
-                        "previewImageUrl": {"type": "string", "label": "预览图片地址"},
-                        "sourceFileName": {"type": "string", "label": "源文件名"},
-                    }
+                if not isinstance(entry, dict) or entry.get("type") != "node_create_schema":
+                    continue
+                schema = entry.get("data")
+                node_type = entry.get("node_type")
+                fields = _UPLOAD_NODE_CREATE_FIELDS.get(node_type) if isinstance(node_type, str) else None
+                if fields and isinstance(schema, dict) and isinstance(schema.get("create_schema"), dict):
                     schema["create_schema"].update(fields)
                     schema["stable_create_fields"] = list(
                         dict.fromkeys([*(schema.get("stable_create_fields") or []), *fields])
                     )
-                    schema["instruction"] = _UPLOAD_NODE_INSTRUCTION
+                    original = schema.get("instruction")
+                    schema["instruction"] = (
+                        f"{original} {_UPLOAD_NODE_INSTRUCTION}"
+                        if node_type != "uploadNode" and original
+                        else _UPLOAD_NODE_INSTRUCTION
+                    )
         return tool_result({
             **{key: value for key, value in data.items() if key != "canvas_url"},
             **_canvas_url_field(data),
@@ -14788,7 +14837,7 @@ if _turnless_external_mcp_host():
         "freezone_get_upload_address",
         _schema(
             "freezone_get_upload_address",
-            "Get a temporary address for uploading a local file to this project.",
+            "Get a temporary address for uploading a local image, video or audio file to this project.",
             {"project_id": _SCOPE_PROPS["project_id"]}, [], reject_unknown=True,
         ),
         _handle_get_upload_address,
