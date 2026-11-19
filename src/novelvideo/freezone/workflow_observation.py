@@ -13,6 +13,7 @@ from novelvideo.utils.error_redaction import redact_error_detail
 TERMINAL_STATES = {"completed", "failed", "cancelled", "interrupted"}
 
 _TRANSIENT_MESSAGE = "上游模型服务暂时不可用，系统可稍后重试。"
+_TEXT_STATUS_CATEGORIES = frozenset({"authentication", "transient_upstream"})
 _FIXABLE_BY = {
     "input_missing": "user",
     "invalid_request": "user",
@@ -69,28 +70,32 @@ def summarize_workflow_run(
                 "504",
             )
         )
-        if category in {"execution", "unknown"}:
-            if status == "blocked":
-                category = "dependency_blocked"
-                message = "上游节点未成功完成，本节点未执行；请先处理上游节点的问题。"
+        generic_category = category in {"execution", "unknown"}
+        if generic_category and status == "blocked":
+            category = "dependency_blocked"
+            message = "上游节点未成功完成，本节点未执行；请先处理上游节点的问题。"
+            retryable = False
+        elif generic_category and signal.get("failure_kind") == CONFIGURATION:
+            category = CONFIGURATION
+            message = (
+                "服务端配置或部署问题导致生成失败，不是节点输入的问题；"
+                "重试或修改画布都无法解决，需要管理员或部署方处理。"
+            )
+            retryable = False
+        elif (
+            (generic_category or category in _TEXT_STATUS_CATEGORIES)
+            and upstream_status is not None
+            and 400 <= upstream_status < 600
+        ):
+            ambiguous = ambiguous or upstream_status in {408, 504}
+            if upstream_status in {408, 429} or upstream_status >= 500:
+                category, message, retryable = "transient_upstream", _TRANSIENT_MESSAGE, True
+            else:
+                category = "upstream_rejected"
+                message = f"上游服务拒绝了本次请求（HTTP {upstream_status}）。"
                 retryable = False
-            elif signal.get("failure_kind") == CONFIGURATION:
-                category = CONFIGURATION
-                message = (
-                    "服务端配置或部署问题导致生成失败，不是节点输入的问题；"
-                    "重试或修改画布都无法解决，需要管理员或部署方处理。"
-                )
-                retryable = False
-            elif upstream_status is not None and 400 <= upstream_status < 600:
-                ambiguous = ambiguous or upstream_status in {408, 504}
-                if upstream_status in {408, 429} or upstream_status >= 500:
-                    category, message, retryable = "transient_upstream", _TRANSIENT_MESSAGE, True
-                else:
-                    category = "upstream_rejected"
-                    message = f"上游服务拒绝了本次请求（HTTP {upstream_status}）。"
-                    retryable = False
-            elif category == "execution":
-                message = "生成失败，原因未知。原始错误见 detail，可凭 diagnostics 中的编号排查。"
+        elif category == "execution":
+            message = "生成失败，原因未知。原始错误见 detail，可凭 diagnostics 中的编号排查。"
         retryable = retryable and not ambiguous
         if category == "input_missing":
             next_action = "fix_input_before_retry"

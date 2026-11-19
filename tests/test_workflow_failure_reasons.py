@@ -90,6 +90,140 @@ def test_upstream_refusal_reports_the_status_without_the_address():
         assert leaked not in rendered
 
 
+@pytest.mark.parametrize("status", [403, 401])
+def test_typed_upstream_refusal_matches_for_image_and_video_errors(status):
+    image_error = (
+        f"DramaClawAPI image generation failed: HTTP {status}: request_id=; "
+        'headers={}; model=demo; body={"error": {"message": '
+        '"request refused by upstream policy", "type": "forbidden"}}'
+    )
+    image = _problem(
+        image_error,
+        task={
+            "error": image_error,
+            "metadata": {"upstream_status": status, "failure_exception": "ValueError"},
+        },
+    )
+    video = _problem(
+        "request refused by upstream policy",
+        task={
+            "error": f"freezone video generation failed: DramaClawAPI submit failed: "
+            f"HTTP {status} - {{...}}",
+            "metadata": {"upstream_status": status, "failure_exception": "RuntimeError"},
+        },
+    )
+    expected = {
+        "error_category": "upstream_rejected",
+        "message": f"上游服务拒绝了本次请求（HTTP {status}）。",
+        "retryable": False,
+        "next_action": "review_failure",
+        "fixable_by": "operator",
+        "automatic_retry": False,
+    }
+    assert {key: image[key] for key in expected} == {key: video[key] for key in expected}
+    assert {key: video[key] for key in expected} == expected
+    assert ("agent_instruction" in image) == ("agent_instruction" in video)
+    assert image["diagnostics"]["upstream_status"] == video["diagnostics"]["upstream_status"]
+    assert video["diagnostics"]["upstream_status"] == status
+
+
+@pytest.mark.parametrize(
+    "error,status,category,fixable_by,retryable,next_action,message",
+    [
+        (
+            "HTTP 401 invalid token", 401, "upstream_rejected", "operator", False,
+            "review_failure", "上游服务拒绝了本次请求（HTTP 401）。",
+        ),
+        (
+            "provider failed: HTTP 403 forbidden", 503, "transient_upstream",
+            "retry_later",
+            True, "retry_after_confirmation",
+            "上游模型服务暂时不可用，系统可稍后重试。",
+        ),
+        (
+            "provider failed: HTTP 429 slow down", 400, "upstream_rejected", "unknown",
+            False, "review_failure", "上游服务拒绝了本次请求（HTTP 400）。",
+        ),
+        (
+            "provider failed: HTTP 429 slow down", 429, "transient_upstream", "retry_later",
+            True, "retry_after_confirmation",
+            "上游模型服务暂时不可用，系统可稍后重试。",
+        ),
+        (
+            "provider failed: HTTP 404 not found", 404, "upstream_rejected", "unknown",
+            False, "review_failure", "上游服务拒绝了本次请求（HTTP 404）。",
+        ),
+    ],
+    ids=["invalid-token", "typed-503", "typed-400", "typed-429", "typed-404"],
+)
+def test_typed_upstream_status_decides_status_class_verdict(
+    error, status, category, fixable_by, retryable, next_action, message
+):
+    problem = _problem(error, task={"error": error, "metadata": {"upstream_status": status}})
+    assert problem["error_category"] == category
+    assert problem["fixable_by"] == fixable_by
+    assert problem["retryable"] is retryable
+    assert problem["next_action"] == next_action
+    assert problem["message"] == message
+
+
+@pytest.mark.parametrize(
+    "error,metadata,category,message,next_action,fixable_by",
+    [
+        (
+            error, {"failure_exception": "ValueError", **status_metadata}, "authentication",
+            "模型服务认证失败，请检查渠道地址和密钥后重试。",
+            "resolve_access_or_quota", "operator",
+        )
+        for error, status_metadata in [
+            ("HTTP 401 invalid token", {}),
+            ("HTTP 403 forbidden", {}),
+            ("HTTP 403 forbidden", {"upstream_status": "403"}),
+            ("HTTP 403 forbidden", {"upstream_status": True}),
+            ("HTTP 403 forbidden", {"upstream_status": 200}),
+        ]
+    ] + [
+        (
+            "HTTP 503 unavailable", {"failure_exception": "ValueError"}, "transient_upstream",
+            "上游模型服务暂时不可用，系统可稍后重试。",
+            "retry_after_confirmation", "retry_later",
+        ),
+    ],
+    ids=["no-status-401", "no-status-403", "string-status", "bool-status", "status-200",
+         "no-status-503"],
+)
+def test_text_decides_status_class_verdict_without_a_valid_typed_status(
+    error, metadata, category, message, next_action, fixable_by
+):
+    problem = _problem(error, task={"error": error, "metadata": metadata})
+    assert problem["error_category"] == category
+    assert problem["message"] == message
+    assert problem["next_action"] == next_action
+    assert problem["fixable_by"] == fixable_by
+
+
+@pytest.mark.parametrize(
+    "error,status,category,fixable_by,next_action",
+    [
+        (
+            "HTTP 403 quota has been exhausted", 403, "quota_exhausted", "operator",
+            "resolve_access_or_quota",
+        ),
+        ("HTTP 403 model_not_found", 403, "model_unavailable", "user", "review_failure"),
+        ("HTTP 400 SensitiveContent", 400, "content_policy", "user", "review_failure"),
+        ("InvalidParameter model", 400, "invalid_request", "user", "correct_parameters"),
+        (MISSING_INPUT_ERROR, 400, "input_missing", "user", "fix_input_before_retry"),
+    ],
+)
+def test_typed_upstream_status_preserves_specific_text_causes(
+    error, status, category, fixable_by, next_action
+):
+    problem = _problem(error, task={"error": error, "metadata": {"upstream_status": status}})
+    assert problem["error_category"] == category
+    assert problem["fixable_by"] == fixable_by
+    assert problem["next_action"] == next_action
+
+
 def test_unknown_cause_says_so_and_gives_leads_instead_of_advice():
     problem = _problem("boom: widget exploded")
     assert problem["error_category"] == "execution"
