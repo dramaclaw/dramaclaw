@@ -65,6 +65,12 @@ _CANVAS_URL_TOOLS = frozenset({
     "freezone_summarize_canvas",
 })
 _IMAGE_URL_TOOLS = frozenset({"freezone_get_node_detail"})
+# Tools whose results list image nodes with login-only file references.
+_IMAGE_REFERENCE_TOOLS = frozenset({
+    "freezone_get_node_detail",
+    "freezone_get_selection",
+    "freezone_get_neighbor_graph",
+})
 _CANVAS_URL_GUIDANCE = (
     " When the result has canvas_url, give that link to the user exactly as returned; "
     "do not download images, send images as attachments, or compose image addresses. "
@@ -73,13 +79,15 @@ _CANVAS_URL_GUIDANCE = (
 _IMAGE_URL_GUIDANCE = (
     " When a node in the result has image_url, show that image in your reply as a Markdown image "
     "using the address exactly as returned, and also give canvas_url exactly as returned. The "
-    "address is time-limited. source_url and preview_url are internal references that need login: "
-    "never give them to the user, link them, or turn them into an address. When there is no "
-    "image_url, give only canvas_url and say the image can be viewed there. Do not download "
-    "images, send images as attachments, or compose image addresses yourself."
+    "address is time-limited. source_url and preview_url are internal references that need "
+    "login: never give them to the user, link them, or turn them into an address. When a node has "
+    "image_unavailable_reason instead of image_url, give only canvas_url and say the image can "
+    "be viewed there. Do not download images, send images as attachments, or compose image "
+    "addresses yourself."
 )
 _INCLUDE_CANVAS_URL: ContextVar[bool] = ContextVar("freezone_include_canvas_url", default=False)
 _INCLUDE_IMAGE_URL: ContextVar[bool] = ContextVar("freezone_include_image_url", default=False)
+_REWRITE_IMAGE_URLS: ContextVar[bool] = ContextVar("freezone_rewrite_image_urls", default=False)
 
 
 def _canvas_url_field(data: dict[str, Any]) -> dict[str, str]:
@@ -10371,6 +10379,56 @@ def _handle_open_mainline_projection(args: dict[str, Any], **_: Any) -> str:
     )
 
 
+def _mark_unavailable_canvas_images(data: dict[str, Any]) -> None:
+    def dicts(value: Any) -> list[dict[str, Any]]:
+        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+    for response in dicts(data.get("responses")):
+        response_type = response.get("type")
+        if response_type == "node_detail":
+            reason = {
+                "code": "no_shareable_image_address",
+                "message": (
+                    "No shareable image address is available for this image. "
+                    "It can be seen on the canvas page."
+                ),
+            }
+        elif response_type in {"selection_detail", "neighbor_graph"}:
+            reason = {
+                "code": "image_address_not_included",
+                "message": (
+                    "This result does not include image addresses. freezone_get_node_detail "
+                    "returns image_url when a shareable address is available; "
+                    "the image can also be seen on the canvas page."
+                ),
+            }
+        else:
+            continue
+
+        details = response.get("data")
+        if not isinstance(details, dict):
+            continue
+        nodes = dicts(details.get("nodes"))
+        if response_type == "node_detail":
+            items = [*nodes]
+            for node in nodes:
+                items.extend(dicts(node.get("reference_media")))
+        else:
+            items = [*nodes, *dicts(details.get("display_nodes"))]
+        for item in items:
+            if item.get("media_type") != "image":
+                continue
+            image_url = item.get("image_url")
+            if isinstance(image_url, str) and image_url:
+                continue
+            if any(isinstance(url, str) and url for url in (
+                item.get("source_url"), item.get("preview_url"),
+            )):
+                item.pop("source_url", None)
+                item.pop("preview_url", None)
+                item["image_unavailable_reason"] = reason
+
+
 def _request_canvas_context_from_frontend(
     *,
     project: str | None,
@@ -10420,6 +10478,8 @@ def _request_canvas_context_from_frontend(
                         if node_type != "uploadNode" and original
                         else _UPLOAD_NODE_INSTRUCTION
                     )
+        if _REWRITE_IMAGE_URLS.get():
+            _mark_unavailable_canvas_images(data)
         return tool_result({
             **{key: value for key, value in data.items() if key != "canvas_url"},
             **_canvas_url_field(data),
@@ -14783,14 +14843,19 @@ def _bind_structured_result_input(handler, tool_name=""):
         started = time.perf_counter()
         result = None
         completed = False
-        include_url = tool_name in _CANVAS_URL_TOOLS and not _product_chat_session()
+        external = not _product_chat_session()
+        include_url = tool_name in _CANVAS_URL_TOOLS and external
         url_token = _INCLUDE_CANVAS_URL.set(include_url)
         image_url_token = _INCLUDE_IMAGE_URL.set(tool_name in _IMAGE_URL_TOOLS and include_url)
+        rewrite_image_urls_token = _REWRITE_IMAGE_URLS.set(
+            external and tool_name in _IMAGE_REFERENCE_TOOLS
+        )
         try:
             result = handler(args, *handler_args, **handler_kwargs)
             completed = True
             return result
         finally:
+            _REWRITE_IMAGE_URLS.reset(rewrite_image_urls_token)
             _INCLUDE_IMAGE_URL.reset(image_url_token)
             _INCLUDE_CANVAS_URL.reset(url_token)
             _STRUCTURED_RESULT_INPUT_HASH.reset(token)

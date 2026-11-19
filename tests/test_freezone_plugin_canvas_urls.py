@@ -3,6 +3,7 @@
 """Canvas links in bound tool results and published MCP contracts."""
 
 import json
+from copy import deepcopy
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -25,13 +26,26 @@ IMAGE_GUIDANCE = (
     " When a node in the result has image_url, show that image in your reply as a Markdown image "
     "using the address exactly as returned, and also give canvas_url exactly as returned. The "
     "address is time-limited. source_url and preview_url are internal references that need "
-    "login: never give them to the user, link them, or turn them into an address. When there is "
-    "no image_url, give only canvas_url and say the image can be viewed there. Do not download "
-    "images, send images as attachments, or compose image addresses yourself."
+    "login: never give them to the user, link them, or turn them into an address. When a node has "
+    "image_unavailable_reason instead of image_url, give only canvas_url and say the image can "
+    "be viewed there. Do not download images, send images as attachments, or compose image "
+    "addresses yourself."
 )
 LEGACY_GUIDANCE = "do not download images or send images as attachments."
 SIGNED_IMAGE = "https://objects.example.test/image.png?sig=a%2Fb&expires=123"
 SOURCE_IMAGE = "/static/projects/p/images/image.png"
+PREVIEW_IMAGE = "/static/projects/p/images/preview.png"
+NO_SHAREABLE_IMAGE = {
+    "code": "no_shareable_image_address",
+    "message": "No shareable image address is available for this image. It can be seen on the canvas page.",
+}
+IMAGE_ADDRESS_NOT_INCLUDED = {
+    "code": "image_address_not_included",
+    "message": (
+        "This result does not include image addresses. freezone_get_node_detail returns "
+        "image_url when a shareable address is available; the image can also be seen on the canvas page."
+    ),
+}
 NODE_DETAIL_TOOL = "freezone_get_node_detail"
 NEW_NODE = {"node_type": "textAnnotationNode", "data": {"title": "Hello", "content": "hello"}}
 CASES = {
@@ -50,6 +64,7 @@ CASES = {
 OUTSIDE = {
     "update_node_data": ("agent-commands", {"node_id": "n", "data": {"title": "Updated"}}),
     "cancel_canvas_action": ("/decision", {"confirmation_id": CONFIRMATION_ID}),
+    "get_selection": ("agent-context", {}),
     "get_neighbor_graph": ("agent-context", {"node_id": "n"}),
 }
 
@@ -91,7 +106,7 @@ def host(agent, monkeypatch):
 
     def call(
         tool, *, api_link=False, product=False, extra=None, decision_status="executed",
-        image_url=None, pending=False,
+        image_url=None, pending=False, context_data=None,
     ):
         if product:
             monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)
@@ -124,7 +139,9 @@ def host(agent, monkeypatch):
                     "canvas_context_status": "resolved",
                     "responses": [{"type": context_type, "data": {}}], "errors": [],
                 }
-                if tool == "get_node_detail":
+                if context_data is not None:
+                    data["responses"][0]["data"] = deepcopy(context_data)
+                elif tool == "get_node_detail":
                     node = {"node_id": "n", "media_type": "image", "source_url": SOURCE_IMAGE}
                     if image_url is not None:
                         node["image_url"] = image_url
@@ -313,6 +330,9 @@ def test_node_detail_forwards_only_api_image_and_schema_accepts_it(host, image_u
     node = {"node_id": "n", "media_type": "image", "source_url": SOURCE_IMAGE}
     if image_url is not None:
         node["image_url"] = image_url
+    else:
+        del node["source_url"]
+        node["image_unavailable_reason"] = NO_SHAREABLE_IMAGE
     assert result["responses"][0]["data"]["nodes"] == [node]
 
     schema = dramaclaw_mcp._output_schema_for_tool(NODE_DETAIL_TOOL, index)
@@ -320,6 +340,67 @@ def test_node_detail_forwards_only_api_image_and_schema_accepts_it(host, image_u
     structured = dramaclaw_mcp._normalize_structured_result(schema, result)
     Draft202012Validator(schema).validate(structured)
     assert structured["responses"][0]["data"]["nodes"] == [node]
+
+
+@pytest.mark.parametrize(("tool", "response_type", "reason"), [
+    ("get_node_detail", "node_detail", NO_SHAREABLE_IMAGE),
+    ("get_selection", "selection_detail", IMAGE_ADDRESS_NOT_INCLUDED),
+    ("get_neighbor_graph", "neighbor_graph", IMAGE_ADDRESS_NOT_INCLUDED),
+    ("summarize_canvas", "canvas_summary", None),
+], ids=["node-detail", "selection", "neighbor-graph", "canvas-summary"])
+@pytest.mark.parametrize("product", [False, True], ids=["external", "product"])
+def test_canvas_context_image_addresses(host, tool, response_type, reason, product):
+    _, index, call = host
+    image = {"media_type": "image"}
+    addresses = {"source_url": SOURCE_IMAGE, "preview_url": PREVIEW_IMAGE}
+    both = {**image, "node_id": "both", "title": "Keep this", "metadata": {"width": 128}}
+    preview = {**image, "node_id": "preview", "image_url": ""}
+    source = {**image, "node_id": "source", "image_url": None}
+    unchanged = [
+        {**image, "node_id": "signed", **addresses, "image_url": SIGNED_IMAGE},
+        {**image, "node_id": "null", "source_url": None, "preview_url": None},
+        {**image, "node_id": "absent"},
+        *[
+            {"node_id": f"media-{media_type}", "media_type": media_type, **addresses}
+            for media_type in ("video", "audio", "model", None)
+        ],
+    ]
+    items = [
+        {**both, **addresses},
+        unchanged[0],
+        {**preview, "source_url": "", "preview_url": PREVIEW_IMAGE},
+        {**source, "source_url": SOURCE_IMAGE},
+        *unchanged[1:],
+    ]
+    expected_items = items
+    if reason is not None and not product:
+        expected_items = [
+            {**both, "image_unavailable_reason": reason},
+            unchanged[0],
+            {**preview, "image_unavailable_reason": reason},
+            {**source, "image_unavailable_reason": reason},
+            *unchanged[1:],
+        ]
+
+    def response_data(rows):
+        if response_type == "node_detail":
+            return {"nodes": [{**rows[0], "reference_media": rows}, *rows[1:]]}
+        if response_type in {"selection_detail", "neighbor_graph"}:
+            return {"nodes": rows, "display_nodes": deepcopy(rows)}
+        return {"nodes": rows}
+
+    result, [_] = call(tool, context_data=response_data(items), product=product)
+    expected = {
+        "ok": True, "tool_call_status": "completed", "canvas_context_status": "resolved",
+        "responses": [{"type": response_type, "data": response_data(expected_items)}],
+        "errors": [],
+    }
+    if reason is not None:
+        schema = dramaclaw_mcp._output_schema_for_tool(f"freezone_{tool}", index)
+        structured = dramaclaw_mcp._normalize_structured_result(schema, result)
+        Draft202012Validator(schema).validate(structured)
+        assert structured["responses"] == expected["responses"]
+    assert result == expected
 
 
 @pytest.mark.parametrize(("product", "api_link"), [
