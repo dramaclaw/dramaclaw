@@ -420,7 +420,10 @@ _IN_PRODUCT_EMIT_DESCRIPTION = (
     "canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request "
     "to create a downstream media node and actually generate its output is a mixed operation: "
     "use add_next_node + run_node_action in this one batch, give add_next_node a client_id, "
-    "and use that same alias as run_node_action.node_id. When an existing node must be edited "
+    "and use that same alias as run_node_action.node_id. For create_node + create_edge + "
+    "run_node_action, set create_node.client_id to a plain alias such as compose_1; use "
+    "compose_1 directly in create_edge.target and run_node_action.node_id, without "
+    "interpolation syntax. When an existing node must be edited "
     "and then generated, use update_node_data + run_node_action in this one batch so "
     "generation reads the updated data without another model turn. Do not ask the user to "
     "click Generate after only creating or editing the node. Do not use this tool for "
@@ -4899,6 +4902,46 @@ def test_generation_clarification_builds_complete_media_questions(monkeypatch):
     assert emitted[0]["allow_recommended"] is False
     assert emitted[0]["allow_skip"] is False
     assert "questions" not in schemas["freezone_request_user_clarification"]["parameters"]["required"]
+
+
+@pytest.mark.parametrize(
+    ("target_node_ids", "should_reject"),
+    [(["music"], True), (["image"], False), (["music", "image"], False), ([], False)],
+)
+def test_generation_clarification_checks_explicit_audio_only_targets(
+    monkeypatch, target_node_ids, should_reject
+):
+    plugin = _load_plugin_module(api_executor=True)
+    emitted = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda *_: emitted.append(True) or {"ok": True})
+    canvas_path = "/api/v1/projects/project-a/freezone/canvases/canvas-a"
+
+    def request(method, path, **kwargs):
+        assert method == "GET"
+        if path == canvas_path:
+            return {"ok": True, "data": {"nodes": [
+                {"id": "music", "type": "audioNode", "data": {"audioKind": "music"}},
+                {"id": "image", "type": "imageGenNode", "data": {}},
+            ]}}
+        return {"ok": True, "data": []}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "target_node_ids": target_node_ids, "generation_media_types": ["image"],
+        "generation_preferences": {"video_duration_seconds": 30},
+    })
+
+    if should_reject:
+        assert result["status"] == "generation_clarification_target_mismatch"
+        assert result["retryable"] is True
+        assert result["target_node_ids"] == target_node_ids
+        assert "freezone_get_node_action_catalog" in result["agent_instruction"]
+        assert not emitted
+    else:
+        assert result["ok"] is True
+        assert emitted == [True]
 
 
 def test_generation_clarification_uses_all_target_video_modes(monkeypatch):

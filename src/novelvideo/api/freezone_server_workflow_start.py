@@ -319,8 +319,11 @@ async def check_server_workflow(
 
 def canvas_open_required_detail(check: dict) -> dict:
     labels = ", ".join(item["label"] or item["action"] for item in check["blocked"])
-    return {"code": "canvas_open_required",
-            "message": f"这些动作需要打开画布才能运行：{labels}", "blocked": check["blocked"]}  # i18n-exempt
+    if any(item["reason"] == "recipe_required" for item in check["blocked"]):
+        message = f"服务端运行预检失败，请检查各动作的阻塞原因：{labels}"  # i18n-exempt
+    else:
+        message = f"这些动作需要打开画布才能运行：{labels}"  # i18n-exempt
+    return {"code": "canvas_open_required", "message": message, "blocked": check["blocked"]}
 
 
 async def start_server_workflow_run(

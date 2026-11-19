@@ -2352,6 +2352,9 @@ def test_workflow_result_rejects_operation_for_another_compiled_skill(
 
     assert response.status_code == 400
     detail = response.json()["detail"]
+    assert detail["code"] == "workflow_result_skill_mismatch"
+    assert detail["next_action"] == "inspect_operation_before_retry"
+    detail = detail["message"]
     assert "does not match compiled Skill" in detail
     assert "operation.skill_id='other-skill'" in detail
     assert "operation.artifact_id='other-skill@1.0.0'" in detail

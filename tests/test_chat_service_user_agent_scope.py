@@ -8716,6 +8716,7 @@ def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypat
     assert "freezone_studio_get_film" in inside
     assert "Never rewrite this node's draftTimeline" in inside
     assert "canvas_id: canvas-a" in inside
+    assert "auto_compose_video" not in inside
 
     outside = chat_service._prompt_with_user_context(
         "admin",
@@ -8726,6 +8727,8 @@ def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypat
     )
     assert "[FREEZONE_COMPOSE_WORKSPACE]" not in outside
     assert "[FREEZONE_CANVAS_CONTEXT]" in outside
+    assert "run_node_action with action auto_compose_video" in outside
+    assert "through the normal canvas confirmation flow" in outside
 
     monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ENABLED", raising=False)
     disabled = chat_service._prompt_with_user_context(
@@ -8747,6 +8750,7 @@ def test_prompt_names_the_compose_workspace_node_only_when_one_is_open(monkeypat
         surface_context={"freezone_compose_node_id": "compose-1"},
     )
     assert "[FREEZONE_COMPOSE_WORKSPACE]" not in mainline
+    assert "auto_compose_video" not in mainline
 
 
 @pytest.fixture

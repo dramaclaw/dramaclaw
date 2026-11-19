@@ -61,6 +61,7 @@ def _search_haystack(summary: dict[str, Any]) -> str:
             summary.get("node_type"),
             " ".join(summary.get("keywords") or []),
             " ".join(summary.get("action_keys") or []),
+            " ".join(summary.get("allowed_recipe_ids") or []),
         )
         if value
     ).lower()

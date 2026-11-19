@@ -3559,6 +3559,7 @@ src/novelvideo/chat/home_uploads.py,Elastic-2.0,2026 SuperTale contributors,REUS
 src/novelvideo/chat/inline_data.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/interactive_story_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/live_events.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/mcp_compact_schemas.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/mcp_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/mcp_schema_guidance.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/media_presentation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -4332,6 +4333,7 @@ tests/test_cognee_ingest_failure_contract.py,Elastic-2.0,2026 SuperTale contribu
 tests/test_cognee_llm_config_refresh.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_pipeline_concurrency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_store_close.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_compact_codex_tool_schemas.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_compose_audio_fade.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_compose_episode_audio_source.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_confirmed_creative_inputs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

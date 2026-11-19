@@ -30,6 +30,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from novelvideo.chat import mcp_runtime
+from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.mcp_runtime import (
     _integer_string_argument_paths as _integer_string_argument_paths,
     _unexpected_argument_fields as _unexpected_argument_fields,
@@ -555,7 +556,7 @@ def build_mcp_tools(tool_index: ToolIndex) -> list[types.Tool]:
             tool.inputSchema["properties"]["commands"]["items"] = _flat_command_schema(
                 parameters["properties"]["commands"]["items"]
             )
-    return tools
+    return [compact_codex_tool(tool) for tool in tools]
 
 
 _FLAT_COMMAND_LEGEND = (

@@ -24,6 +24,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 
 from novelvideo.chat import agent_key_session
+from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
 from novelvideo.freezone.agent_workflows.catalog import (
@@ -544,7 +545,7 @@ async def list_tools() -> list[types.Tool]:
     tools = _workflow_tools()
     for tool in tools:
         tool.inputSchema = schema_with_guidance(tool.inputSchema)
-    return tools
+    return [compact_codex_tool(tool) for tool in tools]
 
 
 @SERVER.call_tool(validate_input=False)

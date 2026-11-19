@@ -6074,3 +6074,23 @@ def test_landed_draft_compiler_run_target(story):
     assert idle["run_target"] == running["run_target"] == expected
     assert running["commands"] == [*idle["commands"], {"type": "run_workflow", **expected}]
     assert not any(c["type"] == "run_workflow" for c in idle["commands"])
+
+
+def test_plan_rejects_ignored_video_mode_and_audio_fields(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _mode_plan(catalog, None, shared_mode="firstFrame")
+    index = next(i for i, node in enumerate(plan["nodes"]) if node["node_type"] == "videoNode")
+    data = plan["nodes"][index]["data"]
+    data.update(generation_mode="firstFrame", generate_audio=False)
+
+    result = catalog.validate_agent_workflow_plan(plan)
+
+    assert result["ok"] is False
+    errors = {item["path"]: item["message"] for item in result["errors"]}
+    assert "data.genMode" in errors[f"nodes[{index}].data.generation_mode"]
+    assert "data.generateAudio" in errors[f"nodes[{index}].data.generate_audio"]
+
+    data["genMode"] = data.pop("generation_mode")
+    data["generateAudio"] = data.pop("generate_audio")
+    assert catalog.validate_agent_workflow_plan(plan)["ok"] is True

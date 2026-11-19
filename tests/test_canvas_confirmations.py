@@ -758,3 +758,21 @@ def test_request_stores_canvas_snapshot_only_for_whole_canvas(tmp_path, monkeypa
     else:
         assert "canvas_node_ids" not in record
     assert [target["node_id"] for target in record["targets"]] == ["n1"]
+
+
+def test_compose_batch_refuses_unknown_action_before_confirmation(canvas):
+    commands = [
+        {"type": "add_next_node", "source_node_id": "n2", "client_id": "compose",
+         "node_type": "videoComposeNode"},
+        {"type": "create_edge", "source": "audio", "target": "compose",
+         "link_type": "composition_input_for"},
+        {"type": "run_node_action", "node_id": "compose", "action": "generate"},
+    ]
+    with pytest.raises(ValueError, match="use auto_compose_video"):
+        confirmation_targets(canvas, commands)
+
+    commands[-1]["action"] = "auto_compose_video"
+    assert confirmation_targets(canvas, commands) == [{
+        "node_id": "compose", "node_type": "videoComposeNode",
+        "title": "", "action": "auto_compose_video",
+    }]
