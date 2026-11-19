@@ -13,6 +13,7 @@ cwd = "/path/to/dramaclaw-ce"
 DRAMACLAW_API_URL = "http://127.0.0.1:8780"
 DRAMACLAW_LOCAL_AGENT_TRUST = "1"
 DRAMACLAW_EXTERNAL_MCP = "1"
+DRAMACLAW_CODEX_COMPACT_SCHEMAS = "1"
 DRAMACLAW_USER = "local"
 
 # Optional Freezone context. Prefer passing project_id/canvas_id in tool calls
@@ -33,3 +34,4 @@ cwd = "/path/to/dramaclaw-ce"
 
 [mcp_servers.dramaclaw_workflows.env]
 DRAMACLAW_USERNAME = "local"
+DRAMACLAW_CODEX_COMPACT_SCHEMAS = "1"
