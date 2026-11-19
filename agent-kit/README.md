@@ -101,6 +101,8 @@ python3 scripts/render_config.py \
 
 Codex 模板不设置 `tool_input_schema_max_bytes`，沿用 Codex 默认：超过 5000 字节的工具输入 schema 会被压缩，嵌套字段可能缺失。画布命令的两个工具（`freezone_emit_canvas_command`、`freezone_validate_canvas_commands`）发布的是 5000 字节以内的精简 schema，`commands[]` 的字段完整可见，每种命令的必填字段写在说明里。其余被压缩的工具里，工作流草稿的拒绝信息附带改正示例，互动故事的拒绝信息列出操作名和必填字段但不带示例；画布命令的拒绝信息只在文本节点缺标题或正文时附带示例。不建议把这个上限整体调大：实测会让工具负载明显增大，并导致运行不稳定。
 
+模板启用 `DRAMACLAW_CODEX_COMPACT_SCHEMAS=1`。它给工作流和互动故事的五个大工具发布精简参数形状，保留常用节点、连线、媒体引用和故事补丁操作。已有配置可在对应 MCP 服务的环境变量中加入此设置。服务端仍按完整契约校验。
+
 ## 自检
 
 ```bash

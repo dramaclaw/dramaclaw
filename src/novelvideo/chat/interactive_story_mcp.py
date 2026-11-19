@@ -22,6 +22,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from novelvideo.chat import mcp_runtime, story_tools
+from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.story_mcp_policy import STORY_HOOKS
 from novelvideo.chat.agent_api_errors import _http_error_result, _maybe_json
 
@@ -152,7 +153,7 @@ def _tools() -> mcp_runtime.ToolIndex:
 
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
-    return mcp_runtime.build_mcp_tools(_tools())
+    return [compact_codex_tool(tool) for tool in mcp_runtime.build_mcp_tools(_tools())]
 
 
 @SERVER.call_tool(validate_input=False)
