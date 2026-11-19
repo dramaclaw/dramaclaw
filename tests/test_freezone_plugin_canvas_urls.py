@@ -39,7 +39,10 @@ SOURCE_IMAGE = "/static/projects/p/images/image.png"
 PREVIEW_IMAGE = "/static/projects/p/images/preview.png"
 NO_SHAREABLE_IMAGE = {
     "code": "no_shareable_image_address",
-    "message": "No shareable image address is available for this image. It can be seen on the canvas page.",
+    "message": (
+        "The image exists; only a shareable address for it is not available. "
+        "It can be seen on the canvas page."
+    ),
 }
 IMAGE_ADDRESS_NOT_INCLUDED = {
     "code": "image_address_not_included",
@@ -52,7 +55,10 @@ SIGNED_MEDIA = "https://objects.example.test/clip.mp4?sig=a%2Fb&expires=123"
 SOURCE_MEDIA = "/static/projects/p/media/clip.mp4"
 NO_SHAREABLE_MEDIA = {
     "code": "no_shareable_media_address",
-    "message": "No shareable address is available for this file. It can be opened on the canvas page.",
+    "message": (
+        "The file exists; only a shareable address for it is not available. "
+        "It can be opened on the canvas page."
+    ),
 }
 MEDIA_ADDRESS_NOT_INCLUDED = {
     "code": "media_address_not_included",
@@ -417,6 +423,27 @@ def test_canvas_context_image_addresses(host, tool, response_type, reason, media
         Draft202012Validator(schema).validate(structured)
         assert structured["responses"] == expected["responses"]
     assert result == expected
+
+
+def test_node_detail_unavailable_reasons_say_the_file_exists(host):
+    _, index, call = host
+    result, [_] = call("get_node_detail", context_data={"nodes": [
+        {"node_id": "img", "media_type": "image", "source_url": SOURCE_IMAGE},
+        {"node_id": "clip", "media_type": "video", "source_url": SOURCE_MEDIA},
+    ]})
+    image, video = result["responses"][0]["data"]["nodes"]
+    assert "source_url" not in image
+    assert "source_url" not in video
+
+    image_reason = image["image_unavailable_reason"]
+    assert image_reason["code"] == "no_shareable_image_address"
+    assert "The image exists" in image_reason["message"]
+    assert "canvas page" in image_reason["message"]
+
+    media_reason = video["media_unavailable_reason"]
+    assert media_reason["code"] == "no_shareable_media_address"
+    assert "The file exists" in media_reason["message"]
+    assert "canvas page" in media_reason["message"]
 
 
 @pytest.mark.parametrize(("product", "api_link"), [

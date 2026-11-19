@@ -10504,14 +10504,14 @@ def _mark_unavailable_canvas_images(data: dict[str, Any]) -> None:
             image_reason = {
                 "code": "no_shareable_image_address",
                 "message": (
-                    "No shareable image address is available for this image. "
+                    "The image exists; only a shareable address for it is not available. "
                     "It can be seen on the canvas page."
                 ),
             }
             media_reason = {
                 "code": "no_shareable_media_address",
                 "message": (
-                    "No shareable address is available for this file. "
+                    "The file exists; only a shareable address for it is not available. "
                     "It can be opened on the canvas page."
                 ),
             }
