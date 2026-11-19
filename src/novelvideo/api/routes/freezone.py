@@ -205,6 +205,7 @@ from novelvideo.freezone.history import (
     append_generation_history,
     build_node_history_record,
     delete_generation_history_record,
+    generation_history_path,
     read_canvas_generation_history,
     read_generation_history,
 )
@@ -11986,6 +11987,15 @@ async def freezone_video_upscale(
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
+    history_context = {}
+    if body.canvas_id and body.node_id:
+        try:
+            history_path = generation_history_path(project_dir, body.canvas_id, body.node_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if history_path.parent.name != body.canvas_id or history_path.stem != body.node_id:
+            raise HTTPException(400, "invalid canvas or node history context")
+        history_context = {"canvas_id": body.canvas_id, "node_id": body.node_id}
     source_path, source_meta, processing_models, billing = await _prepare_video_upscale(
         body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
     )
@@ -12013,6 +12023,7 @@ async def freezone_video_upscale(
                     "source_meta": source_meta,
                     "billing": billing,
                     **processing_models,
+                    **history_context,
                 },
             )
         _start_freezone_video_upscale_task(

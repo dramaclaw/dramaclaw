@@ -9,7 +9,9 @@ from fastapi import HTTPException
 
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import jobs as freezone_jobs
+from novelvideo.freezone.history import read_canvas_generation_history, read_generation_history
 from novelvideo.freezone.jobs import _video_upscale_filter
+from novelvideo.task_backend.runners import freezone as freezone_runner
 
 
 def test_video_upscale_filter_uses_lanczos_and_enhancement() -> None:
@@ -166,10 +168,17 @@ async def test_model_video_enhancement_removes_stages_when_task_stops(
     assert not (output_dir / "stopped.mp4").exists()
 
 
+@pytest.mark.parametrize("history_context", [
+    {},
+    {"canvas_id": "canvas-upscale"},
+    {"node_id": "node-upscale"},
+    {"canvas_id": "canvas-upscale", "node_id": "node-upscale"},
+])
 @pytest.mark.asyncio
 async def test_freezone_video_upscale_route_starts_task(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    history_context: dict[str, str],
 ) -> None:
     username = "admin"
     project = "58"
@@ -238,6 +247,7 @@ async def test_freezone_video_upscale_route_starts_task(
             slowdown="5x",
             scene="anime",
             face_enhance=True,
+            **history_context,
         ),
         user={"username": username},
     )
@@ -261,6 +271,9 @@ async def test_freezone_video_upscale_route_starts_task(
     assert captured["payload"]["slowdown"] == "5x"
     assert captured["payload"]["scene"] == "anime"
     assert captured["payload"]["face_enhance"] is True
+    assert {key: captured["payload"][key] for key in ("canvas_id", "node_id") if key in captured["payload"]} == (
+        history_context if len(history_context) == 2 else {}
+    )
     assert captured["payload"]["upscale_backend"] == "newapi_video_upscale"
     assert captured["payload"]["frame_rate_backend"] == "newapi_video_frame_rate"
     assert captured["payload"]["billing"] == {
@@ -312,6 +325,82 @@ async def test_freezone_video_upscale_route_starts_task(
     )
     assert quote_result["data"]["cost"] == 24
     assert captured["quote_args"]["params"] == captured["payload"]["billing"]
+
+
+@pytest.mark.parametrize("canvas_id,node_id", [
+    ("../foreign-canvas", "node-upscale"),
+    ("canvas-upscale", "folder/node-upscale"),
+])
+@pytest.mark.asyncio
+async def test_video_upscale_rejects_invalid_history_context_before_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    canvas_id: str,
+    node_id: str,
+) -> None:
+    async def resolve(*_args, **_kwargs):
+        return SimpleNamespace(project_id="project"), "user", "project", tmp_path, str(tmp_path)
+
+    async def unexpected(*_args, **_kwargs):
+        pytest.fail("invalid history context should fail before preparing or enqueuing the task")
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", resolve)
+    monkeypatch.setattr(freezone_routes, "_prepare_video_upscale", unexpected)
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_upscale(
+            project="project",
+            body=freezone_routes.FreezoneVideoUpscaleRequest(
+                source_url="/source.mp4", canvas_id=canvas_id, node_id=node_id,
+            ),
+            user={},
+        )
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_completed_video_upscale_records_each_attempt_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = SimpleNamespace(project_id="project-upscale", output_dir=tmp_path)
+    monkeypatch.setattr(freezone_runner, "_update", lambda *_args: None)
+
+    async def render(*_args, project_dir, job_id, **_kwargs):
+        if job_id == "failed-job":
+            raise RuntimeError("failed to enhance")
+        path = freezone_jobs.outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}.mp4"
+        path.write_bytes(b"mp4")
+        return path, {"resolution": "1080p"}
+
+    monkeypatch.setattr(freezone_runner, "_call_freezone_leaf", render)
+
+    async def run(job_id: str, **context: str):
+        return await freezone_runner._run_freezone_video_upscale_async(
+            {"payload": {"job_id": job_id, "source_path": "/source.mp4", **context}},
+            ctx,
+        )
+
+    scope = {"canvas_id": "canvas-upscale", "node_id": "node-upscale"}
+    first = await run("first-job", **scope)
+    second = await run("second-job", **scope)
+    await run("first-job", **scope)
+    with pytest.raises(RuntimeError, match="failed to enhance"):
+        await run("failed-job", **scope)
+    assert "generation_history_record" not in await run("legacy-job")
+    assert "generation_history_record" not in await run("legacy-node", node_id="node-upscale")
+
+    records = read_generation_history(project_dir=tmp_path, **scope)
+    assert [record["id"] for record in records] == [
+        "freezone_video_upscale:first-job", "freezone_video_upscale:second-job",
+    ]
+    for record, result in zip(records, (first, second), strict=True):
+        assert record == result["generation_history_record"]
+        assert record["status"] == "completed"
+        assert record["media_type"] == "video"
+        assert record["result"]["output_url"] == result["output_url"]
+        assert record["task_key"] == f"task:freezone_video_upscale:project:project-upscale:0:{record['job_id']}"
+    assert read_canvas_generation_history(project_dir=tmp_path, canvas_id="canvas-upscale") == records[::-1]
+    assert read_canvas_generation_history(project_dir=tmp_path, canvas_id="default") == []
 
 
 @pytest.mark.asyncio

@@ -573,6 +573,7 @@ def _append_node_history(
     episode: int = 0,
     beat_num: int | None = None,
     scope: str | None = None,
+    idempotent: bool = False,
     **extra: Any,
 ) -> dict[str, Any] | None:
     node_id = str(payload.get("node_id") or "").strip()
@@ -610,6 +611,7 @@ def _append_node_history(
         canvas_id=str(payload.get("canvas_id") or "default"),
         node_id=node_id,
         record=record,
+        idempotency_key=record["id"] if idempotent else None,
     )
 
 
@@ -1452,13 +1454,30 @@ async def _run_freezone_video_upscale_async(
         enhancement_model=str(payload.get("enhancement_model") or "standard"),
     )
     rel = output_path.relative_to(project_dir).as_posix()
-    return {
+    result = {
         "job_id": job_id,
         "output_format": "mp4",
         "output_path": str(output_path),
         "output_url": make_static_url_for_context(ctx, rel),
         "meta": meta,
     }
+    if payload.get("canvas_id") and payload.get("node_id"):
+        try:
+            history_record = _append_node_history(
+                ctx=ctx,
+                project_dir=project_dir,
+                payload=payload,
+                task_type="freezone_video_upscale",
+                job_id=job_id,
+                media_type="video",
+                result=result,
+                idempotent=True,
+            )
+            if history_record:
+                result["generation_history_record"] = history_record
+        except Exception:
+            logger.warning("failed to record completed video upscale history", exc_info=True)
+    return result
 
 
 async def _run_freezone_audio_separate_async(
