@@ -142,6 +142,13 @@ export function searchLibrary(
   );
 }
 
+/** 从模型库卡片拖进视口时，dataTransfer 里放条目 id 用的类型。 */
+export const PREVIZ_LIBRARY_DRAG_TYPE = 'application/x-previz-library-entry';
+
+export function findPrevizLibraryEntry(id: string): PrevizLibraryEntry | undefined {
+  return PREVIZ_LIBRARY_ENTRIES.find((entry) => entry.id === id);
+}
+
 /**
  * 物件的模型对应模型库里哪一项，认不出（用户自己导入的、更新版本才有的模型）返回
  * `undefined`。几何体存的是形状名，不走这里。

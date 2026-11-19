@@ -10192,9 +10192,9 @@
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Đối chiếu với ảnh",
-      "pictureCheckHint": "Chiếu mô hình thô ngược lại ảnh tham chiếu để kiểm tra vị trí, kích thước và máy quay có khớp nhau; tốn thêm một hai vòng tạo nên chậm hơn",
+      "pictureCheckHint": "Căn vị trí và kích thước theo ảnh; thêm 1–2 vòng tạo",
       "renderCheck": "Đối chiếu bản dựng",
-      "renderCheckHint": "Dựng mô hình thô thành ảnh, để mô hình so với ảnh tham chiếu rồi sửa lại, hai vòng; tốn thêm hai vòng tạo nên chậm hơn",
+      "renderCheckHint": "Dựng ảnh rồi sửa theo ảnh tham chiếu; thêm 2 vòng tạo",
       "model": "Mô hình",
       "modelDefault": "{{name}} (mặc định)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
@@ -10209,13 +10209,7 @@
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
-      "guide": {
-        "title": "Images that work well",
-        "space": "A scene whose layout is readable: a room, a street, a courtyard",
-        "floor": "The floor is visible, along with at least one wall or clear boundary",
-        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
-        "occlusion": "People or foreground objects do not cover the main pieces"
-      },
+      "guide": "Hiệu quả nhất với ảnh toàn cảnh ngang tầm mắt, thấy rõ sàn và tường",
       "hint": {
         "title": "This image may affect the result; you can still continue",
         "small": "The image is small (short edge under 512 px), so details may be hard to read",
@@ -10252,6 +10246,7 @@
       "close": "Close model library",
       "categories": "Categories",
       "all": "All",
+      "recent": "Gần đây",
       "category": {
         "primitive": "Primitives",
         "furniture": "Furniture",

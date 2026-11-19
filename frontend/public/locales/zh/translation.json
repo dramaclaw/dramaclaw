@@ -10192,9 +10192,9 @@
       "description": "补充说明（可选）",
       "descriptionPlaceholder": "例如：层高约 3 米，餐桌长 2.4 米，门在后墙右侧",
       "pictureCheck": "画面核对",
-      "pictureCheckHint": "生成后把白模投影回参考图，核对位置、尺寸和机位是否自洽；多耗一到两轮生成，耗时更长",
+      "pictureCheckHint": "对照原图校准位置和尺寸，多 1–2 轮生成",
       "renderCheck": "渲染核对",
-      "renderCheckHint": "生成后把白模渲染成图，和参考图放在一起让模型对照着改，改两轮；多耗两轮生成，耗时更长",
+      "renderCheckHint": "渲染后对照原图再修正，多 2 轮生成",
       "model": "生成模型",
       "modelDefault": "{{name}}（默认）",
       "badExtension": "只支持 png / jpg / jpeg / webp",
@@ -10209,13 +10209,7 @@
       "done": "已生成 {{count}} 个几何体",
       "warnings": "有 {{count}} 处可能需要手动调整",
       "closeDiscards": "关闭此窗口不影响生成：任务在后台继续，结果会自动放进场景，进度见任务中心",
-      "guide": {
-        "title": "什么样的图效果好",
-        "space": "能看清空间结构的场景图：室内、街道、院落等",
-        "floor": "看得见地面，以及至少一面墙或明显的边界",
-        "framing": "平视或略俯视的全景，避免特写和极端仰拍",
-        "occlusion": "主要物件没有被人物或前景大面积挡住"
-      },
+      "guide": "平视全景、能看到地面和墙面的图效果最好",
       "hint": {
         "title": "这张图可能影响生成效果，仍然可以继续",
         "small": "图片偏小（短边不足 512 像素），细节可能认不清",
@@ -10252,6 +10246,7 @@
       "close": "关闭模型库",
       "categories": "模型分类",
       "all": "全部",
+      "recent": "最近使用",
       "category": {
         "primitive": "通用几何体",
         "furniture": "家具",

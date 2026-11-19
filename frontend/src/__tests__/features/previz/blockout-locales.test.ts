@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest";
 import type { PrevizBlockoutStage } from "@/features/previz/ui/useBlockoutGeneration";
 import type { PrevizBlockoutImportMode } from "@/features/previz/domain/blockout";
 import {
-  PREVIZ_BLOCKOUT_GUIDE_KEYS,
   PREVIZ_BLOCKOUT_HINT_KEY,
   PREVIZ_BLOCKOUT_REJECTION_KEY,
 } from "@/features/previz/ui/blockoutMessages";
@@ -74,7 +73,6 @@ const USED_KEYS = [
   ...literalKeys(),
   ...Object.values(PREVIZ_BLOCKOUT_HINT_KEY),
   ...Object.values(PREVIZ_BLOCKOUT_REJECTION_KEY),
-  ...PREVIZ_BLOCKOUT_GUIDE_KEYS,
   ...Object.keys(STAGES).map((stage) => `previz.blockout.stage.${stage}`),
   ...Object.keys(MODES).map((mode) => `previz.blockout.mode.${mode}`),
 ];

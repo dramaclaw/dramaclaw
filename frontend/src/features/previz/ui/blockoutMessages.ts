@@ -25,14 +25,6 @@ export const PREVIZ_BLOCKOUT_REJECTION_KEY: Record<PrevizBlockoutHoldReason['rea
   'version-too-new': 'previz.blockout.rejected.versionTooNew',
 };
 
-/** 对话框开着时一直摆在那儿的选图建议。只是建议：不符合的图照样能生成。 */
-export const PREVIZ_BLOCKOUT_GUIDE_KEYS = [
-  'previz.blockout.guide.space',
-  'previz.blockout.guide.floor',
-  'previz.blockout.guide.framing',
-  'previz.blockout.guide.occlusion',
-] as const;
-
 /** toast 和对话框说的是同一句话。 */
 export function blockoutRejectionMessage(rejection: PrevizBlockoutHoldReason, t: TFunction): string {
   const key = PREVIZ_BLOCKOUT_REJECTION_KEY[rejection.reason];
