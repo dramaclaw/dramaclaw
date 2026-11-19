@@ -489,11 +489,6 @@ def production_api(tmp_path, monkeypatch, request):
         def __init__(self, code):
             self.code = code
 
-    def enabled():
-        if not state.enabled:
-            raise ServiceError("voice_design_unavailable")
-        return 20
-
     async def config(**kwargs):
         if not state.enabled or kwargs["catalog_id"] not in state.models:
             raise ServiceError("voice_design_unavailable")
@@ -543,7 +538,8 @@ def production_api(tmp_path, monkeypatch, request):
     }
 
     async def list_configs(**kwargs):
-        enabled()
+        if not state.enabled:
+            raise ServiceError("voice_design_unavailable")
         return [await config(catalog_id=key, **kwargs) for key in state.models]
 
     async def enqueue(*args, **kwargs):
@@ -556,7 +552,6 @@ def production_api(tmp_path, monkeypatch, request):
             sys.modules,
             "novelvideo.audio.voice_design_service",
             SimpleNamespace(
-                ensure_voice_design_enabled=enabled,
                 resolve_voice_design_config=config,
                 list_voice_design_configs=list_configs,
                 VoiceDesignError=ServiceError,
@@ -1684,9 +1679,6 @@ def test_ce_official_voice_design_catalog_can_submit(
     monkeypatch.setattr(service, "get_port", missing_catalog)
     monkeypatch.setattr(config, "STATE_DIR", tmp_path)
     monkeypatch.setenv("ST_EDITION", "ce")
-    monkeypatch.setenv("VOICE_DESIGN_ENABLED", "0")
-    monkeypatch.setenv("VOICE_DESIGN_DAILY_LIMIT", "20")
-    monkeypatch.setenv("VOICE_DESIGN_CHANNEL_DAILY_LIMIT", "0")
     monkeypatch.delenv("VOICE_DESIGN_TEST_REPLAY", raising=False)
 
     s = production_api

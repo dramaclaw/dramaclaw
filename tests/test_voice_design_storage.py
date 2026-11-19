@@ -207,7 +207,7 @@ def test_ttl_without_quantity_eviction_keeps_formal_files(store, ctx):
     assert formal.read_bytes() == b"formal"
 
 
-def test_daily_quota_and_concurrency_span_projects(store, ctx, tmp_path):
+def test_concurrency_spans_projects_until_prior_attempt_finishes(store, ctx, tmp_path):
     from novelvideo.audio.voice_design_storage import (
         CandidateStorageError,
         VoiceDesignStorage,
@@ -219,12 +219,11 @@ def test_daily_quota_and_concurrency_span_projects(store, ctx, tmp_path):
     )
     first, _ = reserve(store)
     second, _ = reserve(other)
-    assert store.claim(first["candidate_id"], daily_limit=1)
+    assert store.claim(first["candidate_id"])
     with pytest.raises(CandidateStorageError, match="rate_limited"):
-        other.claim(second["candidate_id"], daily_limit=1)
+        other.claim(second["candidate_id"])
     store.fail(first["candidate_id"], "provider_bad_audio")
-    with pytest.raises(CandidateStorageError, match="voice_design_quota_exceeded"):
-        other.claim(second["candidate_id"], daily_limit=1)
+    assert other.claim(second["candidate_id"])
 
 
 def test_ready_requires_matching_local_file(store):
@@ -235,36 +234,6 @@ def test_ready_requires_matching_local_file(store):
     with pytest.raises(CandidateStorageError, match="candidate_persist_failed"):
         store.complete(record["candidate_id"], duration_seconds=3, sha256="a" * 64)
     assert store.get(record["candidate_id"])["status"] == "generating"
-
-
-def test_channel_budget_spans_users_and_quota_resets_next_day(store, ctx, tmp_path):
-    from novelvideo.audio.voice_design_storage import (
-        CandidateStorageError,
-        VoiceDesignStorage,
-    )
-
-    now = [86400.0]
-    store.clock = lambda: now[0]
-    other = VoiceDesignStorage(
-        replace(ctx, requester_user_id="other"),
-        clock=lambda: now[0],
-        quota_path=store.quota_path,
-    )
-    first, _ = reserve(store)
-    second, _ = reserve(other)
-    store.claim(
-        first["candidate_id"], channel_key="shared-channel", channel_daily_limit=1
-    )
-    store.fail(first["candidate_id"], "provider_bad_audio")
-    with pytest.raises(CandidateStorageError, match="voice_design_quota_exceeded"):
-        other.claim(
-            second["candidate_id"], channel_key="shared-channel", channel_daily_limit=1
-        )
-    now[0] += 86400
-    second, _ = reserve(other)
-    assert other.claim(
-        second["candidate_id"], channel_key="shared-channel", channel_daily_limit=1
-    )
 
 
 def test_ttl_starts_after_generation_and_late_completion_fails(store):

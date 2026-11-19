@@ -158,21 +158,6 @@ class VoiceDesignAudio:
     sha256: str
 
 
-def ensure_voice_design_enabled() -> tuple[int | None, int | None]:
-    from novelvideo.shared.runtime_env import uses_local_ce_runtime
-
-    if uses_local_ce_runtime():
-        return None, None
-    try:
-        limit = int(os.environ.get("VOICE_DESIGN_DAILY_LIMIT", "0"))
-        budget = int(os.environ.get("VOICE_DESIGN_CHANNEL_DAILY_LIMIT", "0"))
-    except ValueError:
-        raise VoiceDesignError("voice_design_unavailable") from None
-    if os.environ.get("VOICE_DESIGN_ENABLED") != "1" or limit <= 0 or budget <= 0:
-        raise VoiceDesignError("voice_design_unavailable")
-    return limit, budget
-
-
 def list_voice_design_catalog(entries: list[dict]) -> list[VoiceDesignConfig]:
     visible = {
         str(e.get("catalogId") or e.get("catalog_id") or e.get("id")): e
@@ -254,7 +239,6 @@ def resolve_voice_design_catalog(
 async def list_voice_design_configs(
     *, user_id: str, project_id: str
 ) -> list[VoiceDesignConfig]:
-    ensure_voice_design_enabled()
     if not user_id or not project_id:
         raise VoiceDesignError("voice_design_forbidden")
     try:
@@ -602,7 +586,6 @@ async def generate_voice_design(
     egress_context: TrustedEgressContext,
     model_config: VoiceDesignConfig,
 ) -> VoiceDesignAudio:
-    ensure_voice_design_enabled()
     if (
         type(egress_context) is not TrustedEgressContext
         or egress_context.task_type != "voice_design"

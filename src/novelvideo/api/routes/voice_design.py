@@ -600,12 +600,10 @@ async def create_candidate(
             )
     from novelvideo.audio.voice_design_service import (
         VoiceDesignError as ServiceError,
-        ensure_voice_design_enabled,
         resolve_voice_design_config,
     )
 
     try:
-        ensure_voice_design_enabled()
         config = await resolve_voice_design_config(
             user_id=ctx.requester_user_id,
             project_id=ctx.project_id,
