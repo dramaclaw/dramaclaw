@@ -540,12 +540,13 @@ async def probe_video_stream(
     """Return the first video stream geometry, frame rate, and duration."""
     if not shutil.which("ffprobe"):
         raise RuntimeError("ffprobe not found on PATH; install via brew/apt")
-    entries = (
-        "stream=width,height,avg_frame_rate,pix_fmt,color_transfer,field_order,"
-        "sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation:format=duration"
-    )
+    entries = "stream=width,height,avg_frame_rate:format=duration"
     if verify_constant_frame_rate:
-        entries += ":frame=best_effort_timestamp_time"
+        entries = (
+            "stream=width,height,avg_frame_rate,pix_fmt,color_transfer,field_order,"
+            "sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation:format=duration"
+            ":frame=best_effort_timestamp_time"
+        )
     cmd = [
         "ffprobe",
         "-v",
@@ -597,19 +598,21 @@ async def probe_video_stream(
         stream = data["streams"][0]
         numerator, denominator = str(stream.get("avg_frame_rate") or "0/1").split("/", 1)
         fps = float(numerator) / max(float(denominator), 1.0)
-        result = {
+        result: dict[str, Any] = {
             "width": int(stream["width"]),
             "height": int(stream["height"]),
             "fps": fps,
             "duration": max(0.1, float(data["format"]["duration"])),
-            **({"hdr": stream["color_transfer"] in {"smpte2084", "arib-std-b67"}} if stream.get("color_transfer") else {}),
-            **({"pixel_format": stream["pix_fmt"]} if stream.get("pix_fmt") else {}),
-            **({"field_order": stream["field_order"]} if stream.get("field_order") else {}),
-            **({"sample_aspect_ratio": stream["sample_aspect_ratio"]} if stream.get("sample_aspect_ratio") else {}),
-            "rotated": (stream.get("tags") or {}).get("rotate") not in {None, "0"}
-            or any(item.get("rotation") for item in stream.get("side_data_list") or []),
         }
         if verify_constant_frame_rate:
+            result.update({
+                **({"hdr": stream["color_transfer"] in {"smpte2084", "arib-std-b67"}} if stream.get("color_transfer") else {}),
+                **({"pixel_format": stream["pix_fmt"]} if stream.get("pix_fmt") else {}),
+                **({"field_order": stream["field_order"]} if stream.get("field_order") else {}),
+                **({"sample_aspect_ratio": stream["sample_aspect_ratio"]} if stream.get("sample_aspect_ratio") else {}),
+                "rotated": (stream.get("tags") or {}).get("rotate") not in {None, "0"}
+                or any(item.get("rotation") for item in stream.get("side_data_list") or []),
+            })
             timestamps = [
                 float(frame["best_effort_timestamp_time"])
                 for frame in data.get("frames", [])

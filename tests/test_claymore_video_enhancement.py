@@ -93,14 +93,27 @@ def timestamp_video(tmp_path, request):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("timestamp_video", ["cfr", "vfr", "offset"], indirect=True)
-async def test_claymore_probe_checks_real_frame_pts(timestamp_video):
+async def test_claymore_probe_checks_real_frame_pts(timestamp_video, monkeypatch):
+    run = subprocess.run
+    commands = []
+
+    def record_command(command, **kwargs):
+        commands.append(command)
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(jobs.subprocess, "run", record_command)
     ordinary = await jobs.probe_video_stream(str(timestamp_video.path))
     checked = await jobs.probe_video_stream(
         str(timestamp_video.path), verify_constant_frame_rate=True,
     )
+    assert commands[0] == [
+        "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+        "stream=width,height,avg_frame_rate:format=duration", "-of", "json", str(timestamp_video.path),
+    ]
+    assert "-show_frames" in commands[1]
     assert ordinary["fps"] == checked["fps"] == 24
-    assert "constant_frame_rate" not in ordinary
-    assert "timestamps_aligned_to_zero" not in ordinary
+    assert ordinary == {key: checked[key] for key in ("width", "height", "fps", "duration")}
+    assert checked["pixel_format"] == "yuv420p"
     assert checked["constant_frame_rate"] is timestamp_video.constant_frame_rate
     assert checked["timestamps_aligned_to_zero"] is timestamp_video.timestamps_aligned_to_zero
 

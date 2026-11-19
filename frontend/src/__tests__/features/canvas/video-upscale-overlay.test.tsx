@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { ReactNode } from 'react';
+import { useLayoutEffect, type ReactNode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CanvasNode } from '@/features/canvas/domain/canvasNodes';
@@ -132,11 +132,31 @@ describe('saved video enhancement selection', () => {
     expect(screen.getByRole('option', { name: 'node.videoUpscale.panel.targetFpsAuto' })).toBeTruthy();
   });
 
-  it('disables submission until the quote matches changed workflow parameters', async () => {
-    const { rerender } = render(<VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: 'standard' })} />);
-    await waitFor(() => expect((screen.getByTitle('node.videoUpscale.panel.submit') as HTMLButtonElement).disabled).toBe(false));
+  it.each([
+    ['claymore', 'claymore', true],
+    ['claymore', 'standard', true],
+    ['claymore', 'topaz', true],
+    ['standard', 'claymore', true],
+    ['topaz', 'claymore', true],
+    ['standard', 'standard', false],
+    ['topaz', 'topaz', false],
+  ])('applies immediate quote matching only for Claymore (%s to %s)', async (before, after, immediatelyDisabled) => {
+    mocks.probe.mockResolvedValue({
+      width: 1280, height: 720, fps: 24, duration: 10,
+      enhancement_models: ['topaz', 'standard', 'claymore'],
+      upscale_resolutions: ['1080p', '2k'], frame_rate_resolutions: ['1080p'],
+    });
+    const submitDisabled = () => (screen.getByTitle('node.videoUpscale.panel.submit') as HTMLButtonElement).disabled;
+    let disabledBeforeEffects: boolean | undefined;
+    function ObserveQuote({ model, resolution }: { model: string; resolution: string }) {
+      useLayoutEffect(() => { disabledBeforeEffects = submitDisabled(); }, [model, resolution]);
+      return <VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: model, upscaleResolution: resolution })} />;
+    }
+    const { rerender } = render(<ObserveQuote model={before} resolution="1080p" />);
+    await waitFor(() => expect(submitDisabled()).toBe(false));
     mocks.quote.mockImplementation(() => new Promise(() => {}));
-    rerender(<VideoUpscaleEditorOverlay node={node({ upscaleEnhancementModel: 'standard', upscaleResolution: '2k' })} />);
-    expect((screen.getByTitle('node.videoUpscale.panel.submit') as HTMLButtonElement).disabled).toBe(true);
+    rerender(<ObserveQuote model={after} resolution="2k" />);
+    expect(disabledBeforeEffects).toBe(immediatelyDisabled);
+    expect(submitDisabled()).toBe(true);
   });
 });

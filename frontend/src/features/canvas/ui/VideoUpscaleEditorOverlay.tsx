@@ -67,7 +67,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   const [probeError, setProbeError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [creditQuote, setCreditQuote] = useState<{
-    display: string; promotion?: CreditPromotionDisplay; identity: string;
+    display: string; promotion?: CreditPromotionDisplay; identity?: string;
   } | null>(null);
   const [quoteError, setQuoteError] = useState('');
 
@@ -90,10 +90,11 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   const modelUnavailable = Boolean(
     probe?.enhancement_models && !probe.enhancement_models.includes(enhancementModel),
   );
-  const quoteIdentity = JSON.stringify([
+  const enhancementError = claymore ? probe?.enhancement_error : undefined;
+  const quoteIdentity = claymore ? JSON.stringify([
     project, sourceUrl, enhancementModel, resolution, targetFps, slowdown,
     smartInterpolation, scene, faceEnhance, probe,
-  ]);
+  ]) : undefined;
   const matchingQuote = creditQuote?.identity === quoteIdentity ? creditQuote : null;
 
   useEffect(() => {
@@ -130,19 +131,19 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
     let active = true;
     setCreditQuote(null);
     setQuoteError('');
-    if (!project || !sourceUrl || !probe || probe.enhancement_error || initializingModel || modelUnavailable || !availableResolutions.includes(resolution)) {
+    if (!project || !sourceUrl || !probe || enhancementError || initializingModel || modelUnavailable || !availableResolutions.includes(resolution)) {
       return () => { active = false; };
     }
     void quoteFreezoneVideoUpscale(project, {
       sourceUrl: sourceUrl.split('?')[0], enhancementModel, resolution, targetFps, slowdown, smartInterpolation,
       scene, faceEnhance,
     }).then((value) => {
-      if (active) setCreditQuote({ ...value, identity: quoteIdentity });
+      if (active) setCreditQuote(quoteIdentity === undefined ? value : { ...value, identity: quoteIdentity });
     }).catch((error: unknown) => {
       if (active) setQuoteError(error instanceof Error ? error.message : String(error));
     });
     return () => { active = false; };
-  }, [availableResolutions, enhancementModel, faceEnhance, initializingModel, modelUnavailable, probe, project, quoteIdentity, resolution, scene, slowdown, smartInterpolation, sourceUrl, targetFps]);
+  }, [availableResolutions, enhancementError, enhancementModel, faceEnhance, initializingModel, modelUnavailable, probe, project, quoteIdentity, resolution, scene, slowdown, smartInterpolation, sourceUrl, targetFps]);
 
   useEffect(() => {
     if (!availableResolutions.length || availableResolutions.includes(resolution)) return;
@@ -210,7 +211,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
     }
   }, [availableResolutions, matchingQuote, enhancementModel, faceEnhance, initializingModel, isSubmitting, modelUnavailable, node.id, project, resolution, scene, slowdown, smartInterpolation, sourceUrl, t, targetFps, updateNodeData]);
 
-  const disabled = isSubmitting || initializingModel || modelUnavailable || !probe || !matchingQuote || Boolean(probeError || probe?.enhancement_error) || availableResolutions.length === 0;
+  const disabled = isSubmitting || initializingModel || modelUnavailable || !probe || !matchingQuote || Boolean(probeError || enhancementError) || availableResolutions.length === 0;
   return (
     <ReactFlowNodeToolbar nodeId={node.id} isVisible position={Position.Bottom} align="center" offset={12} className={NODE_TOOLBAR_CLASS}>
       <ZoomScaledToolbar origin="top center">
@@ -299,7 +300,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
             </p>
           )}
           {probeError && <p className="mt-3 text-xs text-red-400">{t('node.videoUpscale.panel.probeError', { error: probeError })}</p>}
-          {probe?.enhancement_error && <p className="mt-3 text-xs text-red-400">{probe.enhancement_error}</p>}
+          {enhancementError && <p className="mt-3 text-xs text-red-400">{enhancementError}</p>}
           {modelUnavailable && <p className="mt-3 text-xs text-red-400">{t('node.videoUpscale.panel.modelUnavailable')}</p>}
           {quoteError && <p className="mt-3 text-xs text-red-400">{quoteError}</p>}
           <div className="mt-4 flex justify-end items-center gap-2">
