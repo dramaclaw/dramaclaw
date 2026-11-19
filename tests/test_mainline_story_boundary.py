@@ -197,3 +197,17 @@ def test_mainline_capability_scope_is_injected_without_changing_canvas_guidance(
             assert scope not in instructions
             assert scope not in prompt
             assert chat_service._CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS in instructions
+
+
+@pytest.mark.parametrize("mode", ["default", "freezone_canvas"])
+def test_chat_guidance_distinguishes_director_from_xiahua_canvas(mode):
+    instructions = chat_service._codex_developer_instructions(mode)
+    prompt = chat_service._prompt_with_user_context(
+        "local", "project-a", "你是谁？", tool_mode=mode,
+    )
+    for guidance in (instructions, prompt):
+        assert "Xia画 (Freezone)" in guidance
+        assert "Xi画" not in guidance
+    if mode == "freezone_canvas":
+        assert "introduce yourself as 虾导 in Chinese or Xia Director in English" in instructions
+        assert "Xia画 (Freezone) is the canvas you work in, not your name" in instructions

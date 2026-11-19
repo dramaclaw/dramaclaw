@@ -301,7 +301,7 @@ def _deny_freezone_mainline_write(tool_name: str) -> str | None:
             "tool": tool_name,
             "chat_error": FREEZONE_MAINLINE_WRITE_DENIED_MESSAGE,
             "agent_instruction": (
-                "Reply in natural Chinese. Explain that Xi画's assistant can query project state "
+                "Reply in natural Chinese. Explain that 虾导 can query project state in Xia画 "
                 "or operate canvas nodes, but cannot start mainline video-generation tasks here. "
                 "For canvas changes, use the Freezone canvas command tools so the user can review "
                 "and approve them; do not call whole-canvas save/delete endpoints."

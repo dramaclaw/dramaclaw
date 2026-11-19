@@ -157,6 +157,16 @@ describe("Header runtime gating", () => {
     securityState.data = undefined;
   });
 
+  it.each([true, false])("shows Piko Town only in EE and keeps the other Piko entries (CE: %s)", async (ce) => {
+    runtimeState.isCe = ce;
+    const user = userEvent.setup();
+    renderHeader();
+    await user.hover(screen.getByRole("button", { name: "Piko Piko" }));
+    expect(await screen.findByText("header.pikoHub.companion")).toBeVisible();
+    expect(screen.getByText("header.pikoHub.play")).toBeVisible();
+    expect(Boolean(screen.queryByText("header.pikoHub.world"))).toBe(!ce);
+  });
+
   it("keeps the Piko reminder on hover, then dismisses and persists it on entry click", async () => {
     const user = userEvent.setup();
     const view = renderHeader();

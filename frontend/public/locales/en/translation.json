@@ -1,7 +1,17 @@
 {
   "chatSnapshot": {
     "saveFailed": "Chat history could not be saved. Please try again later; the current message is still available locally.",
-    "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history."
+    "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history.",
+    "ceHistory": {
+      "title": "Some chat history could not be fully loaded",
+      "description": "This conversation has large or invalid history records, so some reasoning and tool records were not loaded. Message text is still available. This does not mean a model call failed.",
+      "help": "View troubleshooting steps",
+      "support": "Contact community support",
+      "continue": "If you can still send messages normally, you can keep using this conversation. There is no need to clear the chat or delete the project.",
+      "backup": "To recover the full history, first stop the app and related services, back up the complete chat database (chat.db, including any WAL files), then follow the detailed guide to inspect and compact it. Compaction cannot fix every oversized or invalid record.",
+      "privacy": "When asking for help, include your app version, operating system, screenshots and redacted logs. The chat database may contain private conversations and sensitive information. Do not upload it directly to a public issue.",
+      "recoveryGuide": "Open the detailed history recovery guide"
+    }
   },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirm workflow creation",
