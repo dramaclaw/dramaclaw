@@ -773,7 +773,7 @@ export const SelectedNodeOverlay = memo(() => {
         <UpscaleEditorOverlay node={upscalePanelNode} />
       )}
       {videoUpscalePanelNode && (
-        <VideoUpscaleEditorOverlay node={videoUpscalePanelNode} />
+        <VideoUpscaleEditorOverlay key={videoUpscalePanelNode.id} node={videoUpscalePanelNode} />
       )}
       {outpaintNode && outpaintImageSource && (
         <OutpaintEditorOverlay

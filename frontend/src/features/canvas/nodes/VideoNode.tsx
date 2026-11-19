@@ -626,7 +626,8 @@ export const VideoNode = memo(
     } = useNodeGenerationHistory(id, {
       // 故事片段播放器形态:不拉取每节点生成历史(也不渲染下方历史框),避免选中时
       // 历史框「loading→空→消失」造成节点底部闪烁,且历史属画布创作 chrome,播放器形态应收起。
-      enabled: Boolean(selected) && !storyPlayerMode,
+      // 高清面板加载自己的历史；放大播放器打开时仍通过 openNodeVideoViewer 读取历史。
+      enabled: Boolean(selected) && !storyPlayerMode && !data.isUpscaleNode,
     });
 
     // 导入互动影游占位片段的旁白(narration)就地编辑态。双击进入,

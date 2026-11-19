@@ -1,6 +1,16 @@
 {
   "chatSnapshot": {
-    "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử."
+    "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử.",
+    "ceHistory": {
+      "title": "Một phần lịch sử trò chuyện chưa được tải đầy đủ",
+      "description": "Cuộc trò chuyện này có bản ghi lớn hoặc không hợp lệ nên một phần suy nghĩ và bản ghi công cụ chưa được tải. Nội dung tin nhắn vẫn có thể xem. Điều này không có nghĩa là lệnh gọi mô hình bị lỗi.",
+      "help": "Xem hướng dẫn xử lý",
+      "support": "Liên hệ hỗ trợ cộng đồng",
+      "continue": "Nếu vẫn gửi tin nhắn bình thường, bạn có thể tiếp tục cuộc trò chuyện này. Không cần xóa lịch sử trò chuyện hoặc dự án.",
+      "backup": "Để khôi phục toàn bộ lịch sử, trước tiên hãy dừng ứng dụng và các dịch vụ liên quan, sao lưu đầy đủ cơ sở dữ liệu trò chuyện (chat.db, bao gồm các tệp WAL nếu có), rồi làm theo hướng dẫn chi tiết để kiểm tra và thu gọn. Công cụ không thể sửa mọi bản ghi quá lớn hoặc không hợp lệ.",
+      "privacy": "Khi cần trợ giúp, hãy cung cấp phiên bản ứng dụng, hệ điều hành, ảnh chụp màn hình và nhật ký đã ẩn thông tin nhạy cảm. Cơ sở dữ liệu có thể chứa hội thoại riêng tư và dữ liệu nhạy cảm. Không tải trực tiếp lên issue công khai.",
+      "recoveryGuide": "Mở hướng dẫn khôi phục lịch sử chi tiết"
+    }
   },
   "referenceValidation": {
     "firstFrame": "Khung hình đầu",
@@ -6765,6 +6775,7 @@
         "submit": "Tạo video HD",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "claymoreModel": "Tăng cường video RelayClaw",
         "modelUnavailable": "Mô hình tăng cường đã lưu hiện không khả dụng. Hãy chọn mô hình khả dụng để tiếp tục."
       }
     },
@@ -10207,9 +10218,9 @@
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Đối chiếu với ảnh",
-      "pictureCheckHint": "Chiếu mô hình thô ngược lại ảnh tham chiếu để kiểm tra vị trí, kích thước và máy quay có khớp nhau; tốn thêm một hai vòng tạo nên chậm hơn",
+      "pictureCheckHint": "Căn vị trí và kích thước theo ảnh; thêm 1–2 vòng tạo",
       "renderCheck": "Đối chiếu bản dựng",
-      "renderCheckHint": "Dựng mô hình thô thành ảnh, để mô hình so với ảnh tham chiếu rồi sửa lại, hai vòng; tốn thêm hai vòng tạo nên chậm hơn",
+      "renderCheckHint": "Dựng ảnh rồi sửa theo ảnh tham chiếu; thêm 2 vòng tạo",
       "model": "Mô hình",
       "modelDefault": "{{name}} (mặc định)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
@@ -10224,13 +10235,7 @@
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
-      "guide": {
-        "title": "Images that work well",
-        "space": "A scene whose layout is readable: a room, a street, a courtyard",
-        "floor": "The floor is visible, along with at least one wall or clear boundary",
-        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
-        "occlusion": "People or foreground objects do not cover the main pieces"
-      },
+      "guide": "Hiệu quả nhất với ảnh toàn cảnh ngang tầm mắt, thấy rõ sàn và tường",
       "hint": {
         "title": "This image may affect the result; you can still continue",
         "small": "The image is small (short edge under 512 px), so details may be hard to read",
@@ -10267,6 +10272,7 @@
       "close": "Close model library",
       "categories": "Categories",
       "all": "All",
+      "recent": "Gần đây",
       "category": {
         "primitive": "Primitives",
         "furniture": "Furniture",

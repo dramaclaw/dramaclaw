@@ -3,9 +3,7 @@
 import { type ComponentProps } from "react";
 import {
   Blend,
-  Crosshair,
   Cuboid,
-  Grid2x2,
   Magnet,
   RotateCcw,
   Shapes,
@@ -22,6 +20,15 @@ import { PrevizAxisGizmo, type PrevizViewSource } from "@/features/previz/ui/Pre
 import { PrevizHoverTip } from "@/features/previz/ui/PrevizHoverTip";
 import { PrevizKeyCap } from "@/features/previz/ui/PrevizKeyCap";
 import { cn } from "@/lib/utils";
+
+import {
+  PREVIZ_FLOAT_PILL,
+  PREVIZ_HAIRLINE,
+  PREVIZ_ICON_ITEM,
+  PREVIZ_ICON_ON,
+  PREVIZ_KEYCAP_CORNER,
+  PREVIZ_OUTLINE_PILL,
+} from "./previzChrome";
 
 const DISPLAY_ICON: Record<DisplayMode, LucideIcon> = {
   solid: Cuboid,
@@ -60,27 +67,28 @@ export interface PrevizViewportControlsProps {
 }
 
 /** 半透明底 + 毛玻璃：底下是三维视口，不铺底的话图标压在浅色模型上就看不见了。 */
-const CLUSTER =
-  "pointer-events-auto flex items-center gap-0.5 rounded-lg border border-white/10 bg-black/55 p-1 backdrop-blur-sm";
+const CLUSTER = cn("pointer-events-auto flex items-center gap-0.5 p-1", PREVIZ_FLOAT_PILL);
 
 const ITEM = cn(
   // `relative` 放进基础类而不是按有没有 `shortcut` 现加：没有绝对定位子元素时它是个
   // 空操作，加一条条件反而多一处要跟 `shortcut` 保持同步的地方。
-  "relative h-7 w-7 text-white/80 hover:bg-white/10 hover:text-white",
+  "relative h-7 w-7",
+  PREVIZ_ICON_ITEM,
+  "rounded-full",
   // 禁用的原因只写在提示里，而 pointer-events: none 的元素连 hover 都收不到，用户就只
   // 剩一个没有解释的灰按钮。原生 `disabled` 仍然拦住点击，放开指针事件是安全的。
   "disabled:pointer-events-auto disabled:cursor-not-allowed",
 );
 
-const ITEM_ON = "bg-white/15 text-white hover:bg-white/20";
+const ITEM_ON = PREVIZ_ICON_ON;
 
 /**
  * 带文字的浮层按钮。「聚焦」「四视图」不给图标配文字的话，两颗方块图标谁是谁只能点开
  * 试——而这两颗一颗会搬相机、一颗会改右侧面板，试错的代价都不小。
  */
 const TEXT_ITEM = cn(
-  "h-7 w-full justify-start gap-1.5 px-2 text-[11px] font-normal",
-  "text-white/80 hover:bg-white/10 hover:text-white",
+  PREVIZ_OUTLINE_PILL,
+  "bg-neutral-800/80 backdrop-blur-tap",
   "disabled:pointer-events-auto disabled:cursor-not-allowed",
 );
 
@@ -92,9 +100,9 @@ const TEXT_ITEM = cn(
  * 还被它吃掉一半；步进本来就在（聚焦后 ↑↓ 按 step 走），只是不再画出来。
  */
 const DRAW_FIELD = cn(
-  "h-7 w-14 rounded-sm border-white/15 bg-white/10 px-1.5 text-center text-[11px] text-white/90",
-  "md:text-[11px] dark:bg-white/10 dark:hover:bg-white/15",
-  "focus-visible:border-white/40 focus-visible:ring-2 focus-visible:ring-white/30",
+  "h-7 w-14 rounded-full border-transparent bg-white/[0.06] px-2 text-center font-mono text-[12px] tabular-nums text-white/90",
+  "md:text-[12px] dark:bg-white/[0.04] dark:hover:border-white/[0.12]",
+  "focus-visible:border-white/25 focus-visible:ring-[3px] focus-visible:ring-white/10",
   "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
 );
 
@@ -124,7 +132,11 @@ function ControlButton({
         {...props}
       >
         <Icon className="h-4 w-4" />
-        {shortcut && <PrevizKeyCap className="absolute -right-1 -top-1">{shortcut}</PrevizKeyCap>}
+        {shortcut && (
+          <PrevizKeyCap className={PREVIZ_KEYCAP_CORNER}>
+            {shortcut}
+          </PrevizKeyCap>
+        )}
       </Button>
     </PrevizHoverTip>
   );
@@ -191,11 +203,11 @@ export function PrevizViewportControls({
         `left-[114px]`：左上角先是 `PrevizToolbar` 那块浮动面板（left-4 起、约 86px 宽），
         这一列排在它右边再空 12px。面板宽度变了这里要跟着改。
       */}
-      <div className="pointer-events-none absolute left-[114px] top-4 z-20 flex w-24 flex-col items-start gap-2">
+      <div className="pointer-events-none absolute left-[114px] top-4 z-20 flex flex-col items-center gap-1.5">
         <div
           role="group"
           aria-label={t("previz.viewport.group.axis")}
-          className={cn(CLUSTER, "justify-center p-1.5")}
+          className="pointer-events-auto flex justify-center"
         >
           <PrevizAxisGizmo view={view} onViewDirection={onViewDirection} />
         </div>
@@ -203,7 +215,7 @@ export function PrevizViewportControls({
         <div
           role="group"
           aria-label={t("previz.viewport.group.view")}
-          className={cn(CLUSTER, "w-full flex-col items-stretch")}
+          className="pointer-events-auto flex items-center gap-1.5"
         >
           <PrevizHoverTip
             label={hasSelection ? focusLabel : t("previz.viewport.focusHint")}
@@ -217,9 +229,8 @@ export function PrevizViewportControls({
               aria-keyshortcuts="F"
               onClick={onFocus}
             >
-              <Crosshair className="h-3.5 w-3.5" />
               {focusLabel}
-              <PrevizKeyCap className="ml-0.5">F</PrevizKeyCap>
+              <PrevizKeyCap className="bg-transparent px-0 ring-0">F</PrevizKeyCap>
             </Button>
           </PrevizHoverTip>
 
@@ -227,11 +238,10 @@ export function PrevizViewportControls({
             <Button
               type="button"
               variant="ghost"
-              className={cn(TEXT_ITEM, quadView && ITEM_ON)}
+              className={cn(TEXT_ITEM, quadView && "border-white/30 bg-white/15 text-neutral-50")}
               aria-pressed={quadView}
               onClick={() => onQuadView(!quadView)}
             >
-              <Grid2x2 className="h-3.5 w-3.5" />
               {quadLabel}
             </Button>
           </PrevizHoverTip>
@@ -252,7 +262,7 @@ export function PrevizViewportControls({
         */}
         <div role="group" aria-label={t("previz.viewport.group.draw")} className={CLUSTER}>
           <PrevizHoverTip label={spacingLabel} side="bottom">
-            <label className="flex items-center gap-1 pr-1 text-[11px] text-white/55">
+            <label className="flex items-center gap-1 px-0.5 text-[11px] text-white/45">
               <span className="sr-only">{spacingLabel}</span>
               <Input
                 type="number"
@@ -272,7 +282,7 @@ export function PrevizViewportControls({
           </PrevizHoverTip>
 
           <PrevizHoverTip label={speedLabel} side="bottom">
-            <label className="flex items-center gap-1 pr-1 text-[11px] text-white/55">
+            <label className="flex items-center gap-1 px-0.5 text-[11px] text-white/45">
               <span className="sr-only">{speedLabel}</span>
               <Input
                 type="number"
@@ -302,7 +312,7 @@ export function PrevizViewportControls({
             />
           ))}
 
-          <div className="mx-0.5 h-5 w-px bg-white/15" />
+          <div className={cn("mx-1 h-4 w-px", PREVIZ_HAIRLINE)} />
 
           <ControlButton
             icon={RotateCcw}

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { apiCall } from "@/api/client";
-import { probeFreezoneVideoUpscale, quoteFreezoneVideoUpscale } from "@/api/ops";
+import { probeFreezoneVideoUpscale, quoteFreezoneVideoUpscale, submitFreezoneVideoUpscale } from "@/api/ops";
 
 vi.mock("@/api/client", () => ({
   apiCall: vi.fn(),
@@ -67,4 +67,21 @@ it("preserves the selected Topaz family in probe and quote", async () => {
   expect(apiCall).toHaveBeenCalledWith(expect.stringContaining("/quote"), expect.objectContaining({
     json: expect.objectContaining({ enhancement_model: "topaz", target_fps: 60 }),
   }));
+});
+
+it("uses the same Claymore workflow options for quote and submission", async () => {
+  const payload = {
+    sourceUrl: "/source.mp4", enhancementModel: "claymore" as const,
+    resolution: "1080p" as const, targetFps: 60, smartInterpolation: false,
+  };
+  await probeFreezoneVideoUpscale("project", payload.sourceUrl, "claymore");
+  expect(apiCall).toHaveBeenCalledWith(expect.stringContaining("enhancement_model=claymore"));
+  await quoteFreezoneVideoUpscale("project", payload);
+  await submitFreezoneVideoUpscale("project", payload);
+  const expected = expect.objectContaining({
+    source_url: "/source.mp4", enhancement_model: "claymore", resolution: "1080p",
+    target_fps: 60, smart_interpolation: false, slowdown: "auto", face_enhance: false,
+  });
+  expect(apiCall).toHaveBeenCalledWith("projects/project/freezone/video/upscale/quote", expect.objectContaining({ json: expected }));
+  expect(apiCall).toHaveBeenCalledWith("projects/project/freezone/video/upscale", expect.objectContaining({ json: expected }));
 });

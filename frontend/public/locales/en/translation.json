@@ -1,6 +1,16 @@
 {
   "chatSnapshot": {
-    "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history."
+    "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history.",
+    "ceHistory": {
+      "title": "Some chat history could not be fully loaded",
+      "description": "This conversation has large or invalid history records, so some reasoning and tool records were not loaded. Message text is still available. This does not mean a model call failed.",
+      "help": "View troubleshooting steps",
+      "support": "Contact community support",
+      "continue": "If you can still send messages normally, you can keep using this conversation. There is no need to clear the chat or delete the project.",
+      "backup": "To recover the full history, first stop the app and related services, back up the complete chat database (chat.db, including any WAL files), then follow the detailed guide to inspect and compact it. Compaction cannot fix every oversized or invalid record.",
+      "privacy": "When asking for help, include your app version, operating system, screenshots and redacted logs. The chat database may contain private conversations and sensitive information. Do not upload it directly to a public issue.",
+      "recoveryGuide": "Open the detailed history recovery guide"
+    }
   },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirm workflow creation",
@@ -6891,6 +6901,7 @@
         "submit": "Generate HD video",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "claymoreModel": "RelayClaw Video Enhancement",
         "modelUnavailable": "The saved enhancement model is unavailable. Select an available model to continue."
       }
     },
@@ -10207,9 +10218,9 @@
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Picture check",
-      "pictureCheckHint": "Project the blockout back onto the picture and check that positions, sizes and camera agree; one or two extra model rounds, so slower",
+      "pictureCheckHint": "Align positions and sizes to the picture; 1–2 extra rounds",
       "renderCheck": "Render check",
-      "renderCheckHint": "Render the blockout and let the model compare it with the picture and rewrite, twice; two extra model rounds, so slower",
+      "renderCheckHint": "Render and refine against the picture; 2 extra rounds",
       "model": "Model",
       "modelDefault": "{{name}} (default)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
@@ -10224,13 +10235,7 @@
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
-      "guide": {
-        "title": "Images that work well",
-        "space": "A scene whose layout is readable: a room, a street, a courtyard",
-        "floor": "The floor is visible, along with at least one wall or clear boundary",
-        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
-        "occlusion": "People or foreground objects do not cover the main pieces"
-      },
+      "guide": "Works best with a wide, eye-level shot that shows the floor and walls",
       "hint": {
         "title": "This image may affect the result; you can still continue",
         "small": "The image is small (short edge under 512 px), so details may be hard to read",
@@ -10267,6 +10272,7 @@
       "close": "Close model library",
       "categories": "Categories",
       "all": "All",
+      "recent": "Recent",
       "category": {
         "primitive": "Primitives",
         "furniture": "Furniture",

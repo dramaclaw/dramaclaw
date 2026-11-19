@@ -1261,7 +1261,7 @@ def _resolve_skill_studio_tool_result_payload(
                 "Do not apply user-profile rules for short 'ok' replies. "
                 "Treat it as official saved catalog content that can be used immediately. "
                 "Do not ask the user to save it again, do not analyze the draft, do not start another Skill Studio step, "
-                "and do not include hidden reasoning. Reply briefly in Chinese only that it has been saved to Xi画 Skills / Recipes."
+                "and do not include hidden reasoning. Reply briefly in Chinese only that it has been saved to Xia画 Skills / Recipes."
             )
             message = (
                 payload.message

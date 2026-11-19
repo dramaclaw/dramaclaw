@@ -6252,8 +6252,8 @@ async def test_browser_upscale_plain_enqueue(video_media):
     assert [(e["task_type"], e["queue_kind"], e["scope"]) for e in video_media.enqueued] == [
         ("freezone_video_upscale", "ffmpeg", result["data"]["job_id"]),
     ]
-    assert video_media.enqueued[0]["payload"]["canvas_id"] == ""
-    assert video_media.enqueued[0]["payload"]["node_id"] == ""
+    assert "canvas_id" not in video_media.enqueued[0]["payload"]
+    assert "node_id" not in video_media.enqueued[0]["payload"]
 
 
 def test_run_summary_joins_the_task_record_for_failure_reasons(
