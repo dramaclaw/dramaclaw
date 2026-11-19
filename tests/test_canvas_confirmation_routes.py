@@ -1709,12 +1709,13 @@ def test_external_key_write_failure_releases_the_batch_lock(setup, monkeypatch, 
 
 def test_external_key_stuck_write_gives_up_the_lock_after_the_hold_limit(setup, monkeypatch):
     setup.pool.plan = mixed_plan()
-    monkeypatch.setattr(confirmations, "SPLIT_LOCK_HOLD_SECONDS", 0.2)
     setup.pool.apply_delay = 1.0
     setup.user[0] = EXTERNAL
-    stuck = external_post(setup)
-    assert stuck.status_code == 503, stuck.text
-    assert stuck.json()["detail"]["code"] == "canvas_confirmation_timeout"
+    with monkeypatch.context() as stalled_write:
+        stalled_write.setattr(confirmations, "SPLIT_LOCK_HOLD_SECONDS", 0.2)
+        stuck = external_post(setup)
+        assert stuck.status_code == 503, stuck.text
+        assert stuck.json()["detail"]["code"] == "canvas_confirmation_timeout"
     setup.pool.apply_delay = 0.0
     confirmation = external_create(setup)
     assert_one_written_set(setup, [confirmation["confirmation_id"]])
