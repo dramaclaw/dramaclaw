@@ -9704,6 +9704,7 @@
     "restartTitle": "Start over with a new request?",
     "restartHint": "The original request has an unknown result. Starting over will not retry it. Generating again will create a new request and may incur another charge. Continue?",
     "refreshTarget": "Refresh save destination",
+    "gatewayPrice": "Fees depend on your gateway",
     "price": "This generation: {{price}} credits / call",
     "quoteLoading": "Loading price and availability…",
     "close": "Close",

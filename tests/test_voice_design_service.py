@@ -103,11 +103,12 @@ async def test_invalid_preview_is_not_published(tmp_path, preview):
 
 
 @pytest.fixture
-def context():
+def context(request):
     from novelvideo.egress_context import TrustedEgressContext
     from novelvideo.ports.authz import BillingPrincipal
     from novelvideo.ports.model_credentials import CredentialReference
 
+    local = getattr(request, "param", "ee") == "ce"
     return TrustedEgressContext(
         envelope_id="envelope",
         project_id="project",
@@ -116,11 +117,19 @@ def context():
         root_task_id="task",
         admission_id="admission",
         admitted_at="now",
-        membership_id="membership",
+        membership_id=None if local else "membership",
         authz_version=1,
-        billing_principal=BillingPrincipal(kind="organization", id="org"),
-        credential=CredentialReference(
-            source="organization", credential_id="key", key_version=1, org_id="org"
+        billing_principal=(
+            BillingPrincipal(kind="local", id="user")
+            if local
+            else BillingPrincipal(kind="organization", id="org")
+        ),
+        credential=(
+            CredentialReference(source="local", credential_id="local-newapi", key_version=1)
+            if local
+            else CredentialReference(
+                source="organization", credential_id="key", key_version=1, org_id="org"
+            )
         ),
     )
 
@@ -1139,14 +1148,25 @@ def core_case(monkeypatch, runner_case, context):
     )
 
 
-@pytest.mark.parametrize("edition", ["ce", "ee"])
+@pytest.mark.parametrize("context", ["ce", "ee"], indirect=True)
 def test_core_generates_and_replays_ready_with_same_reservation(
-    runner_case, core_case, gateway, audio_bytes, monkeypatch, edition
+    runner_case, core_case, gateway, audio_bytes, monkeypatch, context
 ):
     import base64
 
-    monkeypatch.setenv("ST_EDITION", edition)
-    calls, response, _ = gateway
+    from novelvideo import config
+    from novelvideo.ports.local import LocalModelCredentials
+    from novelvideo.ports.registry import _PORTS
+
+    local = context.credential.source == "local"
+    monkeypatch.setenv("ST_EDITION", "ce" if local else "ee")
+    calls, response, organization_resolver = gateway
+    if local:
+        monkeypatch.setattr(
+            config, "get_newapi_runtime_credentials",
+            lambda: ("test-local-key", "https://local-gateway.example/v1"),
+        )
+        monkeypatch.setitem(_PORTS, "model_credentials", LocalModelCredentials())
     response.payload = {
         "preview_audio": {
             "data": base64.b64encode(audio_bytes).decode(),
@@ -1159,6 +1179,11 @@ def test_core_generates_and_replays_ready_with_same_reservation(
     assert first["status"] == second["status"] == "ready"
     assert first["sha256"] == second["sha256"]
     assert len(calls) == 1
+    if local:
+        url, request = calls[0]
+        assert url == "https://local-gateway.example/v1/audio/voice-designs"
+        assert request["headers"]["Authorization"] == "Bearer test-local-key"
+        organization_resolver.assert_not_awaited()
     assert core_case.settlements == [
         ("confirm", "reservation"),
         ("confirm", "reservation"),
