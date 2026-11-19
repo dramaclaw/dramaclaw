@@ -328,7 +328,7 @@ class VoiceDesignStorage:
         self,
         candidate_id: str,
         *,
-        daily_limit: int = 20,
+        daily_limit: int | None = 20,
         channel_key: str = "",
         channel_daily_limit: int | None = None,
     ) -> dict[str, Any] | None:
@@ -343,12 +343,13 @@ class VoiceDesignStorage:
                 (self.ctx.requester_user_id, now),
             ).fetchone():
                 raise CandidateStorageError("rate_limited")
-            count = db.execute(
-                "SELECT COUNT(*) FROM quota.usage WHERE user_id=? AND day=?",
-                (self.ctx.requester_user_id, int(now // 86400)),
-            ).fetchone()[0]
-            if count >= daily_limit:
-                raise CandidateStorageError("voice_design_quota_exceeded")
+            if daily_limit is not None:
+                count = db.execute(
+                    "SELECT COUNT(*) FROM quota.usage WHERE user_id=? AND day=?",
+                    (self.ctx.requester_user_id, int(now // 86400)),
+                ).fetchone()[0]
+                if count >= daily_limit:
+                    raise CandidateStorageError("voice_design_quota_exceeded")
             if channel_daily_limit is not None:
                 channel_count = db.execute(
                     "SELECT COUNT(*) FROM quota.usage WHERE channel_key=? AND day=?",

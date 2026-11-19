@@ -158,7 +158,11 @@ class VoiceDesignAudio:
     sha256: str
 
 
-def ensure_voice_design_enabled() -> int:
+def ensure_voice_design_enabled() -> tuple[int | None, int | None]:
+    from novelvideo.shared.runtime_env import uses_local_ce_runtime
+
+    if uses_local_ce_runtime():
+        return None, None
     try:
         limit = int(os.environ.get("VOICE_DESIGN_DAILY_LIMIT", "0"))
         budget = int(os.environ.get("VOICE_DESIGN_CHANNEL_DAILY_LIMIT", "0"))
@@ -166,7 +170,7 @@ def ensure_voice_design_enabled() -> int:
         raise VoiceDesignError("voice_design_unavailable") from None
     if os.environ.get("VOICE_DESIGN_ENABLED") != "1" or limit <= 0 or budget <= 0:
         raise VoiceDesignError("voice_design_unavailable")
-    return limit
+    return limit, budget
 
 
 def list_voice_design_catalog(entries: list[dict]) -> list[VoiceDesignConfig]:

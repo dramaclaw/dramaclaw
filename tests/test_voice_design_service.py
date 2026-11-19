@@ -7,7 +7,8 @@ from novelvideo.audio.voice_design_service import (
 )
 
 
-def test_feature_disabled_and_budget_required(monkeypatch):
+def test_ee_feature_disabled_and_budget_required(monkeypatch):
+    monkeypatch.setenv("ST_EDITION", "ee")
     monkeypatch.delenv("VOICE_DESIGN_ENABLED", raising=False)
     with pytest.raises(VoiceDesignError):
         ensure_voice_design_enabled()
@@ -115,6 +116,7 @@ async def test_invalid_preview_is_not_published(tmp_path, preview):
 
 @pytest.fixture
 def enabled(monkeypatch):
+    monkeypatch.setenv("ST_EDITION", "ee")
     monkeypatch.setenv("VOICE_DESIGN_ENABLED", "1")
     monkeypatch.setenv("VOICE_DESIGN_DAILY_LIMIT", "20")
     monkeypatch.setenv("VOICE_DESIGN_CHANNEL_DAILY_LIMIT", "100")
@@ -1177,10 +1179,20 @@ def core_case(monkeypatch, runner_case, context):
     )
 
 
+@pytest.mark.parametrize("edition", ["ce", "ee"])
 def test_core_generates_and_replays_ready_with_same_reservation(
-    runner_case, core_case, gateway, audio_bytes
+    runner_case, core_case, gateway, audio_bytes, monkeypatch, edition
 ):
     import base64
+
+    monkeypatch.setenv("ST_EDITION", edition)
+    if edition == "ce":
+        for name in (
+            "VOICE_DESIGN_ENABLED",
+            "VOICE_DESIGN_DAILY_LIMIT",
+            "VOICE_DESIGN_CHANNEL_DAILY_LIMIT",
+        ):
+            monkeypatch.delenv(name)
 
     calls, response, _ = gateway
     response.payload = {

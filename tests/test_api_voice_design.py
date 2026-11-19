@@ -1684,9 +1684,9 @@ def test_ce_official_voice_design_catalog_can_submit(
     monkeypatch.setattr(service, "get_port", missing_catalog)
     monkeypatch.setattr(config, "STATE_DIR", tmp_path)
     monkeypatch.setenv("ST_EDITION", "ce")
-    monkeypatch.setenv("VOICE_DESIGN_ENABLED", "1")
+    monkeypatch.setenv("VOICE_DESIGN_ENABLED", "0")
     monkeypatch.setenv("VOICE_DESIGN_DAILY_LIMIT", "20")
-    monkeypatch.setenv("VOICE_DESIGN_CHANNEL_DAILY_LIMIT", "20")
+    monkeypatch.setenv("VOICE_DESIGN_CHANNEL_DAILY_LIMIT", "0")
     monkeypatch.delenv("VOICE_DESIGN_TEST_REPLAY", raising=False)
 
     s = production_api
