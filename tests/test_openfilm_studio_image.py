@@ -60,3 +60,18 @@ def test_image_runs_the_studio_smoke() -> None:
 
 def test_build_context_excludes_node_modules() -> None:
     assert "**/node_modules" in DOCKERIGNORE.read_text(encoding="utf-8").splitlines()
+
+
+def test_smoke_opens_its_film_with_the_host_directories() -> None:
+    launcher = (REPO_ROOT / "scripts" / "openfilm_studio" / "run.mjs").read_text(
+        encoding="utf-8"
+    )
+    smoke = (REPO_ROOT / "scripts" / "openfilm_studio" / "smoke.mjs").read_text(
+        encoding="utf-8"
+    )
+    assert 'process.env.OPENFILM_HOST_DIRS = "1"' in launcher
+    for name in ("stateDir", "runtimeDir"):
+        assert name in smoke, (
+            f"the launcher refuses a film opened without {name}; a smoke that omits it "
+            "fails the image build before the editor is ever checked"
+        )
