@@ -4901,6 +4901,46 @@ def test_generation_clarification_builds_complete_media_questions(monkeypatch):
     assert "questions" not in schemas["freezone_request_user_clarification"]["parameters"]["required"]
 
 
+@pytest.mark.parametrize(
+    ("target_node_ids", "should_reject"),
+    [(["music"], True), (["image"], False), (["music", "image"], False), ([], False)],
+)
+def test_generation_clarification_checks_explicit_audio_only_targets(
+    monkeypatch, target_node_ids, should_reject
+):
+    plugin = _load_plugin_module(api_executor=True)
+    emitted = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda *_: emitted.append(True) or {"ok": True})
+    canvas_path = "/api/v1/projects/project-a/freezone/canvases/canvas-a"
+
+    def request(method, path, **kwargs):
+        assert method == "GET"
+        if path == canvas_path:
+            return {"ok": True, "data": {"nodes": [
+                {"id": "music", "type": "audioNode", "data": {"audioKind": "music"}},
+                {"id": "image", "type": "imageGenNode", "data": {}},
+            ]}}
+        return {"ok": True, "data": []}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "target_node_ids": target_node_ids, "generation_media_types": ["image"],
+        "generation_preferences": {"video_duration_seconds": 30},
+    })
+
+    if should_reject:
+        assert result["status"] == "generation_clarification_target_mismatch"
+        assert result["retryable"] is True
+        assert result["target_node_ids"] == target_node_ids
+        assert "freezone_get_node_action_catalog" in result["agent_instruction"]
+        assert not emitted
+    else:
+        assert result["ok"] is True
+        assert emitted == [True]
+
+
 def test_generation_clarification_uses_all_target_video_modes(monkeypatch):
     plugin = _load_plugin_module()
     emitted = []

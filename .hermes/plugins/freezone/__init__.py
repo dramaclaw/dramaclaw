@@ -1585,6 +1585,26 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             # The model-dependency check below must see the normalized field
             # names, not the canonical ids the caller may have passed.
             generation_required_choices = normalized_required_choices
+        target_node_ids = request_scope.get("target_node_ids")
+        if target_node_ids and project and canvas and resumed is None:
+            nodes, _, read_error = _canvas_generation_preflight_state(project, canvas)
+            if read_error is not None:
+                return tool_result(read_error)
+            if all(nodes.get(node_id, {}).get("type") == "audioNode" for node_id in target_node_ids):
+                return tool_result({
+                    "ok": False,
+                    "status": "generation_clarification_target_mismatch",
+                    "code": "generation_clarification_target_mismatch",
+                    "error": "Image/video parameter cards do not apply to the selected audio nodes.",
+                    "target_node_ids": target_node_ids,
+                    "retryable": True,
+                    "next_action": "inspect_audio_node_actions",
+                    "agent_instruction": (
+                        "Call freezone_get_node_action_catalog for the audio target, then "
+                        "continue with the appropriate audio action and its normal confirmation. "
+                        "Do not retry with an image or video parameter card for these audio targets."
+                    ),
+                })
         args = {**args, "allow_skip": False}
     generation_question_aliases = {
         "image_count": "image_variants_per_node",
