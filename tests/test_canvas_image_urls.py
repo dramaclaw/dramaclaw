@@ -188,8 +188,16 @@ def test_only_existing_same_project_images_are_signed(context):
         node("not-a-project-asset"),
         node(None),
         node("/static/projects/proj/images/missing.png"),
-        node("/static/projects/proj/images/clip.mp4", "video"),
-        node("/static/projects/proj/images/audio.mp3", "audio"),
+        # The allow-list is chosen by the item's media kind, never by the file alone.
+        node("/static/projects/proj/images/clip.mp4"),
+        node("/static/projects/proj/images/audio.mp3"),
+        node("/static/projects/proj/images/source.png", "video"),
+        node("/static/projects/proj/images/audio.mp3", "video"),
+        node("/static/projects/proj/images/clip.mp4", "audio"),
+        node("/static/projects/proj/images/clip.mp4", "model"),
+        node("/static/projects/proj/images/clip.mp4", None),
+        node("/static/projects/other/x.png", "video"),
+        node("/static/projects/proj/images/missing.mp4", "video"),
     ]
     context.nodes[:] = [node(SOURCE, reference_media=[
         reference(item["source_url"], item["media_type"]) for item in invalid_nodes
@@ -236,9 +244,48 @@ def test_unsupported_image_suffix_is_refused(context, suffix):
     context.signer.assert_not_called()
 
 
+@pytest.mark.parametrize(("media_type", "suffix"), [
+    *[("video", suffix) for suffix in (".mp4", ".mov", ".webm", ".MP4")],
+    *[("audio", suffix) for suffix in (
+        ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm", ".flac", ".opus", ".MP3",
+    )],
+])
+def test_video_and_audio_files_are_signed_as_media_url(context, media_type, suffix):
+    filename = f"sample{suffix}"
+    (context.project_dir / "images" / filename).touch()
+    url = f"/static/projects/proj/images/{filename}"
+    context.nodes[:] = [
+        node(url, media_type, preview_url=SOURCE, reference_media=[reference(url, media_type)]),
+    ]
+
+    expected = context.request(False).json()
+    [item] = expected["data"]["responses"][0]["data"]["nodes"]
+    item["media_url"] = item["reference_media"][0]["media_url"] = (
+        f"{SIGNED_ORIGIN}/{filename}?sig=fake"
+    )
+    assert context.request(True).json() == expected
+    assert "image_url" not in context.request(True).text
+    context.scope.assert_awaited_with("proj", USER, required_role="viewer", media_read=True)
+    assert {call.args[0].name for call in context.signer.call_args_list} == {filename}
+
+
+@pytest.mark.parametrize(("media_type", "suffix"), [
+    ("video", ".mkv"), ("video", ".avi"), ("video", ".png"), ("video", ""),
+    ("audio", ".mid"), ("audio", ".mp4"), ("audio", ""),
+])
+def test_unsupported_video_and_audio_suffix_is_refused(context, media_type, suffix):
+    filename = f"sample{suffix}"
+    (context.project_dir / "images" / filename).touch()
+    url = f"/static/projects/proj/images/{filename}"
+    context.nodes[:] = [node(url, media_type, reference_media=[reference(url, media_type)])]
+
+    assert context.request(True).content == context.request(False).content
+    context.signer.assert_not_called()
+
+
 def test_body_and_request_items_cannot_select_image_files(context):
     forged = "/static/projects/proj/images/forged.png"
-    extra = dict.fromkeys(("image_url", "source_url", "file_path", "path"), forged)
+    extra = dict.fromkeys(("image_url", "media_url", "source_url", "file_path", "path"), forged)
     expected = deepcopy(context.result)
     item = expected["responses"][0]["data"]["nodes"][0]
     item["image_url"] = SIGNED_SOURCE
