@@ -10,6 +10,8 @@ import type { PrevizRecordMode } from "@/features/previz/capture/recordTarget";
 import { PrevizHoverTip } from "@/features/previz/ui/PrevizHoverTip";
 import { cn } from "@/lib/utils";
 
+import { PREVIZ_OUTLINE_PILL } from "./previzChrome";
+
 /**
  * 录制选单里的两项，顺序就是从左到右的顺序。写成 `readonly PrevizRecordMode[]` 而不是
  * 数组字面量推断：新增一种录制模式时这里不会静默少一项——类型对不上会在录制入口报错。
@@ -54,7 +56,7 @@ function HeaderIconButton({
         // 禁用的原因只写在提示里，而 pointer-events: none 的元素连 hover 都收不到，
         // 用户就只剩一颗没有解释的灰按钮。原生 disabled 仍然拦着点击。
         className={cn(
-          "h-8 w-8 text-white/75 hover:bg-white/10 hover:text-white",
+          "h-8 w-8 rounded-full text-neutral-400 hover:bg-white/10 hover:text-neutral-50",
           "disabled:pointer-events-auto disabled:cursor-not-allowed",
         )}
         {...props}
@@ -66,7 +68,11 @@ function HeaderIconButton({
 }
 
 /** 顶栏右侧那两颗带文字的出片键（截图、录制）。 */
-const ACTION_ITEM = "h-8 rounded-lg bg-white/10 px-3 text-[12px] text-white/85 hover:bg-white/20";
+const ACTION_ITEM = cn(PREVIZ_OUTLINE_PILL, "bg-transparent");
+
+/** 录制中：整颗键换成危险色淡底，和静止态一眼分开——它在录，点下去是停。 */
+const ACTION_RECORDING =
+  "border-destructive/40 bg-destructive/15 text-white hover:border-destructive/60 hover:bg-destructive/25";
 
 /**
  * 编辑器最上面那条横栏：左边是标题与撤销重做，右边是截图、录制与关闭。
@@ -106,18 +112,16 @@ export function PrevizHeaderBar({
         `position: relative` 的 z-index 是 auto，不建上下文，它的子元素是拿全局层级和这里
         比的。少了这一层，展开的录制选单会被视口右上角那簇显示模式盖掉一半。
       */}
-      <div className="relative z-40 flex h-12 shrink-0 items-center justify-between gap-3
-        border-b border-white/10 bg-[#15181d] px-3">
+      <div className="relative z-40 flex h-[46px] shrink-0 items-center justify-between gap-3
+        border-b border-white/10 bg-neutral-900 pl-3.5 pr-3">
         <div className="flex items-center gap-1">
           {/*
             aria-hidden：DialogContent 里已经有一份 sr-only 的 DialogTitle 报同一个名字，
             两份都念出来的话读屏用户开局要听两遍「预演台」。
           */}
-          <span aria-hidden className="px-2 text-[13px] font-medium text-white/85">
+          <span aria-hidden className="pr-1 text-[13px] font-medium text-neutral-300">
             {t("previz.editor.title")}
           </span>
-
-          <div className="mx-1 h-5 w-px bg-white/10" />
 
           <HeaderIconButton
             icon={Undo2}
@@ -167,7 +171,7 @@ export function PrevizHeaderBar({
               variant="ghost"
               aria-label={recordLabel}
               disabled={busy}
-              className={ACTION_ITEM}
+              className={cn(ACTION_ITEM, recording && ACTION_RECORDING)}
               onClick={() => {
                 if (recording) {
                   onStopRecord();
@@ -178,7 +182,7 @@ export function PrevizHeaderBar({
             >
               {recording ? (
                 <>
-                  <Square className="mr-1 h-3 w-3 fill-current text-red-400" />
+                  <Square className="h-2 w-2 animate-pulse fill-current text-destructive" />
                   {t("previz.editor.record.stopWithProgress", {
                     percent: Math.round(recordProgress * 100),
                   })}
@@ -187,8 +191,8 @@ export function PrevizHeaderBar({
                 <>
                   <Circle
                     className={cn(
-                      "mr-1 h-3 w-3 fill-current",
-                      recordPublishing ? "text-white/40" : "text-red-400",
+                      "h-2 w-2 fill-current",
+                      recordPublishing ? "text-white/40" : "text-destructive",
                     )}
                   />
                   {recordPublishing
@@ -207,17 +211,17 @@ export function PrevizHeaderBar({
                 role="menu"
                 aria-label={t("previz.editor.record.open")}
                 aria-orientation="horizontal"
-                className="absolute right-full top-0 mr-2 flex items-center gap-1 rounded-lg
-                  border border-white/10 bg-[#181b20] p-1 whitespace-nowrap shadow-lg
-                  shadow-black/60"
+                className="absolute right-full top-0 mr-2 flex items-center gap-1 rounded-full
+                  border border-white/10 bg-[var(--ui-surface-modal)] p-1 whitespace-nowrap
+                  shadow-[var(--ui-shadow-panel)]"
               >
                 {RECORD_MODES.map((mode) => (
                   <button
                     key={mode}
                     type="button"
                     role="menuitem"
-                    className="rounded-md px-3 py-1.5 text-[12px] text-white/85 transition
-                      hover:bg-white/10 hover:text-white"
+                    className="rounded-full px-3 py-1 text-[12px] text-white/80 transition-colors
+                      duration-150 hover:bg-white/[0.08] hover:text-white"
                     onClick={() => {
                       setMenuOpen(false);
                       onRecord(mode);
@@ -229,6 +233,8 @@ export function PrevizHeaderBar({
               </div>
             )}
           </div>
+
+          <div className="mx-0.5 h-4 w-px bg-white/10" />
 
           <HeaderIconButton icon={X} label={t("previz.editor.close")} onClick={onClose} />
         </div>

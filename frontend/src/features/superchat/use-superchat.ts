@@ -48,6 +48,7 @@ import {
 } from "@/features/freezone/interactiveStoryCanvasRefresh";
 import { CANVAS_NODE_REFERENCE_ATTACHMENT_TYPE } from "@/features/freezone/chatNodeReferences";
 import { api } from "@/lib/api";
+import { isCeRuntime } from "@/lib/runtime-config";
 import {
   isStaleByTtl,
   pruneLocalStorageByPrefix,
@@ -2358,7 +2359,7 @@ export function useSuperChat({
           Array.isArray(frame.history) ? frame.history : [],
           frameScope ?? desiredScopeRef.current,
         );
-        if (history.some(message => (message.raw as Record<string, unknown> | undefined)?.parts_incomplete)) {
+        if (!isCeRuntime() && history.some(message => (message.raw as Record<string, unknown> | undefined)?.parts_incomplete)) {
           setError(i18next.t("chatSnapshot.historyIncomplete"));
         }
         const currentMessages = messagesRef.current;
@@ -3392,6 +3393,9 @@ export function useSuperChat({
     connected,
     connecting,
     error,
+    historyIncomplete: isCeRuntime() && messages.some(
+      message => (message.raw as Record<string, unknown> | undefined)?.parts_incomplete === true,
+    ),
     activeModel,
     appendNotification,
     clearConversation,

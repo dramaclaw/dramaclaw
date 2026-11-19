@@ -73,14 +73,14 @@ export function PrevizSelect<T extends string>({
           alignItemWithTrigger={false}
           className="isolate z-50 outline-none"
         >
-          <Select.Popup className="max-h-[min(var(--available-height),18rem)] min-w-(--anchor-width) overflow-y-auto rounded-md border border-[#2f3542] bg-[#1d222b] py-1 shadow-lg outline-none">
+          <Select.Popup className="max-h-[min(var(--available-height),18rem)] min-w-(--anchor-width) overflow-y-auto rounded-lg border border-white/10 bg-[var(--ui-surface-modal)] p-1 shadow-[var(--ui-shadow-panel)] outline-none">
             <Select.List>
               {options.map((option) => (
                 <Select.Item
                   key={option.value}
                   value={option.value}
                   data-value={option.value}
-                  className="relative flex cursor-default items-center py-1 pl-2 pr-7 text-[12px] text-[#c7cedb] outline-none select-none data-highlighted:bg-[#2a2f3a]"
+                  className="relative flex cursor-default items-center rounded-md py-1 pl-2 pr-7 text-[12px] text-white/80 outline-none select-none data-highlighted:bg-white/[0.07]"
                 >
                   <Select.ItemText className="whitespace-nowrap">{option.label}</Select.ItemText>
                   <Select.ItemIndicator className="absolute right-2 flex items-center">

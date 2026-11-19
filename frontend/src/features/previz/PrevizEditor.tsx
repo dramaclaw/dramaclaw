@@ -75,7 +75,12 @@ import { hasBlockout } from "./domain/blockout";
 import type { EvaluatedMotion } from "./domain/evaluate";
 import { canAddObject, canAddPrimitive } from "./domain/limits";
 import { pastedObjectOverrides, propSpawnTransform } from "./domain/objects";
-import type { PrevizLibraryEntry } from "./domain/modelLibrary";
+import {
+  PREVIZ_LIBRARY_DRAG_TYPE,
+  findPrevizLibraryEntry,
+  type PrevizLibraryEntry,
+} from "./domain/modelLibrary";
+import { rememberRecentLibraryId } from "./domain/recentLibrary";
 import { drawPlaneHeight } from "./domain/pathDraw";
 import { liveCameraAt } from "./domain/program";
 import { PREVIZ_PROP_MAX_MB, propSizeMb, uploadPrevizProp } from "./propAsset";
@@ -1185,6 +1190,7 @@ export function PrevizEditor({
         toast.error(t("previz.editor.limitReached"));
         return;
       }
+      rememberRecentLibraryId(entry.id);
       // 与本地导入同一个理由：这一刻节点上还是占位方块，等模型换进来再取景。
       renderer?.focusObjectWhenReady(id);
     },
@@ -1825,7 +1831,7 @@ export function PrevizEditor({
           越大（实测 960 → 1785），相机 aspect 也跟着偏离可见区域。绝对定位让它彻底
           退出网格流，尺寸只认 DialogContent 的 h-dvh。
         */}
-        <div className="absolute inset-0 flex flex-col bg-[#101216]">
+        <div className="dark absolute inset-0 flex flex-col bg-neutral-950">
           <PrevizHeaderBar
             canUndo={canUndo}
             canRedo={canRedo}
@@ -1853,12 +1859,36 @@ export function PrevizEditor({
           */}
           <TooltipProvider delay={120}>
             <div className="relative min-w-0 flex-1">
+              {/*
+                视口暗角：四角压暗、中间留亮，把视线收向画面中央，也让浮在四角的玻璃面板
+                跟背景拉开层次。纯 DOM 叠层、不碰画布像素，截图与录制出片都不受影响。
+              */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_90%_at_50%_42%,transparent_55%,rgb(0_0_0/0.5)_100%)]"
+              />
               <canvas
                 ref={setCanvas}
                 data-testid="previz-canvas"
                 className="block h-full w-full"
                 // 系统菜单一律压掉：自己的菜单在 pointerup 里按「点还是拖」决定开不开。
                 onContextMenu={(event) => event.preventDefault()}
+                // 从模型库拖进来的卡片：落在地面上的那一点就是落点，同「选落点」那一屏的结果。
+                onDragOver={(event) => {
+                  if (!event.dataTransfer.types.includes(PREVIZ_LIBRARY_DRAG_TYPE)) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                }}
+                onDrop={(event) => {
+                  const entry = findPrevizLibraryEntry(
+                    event.dataTransfer.getData(PREVIZ_LIBRARY_DRAG_TYPE),
+                  );
+                  if (!entry || !renderer) return;
+                  event.preventDefault();
+                  // 视线水平、射线碰不到地面时不编落点；面板会在 dragend 时回来，用户换个角度再拖。
+                  const point = renderer.planePointAt(event.clientX, event.clientY, 0);
+                  if (point) handlePlaceLibraryEntry(entry, [point[0], point[2]]);
+                }}
                 onPointerDown={(event) => {
                   pointerDownAt.current = { x: event.clientX, y: event.clientY };
                   // 只有左键落笔：右键留给菜单，中键留给轨道旋转。
@@ -2022,7 +2052,7 @@ export function PrevizEditor({
                       data-testid="previz-monitor-show"
                       aria-label={t("previz.editor.showMonitor")}
                       onClick={() => setActiveCamera(restorableCameraId)}
-                      className="grid h-7 w-7 place-items-center rounded bg-black/55 text-white/70 transition hover:bg-black/80 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
+                      className="grid h-8 w-8 place-items-center rounded-xl border border-white/[0.07] bg-neutral-800/80 text-white/70 shadow-[var(--ui-shadow-panel)] backdrop-blur-tap transition-colors duration-150 hover:text-white focus-visible:ring-2 focus-visible:ring-white/25 focus-visible:outline-none"
                     >
                       <Monitor className="h-3.5 w-3.5" />
                     </button>
@@ -2044,7 +2074,7 @@ export function PrevizEditor({
                     aria-expanded={panelsOpen}
                     aria-label={panelsLabel}
                     onClick={() => setPanelsOpen((next) => !next)}
-                    className="grid h-14 w-4 place-items-center rounded-l-md bg-white/10 text-white/60 transition hover:bg-white/20 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:outline-none"
+                    className="grid h-12 w-4 place-items-center rounded-l-lg border border-r-0 border-white/[0.07] bg-neutral-800 text-white/50 transition-colors duration-150 hover:bg-neutral-700 hover:text-white focus-visible:ring-2 focus-visible:ring-white/25 focus-visible:outline-none"
                   >
                     {panelsOpen ? (
                       <ChevronRight className="h-3.5 w-3.5" />
@@ -2215,7 +2245,7 @@ export function PrevizEditor({
                 边框和底色也一起收到这里——两个面板上下相接，各画各的边会在接缝处露出来。
               */}
               {(selectedObject || selectedClipId) && (
-                <div className="flex w-80 min-w-0 shrink-0 flex-col overflow-y-auto border-l border-white/10 bg-black/30">
+                <div className="ui-scrollbar flex w-80 min-w-0 shrink-0 flex-col overflow-y-auto border-l border-white/[0.06] bg-neutral-900">
                   <PrevizInspector
                     object={selectedObject}
                     onChange={(patch) => {

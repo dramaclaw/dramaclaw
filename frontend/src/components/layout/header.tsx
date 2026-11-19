@@ -391,11 +391,13 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               </span>
             </DropdownMenuTrigger>
             <HeaderMenuPanel dropdown>
-              <HeaderMenuRow menuItem
-                icon={<Map className="size-3.5" />}
-                label={t("header.pikoHub.world")}
-                badge="New"
-                onClick={() => { markPikoEntrySeen(); capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
+              {!ceRuntime && (
+                <HeaderMenuRow menuItem
+                  icon={<Map className="size-3.5" />}
+                  label={t("header.pikoHub.world")}
+                  badge="New"
+                  onClick={() => { markPikoEntrySeen(); capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
+              )}
               <HeaderMenuRow menuItem id="mybuddy-companion-entry"
                 icon={<Users className="size-3.5" />}
                 label={t("header.pikoHub.companion")}

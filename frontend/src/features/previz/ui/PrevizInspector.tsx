@@ -40,7 +40,7 @@ export interface PrevizInspectorProps {
 }
 
 const FIELD =
-  "h-8 w-full rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none focus:border-white/25";
+  "h-8 w-full rounded-lg border border-white/[0.06] bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none transition-colors duration-150 hover:border-white/[0.12] focus:border-white/25 focus:ring-[3px] focus:ring-white/10";
 const LABEL = "mb-1 block text-[11px] text-white/45";
 
 type PoseAdjustAxis = keyof PrevizCharacter["poseAdjust"];

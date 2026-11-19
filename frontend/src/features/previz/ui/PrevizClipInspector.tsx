@@ -37,12 +37,12 @@ import { PrevizSelect } from './PrevizSelect';
 const ROW = 'flex items-center gap-2';
 const ROW_LABEL = 'w-12 shrink-0 truncate text-[11px] text-white/45';
 const FIELD =
-  'h-7 min-w-0 flex-1 rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none focus:border-white/25';
+  'h-7 min-w-0 flex-1 rounded-lg border border-white/[0.06] bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none transition-colors duration-150 focus:border-white/25 focus:ring-[3px] focus:ring-white/10';
 /** 滑杆右边那个跟读数字的小框。定宽，好让三行角度的数字对齐成一列。 */
 const NUMBER =
-  'h-7 w-16 shrink-0 rounded-md border border-white/10 bg-white/[0.04] px-1 text-center text-[12px] text-white/90 outline-none focus:border-white/25';
+  'h-7 w-16 shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.04] px-1 text-center text-[12px] text-white/90 outline-none transition-colors duration-150 focus:border-white/25 focus:ring-[3px] focus:ring-white/10';
 const ACTION =
-  'h-7 truncate rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/80 outline-none hover:bg-white/[0.08] focus:border-white/25';
+  'h-7 truncate rounded-lg border border-white/[0.06] bg-white/[0.04] px-2 text-[12px] text-white/80 outline-none hover:bg-white/[0.08] focus:border-white/25';
 // 删除是这里唯一一个不可逆地少掉东西的动作，单独给一个红，免得跟「裁到播放头」这类
 // 可以反复调的动作混在同一片灰里误点。
 const DANGER =
@@ -370,7 +370,7 @@ function PointCard({ clip, point }: { clip: PrevizPathClip; point: PrevizPathPoi
           // 轴名印在框里而不是每根轴自成一行：三根轴是一个量，摊成三行读起来像三件事。
           <label
             key={axis}
-            className="flex h-7 min-w-0 flex-1 items-center gap-0.5 rounded-md border border-white/10 bg-white/[0.04] px-1 focus-within:border-white/25"
+            className="flex h-7 min-w-0 flex-1 items-center gap-0.5 rounded-lg border border-white/[0.06] bg-white/[0.04] px-1 focus-within:border-white/25"
           >
             <span className="shrink-0 text-[10px] uppercase text-white/30">{axis}</span>
             <NumberInput

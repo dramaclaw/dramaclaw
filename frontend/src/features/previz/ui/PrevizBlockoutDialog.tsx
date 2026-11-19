@@ -16,7 +16,6 @@ import {
   type PrevizImageSize,
 } from "@/features/previz/domain/blockoutImage";
 import {
-  PREVIZ_BLOCKOUT_GUIDE_KEYS,
   PREVIZ_BLOCKOUT_HINT_KEY,
   blockoutRejectionMessage,
 } from "@/features/previz/ui/blockoutMessages";
@@ -121,7 +120,6 @@ function BlockoutPanel({
   const renderCheckId = useId();
   const renderCheckHintId = useId();
   const modelLabelId = useId();
-  const guideId = useId();
   const hintId = useId();
   const heldId = useId();
   const [file, setFile] = useState<File | null>(null);
@@ -355,19 +353,8 @@ function BlockoutPanel({
               </div>
             )}
 
-            <div className={cn(GROUP, "flex flex-col gap-1.5 px-3.5 py-3")}>
-              <p id={guideId} className="text-[12px] font-medium text-white/70">
-                {t("previz.blockout.guide.title")}
-              </p>
-              <ul
-                aria-labelledby={guideId}
-                className={cn(HELPER, "list-disc pl-4 marker:text-white/25")}
-              >
-                {PREVIZ_BLOCKOUT_GUIDE_KEYS.map((key) => (
-                  <li key={key}>{t(key)}</li>
-                ))}
-              </ul>
-            </div>
+            {/* 选图建议只给一句：不符合的图照样能生成，长清单反而像门槛。 */}
+            <p className={HELPER}>{t("previz.blockout.guide")}</p>
 
           </div>
 
@@ -377,9 +364,12 @@ function BlockoutPanel({
                 <label htmlFor={noteId} className={LABEL}>
                   {t("previz.blockout.description")}
                 </label>
-                <span className="text-[12px] tabular-nums text-white/35">
-                  {`${description.length} / ${PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS}`}
-                </span>
+                {/* 没写字时不摆计数，免得空表单上多一串数字。 */}
+                {description.length > 0 && (
+                  <span className="text-[12px] tabular-nums text-white/35">
+                    {`${description.length} / ${PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS}`}
+                  </span>
+                )}
               </div>
               <textarea
                 id={noteId}
