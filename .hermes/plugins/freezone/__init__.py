@@ -6406,7 +6406,10 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
             "tool_call_status": "failed", "canvas_apply_status": "not_applied", "applied": False,
             **scope, "errors": [message], "message": message,
             **{key: response[key] for key in ("blocked", "run_id") if key in response},
-            "agent_instruction": _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS.get(
+            "agent_instruction": (
+                _recipe_blocker_instruction(response.get("blocked", []))
+                if code == "canvas_open_required" else ""
+            ) or _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS.get(
                 code,
                 "This confirmation cannot be used here and nothing was executed. Do not retry.",
             ).format(
@@ -6422,7 +6425,13 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
         }
         if run := data.get("run"):
             payload["run"] = run
-            if run["code"] == "canvas_open_required":
+            recipe_instruction = _recipe_blocker_instruction(run.get("blocked", []))
+            if recipe_instruction:
+                payload["agent_instruction"] = (
+                    "The canvas edits were applied, but the workflow run did not start. "
+                    + recipe_instruction + " Do not call this confirmation again."
+                )
+            elif run["code"] == "canvas_open_required":
                 labels = ", ".join(
                     item.get("label") or item["action"] for item in run.get("blocked", [])
                 )
@@ -6439,7 +6448,13 @@ def _decide_canvas_confirmation(args: dict[str, Any], decision: str) -> str:
         return tool_result(payload)
     if data["status"] == "running":
         refusal_instruction = ""
-        if data.get("refused"):
+        recipe_instruction = _recipe_blocker_instruction(data.get("refused", []))
+        if recipe_instruction:
+            refusal_instruction = (
+                " The refused actions are recorded as failed in this run. "
+                + recipe_instruction + " Tell the user; do not retry them on your own."
+            )
+        elif data.get("refused"):
             labels = ", ".join(item.get("label") or item["action"] for item in data["refused"])
             refusal_instruction = (
                 " These actions were not run because they need the open canvas: "
@@ -6568,7 +6583,24 @@ def _canvas_browser_required_error(project: str, canvas: str) -> dict[str, Any] 
     }
 
 
+def _recipe_blocker_instruction(blocked: list[dict[str, Any]]) -> str:
+    labels = ", ".join(
+        item.get("label") or item["action"]
+        for item in blocked if item.get("reason") == "recipe_required"
+    )
+    if not labels:
+        return ""
+    return (
+        f"These actions lack server Recipe admission: {labels}. Inspect their node details "
+        "and use the selected Workflow Skill's compatible Recipe before retrying. "
+        "Do not retry the unchanged commands."
+    )
+
+
 def _canvas_open_required_instruction(blocked: list[dict[str, Any]]) -> str:
+    recipe_instruction = _recipe_blocker_instruction(blocked)
+    if recipe_instruction:
+        return recipe_instruction
     actions = ", ".join(item["label"] for item in blocked)
     return (
         f"These actions only run in the open canvas: {actions}. "
@@ -6618,20 +6650,31 @@ _INVALID_CANVAS_REQUEST_INSTRUCTION = (
     "with the accepted values or shape when it can. Fix that command and retry the corrected "
     "batch once; do not resend it unchanged. If it fails again, tell the user the error."
 )
+_CANVAS_MISSING_TARGET_INSTRUCTION = (
+    "The batch was not applied. For a node created earlier in this batch, set its "
+    "create_node.client_id and use that exact plain string in create_edge.source/target or "
+    "run_node_action.node_id (for example compose_1, without interpolation syntax). "
+    "For an existing node, read the canvas and use its current node ID. "
+    "Submit the corrected batch once."
+)
 
 
 def _canvas_executor_failure(response: dict[str, Any], *, context: bool = False) -> dict[str, Any]:
     message = response.get("message") or response.get("error") or "Canvas API request failed"
+    code = response.get("code")
+    instruction = {
+        "invalid_agent_canvas_request": _INVALID_CANVAS_REQUEST_INSTRUCTION,
+        "targets_missing": _CANVAS_MISSING_TARGET_INSTRUCTION,
+    }.get(code, "") if not context else ""
+    if code == "invalid_agent_canvas_request" and not context and "node not found" in message:
+        instruction = _CANVAS_MISSING_TARGET_INSTRUCTION
     return {
         "ok": False,
         "tool_call_status": "failed",
         **({"canvas_context_status": "failed"} if context else {
             "canvas_apply_status": "failed", "applied": False,
         }),
-        **({
-            "retryable": True,
-            "agent_instruction": _INVALID_CANVAS_REQUEST_INSTRUCTION,
-        } if response.get("code") == "invalid_agent_canvas_request" and not context else {}),
+        **({"retryable": True, "agent_instruction": instruction} if instruction else {}),
         "errors": [message],
         "message": message,
         **{key: response[key] for key in ("code", "current_revision") if key in response},
@@ -7961,6 +8004,15 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
                     else "ask_user_in_conversation"
                 ),
             }
+        elif action == "prepare" and error.get("code") == "workflow_result_skill_mismatch":
+            operation_id = request_args.get("operation_id")
+            error["agent_instruction"] = (
+                f"The draft was not written by this request. Check the existing operation "
+                f"{operation_id!r} before retrying; do not reuse it with another Skill. "
+                "If no prior submission is active or unresolved, call "
+                "freezone_begin_agent_product_generation for the newly selected Skill, then "
+                "call freezone_prepare_workflow with the returned operation_id."
+            )
         elif action == "prepare" and error.get("code") == "no_compatible_video_model":
             from novelvideo.freezone.workflow_preflight import (
                 video_model_constraint_adjustment_clarification,
@@ -13055,7 +13107,7 @@ TOOLS = (
         "freezone_get_canvas_ontology",
         _schema(
             "freezone_get_canvas_ontology",
-            "Request the current detailed Freezone canvas ontology context from the frontend.",
+            "Request the detailed ontology for the current Freezone canvas.",
             _SCOPE_PROPS,
         ),
         _handle_canvas_ontology,
@@ -13064,7 +13116,7 @@ TOOLS = (
         "freezone_summarize_canvas",
         _schema(
             "freezone_summarize_canvas",
-            "Request the simple Freezone canvas ontology summary from the frontend.",
+            "Request the ontology summary for the current Freezone canvas.",
             _SCOPE_PROPS,
         ),
         _handle_summarize_canvas,
@@ -13073,7 +13125,7 @@ TOOLS = (
         "freezone_get_canvas_action_catalog",
         _schema(
             "freezone_get_canvas_action_catalog",
-            "Request the current canvas-level Freezone action catalog from the frontend.",
+            "Request the canvas-level action catalog for the current Freezone canvas.",
             _SCOPE_PROPS,
         ),
         _handle_canvas_action_catalog,
@@ -13082,7 +13134,7 @@ TOOLS = (
         "freezone_get_canvas_command_catalog",
         _schema(
             "freezone_get_canvas_command_catalog",
-            "Request the frontend Freezone canvas_chat_commands.v1 command catalog. Use this before freezone_emit_canvas_command when batch command fields are unclear.",
+            "Request the Freezone canvas_chat_commands.v1 command catalog. Use this before freezone_emit_canvas_command when batch command fields are unclear.",
             _SCOPE_PROPS,
         ),
         _handle_canvas_command_catalog,
@@ -13584,7 +13636,7 @@ TOOLS = (
         "freezone_get_selection",
         _schema(
             "freezone_get_selection",
-            "Request the current Freezone canvas selection from the frontend.",
+            "Request the selection available to the current canvas executor. The server executor does not read the browser selection; pass explicit node IDs for selection-scoped actions.",
             _SCOPE_PROPS,
         ),
         _handle_selection,
@@ -13594,7 +13646,7 @@ TOOLS = (
         "freezone_get_node_detail",
         _schema(
             "freezone_get_node_detail",
-            "Request detailed context for one Freezone canvas node from the frontend. This returns node data parameters, not toolbar/action parameters.",
+            "Request detailed context for one node on the current Freezone canvas. This returns node data parameters, not toolbar/action parameters.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Canvas node id."},
@@ -13624,7 +13676,7 @@ TOOLS = (
         "freezone_get_node_action_catalog",
         _schema(
             "freezone_get_node_action_catalog",
-            "Request the action catalog for one Freezone canvas node from the frontend. Use this with action before answering questions about toolbar/action parameters or behavior; node_detail.parameters are only node data.",
+            "Request the action catalog for one node on the current Freezone canvas. Use this with action before answering questions about toolbar/action parameters or behavior; node_detail.parameters are only node data.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Canvas node id."},
@@ -13641,7 +13693,7 @@ TOOLS = (
         "freezone_get_node_create_schema",
         _schema(
             "freezone_get_node_create_schema",
-            "Request the creation schema for one Freezone node type from the frontend. "
+            "Request the creation schema for one Freezone node type. "
             "After selecting an image or video model, call again with its exact model_id "
             "and use only that model's returned parameter options. "
             "htmlArtifactNode creates an empty webpage node through generic create_node/add_next_node; "
@@ -13665,7 +13717,7 @@ TOOLS = (
         "freezone_get_audio_voice_options",
         _schema(
             "freezone_get_audio_voice_options",
-            "Request dynamic voice options for one Freezone audio node from the frontend.",
+            "Request dynamic voice options for one Freezone audio node.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {"type": "string", "description": "Audio canvas node id."},
@@ -14048,7 +14100,7 @@ TOOLS = (
         "freezone_validate_canvas_commands",
         _schema(
             "freezone_validate_canvas_commands",
-            "Preflight validate canvas_chat_commands.v1 against the current frontend canvas before emitting commands.",
+            "Preflight validate canvas_chat_commands.v1 against the current canvas before submitting the batch; this does not apply edits or start a run.",
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
                 "commands": {
@@ -14067,7 +14119,7 @@ TOOLS = (
         "freezone_emit_canvas_command",
         _schema(
             "freezone_emit_canvas_command",
-            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. When an existing node must be edited and then generated, use update_node_data + run_node_action in this one batch so generation reads the updated data without another model turn. Do not ask the user to click Generate after only creating or editing the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first."
+            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. For create_node + create_edge + run_node_action, set create_node.client_id to a plain alias such as compose_1; use compose_1 directly in create_edge.target and run_node_action.node_id, without interpolation syntax. When an existing node must be edited and then generated, use update_node_data + run_node_action in this one batch so generation reads the updated data without another model turn. Do not ask the user to click Generate after only creating or editing the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first."
             + _EMIT_HOST_GUIDANCE,
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
@@ -14422,7 +14474,7 @@ TOOLS = (
         "freezone_run_node_action",
         _schema(
             "freezone_run_node_action",
-            "Single-operation tool only: run or open exactly one standalone frontend node action "
+            "Single-operation tool only: run a supported server action or open a browser-only UI action on one existing node "
             "listed by node_detail action_summary. A one-node workflow is still a workflow: never "
             "use this tool to run, continue, or resume a target the user identifies as a workflow; "
             "use freezone_run_workflow instead. Use this tool when a named Recipe is already bound "

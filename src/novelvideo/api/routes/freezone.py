@@ -16192,14 +16192,18 @@ async def create_canvas_workflow_draft(
             or not operation_skill_version
             or operation_skill_version != artifact_skill_version
         ):
-            raise HTTPException(
-                400,
-                "workflow result operation does not match compiled Skill: "
-                f"operation.skill_id={operation_skill_id!r}, "
-                f"operation.skill_version={operation_skill_version!r}, "
-                f"operation.artifact_id={artifact_id!r}, "
-                f"expected skill_id={compiled_skill_id!r}",
-            )
+            raise HTTPException(400, {
+                "code": "workflow_result_skill_mismatch",
+                "message": (
+                    "workflow result operation does not match compiled Skill: "
+                    f"operation.skill_id={operation_skill_id!r}, "
+                    f"operation.skill_version={operation_skill_version!r}, "
+                    f"operation.artifact_id={artifact_id!r}, "
+                    f"expected skill_id={compiled_skill_id!r}"
+                ),
+                "retryable": False,
+                "next_action": "inspect_operation_before_retry",
+            })
     if (
         operation
         and operation.get("status") == "delivered"
@@ -16309,9 +16313,12 @@ async def create_canvas_workflow_draft(
                 and validated_skill_version != operation_skill_version
             )
         ):
-            raise HTTPException(
-                400, "workflow result operation does not match compiled Skill identity"
-            )
+            raise HTTPException(400, {
+                "code": "workflow_result_skill_mismatch",
+                "message": "workflow result operation does not match compiled Skill identity",
+                "retryable": False,
+                "next_action": "inspect_operation_before_retry",
+            })
     try:
         await asyncio.to_thread(
             prune_expired_workflow_drafts,
