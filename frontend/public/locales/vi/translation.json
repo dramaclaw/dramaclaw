@@ -1,7 +1,17 @@
 {
   "chatSnapshot": {
     "saveFailed": "Không thể lưu lịch sử trò chuyện. Vui lòng thử lại sau; tin nhắn hiện tại vẫn được giữ trên máy.",
-    "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử."
+    "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử.",
+    "ceHistory": {
+      "title": "Một phần lịch sử trò chuyện chưa được tải đầy đủ",
+      "description": "Cuộc trò chuyện này có bản ghi lớn hoặc không hợp lệ nên một phần suy nghĩ và bản ghi công cụ chưa được tải. Nội dung tin nhắn vẫn có thể xem. Điều này không có nghĩa là lệnh gọi mô hình bị lỗi.",
+      "help": "Xem hướng dẫn xử lý",
+      "support": "Liên hệ hỗ trợ cộng đồng",
+      "continue": "Nếu vẫn gửi tin nhắn bình thường, bạn có thể tiếp tục cuộc trò chuyện này. Không cần xóa lịch sử trò chuyện hoặc dự án.",
+      "backup": "Để khôi phục toàn bộ lịch sử, trước tiên hãy dừng ứng dụng và các dịch vụ liên quan, sao lưu đầy đủ cơ sở dữ liệu trò chuyện (chat.db, bao gồm các tệp WAL nếu có), rồi làm theo hướng dẫn chi tiết để kiểm tra và thu gọn. Công cụ không thể sửa mọi bản ghi quá lớn hoặc không hợp lệ.",
+      "privacy": "Khi cần trợ giúp, hãy cung cấp phiên bản ứng dụng, hệ điều hành, ảnh chụp màn hình và nhật ký đã ẩn thông tin nhạy cảm. Cơ sở dữ liệu có thể chứa hội thoại riêng tư và dữ liệu nhạy cảm. Không tải trực tiếp lên issue công khai.",
+      "recoveryGuide": "Mở hướng dẫn khôi phục lịch sử chi tiết"
+    }
   },
   "referenceValidation": {
     "firstFrame": "Khung hình đầu",
