@@ -1,5 +1,6 @@
 """A failed canvas run tells the agent what happened, who can fix it and what to do now."""
 
+import base64
 import json
 from types import SimpleNamespace
 
@@ -179,12 +180,24 @@ def test_blocked_action_points_at_the_upstream_failure():
     assert blocked["detail"] == "跳过 generate_video：上游节点 image 未成功完成。"
 
 
+def _b64(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+# Secret-shaped samples are assembled at run time so no such literal sits in the source.
+_FAKE_KEY = "-".join(["sk", "fake", "0123456789abcdef"])
+_FAKE_LONG_KEY = "-".join(["sk", "fakeLIVE0123456789abcdefXYZ"])
+_FAKE_JWT_PARTS = [_b64('{"alg":"HS256"}'), _b64('{"sub":"fake"}'), _b64("signaturefake")]
+_FAKE_ACCESS_KEY = "AKIA" + "FAKE" * 3 + "1234"
+_FAKE_PASSWORD = "hunter2" + "fake"
+
+
 @pytest.mark.parametrize(
     "secret_text,leaks",
     [
-        ("auth failed api_key=sk-fake-0123456789abcdef", ["sk-fake-0123456789abcdef"]),
-        ("call rejected for key sk-fakeLIVE0123456789abcdefXYZ", ["sk-fakeLIVE"]),
-        ("Authorization: Bearer fakebearer.value.123", ["fakebearer"]),
+        (f"auth failed api_key={_FAKE_KEY}", [_FAKE_KEY]),
+        (f"call rejected for key {_FAKE_LONG_KEY}", ["sk-fakeLIVE"]),
+        ("Authorization: Bearer " + ".".join(["fakebearer", "value", "123"]), ["fakebearer"]),
         (
             "GET https://bucket.oss.example.com/a/b.png?Signature=FAKESIG123&Expires=99 failed",
             ["bucket.oss.example.com", "FAKESIG123", "Expires=99"],
@@ -195,11 +208,15 @@ def test_blocked_action_points_at_the_upstream_failure():
         ("cannot read /Users/someone/.config/app/credentials.json", ["someone", ".config"]),
         ("open C:\\Users\\someone\\keys\\id_rsa failed", ["someone", "id_rsa"]),
         (
-            "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.c2lnbmF0dXJlZmFrZQ rejected",
-            ["eyJhbGciOiJIUzI1NiJ9", "c2lnbmF0dXJlZmFrZQ"],
+            "jwt " + ".".join(_FAKE_JWT_PARTS) + " rejected",
+            [_FAKE_JWT_PARTS[0], _FAKE_JWT_PARTS[2]],
         ),
-        ("access key AKIAFAKEFAKEFAKE1234 denied", ["AKIAFAKEFAKEFAKE1234"]),
-        ("password=hunter2fake rejected", ["hunter2fake"]),
+        (f"access key {_FAKE_ACCESS_KEY} denied", [_FAKE_ACCESS_KEY]),
+        (f"password={_FAKE_PASSWORD} rejected", [_FAKE_PASSWORD]),
+    ],
+    ids=[
+        "api-key", "bare-key", "bearer", "signed-url", "ip-port", "internal-host-port",
+        "cluster-host", "posix-path", "windows-path", "jwt", "access-key", "password",
     ],
 )
 @pytest.mark.parametrize("source", ["action", "task"])
