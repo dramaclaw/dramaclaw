@@ -137,6 +137,44 @@ async def test_retry_or_final_failure(tmp_path, error, expected):
 
 
 @pytest.mark.asyncio
+async def test_unexpected_runner_exception_is_stored_as_server_fault(tmp_path):
+    class SubmissionError(Exception):
+        pass
+
+    class FailingRunner(FakeRunner):
+        async def run_action(self, **kwargs):
+            raise SubmissionError("submission failed")
+
+    clock = Clock()
+    scope = setup_run(
+        tmp_path, clock, actions=[{'node_id': 'one', 'action': 'generate_image'}], levels=[[0]],
+    )
+    assert (await drive(scope, clock, FailingRunner(scope)))['status'] == 'failed'
+    (action,) = store.read_workflow_run(**scope)['actions']
+    assert action['error_category'] == 'server_fault'
+    assert action['failure_signal'] == {
+        'failure_kind': 'server_fault', 'failure_exception': 'SubmissionError',
+    }
+
+
+@pytest.mark.asyncio
+async def test_failed_outcome_signal_is_stored(tmp_path):
+    clock = Clock()
+    scope = setup_run(
+        tmp_path, clock, actions=[{'node_id': 'one', 'action': 'generate_image'}], levels=[[0]],
+    )
+    signal = {'upstream_status': 403}
+    runner = FakeRunner(scope, scripts={'one': [{
+        'status': 'failed', 'error': 'HTTP 403: this parameter value is restricted',
+        'signal': signal,
+    }]})
+    assert (await drive(scope, clock, runner))['status'] == 'failed'
+    (action,) = store.read_workflow_run(**scope)['actions']
+    assert action['error_category'] == 'upstream_rejected'
+    assert action['failure_signal'] == signal
+
+
+@pytest.mark.asyncio
 async def test_completion_stores_the_runner_artifact(tmp_path):
     clock = Clock()
     scope = setup_run(tmp_path, clock, actions=[{'node_id': 'one', 'action': 'generate_image'}],

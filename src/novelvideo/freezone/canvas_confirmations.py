@@ -512,12 +512,16 @@ def _locked_record(directory: Path, confirmation_id: str) -> Iterator[dict]:
         yield record
 
 
-def save_price(directory: str | Path, confirmation_id: str, price: dict) -> None:
+def save_price(
+    directory: str | Path, confirmation_id: str, price: dict, quote_digest: dict | None = None,
+) -> None:
     directory = Path(directory)
     try:
         with _locked_record(directory, confirmation_id) as record:
             if record["status"] == "pending":
                 record["price"] = price
+                if quote_digest is not None:
+                    record["quote_digest"] = quote_digest
                 _save(directory, record)
     except CanvasConfirmationError as exc:
         if exc.code != "not_found":

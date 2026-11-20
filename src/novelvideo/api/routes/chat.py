@@ -1673,6 +1673,12 @@ async def append_canvas_confirmation_notice(
             f"target nodes changed ({detail}). Nothing was executed. "
             "Read the canvas again before asking."
         ),
+        "quote_changed": (
+            f"Canvas confirmation {confirmation_id} ({kinds}) was voided because the node "
+            f"content or the price changed after the card was shown ({detail}). "
+            "Nothing was executed. Request the confirmation again so the user sees the "
+            "current content and price."
+        ),
         "reported": (
             f"The user confirmed canvas confirmation {confirmation_id} ({kinds}); "
             f"the open canvas ran it and reported status {detail}. "

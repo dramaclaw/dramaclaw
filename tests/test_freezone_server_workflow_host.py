@@ -244,6 +244,26 @@ async def test_task_lookup_and_result_url(host, context, monkeypatch):
     assert await host.job_result(TASK) is None
 
 
+async def test_task_status_returns_only_failure_signal_metadata(host, monkeypatch):
+    from novelvideo.api import freezone_server_workflow_host as host_module
+
+    signal = {
+        "failure_kind": "server_fault", "upstream_status": 403,
+        "failure_exception": "SubmissionError", "error_code": "GENERATION_FAILED",
+    }
+    state = SimpleNamespace(
+        status="failed", result=None, error="request failed",
+        metadata={**signal, "unrelated": "ignored"},
+    )
+    monkeypatch.setattr(host_module, "get_task_manager", lambda: SimpleNamespace(
+        get_task_for_project=lambda *args, **kwargs: state,
+    ))
+
+    status = await host.task_status(TASK)
+
+    assert status["signal"] == signal
+
+
 async def test_clear_generation_markers_only_for_this_run(context):
     from novelvideo.api.freezone_server_workflow_host import clear_server_generation_markers
 

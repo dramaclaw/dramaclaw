@@ -3,6 +3,8 @@
 """Inspect planned canvas generation and quote it without submitting tasks."""
 
 import asyncio
+import hashlib
+import json
 import logging
 from pathlib import Path
 from urllib.parse import quote
@@ -11,6 +13,7 @@ from fastapi import HTTPException
 
 from novelvideo.api.freezone_server_workflow_host import InProcessActionHost
 from novelvideo.freezone import canvas_core_pool
+from novelvideo.freezone.agent_product_operations import agent_product_price_key
 from novelvideo.freezone.canvas_confirmations import node_title
 from novelvideo.freezone.generation_inputs import (
     MISSING_INPUT_CODES,
@@ -20,8 +23,12 @@ from novelvideo.freezone.generation_inputs import (
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
 from novelvideo.project_context import ProjectContext
+from novelvideo.shared.billing_errors import find_billing_rule_not_configured_error
 
 logger = logging.getLogger(__name__)
+
+# Minted per submission, so they are neither billed nor part of what the user was shown.
+_REQUEST_IDENTITY_KEYS = frozenset({"product_operation_id", "generation_attempt_id"})
 
 _GENERATION_ROUTES = {
     "generate_image": {"gen"},
@@ -124,7 +131,6 @@ async def check_generation_inputs(
 
 async def _quote_request(host: InProcessActionHost, action: str, request: dict) -> dict:
     from novelvideo.api.routes import freezone as routes
-    from novelvideo.api.routes.model_credits import quote_generation_credit_cost
 
     path = request["path"]
     prefix = f"projects/{quote(host.ctx.project_id, safe='')}/freezone/"
@@ -132,7 +138,7 @@ async def _quote_request(host: InProcessActionHost, action: str, request: dict) 
         raise ValueError("Request has no generation billing probe")
     body = {
         key: value for key, value in request["body"].items()
-        if key not in {"product_operation_id", "generation_attempt_id"}
+        if key not in _REQUEST_IDENTITY_KEYS
     }
     token = routes._generation_billing_probe.set(True)
     try:
@@ -143,6 +149,14 @@ async def _quote_request(host: InProcessActionHost, action: str, request: dict) 
         raise ValueError("Generation billing was unavailable")
     finally:
         routes._generation_billing_probe.reset(token)
+    return await _quote_feature(host, feature_key, params, quantity)
+
+
+async def _quote_feature(
+    host: InProcessActionHost, feature_key: str, params: dict, quantity: int,
+) -> dict:
+    from novelvideo.api.routes.model_credits import quote_generation_credit_cost
+
     data = (await quote_generation_credit_cost(
         kind="feature", surface="canvas", value=feature_key, params=params, quantity=quantity,
         user_id=host.ctx.requester_user_id,
@@ -152,48 +166,109 @@ async def _quote_request(host: InProcessActionHost, action: str, request: dict) 
 
 async def _price_action(
     host: InProcessActionHost, canvas: dict, node: dict, action: dict,
-    input_pending: bool, built: dict | None,
-) -> dict:
-    name = action["action"]
-    binding = (node.get("data") or {}).get("workflowCatalog")
-    recipe_id = action.get("recipe_id") or (
-        binding.get("recipeId") if isinstance(binding, dict) else None
+    input_pending: bool, built: dict | None, with_price: bool,
+) -> tuple[dict, dict]:
+    """Price one planned action; also return what it would run, for the confirmation digest."""
+    from novelvideo.api.freezone_server_workflow_start import workflow_action_recipe_binding
+    from novelvideo.api.routes.freezone import (
+        WORKFLOW_RECIPE_ONLY_ACTIONS,
+        workflow_action_recipe_admission,
     )
-    if str(recipe_id or "").strip():
-        reason = "recipe_action"
-    elif not _quotable_action(name, node):
-        reason = "action_not_quoted"
-    else:
-        try:
+    from novelvideo.api.routes.model_credits import _display_credit_cost
+
+    name = action["action"]
+    binding = workflow_action_recipe_binding(node)
+    admits_recipe = workflow_action_recipe_admission({"action": name, **binding})
+    shown = {"recipe": binding if admits_recipe else None, "request": None}
+    parts = []
+    try:
+        if not (admits_recipe and name in WORKFLOW_RECIPE_ONLY_ACTIONS):
+            if not _quotable_action(name, node):
+                return {"status": "unknown", "reason": "action_not_quoted"}, shown
             if built is None:
                 built = await _build_request(host, canvas, action)
+            shown["request"] = built
+            if not with_price:
+                return {}, shown
             request = built["request"]
             if (
                 request["ok"] and len(request["requests"]) == 1
                 and built.get("trim_requirement") is None
                 and (built.get("compile_input") or {}).get("ok") is not False
             ):
-                return await _quote_request(host, name, request["requests"][0])
-            reason = (
-                "input_pending"
-                if input_pending and request.get("code") in MISSING_INPUT_CODES
-                else "request_unavailable"
-            )
-        except Exception as exc:
-            logger.warning("Confirmation price unavailable: %s", type(exc).__name__)
-            reason = "quote_failed"
-    return {"status": "unknown", "reason": reason}
+                parts.append(await _quote_request(host, name, request["requests"][0]))
+            else:
+                reason = (
+                    "input_pending"
+                    if input_pending and request.get("code") in MISSING_INPUT_CODES
+                    else "request_unavailable"
+                )
+                return {"status": "unknown", "reason": reason}, shown
+        if admits_recipe and with_price:
+            feature_key = agent_product_price_key("recipe_result")
+            parts.append(await _quote_feature(host, feature_key, {}, 1))
+    except Exception as exc:
+        logger.warning("Confirmation price unavailable: %s", type(exc).__name__)
+        reason = (
+            "price_not_configured"
+            if find_billing_rule_not_configured_error(exc) is not None
+            else "quote_failed"
+        )
+        return {"status": "unknown", "reason": reason}, shown
+    if not with_price:
+        return {}, shown
+    if len(parts) == 1:
+        return parts[0], shown
+    total = sum(part["credits"] for part in parts)
+    return {"status": "known", "credits": total, "display": _display_credit_cost(total)}, shown
 
 
-async def confirmation_price(
+def _digest(value: object) -> str:
+    text = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _without_request_identity(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _without_request_identity(item) for key, item in value.items()
+            if key not in _REQUEST_IDENTITY_KEYS
+        }
+    if isinstance(value, list):
+        return [_without_request_identity(item) for item in value]
+    return value
+
+
+def _content_digest(shown: list[dict] | None, client_ids: dict[str, str]) -> str:
+    text = json.dumps(
+        _without_request_identity(shown), sort_keys=True, ensure_ascii=False, default=str,
+    )
+    # A node the confirmation will create has a new preview id on every plan.
+    for preview_id, client_id in client_ids.items():
+        text = text.replace(json.dumps(preview_id), json.dumps(client_id))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _price_digest(price: dict) -> str:
+    # Why a price is unknown is not part of what was agreed; only the amounts are.
+    return _digest({
+        "status": price["status"], "credits": price.get("credits"),
+        "known_credits": price.get("known_credits"),
+        "items": sorted(
+            json.dumps([item["action"], item["status"], item.get("credits")])
+            for item in price.get("items", [])
+        ),
+    })
+
+
+async def _quote_plan(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str, planning: dict,
-    requests: dict[int, dict], reused_commands: list[dict] | None = None,
-) -> dict:
+    requests: dict[int, dict], reused_commands: list[dict] | None, with_price: bool = True,
+) -> tuple[dict, str]:
+    """Return the price of the planned actions and a digest of what they would run."""
     from novelvideo.api.freezone_server_workflow_start import _plan_run_commands
     from novelvideo.api.routes.model_credits import _display_credit_cost
 
-    if isinstance(get_usage_meter(), NoOpUsageMeter):
-        return {"status": "not_metered"}
     if reused_commands is not None:
         try:
             planning = await _plan_run_commands(
@@ -203,23 +278,34 @@ async def confirmation_price(
             logger.warning("Confirmation price plan unavailable: %s", type(exc).__name__)
     actions = (planning.get("plan") or {}).get("actions")
     if actions is None:
-        return {"status": "unknown", "reason": "plan_unavailable", "items": []}
+        price = {"status": "unknown", "reason": "plan_unavailable", "items": []}
+        return price, _content_digest(None, {})
     canvas = planning["canvas"]
     client_ids = planning["client_ids"]
     nodes = {node["id"]: node for node in canvas.get("nodes", [])}
     host = InProcessActionHost(ctx=ctx, canvas_id=canvas_id, assert_lease=lambda: None)
     items = []
+    shown = []
     earlier = set()
     for index, action in enumerate(actions):
         node_id = action["node_id"]
-        price = await _price_action(
+        price, runs = await _price_action(
             host, canvas, nodes.get(node_id, {}), action,
             bool(earlier.intersection(upstream_ids(canvas, node_id))), requests.get(index),
+            with_price,
         )
         items.append({
             "node_id": client_ids.get(node_id, node_id), "action": action["action"], **price,
         })
+        shown.append({
+            "node_id": node_id, "action": action["action"],
+            "execution_mode": action.get("execution_mode"),
+            "parameters": action.get("parameters"), **runs,
+        })
         earlier.add(node_id)
+    content = _content_digest(shown, client_ids)
+    if not with_price:
+        return {}, content
 
     known = [item for item in items if item["status"] == "known"]
     first_unknown = next((item for item in items if item["status"] == "unknown"), None)
@@ -228,6 +314,64 @@ async def confirmation_price(
         return {
             "status": "unknown", "reason": first_unknown["reason"], "items": items,
             **({"known_credits": total} if known else {}),
-        }
+        }, content
     display = known[0]["display"] if len(known) == 1 else _display_credit_cost(total)
-    return {"status": "known", "credits": total, "display": display, "items": items}
+    return {"status": "known", "credits": total, "display": display, "items": items}, content
+
+
+async def confirmation_price(
+    *, ctx: ProjectContext, state_dir: Path, canvas_id: str, planning: dict,
+    requests: dict[int, dict], reused_commands: list[dict] | None = None,
+) -> dict:
+    if isinstance(get_usage_meter(), NoOpUsageMeter):
+        return {"status": "not_metered"}
+    return (await _quote_plan(
+        ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, planning=planning,
+        requests=requests, reused_commands=reused_commands,
+    ))[0]
+
+
+async def confirmation_quote_digest(
+    *, ctx: ProjectContext, state_dir: Path, canvas_id: str, commands: list[dict], price: dict,
+) -> dict | None:
+    """Digest what a paid confirmation card showed: the planned requests and the price.
+
+    The planned requests are derived from the stored commands, exactly as at confirm time.
+    """
+    if isinstance(get_usage_meter(), NoOpUsageMeter):
+        return None
+    _, content = await _quote_plan(
+        ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, planning={}, requests={},
+        reused_commands=commands, with_price=False,
+    )
+    return {"content": content, "price": _price_digest(price)}
+
+
+async def confirmation_quote_changes(
+    *, ctx: ProjectContext, state_dir: Path, canvas_id: str, record: dict,
+) -> list[str]:
+    """Name what differs between the card a user confirmed and the canvas now.
+
+    Re-derives the plan and the quote from the current canvas through the code that created
+    them. ``unverified`` means the card has no usable digest to compare against.
+    """
+    if isinstance(get_usage_meter(), NoOpUsageMeter):
+        return []
+    stored = record.get("quote_digest")
+    if not (
+        isinstance(stored, dict)
+        and isinstance(stored.get("content"), str) and isinstance(stored.get("price"), str)
+    ):
+        return ["unverified"]
+    try:
+        price, content = await _quote_plan(
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, planning={}, requests={},
+            reused_commands=record["commands"],
+        )
+    except Exception as exc:
+        logger.warning("Confirmation quote check unavailable: %s", type(exc).__name__)
+        return ["unverified"]
+    return [
+        name for name, current in (("content", content), ("price", _price_digest(price)))
+        if current != stored[name]
+    ]

@@ -2,18 +2,15 @@
 
 import hashlib
 import json
-import re
 from collections import Counter
 from typing import Any
 
-from novelvideo.freezone.workflow_runs import workflow_error_diagnostics
-from novelvideo.shared.failure_signals import CONFIGURATION
+from novelvideo.freezone.workflow_runs import classify_workflow_error, workflow_error_diagnostics
+from novelvideo.shared.failure_signals import CONFIGURATION, SERVER_FAULT, sanitize_failure_signal
 from novelvideo.utils.error_redaction import redact_error_detail
 
 TERMINAL_STATES = {"completed", "failed", "cancelled", "interrupted"}
 
-_TRANSIENT_MESSAGE = "上游模型服务暂时不可用，系统可稍后重试。"
-_TEXT_STATUS_CATEGORIES = frozenset({"authentication", "transient_upstream"})
 _FIXABLE_BY = {
     "input_missing": "user",
     "invalid_request": "user",
@@ -25,13 +22,8 @@ _FIXABLE_BY = {
     "authentication": "operator",
     "quota_exhausted": "operator",
     CONFIGURATION: "operator",
+    SERVER_FAULT: "operator",
 }
-
-
-def _diagnostic_code(value: Any) -> str | None:
-    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", value):
-        return value
-    return None
 
 
 def summarize_workflow_run(
@@ -48,14 +40,13 @@ def summarize_workflow_run(
             continue
         task_key = action.get("task_key")
         task = (tasks_by_key or {}).get(task_key) or {}
-        signal = task.get("metadata")
-        if not isinstance(signal, dict):
-            signal = {}
+        signal = {
+            **sanitize_failure_signal(action.get("failure_signal")),
+            **sanitize_failure_signal(task.get("metadata")),
+        }
         upstream_status = signal.get("upstream_status")
-        if type(upstream_status) is not int:
-            upstream_status = None
         error = action.get("error")
-        diagnostics = workflow_error_diagnostics(error)
+        diagnostics = workflow_error_diagnostics(error, signal)
         category = diagnostics["error_category"]
         message = diagnostics["user_error"]
         retryable = diagnostics["retryable"]
@@ -70,32 +61,15 @@ def summarize_workflow_run(
                 "504",
             )
         )
-        generic_category = category in {"execution", "unknown"}
-        if generic_category and status == "blocked":
+        if status == "blocked" and classify_workflow_error(error)[0] in {"execution", "unknown"}:
             category = "dependency_blocked"
             message = "上游节点未成功完成，本节点未执行；请先处理上游节点的问题。"
             retryable = False
-        elif generic_category and signal.get("failure_kind") == CONFIGURATION:
-            category = CONFIGURATION
-            message = (
-                "服务端配置或部署问题导致生成失败，不是节点输入的问题；"
-                "重试或修改画布都无法解决，需要管理员或部署方处理。"
-            )
-            retryable = False
-        elif (
-            (generic_category or category in _TEXT_STATUS_CATEGORIES)
-            and upstream_status is not None
-            and 400 <= upstream_status < 600
-        ):
-            ambiguous = ambiguous or upstream_status in {408, 504}
-            if upstream_status in {408, 429} or upstream_status >= 500:
-                category, message, retryable = "transient_upstream", _TRANSIENT_MESSAGE, True
-            else:
-                category = "upstream_rejected"
-                message = f"上游服务拒绝了本次请求（HTTP {upstream_status}）。"
-                retryable = False
         elif category == "execution":
             message = "生成失败，原因未知。原始错误见 detail，可凭 diagnostics 中的编号排查。"
+        ambiguous = ambiguous or (
+            category == "transient_upstream" and upstream_status in {408, 504}
+        )
         retryable = retryable and not ambiguous
         if category == "input_missing":
             next_action = "fix_input_before_retry"
@@ -122,9 +96,9 @@ def summarize_workflow_run(
             "task_key": task_key,
             "job_id": action.get("job_id"),
             "request_id": diagnostics["error_request_id"],
-            "error_code": _diagnostic_code(signal.get("error_code")),
+            "error_code": signal.get("error_code"),
             "upstream_status": upstream_status,
-            "exception": _diagnostic_code(signal.get("failure_exception")),
+            "exception": signal.get("failure_exception"),
         }
         problems.append(
             {

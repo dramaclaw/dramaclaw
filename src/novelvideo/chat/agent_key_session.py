@@ -14,7 +14,7 @@ import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
-from urllib.request import Request
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 _CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}
@@ -25,6 +25,21 @@ _UNSUPPORTED = (
     "This server does not support agent keys via POST /api/v1/agent/sessions; "
     "for a local community API use DRAMACLAW_LOCAL_AGENT_TRUST=1 instead."
 )
+_REDIRECTED = (
+    "Agent key session exchange was answered with a redirect, which is never followed "
+    "because it would send the agent key to another address; "
+    "DRAMACLAW_API_URL must be the final API address."
+)
+
+
+class _RefuseRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # No follow-up request: the redirect surfaces as the response's HTTPError.
+        return None
+
+
+# The exchange carries the agent key, so it never uses a caller-supplied opener.
+_open_exchange = build_opener(_RefuseRedirects).open
 
 
 def agent_key_mode() -> bool:
@@ -84,7 +99,7 @@ def _exchange_error(status: int, *, unsupported: bool = False) -> dict[str, Any]
 
 def _exchange(
     api_base: str, key: str, scope: dict[str, str], headers: dict[str, str],
-    timeout: float, opener: Callable[..., Any],
+    timeout: float,
 ) -> tuple[str, float] | dict[str, Any]:
     exchange_headers = {
         **headers,
@@ -98,12 +113,17 @@ def _exchange(
         headers=exchange_headers, method="POST",
     )
     try:
-        with opener(req, timeout=timeout) as resp:
+        with _open_exchange(req, timeout=timeout) as resp:
             status = resp.status
             text = resp.read().decode("utf-8", errors="replace")
     except HTTPError as exc:
         # Never forward the exchange body, which may echo credentials.
         exc.close()
+        if 300 <= exc.code < 400:
+            return {
+                "ok": False, "status_code": exc.code,
+                "code": "agent_key_exchange_redirected", "error": _REDIRECTED,
+            }
         return _exchange_error(exc.code, unsupported=exc.code in {404, 405})
     except (URLError, OSError) as exc:
         reason = exc.reason if isinstance(exc, URLError) else str(exc)
@@ -164,7 +184,7 @@ def request(
         with entry_lock:
             session = _CACHE.get(cache_key)
             if session is None or session[1] - time.time() <= 60:
-                exchanged = _exchange(api_base, key, scope, headers, timeout, opener)
+                exchanged = _exchange(api_base, key, scope, headers, timeout)
                 if isinstance(exchanged, dict):
                     return exchanged
                 session = _CACHE[cache_key] = exchanged

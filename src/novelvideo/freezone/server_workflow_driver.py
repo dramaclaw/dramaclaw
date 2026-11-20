@@ -11,7 +11,7 @@ from typing import Protocol
 
 from novelvideo.freezone import workflow_runs as store
 from novelvideo.freezone.agent_canvas_metrics import count, observe
-from novelvideo.freezone.server_workflow_actions import ActionLeaseLost
+from novelvideo.freezone.server_workflow_actions import ActionLeaseLost, action_failure_signal
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +321,9 @@ async def drive_server_workflow_run(
                 except (ServerWorkflowLeaseLost, store.WorkflowRunLeaseConflict, _RunEnded):
                     raise
                 except Exception as exc:
-                    outcome = {"status": "failed", "error": str(exc)}
+                    outcome = {
+                        "status": "failed", "error": str(exc), "signal": action_failure_signal(exc),
+                    }
                 finally:
                     executing.pop(task, None)
                     timed_out.discard(task)
@@ -352,7 +354,7 @@ async def drive_server_workflow_run(
                     await sleep(workflow_retry_delay_seconds(retry_count))
                     existing_task = None
                 else:
-                    await update(status="failed", error=error)
+                    await update(status="failed", error=error, failure_signal=outcome.get("signal"))
                     return
 
     async def work() -> str:

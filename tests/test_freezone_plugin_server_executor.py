@@ -480,7 +480,7 @@ def _confirmation_result(data, via, instruction):
         "agent_instruction": instruction,
         **({
             "price": {"status": "unknown", "reason": "not_provided"},
-            "price_text": "The price is unknown: the server could not price this generation.",
+            "price_text": "The price is unknown: the server did not return a price.",
         } if "paid_generation" in data["kinds"] else {}),
     }
 
@@ -683,6 +683,9 @@ def test_cancel_refuses_via_decision_route(agent, monkeypatch):
      "never confirm in the turn that requested the confirmation."),
     ("targets_changed", "The target nodes changed, so the confirmation was voided and nothing "
      "was executed. Read the canvas again and ask the user again if it is still wanted."),
+    ("quote_changed", "The node content or the price changed after this confirmation was shown, "
+     "so it was voided and nothing was executed or charged. Send the canvas commands again to "
+     "get a new confirmation with the current price, and show that price to the user."),
     ("already_handled", "This confirmation was already decided. Do not retry."),
     ("canvas_open_required", "Ask the user to open this canvas, then call "
      "freezone_confirm_canvas_action again with the same confirmation_id within 30 minutes. "

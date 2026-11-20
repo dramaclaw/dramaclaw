@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, TypeVar
 
 CONFIGURATION = "configuration"
-FAILURE_KINDS = frozenset({CONFIGURATION})
+SERVER_FAULT = "server_fault"
+FAILURE_KINDS = frozenset({CONFIGURATION, SERVER_FAULT})
 _MAX_CHAIN = 8
 
 
@@ -22,6 +24,23 @@ def _valid_status(value: object) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and 400 <= value <= 599:
         return value
     return None
+
+
+def sanitize_failure_signal(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    signal: dict[str, Any] = {}
+    kind = value.get("failure_kind")
+    if isinstance(kind, str) and kind in FAILURE_KINDS:
+        signal["failure_kind"] = kind
+    status = _valid_status(value.get("upstream_status"))
+    if status is not None:
+        signal["upstream_status"] = status
+    for key in ("failure_exception", "error_code"):
+        code = value.get(key)
+        if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", code):
+            signal[key] = code
+    return signal
 
 
 def upstream_status_of(source: object) -> int | None:

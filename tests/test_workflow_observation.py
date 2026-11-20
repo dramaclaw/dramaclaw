@@ -95,3 +95,49 @@ def test_missing_input_problem_explains_recovery_without_changing_summary_shape(
     assert missing["next_action"] == "fix_input_before_retry"
     assert missing["retryable"] is False
     assert missing["agent_instruction"] == FIX_CAUSE_INSTRUCTION
+
+
+@pytest.mark.parametrize(
+    "error,signal,category,message",
+    [
+        (
+            "HTTP 403: this parameter value is restricted",
+            {"upstream_status": 403},
+            "upstream_rejected",
+            "上游服务拒绝了本次请求（HTTP 403）。",
+        ),
+        (
+            "could not connect to database: too many clients",
+            {"failure_kind": "server_fault", "failure_exception": "OperationalError"},
+            "server_fault",
+            "服务端处理本次生成时发生内部错误；可稍后重试，持续出现请联系管理员或部署方。",
+        ),
+    ],
+)
+def test_summary_matches_stored_failure_without_task_metadata(error, signal, category, message):
+    action = {
+        "node_id": "image", "action": "generate_image", "status": "failed", "error": error,
+        "failure_signal": signal, "error_category": category, "user_error": message,
+    }
+    summary = summarize_workflow_run({"run_id": "run_1", "status": "failed", "actions": [action]})
+    (problem,) = summary["problems"]
+    assert problem["error_category"] == action["error_category"]
+    assert problem["message"] == action["user_error"]
+    assert problem["fixable_by"] == "operator"
+    assert problem["retryable"] is False
+
+
+def test_summary_merges_stored_signal_with_task_metadata():
+    action = {
+        "node_id": "image", "action": "generate_image", "status": "failed",
+        "error": "request refused", "task_key": "task:image",
+        "failure_signal": {"upstream_status": 403, "failure_exception": "HTTPStatusError"},
+    }
+    summary = summarize_workflow_run(
+        {"run_id": "run_1", "status": "failed", "actions": [action]},
+        tasks_by_key={"task:image": {"metadata": {"upstream_status": 429}}},
+    )
+    (problem,) = summary["problems"]
+    assert problem["error_category"] == "transient_upstream"
+    assert problem["diagnostics"]["upstream_status"] == 429
+    assert problem["diagnostics"]["exception"] == "HTTPStatusError"

@@ -28,7 +28,7 @@ UNKNOWN = {
         "reason": "quote_failed",
     }],
 }
-UNKNOWN_TEXT = "The price is unknown: the server could not price this generation."
+MISSING_PRICE_TEXT = "The price is unknown: the server did not return a price."
 PRICE_TEXT = "This will cost 30 credits."
 CONFIRMATION_TOOLS = {
     "freezone_emit_canvas_command",
@@ -58,13 +58,13 @@ def call_confirmation(agent, monkeypatch, response, *, commands=PAID):
         ({"status": "not_metered"},
          "This deployment does not deduct credits; the model provider's own cost "
          "is not known here."),
-        (UNKNOWN, UNKNOWN_TEXT),
         ({**UNKNOWN, "known_credits": 30, "items": [IMAGE, *UNKNOWN["items"]]},
          "The price is unknown: 1 of 2 actions could not be priced; "
-         "the priced part costs 30 credits."),
-        (None, UNKNOWN_TEXT),
+         "the priced part costs 30 credits. The pricing service failed while quoting "
+         "this generation."),
+        (None, MISSING_PRICE_TEXT),
     ],
-    ids=["known", "not-metered", "unknown", "partly-known", "older-api"],
+    ids=["known", "not-metered", "partly-known", "older-api"],
 )
 @pytest.mark.parametrize("external", [False, True], ids=["product", "external"])
 def test_paid_confirmation_price_text(agent, monkeypatch, external, price, text):
@@ -78,7 +78,48 @@ def test_paid_confirmation_price_text(agent, monkeypatch, external, price, text)
     assert result["price"] == (
         price if price is not None else {"status": "unknown", "reason": "not_provided"}
     )
-    assert result["price_text"] == text
+    assert_price_text(result, text)
+
+
+def assert_price_text(result, expected):
+    price_text = result["price_text"]
+    assert "temporar" not in price_text.lower()
+    assert "暂时" not in price_text
+    assert price_text == expected
+
+
+@pytest.mark.parametrize(
+    "reason,text",
+    [
+        ("price_not_configured",
+         "The price is unknown: no price is configured for this generation. "
+         "Retrying will not change this; an administrator has to configure the price."),
+        ("quote_failed",
+         "The price is unknown: the pricing service failed while quoting this generation."),
+        ("action_not_quoted",
+         "The price is unknown: this kind of action has no price quote before it runs."),
+        ("input_pending",
+         "The price is unknown: the node is still missing inputs, "
+         "so its generation cannot be priced yet."),
+        ("request_unavailable",
+         "The price is unknown: the node's current settings do not produce "
+         "a generation request to price."),
+        ("plan_unavailable",
+         "The price is unknown: the actions of this plan could not be read."),
+        ("not_provided", MISSING_PRICE_TEXT),
+        ("unrecognized_reason", MISSING_PRICE_TEXT),
+        (None, MISSING_PRICE_TEXT),
+    ],
+)
+def test_unknown_confirmation_price_text_names_cause(agent, monkeypatch, reason, text):
+    price = {"status": "unknown"}
+    if reason is not None:
+        price["reason"] = reason
+    data = {**CONFIRMATION, "kinds": ["paid_generation"], "price": price}
+    result = call_confirmation(agent, monkeypatch, {"ok": True, "data": data})
+    assert result["status"] == "confirmation_required"
+    assert result["price"] == price
+    assert_price_text(result, text)
 
 
 @pytest.mark.parametrize("branch", ["card", "conversation", "written"])

@@ -2720,7 +2720,7 @@
         "confirmDescription": "{{feature}} sẽ chạy ngay sau khi bạn xác nhận.",
         "confirmAction": "Xác nhận và chạy",
         "costLoading": "Đang tải mức giá hiện tại của tổ chức",
-        "costUnavailable": "Tạm thời chưa lấy được giá. Hãy thử lại sau.",
+        "costUnavailable": "Không lấy được giá.",
         "openWorld": "Mở Director World",
         "worldNotReady": "Director World chưa sẵn sàng"
       },
@@ -5768,7 +5768,7 @@
       "regenerateVideo": "Tạo lại video",
       "regenerateDescription": "Tạo lại video và chuyển sang GIF",
       "videoBilling": "Cố định khung hình đầu · 4 giây · 720P · Không âm thanh. Video được tính phí theo giá báo; chuyển đổi GIF miễn phí.",
-      "quoteUnavailable": "Chưa thể ước tính điểm sử dụng. Vui lòng thử lại sau.",
+      "quoteUnavailable": "Không thể ước tính điểm sử dụng.",
       "confirm": "Xác nhận tạo",
       "svgDescription": "Chuyển sang SVG trên thiết bị. Ảnh phức tạp có thể mất chi tiết.",
       "videoUnavailable": "Mô hình video không khả dụng",

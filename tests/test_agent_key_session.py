@@ -392,6 +392,61 @@ def test_exchange_malformed_success_is_unsupported(plugin, api, monkeypatch, bod
     assert api.business == []
 
 
+@pytest.fixture
+def redirecting_api():
+    """A local address that answers every request with a redirect elsewhere."""
+    state = {"status": 302, "location": "", "requests": []}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.respond()
+
+        def do_POST(self):
+            self.respond()
+
+        def respond(self):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            state["requests"].append((self.command, urlsplit(self.path).path))
+            self.send_response(state["status"])
+            self.send_header("Location", state["location"])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    state["url"] = f"http://127.0.0.1:{server.server_port}"
+    try:
+        yield state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_key_exchange_does_not_follow_a_redirect(plugin, api, redirecting_api, monkeypatch, status):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    monkeypatch.setenv("DRAMACLAW_API_URL", redirecting_api["url"])
+    redirecting_api["status"] = status
+    redirecting_api["location"] = f"{api.url}{EXCHANGE_PATH}"
+
+    result = request_result(plugin)
+
+    # The address the redirect points at must never see the key, or anything else.
+    assert api.requests == []
+    assert redirecting_api["requests"] == [("POST", EXCHANGE_PATH)]
+    assert result.get("ok") is False
+    assert result.get("code") == "agent_key_exchange_redirected"
+    assert result.get("status_code") == status
+    assert "redirect" in result.get("error", "")
+    assert "DRAMACLAW_API_URL must be the final API address" in result.get("error", "")
+    assert KEY not in json.dumps(result)
+
+
 def test_unreadable_key_file_does_not_fall_back(plugin, api, monkeypatch, tmp_path):
     monkeypatch.setenv("DRAMACLAW_AGENT_KEY_FILE", str(tmp_path / "missing.key"))
     monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)

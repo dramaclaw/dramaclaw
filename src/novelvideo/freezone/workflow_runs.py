@@ -20,6 +20,7 @@ from novelvideo.freezone.agent_canvas_metrics import count
 from novelvideo.freezone.paths import CANVAS_ID_RE
 from novelvideo.freezone.server_workflow_actions import IMAGE_TOOL_SERVER_ACTIONS
 from novelvideo.freezone.workflow_contract_generated import GENERATION_ACTION_TYPES
+from novelvideo.shared.failure_signals import CONFIGURATION, SERVER_FAULT, sanitize_failure_signal
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,7 @@ CREATE TABLE IF NOT EXISTS workflow_run_actions (
     error_category      TEXT,
     retryable           INTEGER,
     error_request_id    TEXT,
+    failure_signal      TEXT,
     error_fingerprint   TEXT,
     user_error           TEXT,
     task_key             TEXT,
@@ -247,17 +249,15 @@ def classify_workflow_error(error: str | None) -> tuple[str, bool]:
     return "execution", False
 
 
-def workflow_error_diagnostics(error: str | None) -> dict[str, Any]:
+def workflow_error_diagnostics(
+    error: str | None, signal: dict[str, Any] | None = None
+) -> dict[str, Any]:
     raw_error = str(error or "").strip()
     category, retryable = classify_workflow_error(raw_error)
     request_match = REQUEST_ID_RE.search(raw_error)
     request_id = request_match.group(1).rstrip(")}],;") if request_match else None
     normalized_message = re.sub(r"\s+", " ", raw_error).strip().lower()
-    fingerprint = (
-        f"request:{request_id.lower()}"
-        if request_id
-        else f"{category}:{normalized_message[:500]}"
-    )
+    transient_message = "上游模型服务暂时不可用，系统可稍后重试。"
     if category == "input_missing":
         user_message = "节点缺少生成所需的输入：" + raw_error.partition("]:")[2].strip()[:500]
     elif category == "authentication":
@@ -301,11 +301,37 @@ def workflow_error_diagnostics(error: str | None) -> dict[str, Any]:
     elif category == "attempt_ended":
         user_message = "本次节点执行已结束，无法继续提交，请重新运行该节点。"
     elif category == "transient_upstream":
-        user_message = "上游模型服务暂时不可用，系统可稍后重试。"
+        user_message = transient_message
     elif category == "unknown":
         user_message = "生成任务失败，但没有返回具体错误。"
     else:
-        user_message = "节点生成失败，请检查节点输入和模型配置后重试。"
+        user_message = "节点生成失败，原因未知。"
+    signal = sanitize_failure_signal(signal)
+    kind = signal.get("failure_kind")
+    upstream_status = signal.get("upstream_status")
+    generic = category in {"execution", "unknown"}
+    accepts_status = generic or category in {"authentication", "transient_upstream"}
+    if generic and kind == CONFIGURATION:
+        category, retryable = CONFIGURATION, False
+        user_message = (
+            "服务端配置或部署问题导致生成失败，不是节点输入的问题；"
+            "重试或修改画布都无法解决，需要管理员或部署方处理。"
+        )
+    elif generic and kind == SERVER_FAULT:
+        category, retryable = SERVER_FAULT, False
+        user_message = "服务端处理本次生成时发生内部错误；可稍后重试，持续出现请联系管理员或部署方。"
+    elif accepts_status and upstream_status is not None:
+        if upstream_status in {408, 429} or upstream_status >= 500:
+            category, retryable = "transient_upstream", True
+            user_message = transient_message
+        else:
+            category, retryable = "upstream_rejected", False
+            user_message = f"上游服务拒绝了本次请求（HTTP {upstream_status}）。"
+    fingerprint = (
+        f"request:{request_id.lower()}"
+        if request_id
+        else f"{category}:{normalized_message[:500]}"
+    )
     return {
         "error_category": category,
         "retryable": retryable,
@@ -425,6 +451,7 @@ def _connect(project_dir: Path):
                     "media_request_fingerprint",
                     "media_claimed_at",
                     "media_claim_retry_count",
+                    "failure_signal",
                 ):
                     if column not in columns:
                         column_type = {
@@ -496,6 +523,8 @@ def _action_from_row(row: sqlite3.Row) -> dict[str, Any]:
             action[field] = row[field]
     if row["retryable"] is not None:
         action["retryable"] = bool(row["retryable"])
+    if signal := _decode_metadata(row["failure_signal"]):
+        action["failure_signal"] = signal
     return action
 
 
@@ -593,8 +622,8 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 error_fingerprint, user_error, task_key, task_type, job_id,
                 retry_count, artifact_status, recipe_id, recipe_version,
                 generation_attempt_id, product_operation_id,
-                media_request_fingerprint, media_claimed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                media_request_fingerprint, media_claimed_at, failure_signal
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(run_id, node_id, action) DO UPDATE SET
                 sequence_no = excluded.sequence_no,
                 status = excluded.status,
@@ -606,6 +635,7 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 error_request_id = excluded.error_request_id,
                 error_fingerprint = excluded.error_fingerprint,
                 user_error = excluded.user_error,
+                failure_signal = excluded.failure_signal,
                 task_key = excluded.task_key,
                 task_type = excluded.task_type,
                 job_id = excluded.job_id,
@@ -647,6 +677,11 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 item.get("product_operation_id"),
                 item.get("media_request_fingerprint"),
                 item.get("media_claimed_at"),
+                (
+                    json.dumps(signal, separators=(",", ":"))
+                    if item["status"] == "failed" and (signal := item.get("failure_signal"))
+                    else None
+                ),
             ),
         )
 
@@ -1483,6 +1518,7 @@ def reconcile_workflow_runs_with_canvas_results(
                     "error_request_id",
                     "error_fingerprint",
                     "user_error",
+                    "failure_signal",
                 ):
                     item.pop(field, None)
                 changed = True
@@ -1771,7 +1807,15 @@ def update_workflow_run(
                     raise ValueError(f"invalid workflow node phase: {phase!r}")
                 item["phase"] = phase or None
             if node_status == "failed":
-                item.update(workflow_error_diagnostics(item["error"]))
+                # Only the server driver reports signals; browser callbacks are raw client input.
+                signal = sanitize_failure_signal(
+                    update.get("failure_signal") if owner_kind == "server" else None
+                )
+                if signal:
+                    item["failure_signal"] = signal
+                else:
+                    item.pop("failure_signal", None)
+                item.update(workflow_error_diagnostics(item["error"], signal))
             else:
                 for field in (
                     "error_category",
@@ -1779,6 +1823,7 @@ def update_workflow_run(
                     "error_request_id",
                     "error_fingerprint",
                     "user_error",
+                    "failure_signal",
                 ):
                     item.pop(field, None)
             for field in ("task_key", "task_type", "job_id"):
@@ -1931,6 +1976,7 @@ def reconcile_workflow_runs_with_tasks(
                 if task_status in ACTIVE_TASK_STATUSES:
                     if item.get("status") != "running":
                         item["status"] = "running"
+                        item.pop("failure_signal", None)
                         item["updated_at"] = timestamp
                         changed = True
                     continue
@@ -1942,10 +1988,12 @@ def reconcile_workflow_runs_with_tasks(
                         project_dir=project_dir, run=payload, action=item, error=error
                     ):
                         continue
+                    signal = sanitize_failure_signal(task.get("metadata"))
                     updates = {
                         "status": "failed",
                         "error": error,
-                        **workflow_error_diagnostics(error),
+                        "failure_signal": signal or None,
+                        **workflow_error_diagnostics(error, signal),
                     }
                 else:
                     artifact_status, artifact_error = _validate_action_artifact(
@@ -1964,6 +2012,7 @@ def reconcile_workflow_runs_with_tasks(
                         updates = {
                             "status": "failed",
                             "error": artifact_error,
+                            "failure_signal": None,
                             **workflow_error_diagnostics(artifact_error),
                             "artifact_status": artifact_status,
                         }
@@ -1971,6 +2020,7 @@ def reconcile_workflow_runs_with_tasks(
                         updates = {
                             "status": "completed",
                             "error": None,
+                            "failure_signal": None,
                             "artifact_status": artifact_status,
                         }
                 if any(item.get(key) != value for key, value in updates.items()):

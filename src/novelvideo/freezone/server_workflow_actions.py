@@ -14,6 +14,7 @@ import uuid
 from typing import Any, Protocol
 
 from novelvideo.freezone.generation_inputs import generation_guard_error
+from novelvideo.shared.failure_signals import SERVER_FAULT, exception_failure_signal
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,13 @@ class ServerActionHttpError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.info = info
+
+
+def action_failure_signal(exc: Exception) -> dict[str, Any]:
+    signal = exception_failure_signal(exc)
+    if not isinstance(exc, ServerActionHttpError) or (exc.status_code or 0) >= 500:
+        signal.setdefault("failure_kind", SERVER_FAULT)
+    return signal
 
 
 class ActionLeaseLost(Exception):
@@ -219,26 +227,7 @@ class WorkflowActionRunner:
             generation_attempt_id,
         )
         try:
-            execution.check()
-            if action == "generate_image":
-                return await execution.image(existing_task)
-            if action == "generate_video":
-                return await execution.video(existing_task)
-            if action == "generate_text":
-                return await execution.text()
-            if action == "generate_audio":
-                return await execution.audio(existing_task)
-            if action in {"translate_text", "generate_3gs_world"} or action in IMAGE_TOOL_SERVER_ACTIONS:
-                canvas = await self.host.read_canvas()
-                node_type = next((node.get("type") for node in canvas["nodes"]
-                                  if node["id"] == node_id), None)
-                if server_action_supported(action, node_type):
-                    if action in IMAGE_TOOL_SERVER_ACTIONS:
-                        return await execution.image_tool(action, existing_task)
-                    if action == "generate_3gs_world":
-                        return await execution.world(existing_task)
-                    return await execution.audio_translate(existing_task)
-            return {"status": "failed", "error": f"Unsupported server action: {action}"}
+            outcome = await execution.dispatch(action, existing_task)
         except _ActionStopped:
             try:
                 if self.host.lease_held():
@@ -255,6 +244,11 @@ class WorkflowActionRunner:
             return {"status": "stopped"}
         except ActionLeaseLost:
             return {"status": "stopped"}
+        signal = execution.failure_signal or {}
+        # An exception name alone classifies nothing; report a signal only when it does.
+        if outcome["status"] == "failed" and signal.keys() & {"failure_kind", "upstream_status"}:
+            outcome["signal"] = signal
+        return outcome
 
 
 class _ActionExecution:
@@ -270,6 +264,7 @@ class _ActionExecution:
         self.on_accepted = on_accepted
         self.on_phase = on_phase
         self.should_stop = should_stop
+        self.failure_signal: dict[str, Any] | None = None
         self.started = False
         self.product_operation = product_operation
         self.generation_attempt_id = generation_attempt_id
@@ -306,11 +301,41 @@ class _ActionExecution:
         await self.on_phase(phase)
         self.check()
 
+    async def dispatch(self, action, existing_task):
+        self.check()
+        if action == "generate_image":
+            return await self.image(existing_task)
+        if action == "generate_video":
+            return await self.video(existing_task)
+        if action == "generate_text":
+            return await self.text()
+        if action == "generate_audio":
+            return await self.audio(existing_task)
+        if (
+            action in {"translate_text", "generate_3gs_world"}
+            or action in IMAGE_TOOL_SERVER_ACTIONS
+        ):
+            canvas = await self.host.read_canvas()
+            node_type = next((node.get("type") for node in canvas["nodes"]
+                              if node["id"] == self.node_id), None)
+            if server_action_supported(action, node_type):
+                if action in IMAGE_TOOL_SERVER_ACTIONS:
+                    return await self.image_tool(action, existing_task)
+                if action == "generate_3gs_world":
+                    return await self.world(existing_task)
+                return await self.audio_translate(existing_task)
+        return {"status": "failed", "error": f"Unsupported server action: {action}"}
+
     async def request(self, request, *, media_link=None):
         self.check()
-        return await self.host.request(
-            request["method"], request["path"], request["body"], media_link=media_link,
-        )
+        self.failure_signal = None
+        try:
+            return await self.host.request(
+                request["method"], request["path"], request["body"], media_link=media_link,
+            )
+        except Exception as exc:
+            self.failure_signal = action_failure_signal(exc)
+            raise
 
     async def start(self, op, phase="start"):
         patch = await self.core(op, {"phase": phase, "started_at_ms": self.runner.now_ms()})
@@ -877,6 +902,7 @@ class _ActionExecution:
                 if status["status"] == "completed":
                     return {"kind": "completed", "result": status.get("result")}
                 if status["status"] in {"failed", "cancelled"}:
+                    self.failure_signal = status.get("signal")
                     kind = status["status"]
                     fallback = "任务已取消" if kind == "cancelled" else failed_message
                     return {"kind": kind, "message": status.get("error") or fallback}

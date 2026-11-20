@@ -400,6 +400,163 @@ def test_failed_action_persists_normalized_error_diagnostics(tmp_path: Path) -> 
     assert "user_error" not in retried_action
 
 
+@pytest.mark.parametrize(
+    "error,signal,category,message,retryable",
+    [
+        (
+            None, {"failure_kind": "configuration"}, "configuration",
+            "服务端配置或部署问题导致生成失败，不是节点输入的问题；"
+            "重试或修改画布都无法解决，需要管理员或部署方处理。",
+            False,
+        ),
+        *[
+            (
+                "HTTP 403: request refused", {"upstream_status": status},
+                "transient_upstream", "上游模型服务暂时不可用，系统可稍后重试。", True,
+            )
+            for status in (408, 429, 503)
+        ],
+    ],
+    ids=["configuration", "typed-408", "typed-429", "typed-503"],
+)
+def test_workflow_error_diagnostics_applies_structured_signal(
+    error, signal, category, message, retryable,
+):
+    diagnostics = workflow_error_diagnostics(error, signal=signal)
+    assert diagnostics["error_category"] == category
+    assert diagnostics["user_error"] == message
+    assert diagnostics["retryable"] is retryable
+
+
+@pytest.mark.parametrize(
+    "error,signal,category,message",
+    [
+        (
+            "HTTP 403: this parameter value is restricted",
+            {"upstream_status": 403},
+            "upstream_rejected",
+            "上游服务拒绝了本次请求（HTTP 403）。",
+        ),
+        (
+            "HTTP 403: this parameter value is restricted",
+            None,
+            "authentication",
+            "模型服务认证失败，请检查渠道地址和密钥后重试。",
+        ),
+        (
+            "could not connect to database: too many clients",
+            {"failure_kind": "server_fault", "failure_exception": "OperationalError"},
+            "server_fault",
+            "服务端处理本次生成时发生内部错误；可稍后重试，持续出现请联系管理员或部署方。",
+        ),
+        (
+            "could not connect to database: too many clients",
+            None,
+            "execution",
+            "节点生成失败，原因未知。",
+        ),
+    ],
+    ids=["typed-403", "legacy-403", "server-fault", "generic"],
+)
+def test_failed_action_stores_user_diagnostics(tmp_path, error, signal, category, message):
+    action = {"node_id": "one", "action": "generate_image"}
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="default", actions=[action],
+        owner_kind="server",
+    )
+    scope = dict(project_dir=tmp_path, canvas_id="default", run_id=run["run_id"])
+    update_workflow_run(
+        **scope, owner_kind="server",
+        action_updates=[{
+            **action, "status": "failed", "error": error,
+            **({"failure_signal": signal} if signal is not None else {}),
+        }],
+    )
+
+    stored = read_workflow_run(**scope)["actions"][0]
+    assert stored["error_category"] == category
+    assert stored["user_error"] == message
+    if category == "server_fault":
+        assert "节点输入" not in stored["user_error"]
+    assert stored["retryable"] is False
+
+
+@pytest.mark.parametrize(
+    "signal,expected",
+    [
+        (
+            {"failure_kind": "other", "upstream_status": 403,
+             "failure_exception": "invalid name", "extra": "ignored"},
+            {"upstream_status": 403},
+        ),
+        (
+            {"failure_kind": "server_fault", "upstream_status": "403",
+             "failure_exception": "db.OperationalError"},
+            {"failure_kind": "server_fault", "failure_exception": "db.OperationalError"},
+        ),
+    ],
+    ids=["valid-status-only", "valid-kind-and-exception"],
+)
+def test_action_failure_signal_round_trips_and_clears(tmp_path, signal, expected):
+    action = {"node_id": "one", "action": "generate_image"}
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="default", actions=[action],
+        owner_kind="server",
+    )
+    scope = dict(project_dir=tmp_path, canvas_id="default", run_id=run["run_id"])
+    update_workflow_run(
+        **scope, owner_kind="server",
+        action_updates=[{**action, "status": "failed", "error": "failed",
+                         "failure_signal": signal}],
+    )
+    assert read_workflow_run(**scope)["actions"][0]["failure_signal"] == expected
+
+    update_workflow_run(
+        **scope, owner_kind="server", action_updates=[{**action, "status": "running"}],
+    )
+    assert "failure_signal" not in read_workflow_run(**scope)["actions"][0]
+
+
+def test_browser_callback_cannot_supply_a_failure_signal(tmp_path):
+    action = {"node_id": "one", "action": "generate_image"}
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="default", actions=[action],
+    )
+    updated = update_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"],
+        owner_kind="browser_legacy",
+        action_updates=[{
+            **action, "status": "failed", "error": "request failed",
+            "failure_signal": {"failure_kind": "server_fault"},
+        }],
+    )
+    (stored,) = updated["actions"]
+    assert stored["error_category"] == "execution"
+    assert "failure_signal" not in stored
+
+
+def test_action_failure_signal_migrates_existing_database(tmp_path):
+    from novelvideo.freezone.workflow_runs import WORKFLOW_RUN_SCHEMA_SQL
+
+    db_path = workflow_runs_db_path(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(WORKFLOW_RUN_SCHEMA_SQL)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_run_actions)")}
+        if "failure_signal" in columns:
+            conn.execute("ALTER TABLE workflow_run_actions DROP COLUMN failure_signal")
+
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="default",
+        actions=[{"node_id": "one", "action": "generate_image"}],
+    )
+    assert "failure_signal" not in run["actions"][0]
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1]: row[2] for row in conn.execute(
+            "PRAGMA table_info(workflow_run_actions)"
+        )}
+        assert columns.get("failure_signal") == "TEXT"
+
+
 @pytest.mark.parametrize("initial_status", ["running", "completed"])
 def test_task_reconciliation_completes_run_with_existing_artifact(
     tmp_path: Path, initial_status: str
@@ -613,7 +770,21 @@ def test_task_reconciliation_rejects_unverifiable_artifact(tmp_path: Path) -> No
     assert reconciled["actions"][0]["artifact_status"] == "unverified"
 
 
-def test_task_reconciliation_classifies_task_failure(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "task_failure,category,retryable",
+    [
+        ({"error": "HTTP 503 upstream unavailable"}, "transient_upstream", True),
+        (
+            {"error": "HTTP 403: this parameter value is restricted",
+             "metadata": {"upstream_status": 403}},
+            "upstream_rejected",
+            False,
+        ),
+    ],
+)
+def test_task_reconciliation_classifies_task_failure(
+    tmp_path: Path, task_failure, category, retryable,
+) -> None:
     run = create_workflow_run(
         project_dir=tmp_path,
         project_id="project-a",
@@ -641,7 +812,7 @@ def test_task_reconciliation_classifies_task_failure(tmp_path: Path) -> None:
             "task:audio-one": {
                 "status": "failed",
                 "result": None,
-                "error": "HTTP 503 upstream unavailable",
+                **task_failure,
             }
         },
     )
@@ -650,8 +821,11 @@ def test_task_reconciliation_classifies_task_failure(tmp_path: Path) -> None:
         project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
     )
     assert reconciled is not None
-    assert reconciled["actions"][0]["error_category"] == "transient_upstream"
-    assert reconciled["actions"][0]["retryable"] is True
+    action = reconciled["actions"][0]
+    assert action["error_category"] == category
+    assert action["retryable"] is retryable
+    if "metadata" in task_failure:
+        assert action["failure_signal"] == task_failure["metadata"]
 
 
 @pytest.mark.parametrize("terminal_status", ["completed", "failed", "interrupted"])

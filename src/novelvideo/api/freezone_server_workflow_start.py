@@ -48,6 +48,18 @@ def is_run_command(command: dict) -> bool:
     )
 
 
+def workflow_action_recipe_binding(node: dict) -> dict[str, str]:
+    catalog = (node.get("data") or {}).get("workflowCatalog")
+    if not isinstance(catalog, dict):
+        return {}
+    binding = {}
+    for source, target in (("recipeId", "recipe_id"), ("recipeVersion", "recipe_version")):
+        value = str(catalog.get(source) or "").strip()
+        if value:
+            binding[target] = value
+    return binding
+
+
 def _server_run_actions(canvas: dict, plan: dict, idempotency_key: str) -> list[dict]:
     nodes = {node["id"]: node for node in canvas.get("nodes", [])}
     actions = []
@@ -57,13 +69,10 @@ def _server_run_actions(canvas: dict, plan: dict, idempotency_key: str) -> list[
     }
     for planned in plan["actions"]:
         node_id, name = planned["node_id"], planned["action"]
-        catalog = nodes.get(node_id, {}).get("data", {}).get("workflowCatalog")
-        catalog = catalog if isinstance(catalog, dict) else {}
-        action = {"node_id": node_id, "action": name}
-        for source, target in (("recipeId", "recipe_id"), ("recipeVersion", "recipe_version")):
-            value = str(catalog.get(source) or "").strip()
-            if value:
-                action[target] = value
+        action = {
+            "node_id": node_id, "action": name,
+            **workflow_action_recipe_binding(nodes.get(node_id, {})),
+        }
         if name in generation_actions:
             action["generation_attempt_id"] = f"{idempotency_key}:{node_id}:{name}"
         actions.append(action)

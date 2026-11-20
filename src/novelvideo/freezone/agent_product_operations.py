@@ -31,9 +31,15 @@ PRODUCT_TASK_TYPES = {
     "workflow_generate": "freezone_agent_workflow_generate",
     "recipe_generate": "freezone_agent_recipe_generate",
 }
+
+
+def agent_product_price_key(kind: str) -> str:
+    return f"freezone.agent.{kind}"
+
+
 AGENT_PRODUCT_PRICE_REFERENCE = tuple(
     {
-        "key": f"freezone.agent.{kind}",
+        "key": agent_product_price_key(kind),
         "label": label,
         "billing": "admin_configured",
         "reference_display": "由管理员配置，可显式设为免费",
@@ -297,6 +303,25 @@ def read_agent_product_operation(
             (clean_id,),
         ).fetchone()
     return _payload(row) if row is not None else None
+
+
+def list_undelivered_agent_product_operations(
+    *, project_dir: Path, operation_ids: list[str]
+) -> list[dict[str, Any]]:
+    """Return those of the given operations that ended failed or cancelled."""
+    ids = sorted({str(item or "").strip() for item in operation_ids} - {""})
+    operations: list[dict[str, Any]] = []
+    with _connect(project_dir) as conn:
+        for offset in range(0, len(ids), 500):
+            batch = ids[offset : offset + 500]
+            rows = conn.execute(
+                "SELECT * FROM freezone_agent_product_operations "
+                "WHERE status IN ('failed', 'cancelled') "
+                f"AND operation_id IN ({','.join('?' for _ in batch)})",
+                batch,
+            ).fetchall()
+            operations.extend(_payload(row) for row in rows)
+    return operations
 
 
 def list_agent_product_operations_for_session(
@@ -650,6 +675,18 @@ async def terminalize_undelivered_agent_product_task(
         "settlement_status": settlement_status,
         "error_code": None,
     }
+    if settlement_status == "refund_pending":
+        # Closing the task would end the retries: this function skips closed
+        # tasks. Leave it open so the next call attempts the refund again.
+        manager.update_task_metadata_for_project(
+            ctx,
+            task_type,
+            0,
+            scope=operation_id,
+            metadata=task_metadata,
+            expected_task_id=expected_task_id,
+        )
+        return
     if outcome == "cancelled":
         manager.update_progress_for_project(
             ctx,

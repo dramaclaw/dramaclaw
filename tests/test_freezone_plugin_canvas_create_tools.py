@@ -1384,19 +1384,18 @@ def key_host(external, monkeypatch):
     monkeypatch.delenv("DRAMACLAW_AGENT_TOKEN", raising=False)
     monkeypatch.setenv("DRAMACLAW_AGENT_KEY", "test-agent-key-not-a-secret")
     monkeypatch.setenv("DRAMACLAW_API_URL", "http://127.0.0.1")
-    forward = h.plugin.urlopen
 
-    def urlopen(request, *args, **kwargs):
-        if urlsplit(request.full_url).path == "/api/v1/agent/sessions":
-            return _Response(200, json.dumps({"ok": True, "data": {
-                "token": "test-session-token-not-a-secret", "expires_at": time.time() + 3600,
-            }}).encode())
-        return forward(request, *args, **kwargs)
+    def exchange(request, *args, **kwargs):
+        assert urlsplit(request.full_url).path == "/api/v1/agent/sessions"
+        return _Response(200, json.dumps({"ok": True, "data": {
+            "token": "test-session-token-not-a-secret", "expires_at": time.time() + 3600,
+        }}).encode())
 
     async def image_models(_user_id):
         return h.image_catalog
 
-    monkeypatch.setattr(h.plugin, "urlopen", urlopen)
+    # The key exchange has its own transport; only business calls use the plugin's.
+    monkeypatch.setattr(h.plugin._SHARED_AGENT_KEY_SESSION, "_open_exchange", exchange)
     monkeypatch.setattr(routes, "_freezone_image_models_data", image_models)
     return h
 

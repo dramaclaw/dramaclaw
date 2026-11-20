@@ -346,14 +346,27 @@ def test_viewer_cannot_mint_upload_address(api):
 
 @pytest.mark.parametrize(("project", "scopes"), [
     ("proj", ["projects:read"]),
+    ("proj", ["projects:read", "tasks:submit"]),
     ("other", ["projects:write"]),
-], ids=["no-write-scope", "different-project"])
+], ids=["no-write-scope", "other-write-scope-only", "different-project"])
 def test_agent_session_cannot_mint_outside_its_write_scope(api, project, scopes):
     api.agent_user.update(current_project_id=project, scopes=scopes)
     response = api.client.post(MINT, headers=AGENT_HEADERS)
     assert response.status_code == 403, response.text
     assert "upload_url" not in response.text
     api.bearer.assert_awaited_once_with(AGENT)
+
+
+def test_agent_session_with_project_write_scope_mints_upload_address(api):
+    api.agent_user.update(scopes=["projects:read", "projects:write"])
+    data = _data(api.client.post(MINT, headers=AGENT_HEADERS))
+    assert data["upload_url"].startswith(ORIGIN)
+
+
+def test_session_without_scopes_mints_upload_address(api):
+    assert "scopes" not in USERS[ALICE]
+    data = _data(_mint(api))
+    assert data["upload_url"].startswith(ORIGIN)
 
 
 def test_valid_ticket_for_another_user_cannot_borrow_editor_session(api):

@@ -13,7 +13,7 @@ from test_freezone_workflow_runs import MISSING_INPUT_ERROR
 from test_workflow_observation import FIX_CAUSE_INSTRUCTION
 
 TASK_KEY = "task:freezone_video_generate:project:proj_demo:0:video"
-GENERIC_STORED_MESSAGE = "节点生成失败，请检查节点输入和模型配置后重试。"
+GENERIC_STORED_MESSAGE = "节点生成失败，原因未知。"
 UPSTREAM_403 = (
     "Client error '403 Forbidden' for url "
     "'https://gateway.internal.example:8443/v1/video?X-Amz-Signature=0123abcd&sig=zz9'"
@@ -415,7 +415,7 @@ def test_recognised_failures_keep_their_category_message_and_recovery(
     assert ("agent_instruction" in problem) is (not retryable)
 
 
-def test_stored_canvas_diagnostics_are_unchanged():
+def test_stored_canvas_diagnostics_report_an_unknown_cause():
     assert workflow_error_diagnostics("boom: widget exploded") == {
         "error_category": "execution",
         "retryable": False,

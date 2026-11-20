@@ -2837,7 +2837,7 @@
         "confirmDescription": "{{feature}} começará imediatamente após a confirmação.",
         "confirmAction": "Confirmar e iniciar",
         "costLoading": "A carregar o preço atual da organização",
-        "costUnavailable": "O preço está temporariamente indisponível. Tente novamente mais tarde.",
+        "costUnavailable": "O preço está indisponível.",
         "openWorld": "Abrir o Director World",
         "worldNotReady": "O Director World não está pronto"
       },
@@ -5885,7 +5885,7 @@
       "regenerateVideo": "Gerar vídeo novamente",
       "regenerateDescription": "Gerar novamente o vídeo e convertê-lo para GIF",
       "videoBilling": "Primeiro fotograma bloqueado · 4 segundos · 720P · Sem áudio. O vídeo é faturado pelo preço indicado; a conversão para GIF é gratuita.",
-      "quoteUnavailable": "A estimativa de créditos não está disponível. Tente novamente mais tarde.",
+      "quoteUnavailable": "A estimativa de créditos não está disponível.",
       "confirm": "Confirmar geração",
       "svgDescription": "Converter localmente para SVG. As imagens complexas podem perder detalhes.",
       "videoUnavailable": "Modelo de vídeo indisponível",

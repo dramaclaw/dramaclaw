@@ -6345,3 +6345,181 @@ def test_run_summary_survives_an_unavailable_task_record(
     assert problem["error_category"] == "execution"
     assert problem["fixable_by"] == "unknown"
     assert problem["detail"] == "boom: widget exploded"
+
+
+class _TemplateFeeRun:
+    """A metered run with one template image action and its waiting fee task."""
+
+    def __init__(self, client, monkeypatch, *, refund_errors: int = 0):
+        from novelvideo.api.routes import freezone
+        from novelvideo.freezone import agent_product_operations as products
+        from novelvideo.task_backend import run_core
+
+        self.client = client
+        self.base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+        monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+        self.run = client.post(self.base, json={"actions": [{
+            "node_id": "image", "action": "generate_image", "recipe_id": "product-image",
+            "recipe_version": "1.0.0", "generation_attempt_id": "attempt-image",
+        }]}).json()["data"]
+        self.operation_id = self.run["actions"][0]["product_operation_id"]
+        operation = self.operation()
+        self.fee_task = SimpleNamespace(
+            task_type=operation["task_type"], episode=0, beat_num=None,
+            scope=self.operation_id, task_id=operation["task_id"], status="running",
+            progress=0, current_task="", result=None, error=None,
+            metadata={"feature_credit_reservation_id": "credit-image"},
+        )
+        self.media_tasks: list = []
+        self.refund_calls: list[str] = []
+        owner = self
+
+        class Manager(_TaskMetadataWriter):
+            def get_tasks_for_project(self, ctx, keys, **kwargs):
+                return _task_batch(ctx, keys, [owner.fee_task, *owner.media_tasks])
+
+            def get_task_for_project(self, *args, scope, **kwargs):
+                return owner.fee_task if scope == owner.operation_id else None
+
+            def update_progress_for_project(self, *args, status, metadata, **kwargs):
+                owner.fee_task.status = status
+                owner.fee_task.metadata.update(metadata)
+
+            def fail_task_for_project(self, *args, metadata, **kwargs):
+                owner.fee_task.status = "failed"
+                owner.fee_task.metadata.update(metadata)
+
+        class Meter:
+            async def settle_cancelled_feature_credit_reservation(
+                self, reservation_id, *, metadata=None
+            ):
+                owner.refund_calls.append(reservation_id)
+                if len(owner.refund_calls) <= refund_errors:
+                    raise ConnectionError("usage meter unavailable")
+                return {}
+
+        manager = Manager()
+        monkeypatch.setattr(freezone, "get_task_manager", lambda: manager)
+        monkeypatch.setattr(products, "get_task_manager", lambda: manager)
+        monkeypatch.setattr(run_core, "get_usage_meter", lambda: Meter())
+        monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_: {
+            "nodes": [{"id": "image"}], "edges": [],
+        })
+
+    def operation(self) -> dict:
+        from novelvideo.freezone import agent_product_operations as products
+
+        return products.read_agent_product_operation(
+            project_dir=self.client.state_dir, operation_id=self.operation_id,
+        )
+
+    def fail_action(self, **update) -> None:
+        response = self.client.patch(f"{self.base}/{self.run['run_id']}", json={
+            "status": "failed", "action_updates": [{
+                "node_id": "image", "action": "generate_image", "status": "failed",
+                "error": "generation failed", **update,
+            }],
+        })
+        assert response.status_code == 200, response.text
+
+    def maintain(self) -> None:
+        response = self.client.get(self.base)
+        assert response.status_code == 200, response.text
+
+    def fee_state(self) -> tuple[str, str | None]:
+        return self.fee_task.status, self.fee_task.metadata.get("settlement_status")
+
+
+def test_action_failed_before_any_media_task_refunds_template_fee_once(
+    workflow_run_client, monkeypatch
+):
+    fee = _TemplateFeeRun(workflow_run_client, monkeypatch)
+    fee.fail_action()
+
+    fee.maintain()
+
+    assert fee.operation()["status"] == "failed"
+    assert fee.fee_state() == ("failed", "refunded")
+    assert fee.refund_calls == ["credit-image"]
+
+
+def test_refunded_template_fee_is_not_refunded_again_by_later_passes(
+    workflow_run_client, monkeypatch
+):
+    fee = _TemplateFeeRun(workflow_run_client, monkeypatch)
+    fee.fail_action()
+
+    for _ in range(3):
+        fee.maintain()
+
+    assert fee.fee_state() == ("failed", "refunded")
+    assert fee.refund_calls == ["credit-image"]
+
+
+def test_template_fee_refund_is_retried_after_the_usage_meter_fails(
+    workflow_run_client, monkeypatch
+):
+    fee = _TemplateFeeRun(workflow_run_client, monkeypatch, refund_errors=1)
+    fee.fail_action()
+
+    fee.maintain()
+    # The fee task stays open while its refund is outstanding.
+    assert fee.operation()["status"] == "failed"
+    assert fee.fee_state() == ("running", "refund_pending")
+    assert fee.refund_calls == ["credit-image"]
+
+    fee.maintain()
+    assert fee.fee_state() == ("failed", "refunded")
+    assert fee.refund_calls == ["credit-image", "credit-image"]
+
+    fee.maintain()
+    assert fee.refund_calls == ["credit-image", "credit-image"]
+
+
+def test_template_fee_refund_is_retried_after_the_media_task_record_expires(
+    workflow_run_client, monkeypatch
+):
+    fee = _TemplateFeeRun(workflow_run_client, monkeypatch, refund_errors=1)
+    fee.media_tasks.append(SimpleNamespace(
+        task_type="freezone_gen", episode=0, beat_num=None, scope="image-job",
+        status="failed", progress=0, current_task="failed", result={},
+        error="HTTP 400: invalid image request",
+    ))
+    fee.fail_action(task_key="task:freezone_gen:project:proj_demo:0:image-job")
+
+    fee.maintain()
+    assert fee.operation()["status"] == "failed"
+    assert fee.fee_state() == ("running", "refund_pending")
+
+    fee.media_tasks.clear()
+    fee.maintain()
+    assert fee.fee_state() == ("failed", "refunded")
+    assert fee.refund_calls == ["credit-image", "credit-image"]
+
+    fee.maintain()
+    assert fee.refund_calls == ["credit-image", "credit-image"]
+
+
+def test_delivered_template_fee_is_never_refunded_by_the_refund_retry(
+    workflow_run_client, monkeypatch
+):
+    from novelvideo.freezone import agent_product_operations as products
+
+    fee = _TemplateFeeRun(workflow_run_client, monkeypatch)
+    products.bind_agent_product_model_execution(
+        project_dir=workflow_run_client.state_dir, operation_id=fee.operation_id,
+        model_call_id="model-call", executed_at=1.0, source="server_recipe_compiler",
+        compile_mode="model",
+    )
+    products.finish_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=fee.operation_id,
+        outcome="delivered", expected_task_id=fee.fee_task.task_id,
+        result_ref={"kind": "recipe_result", "id": "image-job"},
+    )
+    fee.fail_action()
+
+    fee.maintain()
+
+    assert fee.operation()["status"] == "delivered"
+    assert fee.fee_task.status == "running"
+    assert fee.refund_calls == []

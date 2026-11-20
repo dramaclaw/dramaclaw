@@ -349,3 +349,117 @@ async def test_confirmation_project_name_response(guard):
     _executor(guard, "browser")
     data = await _confirm([_run("i1", "generate_image")])
     assert data["project_name"] == "demo"
+
+
+class _MeteredUsage:
+    def reserve_current_model_call_credit(self, *args, **kwargs):
+        pytest.fail("Checking a confirmation must never reserve credits")
+
+    def clear_llm_usage_context(self):
+        pass
+
+
+class _Quotes:
+    rates = {"freezone.image_generate": 15, "freezone.video_generate": 24}
+
+    async def generation_credit_quote(self, **kwargs):
+        from novelvideo.freezone.agent_product_operations import agent_product_price_key
+
+        rate = 11 if kwargs["model"] == agent_product_price_key("recipe_result") else (
+            self.rates[kwargs["model"]]
+        )
+        return SimpleNamespace(
+            total_cost=rate * kwargs["quantity"], original_total_cost=None, discount_amount=0,
+        )
+
+
+@pytest.fixture
+def metered(guard, monkeypatch, core):
+    from novelvideo.freezone import canvas_core_pool
+    from novelvideo.ports import registry
+
+    async def allow_model(*args, **kwargs):
+        return None
+
+    async def catalog_request(media_type, *args, **kwargs):
+        if media_type == "video":
+            return {}, {}, {"id": "video-model", "supportedModes": ["text_to_video"]}
+        return {}, {}, {"id": "image-model", "provider": "openai", "apiModel": "image-model"}
+
+    async def video_backend(*args, **kwargs):
+        return "seedance_2"
+
+    async def reject(*args, **kwargs):
+        pytest.fail("Checking a confirmation must never submit generation")
+
+    monkeypatch.setitem(registry._PORTS, "usage_meter", _MeteredUsage())
+    monkeypatch.setitem(registry._PORTS, "credit_quote", _Quotes())
+    monkeypatch.setattr(canvas_core_pool, "get_canvas_core_pool", lambda: core)
+    monkeypatch.setattr(routes, "_require_scoped_media_model", allow_model)
+    monkeypatch.setattr(routes, "_resolve_catalog_request", catalog_request)
+    monkeypatch.setattr(routes, "_resolve_catalog_video_backend", video_backend)
+    monkeypatch.setattr(routes, "_enqueue_claimed_workflow_media", reject)
+    monkeypatch.setattr(routes, "compile_freezone_recipe", reject)
+    monkeypatch.setattr(routes, "create_agent_product_operation", reject)
+
+    def write(change):
+        canvas_store.save_canvas(
+            guard.root, CANVAS, base_revision=None, enforce_revision=False,
+            build_payload=lambda canvas: {**canvas, "nodes": change(canvas["nodes"])},
+        )
+
+    def edit(node_id, **data):
+        write(lambda nodes: [
+            {**node, "data": {**node["data"], **data}} if node["id"] == node_id else node
+            for node in nodes
+        ])
+
+    write(lambda nodes: [*nodes, {
+        "id": "i2", "type": "imageGenNode", "position": {"x": 300, "y": 300},
+        "data": {**IMAGE, "displayName": "模板海报",
+                 "workflowCatalog": {"recipeId": "poster", "recipeVersion": "1"}},
+    }])
+    _executor(guard, "server")
+    return SimpleNamespace(root=guard.root, edit=edit)
+
+
+PAID_NODES = [_run("i1", "generate_image"), _run("v1", "generate_video"),
+              _run("i2", "generate_image")]
+
+
+async def _changes(metered, data):
+    from novelvideo.api.freezone_confirmation_price import confirmation_quote_changes
+
+    directory = canvas_confirmations.confirmations_dir("alice", "main", metered.root)
+    record = canvas_confirmations.read_confirmation(directory, data["confirmation_id"])
+    assert record["quote_digest"]
+    ctx, *_ = await routes._resolve_freezone_project("proj", USER)
+    return await confirmation_quote_changes(
+        ctx=ctx, state_dir=metered.root, canvas_id=CANVAS, record=record,
+    )
+
+
+async def test_unchanged_paid_confirmation_requotes_identically(metered):
+    import asyncio
+
+    data = await _confirm(PAID_NODES)
+    assert data["price"]["status"] == "known", data["price"]
+    assert [item["credits"] for item in data["price"]["items"]] == [15, 24, 26]
+
+    assert await _changes(metered, data) == []
+    await asyncio.sleep(1.1)
+    assert await _changes(metered, data) == []
+
+
+@pytest.mark.parametrize("node_id,patch,changed", [
+    ("i1", {"prompt": "A blue cup"}, ["content"]),
+    ("i2", {"count": 2}, ["content", "price"]),
+    ("v1", {"durationSec": 10}, ["content"]),
+], ids=["manual-image-prompt", "template-image-count", "manual-video-duration"])
+async def test_paid_confirmation_requote_reports_an_edited_node(metered, node_id, patch, changed):
+    data = await _confirm(PAID_NODES)
+    assert await _changes(metered, data) == []
+
+    metered.edit(node_id, **patch)
+
+    assert await _changes(metered, data) == changed

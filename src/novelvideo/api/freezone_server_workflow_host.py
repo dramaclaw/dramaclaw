@@ -54,6 +54,7 @@ from novelvideo.freezone.server_workflow_actions import (
 )
 from novelvideo.ports import get_usage_meter
 from novelvideo.project_context import ProjectContext
+from novelvideo.shared.failure_signals import sanitize_failure_signal
 from novelvideo.task_state import get_task_manager
 
 
@@ -303,7 +304,11 @@ class InProcessActionHost:
         )
         if state is None:
             return None
-        return {"status": state.status, "result": state.result, "error": state.error}
+        signal = sanitize_failure_signal(getattr(state, "metadata", None))
+        return {
+            "status": state.status, "result": state.result, "error": state.error,
+            **({"signal": signal} if signal else {}),
+        }
 
     async def job_result(self, task: dict) -> dict | None:
         from novelvideo.api.routes import freezone as routes

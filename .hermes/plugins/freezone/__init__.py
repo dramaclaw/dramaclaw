@@ -6122,6 +6122,21 @@ _CONFIRMATION_PRICE_INSTRUCTION = (
 )
 
 
+_CONFIRMATION_PRICE_CAUSES = {
+    "price_not_configured": (
+        "no price is configured for this generation. "
+        "Retrying will not change this; an administrator has to configure the price"
+    ),
+    "quote_failed": "the pricing service failed while quoting this generation",
+    "action_not_quoted": "this kind of action has no price quote before it runs",
+    "input_pending": "the node is still missing inputs, so its generation cannot be priced yet",
+    "request_unavailable": (
+        "the node's current settings do not produce a generation request to price"
+    ),
+    "plan_unavailable": "the actions of this plan could not be read",
+}
+
+
 def _confirmation_price_text(price: dict) -> str:
     if price.get("status") == "known":
         return f'This will cost {price["display"]} credits.'
@@ -6130,14 +6145,18 @@ def _confirmation_price_text(price: dict) -> str:
             "This deployment does not deduct credits; the model provider's own cost "
             "is not known here."
         )
+    cause = _CONFIRMATION_PRICE_CAUSES.get(
+        str(price.get("reason")), "the server did not return a price",
+    )
     if "known_credits" in price:
         items = price["items"]
         unknown = sum(item.get("status") == "unknown" for item in items)
         return (
             f"The price is unknown: {unknown} of {len(items)} actions could not be priced; "
-            f'the priced part costs {price["known_credits"]} credits.'
+            f'the priced part costs {price["known_credits"]} credits. '
+            f"{cause[0].upper()}{cause[1:]}."
         )
-    return "The price is unknown: the server could not price this generation."
+    return f"The price is unknown: {cause}."
 
 
 def _create_canvas_confirmation(
@@ -6530,6 +6549,11 @@ _CANVAS_CONFIRMATION_ERROR_INSTRUCTIONS = {
     "targets_changed": (
         "The target nodes changed, so the confirmation was voided and nothing was executed. "
         "Read the canvas again and ask the user again if it is still wanted."
+    ),
+    "quote_changed": (
+        "The node content or the price changed after this confirmation was shown, so it was "
+        "voided and nothing was executed or charged. Send the canvas commands again to get a "
+        "new confirmation with the current price, and show that price to the user."
     ),
     "already_handled": "This confirmation was already decided. Do not retry.",
     "canvas_open_required": (

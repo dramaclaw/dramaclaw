@@ -2837,7 +2837,7 @@
         "confirmDescription": "{{feature}}，确认后将立即启动任务。",
         "confirmAction": "确认并启动",
         "costLoading": "正在获取当前组织价格",
-        "costUnavailable": "暂时无法获取价格，请稍后重试",
+        "costUnavailable": "无法获取价格",
         "openWorld": "打开导演世界",
         "worldNotReady": "导演世界（片场未就绪）"
       },
@@ -5885,7 +5885,7 @@
       "regenerateVideo": "重新生成视频",
       "regenerateDescription": "重新生成视频后转换为 GIF",
       "videoBilling": "首帧锁定 · 4 秒 · 720P · 无音频，视频按报价计费，GIF 转换免费。",
-      "quoteUnavailable": "暂时无法获取积分报价，请稍后重试。",
+      "quoteUnavailable": "无法获取积分报价。",
       "confirm": "确认生成",
       "svgDescription": "本地转换 SVG，复杂图片可能损失细节。",
       "videoUnavailable": "视频模型暂不可用",

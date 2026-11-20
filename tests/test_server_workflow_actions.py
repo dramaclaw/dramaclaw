@@ -239,6 +239,43 @@ async def test_failed_task(setup_runner):
     assert_cleared(host)
 
 
+async def test_failed_image_task_propagates_upstream_status(setup_runner):
+    host, _, run, _, _ = setup_runner
+    host.statuses = [{
+        "status": "failed", "error": "HTTP 403: this parameter value is restricted",
+        "signal": {"upstream_status": 403},
+    }]
+
+    outcome = await run("generate_image")
+
+    assert outcome["status"] == "failed"
+    assert outcome["signal"]["upstream_status"] == 403
+
+
+async def test_unexpected_host_request_exception_becomes_stored_server_fault(
+    setup_runner, tmp_path,
+):
+    from novelvideo.freezone.workflow_runs import read_workflow_run
+    from test_server_workflow_driver import Clock, drive, setup_run
+
+    class SubmissionError(Exception):
+        pass
+
+    host, runner, _, _, _ = setup_runner
+    host.responses = [SubmissionError("submission failed")]
+    clock = Clock()
+    scope = setup_run(
+        tmp_path, clock, actions=[{"node_id": "n", "action": "generate_image"}], levels=[[0]],
+    )
+
+    assert (await drive(scope, clock, runner))["status"] == "failed"
+    assert len(host.requests) == 1
+    (action,) = read_workflow_run(**scope)["actions"]
+    assert action["failure_signal"] == {
+        "failure_kind": "server_fault", "failure_exception": "SubmissionError",
+    }
+
+
 async def test_fallback_url_is_durable(setup_runner, tmp_path):
     host, _, run, _, _ = setup_runner
     host.statuses = [{"status": "completed", "result": {}}]

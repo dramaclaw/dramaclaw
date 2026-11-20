@@ -2837,7 +2837,7 @@
         "confirmDescription": "{{feature}} will start immediately after confirmation.",
         "confirmAction": "Confirm and start",
         "costLoading": "Loading the current organization price",
-        "costUnavailable": "Price is temporarily unavailable. Try again later.",
+        "costUnavailable": "Price is unavailable.",
         "openWorld": "Open Director World",
         "worldNotReady": "Director World not ready"
       },
@@ -5885,7 +5885,7 @@
       "regenerateVideo": "Regenerate video",
       "regenerateDescription": "Regenerate the video and convert it to GIF",
       "videoBilling": "Locked first frame · 4 seconds · 720P · No audio. Video is billed at the quoted price; GIF conversion is free.",
-      "quoteUnavailable": "Credit estimate is unavailable. Please try again later.",
+      "quoteUnavailable": "Credit estimate is unavailable.",
       "confirm": "Confirm generation",
       "svgDescription": "Convert locally to SVG. Complex images may lose detail.",
       "videoUnavailable": "Video model unavailable",

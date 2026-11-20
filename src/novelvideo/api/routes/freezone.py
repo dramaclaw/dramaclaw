@@ -264,6 +264,7 @@ from novelvideo.freezone.agent_product_operations import (
     finish_agent_product_operation,
     is_direct_voice_recipe_action,
     list_agent_product_operations_for_session,
+    list_undelivered_agent_product_operations,
     is_recipe_compile_receipt,
     read_agent_generation_session,
     read_agent_product_operation,
@@ -6146,7 +6147,9 @@ def _persist_freezone_upload(target: Path, contents: bytes) -> None:
 
 
 @router.post("/projects/{project}/freezone/upload-address", tags=[TAG_FREEZONE_MEDIA])
-async def freezone_upload_address(project: str, user: dict = Depends(get_api_user)):
+async def freezone_upload_address(
+    project: str, user: dict = Depends(require_project_scope("projects:write"))
+):
     ctx, *_ = await _resolve_freezone_project(project, user)
     origin = public_origin()
     if origin is None:
@@ -17478,6 +17481,26 @@ async def finish_canvas_workflow_draft(
     return {"ok": True, "data": _workflow_draft_api_data(draft)}
 
 
+WORKFLOW_RECIPE_ONLY_ACTIONS = frozenset({"generate_text"})
+WORKFLOW_RECIPE_ADMISSIBLE_ACTIONS = WORKFLOW_RECIPE_ONLY_ACTIONS | frozenset({
+    "generate_story_script",
+    "generate_image",
+    "generate_video",
+    "generate_text_video",
+    "generate_audio",
+    "generate_3gs_world",
+})
+
+
+def workflow_action_recipe_admission(action: dict) -> bool:
+    name = str(action.get("action") or "")
+    return bool(
+        action.get("recipe_id")
+        and not action.get("product_operation_id")
+        and (name in WORKFLOW_RECIPE_ADMISSIBLE_ACTIONS or name == "generate_html")
+    )
+
+
 async def admit_canvas_workflow_run_actions(
     *, ctx: ProjectContext, state_dir: Path, canvas_id: str,
     actions: list[dict] | None = None, run: dict | None = None,
@@ -17490,25 +17513,11 @@ async def admit_canvas_workflow_run_actions(
         if action.get("product_operation_id"):
             continue
         action_name = str(action.get("action") or "")
-        if (
-            (
-                action_name
-                in {
-                    "generate_text",
-                    "generate_story_script",
-                    "generate_image",
-                    "generate_video",
-                    "generate_text_video",
-                    "generate_audio",
-                    "generate_3gs_world",
-                }
-                or (action_name == "generate_html" and action.get("recipe_id"))
-            )
-            and (action_name == "generate_text" or action.get("recipe_id"))
-            and (
-                not action.get("recipe_id")
-                or not action.get("generation_attempt_id")
-            )
+        requires_recipe = (
+            action_name in WORKFLOW_RECIPE_ONLY_ACTIONS or workflow_action_recipe_admission(action)
+        )
+        if requires_recipe and (
+            not action.get("recipe_id") or not action.get("generation_attempt_id")
         ):
             raise HTTPException(
                 400,
@@ -17519,24 +17528,9 @@ async def admit_canvas_workflow_run_actions(
     admitted_operations: list[dict[str, Any]] = []
     try:
         for action in run.get("actions") or []:
-            if action.get("product_operation_id"):
+            if not workflow_action_recipe_admission(action):
                 continue
             action_name = str(action.get("action") or "")
-            if action_name not in {
-                "generate_text",
-                "generate_story_script",
-                "generate_image",
-                "generate_video",
-                "generate_text_video",
-                "generate_audio",
-                "generate_3gs_world",
-            } and not (action_name == "generate_html" and action.get("recipe_id")):
-                continue
-            # Ordinary media/script nodes use their generation endpoint's model
-            # billing. Only catalog Recipe executions need a recipe_result
-            # admission; do not invent a Recipe or charge both product paths.
-            if not action.get("recipe_id"):
-                continue
             node_id = str(action.get("node_id") or "")
             recipe_id = str(action.get("recipe_id") or "")
             recipe_version = str(action.get("recipe_version") or "")
@@ -17849,6 +17843,8 @@ async def _maintain_canvas_workflow_runs(
                 history_by_operation_attempt.setdefault(
                     (operation_id, attempt_id, node_id), []
                 ).append(record)
+    # Operations whose refund was attempted in this pass; see the retry below.
+    settled_operation_ids: set[str] = set()
     for run in runs:
         for action in run.get("actions") or []:
             operation_id = str(action.get("product_operation_id") or "")
@@ -17886,9 +17882,12 @@ async def _maintain_canvas_workflow_runs(
             if not operation_id:
                 continue
             if task is None:
+                # An action that ended without submitting media can deliver
+                # nothing later: one that failed closes its operation as failed,
+                # one that never started as cancelled.
                 if (
                     run.get("status") in {"failed", "cancelled"}
-                    and action.get("status") == "blocked"
+                    and action.get("status") in {"failed", "blocked"}
                     and not task_key
                     and not action.get("job_id")
                     and not action.get("media_claimed_at")
@@ -17902,9 +17901,14 @@ async def _maintain_canvas_workflow_runs(
                             operation = await io.run(
                                 "operation_finish", finish_agent_product_operation,
                                 project_dir=canvas_project_dir,
-                                operation_id=operation_id, outcome="cancelled",
+                                operation_id=operation_id,
+                                outcome=(
+                                    "failed" if action.get("status") == "failed"
+                                    else "cancelled"
+                                ),
                                 expected_task_id=str(operation.get("task_id") or ""),
                             )
+                        settled_operation_ids.add(operation_id)
                         with workflow_read_stage("settlement"):
                             await terminalize_undelivered_agent_product_task(
                                 ctx=ctx, operation=operation,
@@ -17935,6 +17939,7 @@ async def _maintain_canvas_workflow_runs(
             if operation is None:
                 continue
             if operation.get("status") in {"failed", "cancelled"}:
+                settled_operation_ids.add(operation_id)
                 with workflow_read_stage("settlement"):
                     await terminalize_undelivered_agent_product_task(
                         ctx=ctx, operation=operation,
@@ -18005,6 +18010,7 @@ async def _maintain_canvas_workflow_runs(
                 result_ref=result_ref,
                 server_recipe_direct_audio=direct_voice and outcome == "delivered",
             )
+            settled_operation_ids.add(operation_id)
             with workflow_read_stage("settlement"):
                 if operation.get("status") == "delivered":
                     await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
@@ -18012,6 +18018,44 @@ async def _maintain_canvas_workflow_runs(
                     await terminalize_undelivered_agent_product_task(
                         ctx=ctx, operation=operation,
                     )
+    # An undelivered operation keeps its fee task open until the refund is
+    # accepted. The loop above reaches it only through a readable media task,
+    # so retry the rest here: an outstanding refund must not depend on that.
+    try:
+        undelivered = await io.run(
+            "operation_batch", list_undelivered_agent_product_operations,
+            project_dir=canvas_project_dir,
+            operation_ids=[
+                operation_id
+                for run in runs
+                for action in run.get("actions") or []
+                if (operation_id := str(action.get("product_operation_id") or ""))
+                and operation_id not in settled_operation_ids
+            ],
+        )
+        fee_task_keys = {
+            project_task_state_key(
+                str(operation["task_type"]), ctx.project_id, 0,
+                scope=str(operation["operation_id"]),
+            ): operation
+            for operation in undelivered
+        }
+        fee_tasks = await io.run(
+            "task_batch", get_task_manager().get_tasks_for_project,
+            ctx, set(fee_task_keys), include_logs=False,
+        ) if fee_task_keys else {}
+    except WorkflowReadBusy:
+        raise
+    except Exception as exc:
+        logger.warning("workflow refund retry skipped: %s", type(exc).__name__)
+        fee_tasks = {}
+    for fee_task_key, fee_task in fee_tasks.items():
+        if fee_task.status in {"completed", "failed", "cancelled"}:
+            continue
+        with workflow_read_stage("settlement"):
+            await terminalize_undelivered_agent_product_task(
+                ctx=ctx, operation=fee_task_keys[fee_task_key],
+            )
 
 
 @router.get(
@@ -18597,6 +18641,7 @@ async def create_canvas_confirmation(
     from novelvideo.api.freezone_confirmation_price import (
         check_generation_inputs,
         confirmation_price,
+        confirmation_quote_digest,
     )
     from novelvideo.api.freezone_server_workflow_start import (
         canvas_open_required_detail,
@@ -18845,6 +18890,15 @@ async def create_canvas_confirmation(
         except Exception as exc:
             logger.warning("Confirmation price plan unavailable: %s", type(exc).__name__)
             data["price"] = {"status": "unknown", "reason": "plan_unavailable", "items": []}
+        quote_digest = None
+        try:
+            # Confirming compares the canvas against this digest of what the card showed.
+            quote_digest = await confirmation_quote_digest(
+                ctx=ctx, state_dir=state_dir, canvas_id=canvas_id,
+                commands=record["commands"], price=data["price"],
+            )
+        except Exception as exc:
+            logger.warning("Confirmation quote digest unavailable: %s", type(exc).__name__)
         try:
             directory = await asyncio.to_thread(
                 canvas_confirmations.confirmations_dir, str(user["username"]),
@@ -18852,6 +18906,7 @@ async def create_canvas_confirmation(
             )
             await asyncio.to_thread(
                 canvas_confirmations.save_price, directory, record["id"], data["price"],
+                quote_digest,
             )
         except Exception as exc:
             logger.warning("Confirmation price persistence failed: %s", type(exc).__name__)
@@ -18953,6 +19008,13 @@ async def decide_canvas_confirmation(
             "targets_changed": (
                 f"目标节点已删除或已变化（{', '.join(detail.get('node_ids', []))}），"
                 "确认已作废，未执行。"
+            ),
+            "quote_changed": (
+                "这条确认没有保存展示时的内容和价格记录，无法核对是否已变化，确认已作废，未执行；"
+                "请重新发起确认以查看最新内容和价格。"
+                if detail.get("changed") == ["unverified"] else
+                "确认卡片展示之后，节点内容或价格已发生变化，确认已作废，未执行；"
+                "请重新发起确认以查看最新内容和价格。"
             ),
         }
         detail.setdefault("message", messages.get(code, "画布确认未通过，未执行。"))
@@ -19078,6 +19140,28 @@ async def decide_canvas_confirmation(
         if body.via == "card":
             await append_canvas_confirmation_notice(user, record, "voided", ",".join(changed))
         raise reject(409, "targets_changed", node_ids=changed)
+    if "paid_generation" in record["kinds"]:
+        from novelvideo.api.freezone_confirmation_price import confirmation_quote_changes
+
+        # The card priced the canvas as it was; an edit since then is not what was confirmed.
+        quote_changed = await confirmation_quote_changes(
+            ctx=ctx, state_dir=state_dir, canvas_id=canvas_id, record=record,
+        )
+        if quote_changed:
+            record = await asyncio.to_thread(
+                canvas_confirmations.void_confirmation, directory, confirmation_id,
+                reason="quote_changed", now=now,
+            )
+            await release_unapplied_workflow_draft(
+                project_dir=state_dir, canvas_id=canvas_id,
+                identity=workflow_draft_identity(record["commands"]),
+            )
+            _log_canvas_confirmation_decision(record, "voided", body.via, now)
+            if body.via == "card":
+                await append_canvas_confirmation_notice(
+                    user, record, "quote_changed", ",".join(quote_changed),
+                )
+            raise reject(409, "quote_changed", changed=quote_changed)
     edit_commands = [command for command in record["commands"] if not is_run_command(command)]
     mixed = check["status"] == "runnable" and not needs_browser and bool(edit_commands)
     data = None
