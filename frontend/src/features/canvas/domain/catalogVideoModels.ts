@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { WORKFLOW_STABLE_CONTRACT } from "@/features/freezone/generated/workflowContract";
-import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
+import type { ModelOption } from "@/features/canvas/domain/modelOptions";
 
 const videoAliases: Readonly<Record<string, string>> =
   WORKFLOW_STABLE_CONTRACT.model_aliases_by_node_type.videoNode;

@@ -61,6 +61,7 @@ def _search_haystack(summary: dict[str, Any]) -> str:
             summary.get("node_type"),
             " ".join(summary.get("keywords") or []),
             " ".join(summary.get("action_keys") or []),
+            " ".join(summary.get("allowed_recipe_ids") or []),
         )
         if value
     ).lower()
@@ -130,10 +131,19 @@ def get_catalog_item(
     kind: CatalogKind,
     item_id: str,
 ) -> dict[str, Any] | None:
+    if not str(item_id or "").strip():
+        return None
+    return find_catalog_item(list_user_agent_config_items(username, kind), item_id)
+
+
+def find_catalog_item(
+    items: list[dict[str, Any]], item_id: str,
+) -> dict[str, Any] | None:
+    """Find an enabled item in a supplied catalog, omitting internal fields."""
     normalized_id = str(item_id or "").strip()
     if not normalized_id:
         return None
-    for item in list_user_agent_config_items(username, kind):
+    for item in items:
         if str(item.get("id") or "") == normalized_id and item.get("enabled") is not False:
             return _public_item(item)
     return None

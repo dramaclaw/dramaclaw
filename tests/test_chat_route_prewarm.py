@@ -6,6 +6,7 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from novelvideo.api.routes import chat as chat_route
+from novelvideo.chat.history_page import HistoryPage
 from novelvideo.chat.store import ChatScope
 from novelvideo.freezone import canvas_command_bridge
 from novelvideo.freezone.canvas_command_bridge import (
@@ -26,8 +27,8 @@ async def test_send_scope_changed_returns_none_when_client_disconnected(
         async def send_json(self, payload):
             raise WebSocketDisconnect(code=1006)
 
-    async def fake_history(username, scope, *, project_ctx=None):
-        return []
+    async def fake_history(username, scope, *, project_ctx=None, before=None):
+        return HistoryPage([], None, False)
 
     monkeypatch.setattr(chat_route, "_history", fake_history)
 
@@ -108,9 +109,9 @@ async def test_codex_cancel_requires_scope_and_business_turn(monkeypatch) -> Non
 
 @pytest.mark.anyio
 async def test_stale_codex_cancel_does_not_force_release_a_new_turn_lock(
-    monkeypatch,
+    monkeypatch, tmp_path,
 ) -> None:
-    releases = []
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
     async def no_interrupt(*_args):
         return False
 
@@ -120,21 +121,21 @@ async def test_stale_codex_cancel_does_not_force_release_a_new_turn_lock(
         "interrupt_active_codex_turn",
         no_interrupt,
     )
-    monkeypatch.setattr(
-        chat_route.chat_service,
-        "force_release_chat_run_lock",
-        lambda *args: releases.append(args),
-    )
     payload = chat_route.CancelChatTurnRequest(
         scope=chat_route.ChatScopePayload(kind="home"), turn_id="business-old"
     )
 
-    result = await chat_route.cancel_chat_turn(
-        {"username": "alice"}, payload=payload
-    )
+    lock = chat_route.chat_service._acquire_chat_run_lock("alice", "", "running-business")
+    try:
+        result = await chat_route.cancel_chat_turn(
+            {"username": "alice"}, payload=payload
+        )
+        active = await chat_route.chat_service.active_chat_turn("alice", "")
+        assert active.turn_id == "running-business"
+    finally:
+        chat_route.chat_service._release_chat_run_lock("alice", "", lock)
 
     assert result == {"ok": True, "data": {"cancelled": False}}
-    assert releases == []
 
 
 @pytest.mark.anyio
@@ -158,54 +159,10 @@ async def test_codex_cancel_without_turn_identity_fails_closed_and_keeps_lock(
 
 
 @pytest.mark.anyio
-async def test_hermes_cancel_recovers_stranded_home_lock(monkeypatch, tmp_path) -> None:
-    from novelvideo.chat import hermes_pool
-    from novelvideo.chat import service as chat_service
-
-    class IdleHermesPool:
-        async def close_user(self, _username):
-            return False
-
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "hermes")
-    monkeypatch.setattr(hermes_pool, "pool", IdleHermesPool())
-    chat_service._acquire_chat_run_lock("alice", "")
-
-    result = await chat_route.cancel_chat_turn({"username": "alice"})
-
-    assert result == {"ok": True, "data": {"cancelled": False}}
-    next_lock = chat_service._acquire_chat_run_lock("alice", "")
-    chat_service._release_chat_run_lock("alice", "", next_lock)
-
-
-@pytest.mark.anyio
-async def test_hermes_cancel_error_recovers_stranded_home_lock(
-    monkeypatch, tmp_path
-) -> None:
-    from novelvideo.chat import hermes_pool
-    from novelvideo.chat import service as chat_service
-
-    class FailingHermesPool:
-        async def close_user(self, _username):
-            raise RuntimeError("worker registry unavailable")
-
-    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "hermes")
-    monkeypatch.setattr(hermes_pool, "pool", FailingHermesPool())
-    chat_service._acquire_chat_run_lock("alice", "")
-
-    result = await chat_route.cancel_chat_turn({"username": "alice"})
-
-    assert result == {"ok": True, "data": {"cancelled": False}}
-    next_lock = chat_service._acquire_chat_run_lock("alice", "")
-    chat_service._release_chat_run_lock("alice", "", next_lock)
-
-
-@pytest.mark.anyio
 async def test_cancel_does_not_force_release_while_interrupt_is_settling(
-    monkeypatch,
+    monkeypatch, tmp_path,
 ) -> None:
-    releases = []
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
 
     async def active_turn_cancelled(_username, _scope_key, _business_turn_id):
         return True
@@ -218,29 +175,28 @@ async def test_cancel_does_not_force_release_while_interrupt_is_settling(
         "interrupt_active_codex_turn",
         active_turn_cancelled,
     )
-    monkeypatch.setattr(
-        chat_route.chat_service,
-        "force_release_chat_run_lock",
-        lambda *args: releases.append(args),
-    )
 
-    result = await chat_route.cancel_chat_turn(
-        {"username": "alice"},
-        payload=chat_route.CancelChatTurnRequest(
-            scope=chat_route.ChatScopePayload(kind="home"),
-            turn_id="business-a",
-        ),
-    )
+    lock = chat_route.chat_service._acquire_chat_run_lock("alice", "", "running-business")
+    try:
+        result = await chat_route.cancel_chat_turn(
+            {"username": "alice"},
+            payload=chat_route.CancelChatTurnRequest(
+                scope=chat_route.ChatScopePayload(kind="home"),
+                turn_id="business-a",
+            ),
+        )
+        active = await chat_route.chat_service.active_chat_turn("alice", "")
+        assert active.turn_id == "running-business"
+    finally:
+        chat_route.chat_service._release_chat_run_lock("alice", "", lock)
 
     assert result == {"ok": True, "data": {"cancelled": True}}
-    assert releases == []
 
 
 @pytest.mark.anyio
 async def test_cancel_stays_best_effort_when_backend_resolution_fails(
     monkeypatch,
 ) -> None:
-    releases = []
 
     def fail_backend_resolution():
         raise RuntimeError("configured backend is unavailable")
@@ -248,16 +204,10 @@ async def test_cancel_stays_best_effort_when_backend_resolution_fails(
     monkeypatch.setattr(
         chat_route.chat_service, "get_chat_backend_name", fail_backend_resolution
     )
-    monkeypatch.setattr(
-        chat_route.chat_service,
-        "force_release_chat_run_lock",
-        lambda *args: releases.append(args),
-    )
 
     result = await chat_route.cancel_chat_turn({"username": "alice"})
 
     assert result == {"ok": True, "data": {"cancelled": False}}
-    assert releases == []
 
 
 def test_scope_from_model_preserves_freezone_canvas_scope() -> None:
@@ -490,36 +440,6 @@ async def test_canvas_background_followup_is_saved_for_agent_without_reresolving
         assert "extra charges" in str(saved["content"])
     assert saved["idempotency_key"] == f"canvas-background-result:bridge-workflow:{apply_status}"
     assert getattr(saved["scope"], "agent_id") == "agent-1"
-
-
-@pytest.mark.anyio
-async def test_workflow_completion_notification_is_idempotent_per_canvas(monkeypatch, tmp_path):
-    from novelvideo.chat.store import ChatStore
-
-    store = ChatStore()
-    monkeypatch.setattr(store, "db_for", lambda _username, scope: tmp_path / f"{scope.canvas_id}.db")
-    monkeypatch.setattr(chat_route, "chat_store", store)
-
-    async def fake_project_context(_user, _scope):
-        return None
-
-    monkeypatch.setattr(chat_route, "_project_context_for_scope", fake_project_context)
-    payload = chat_route.ChatNotificationIn(
-        scope=chat_route.ChatScopePayload(
-            kind="project", id="p", surface="freezone", canvasId="canvas-a", agentId="main",
-        ),
-        text="本轮工作流已完成，是否继续？",
-        idempotency_key="workflow-completion:run-1",
-    )
-    first = await chat_route.append_chat_notification(payload, {"username": "admin"})
-    second = await chat_route.append_chat_notification(payload, {"username": "admin"})
-    assert first["data"]["id"] == second["data"]["id"]
-    with sqlite3.connect(tmp_path / "canvas-a.db") as conn:
-        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
-    payload.scope.canvasId = "canvas-b"
-    await chat_route.append_chat_notification(payload, {"username": "admin"})
-    with sqlite3.connect(tmp_path / "canvas-b.db") as conn:
-        assert conn.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 1
 
 
 @pytest.mark.anyio
@@ -1255,13 +1175,16 @@ async def test_watch_pending_skill_studio_events_emits_freezone_bridge_event(
             "event": event,
         }
     ]
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
     messages = chat_route.chat_store.list_messages("admin", scope)
     assert messages[-1]["turn_id"] == "turn-a"
-    assert messages[-1]["ui_events"][0]["type"] == "skill_studio.questions"
-    assert messages[-1]["ui_events"][0]["skill_studio_session_id"] == "skill_studio_01"
-    assert messages[-1]["ui_events"][0]["bridge_key"] == "skill-key-1"
-    assert messages[-1]["ui_events"][0]["canvas_id"] == "canvas-a"
-    assert messages[-1]["ui_events"][0]["agent_id"] == "agent-1"
+    assert events_by_turn["turn-a"][0]["type"] == "skill_studio.questions"
+    assert events_by_turn["turn-a"][0]["skill_studio_session_id"] == "skill_studio_01"
+    assert events_by_turn["turn-a"][0]["bridge_key"] == "skill-key-1"
+    assert events_by_turn["turn-a"][0]["canvas_id"] == "canvas-a"
+    assert events_by_turn["turn-a"][0]["agent_id"] == "agent-1"
 
 
 @pytest.mark.anyio
@@ -1319,9 +1242,11 @@ async def test_watch_pending_skill_studio_events_emits_status_progress_event(
     assert websocket.sent[0]["type"] == "skill_studio.event"
     assert websocket.sent[0]["bridge_key"] == "skill-status-1"
     assert websocket.sent[0]["event"] == event
-    messages = chat_route.chat_store.list_messages("admin", scope)
-    assert messages[-1]["ui_events"][0]["type"] == "skill_studio.status"
-    assert messages[-1]["ui_events"][0]["message"] == "已生成 Recipe 1 / 2"
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
+    assert events_by_turn["turn-a"][0]["type"] == "skill_studio.status"
+    assert events_by_turn["turn-a"][0]["message"] == "已生成 Recipe 1 / 2"
 
 
 def test_skill_studio_status_frame_uses_backend_intent_detection() -> None:
@@ -1707,10 +1632,12 @@ async def test_resolve_skill_studio_tool_result_persists_submitted_ui_event(
         user={"username": "admin"},
     )
 
-    messages = chat_route.chat_store.list_messages("admin", scope)
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
     submitted_events = [
         event
-        for event in messages[-1]["ui_events"]
+        for event in events_by_turn["turn-a"]
         if event.get("type") == "skill_studio.questions"
         and event.get("submitted") is True
     ]
@@ -1777,10 +1704,12 @@ async def test_resolve_skill_studio_draft_tool_result_persists_submitted_ui_even
         user={"username": "admin"},
     )
 
-    messages = chat_route.chat_store.list_messages("admin", scope)
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
     submitted_events = [
         event
-        for event in messages[-1]["ui_events"]
+        for event in events_by_turn["turn-a"]
         if event.get("type") == "skill_studio.draft" and event.get("submitted") is True
     ]
     assert submitted_events
@@ -1994,11 +1923,14 @@ async def test_watch_pending_clarification_events_emits_freezone_bridge_event(
             "event": event,
         }
     ]
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a"]
+    )
     messages = chat_route.chat_store.list_messages("admin", scope)
     assert messages[-1]["turn_id"] == "turn-a"
-    assert messages[-1]["ui_events"][0]["type"] == "assistant.clarification.request"
-    assert messages[-1]["ui_events"][0]["clarification_id"] == "clarify_01"
-    assert messages[-1]["ui_events"][0]["bridge_key"] == "clarify-key-1"
+    assert events_by_turn["turn-a"][0]["type"] == "assistant.clarification.request"
+    assert events_by_turn["turn-a"][0]["clarification_id"] == "clarify_01"
+    assert events_by_turn["turn-a"][0]["bridge_key"] == "clarify-key-1"
 
 
 async def test_watch_pending_clarification_events_redelivers_unanswered_card_to_next_turn(
@@ -2184,19 +2116,16 @@ async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
         user={"username": "admin"},
     )
 
-    messages = chat_route.chat_store.list_messages("admin", scope)
+    events_by_turn = await chat_route.chat_store.turn_ui_events_async(
+        "admin", scope, ["turn-a", "turn-b"]
+    )
     if replayed:
         for turn in ("turn-a", "turn-b"):
-            events = [
-                event
-                for message in messages
-                if message.get("turn_id") == turn
-                for event in message.get("ui_events", [])
-            ]
+            events = events_by_turn[turn]
             assert any(event.get("submitted") is True for event in events)
     submitted_events = [
         event
-        for event in messages[-1]["ui_events"]
+        for event in events_by_turn["turn-b" if replayed else "turn-a"]
         if event.get("type") == "assistant.clarification.request"
         and event.get("submitted") is True
     ]

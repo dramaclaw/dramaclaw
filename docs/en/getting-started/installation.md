@@ -88,7 +88,8 @@ scripts/start-ce.sh
 
 Open `http://localhost:5173` for the Vite development UI; the API is at
 `http://localhost:8780`. The launcher installs dependencies and starts both services;
-Ctrl+C stops them. Keep `DRAMACLAW_CHAT_BACKEND=codex` in `.env`; an older setting
+Ctrl+C stops them. It also builds the server canvas bundle (`frontend/dist-canvas-server/`),
+which canvas creation needs. Keep `DRAMACLAW_CHAT_BACKEND=codex` in `.env`; an older setting
 selecting another backend produces an actionable error rather than a silent fallback.
 
 To manage the API and frontend separately, prepare the same runtime before starting
@@ -104,8 +105,13 @@ CODEX_BIN="$(bash scripts/setup-codex.sh)" &&
 In a second terminal, from the repository root:
 
 ```bash
-cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
+cd frontend && pnpm install && pnpm run build:canvas-server && pnpm dev --host 127.0.0.1 --port 5173
 ```
+
+Canvas creation needs Node.js and this bundle. Rebuild it after pulling frontend changes.
+If it is missing, the API logs a `canvas_core unavailable` warning at startup and canvas
+creation returns `canvas_core_unavailable`. The bundle is read when the first canvas
+operation starts the worker, so building it after the API has started is fine.
 
 To skip downloading, set `CODEX_BIN=/absolute/path/to/codex-dramaclaw` in `.env`
 for the launcher, or export it before the standalone setup command. An explicit binary

@@ -55,7 +55,7 @@ where, and CSS that says how each looks. A page draws a shot.
     its `#t=0,length` is required, and is how long it stays.
   - `id`: unique across the film; without it, the file's name.
   - `at`: where it starts on the film, in seconds from 0 (default 0).
-  - `speed` on videos and sounds: the playback rate, 0.25 to 4, sound keeping its pitch. The clip lasts
+  - `speed` on videos and sounds: the playback rate, 0.1 to 100, sound keeping its pitch. The clip lasts
     `(out − in) / speed` on the film.
   - `volume` on videos and sounds: linear gain, 1 the file's own level; `muted` is 0.
   - `size` on pages: `size="1920x1080"`, the CSS pixels a page without its own `width` and `height` (§2) is laid

@@ -731,7 +731,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
     hook.unmount();
   });
 
-  it("stashes a 409 save conflict and freezes further network autosaves", async () => {
+  it("stashes a repeated 409 save conflict and freezes further network autosaves", async () => {
     vi.useFakeTimers();
     vi.mocked(getFreezoneCanvas).mockResolvedValue({
       nodes: [
@@ -745,7 +745,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
       edges: [],
       revision: 7,
     });
-    vi.mocked(putFreezoneCanvas).mockRejectedValueOnce(
+    vi.mocked(putFreezoneCanvas).mockRejectedValue(
       new ApiError("conflict", 409, {}),
     );
 
@@ -781,7 +781,8 @@ describe("useCanvasSync hydrate lifecycle", () => {
       await Promise.resolve();
     });
 
-    expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(2);
+    expect(getFreezoneCanvas).toHaveBeenCalledTimes(2);
 
     hook.unmount();
   });
@@ -1437,10 +1438,15 @@ describe("useCanvasSync hydrate lifecycle", () => {
       for (let i = 0; i < 12; i += 1) await Promise.resolve();
     });
 
-    expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(2);
     expect(vi.mocked(putFreezoneCanvas).mock.calls[0][2]).toMatchObject({
       base_revision: 7,
     });
+    expect(vi.mocked(putFreezoneCanvas).mock.calls[1][2]).toMatchObject({
+      base_revision: 9,
+      nodes: expect.arrayContaining([expect.objectContaining({ id: "added-by-other-tab" })]),
+    });
+    expect(hook.result.current.revision).toBe(9);
     expect(hook.result.current.status).toBe("conflict");
     expect(readCanvasDraft("project-a", "compose_concurrent_user_eric")).not.toBeNull();
 
@@ -1467,8 +1473,8 @@ describe("useCanvasSync hydrate lifecycle", () => {
     vi.mocked(getFreezoneCanvas)
       .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))
       .mockImplementationOnce(() => new Promise(resolve => { resolveNew = resolve; }));
-    const old = refreshRemoteFreezoneCanvas("project-a", canvasId, { protectUnsavedLocalEdits: true });
-    const fresh = refreshRemoteFreezoneCanvas("project-a", canvasId, { protectUnsavedLocalEdits: true });
+    const old = refreshRemoteFreezoneCanvas("project-a", canvasId);
+    const fresh = refreshRemoteFreezoneCanvas("project-a", canvasId);
     await act(async () => {
       resolveNew(remote(9, "newest"));
       expect(await fresh).toBe(true);
@@ -1506,7 +1512,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
     hook.unmount();
   });
 
-  it("keeps recovered media autosaving when a protected refresh has the same revision", async () => {
+  it("keeps recovered media autosaving when a refresh has the same revision", async () => {
     const canvasId = "recovered_media_same_revision";
     vi.mocked(getFreezoneCanvas).mockResolvedValue({
       nodes: [{
@@ -1530,9 +1536,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
         });
       });
       await act(async () => {
-        expect(await refreshRemoteFreezoneCanvas("project-a", canvasId, {
-          protectUnsavedLocalEdits: true,
-        })).toBe(false);
+        expect(await refreshRemoteFreezoneCanvas("project-a", canvasId)).toBe(true);
       });
       expect(hook.result.current.status).not.toBe("conflict");
       expect(useCanvasStore.getState().nodes[0].data).toMatchObject({
@@ -1589,8 +1593,6 @@ describe("useCanvasSync hydrate lifecycle", () => {
           revision: 8,
           metadata: null,
         },
-        undefined,
-        { protectUnsavedLocalEdits: true },
       );
     });
 
@@ -1618,8 +1620,6 @@ describe("useCanvasSync hydrate lifecycle", () => {
           revision: 9,
           metadata: null,
         },
-        undefined,
-        { protectUnsavedLocalEdits: true },
       );
     });
 
@@ -1719,25 +1719,17 @@ describe("useCanvasSync hydrate lifecycle", () => {
           revision: 8,
           metadata: null,
         },
-        undefined,
-        {
-          protectUnsavedLocalEdits: true,
-          conflictMessage: "Agent update overlaps unsaved local edits",
-        },
       );
     });
 
-    expect(applied).toBe(false);
-    expect(hook.result.current.status).toBe("conflict");
-    expect(hook.result.current.error).toBe(
-      "Agent update overlaps unsaved local edits",
-    );
-    expect(hook.result.current.revision).toBe(7);
-    expect(useCanvasStore.getState().nodes).toHaveLength(1);
+    expect(applied).toBe(true);
+    expect(hook.result.current.status).toBe("ready");
+    expect(hook.result.current.error).toBeNull();
+    expect(hook.result.current.revision).toBe(8);
+    expect(useCanvasStore.getState().nodes).toHaveLength(2);
     expect(useCanvasStore.getState().nodes[0]?.id).not.toBe("agent-story-node");
-    expect(hook.result.current.readConflictSnapshot()).toMatchObject({
-      canvas_id: canvasId,
-    });
+    expect(useCanvasStore.getState().nodes[1]?.id).toBe("agent-story-node");
+    expect(hook.result.current.readConflictSnapshot()).toBeNull();
 
     hook.unmount();
   });

@@ -415,17 +415,16 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
     )
     raw_run_after_create = args.get("run_after_create")
     run_after_create = _bool_value(raw_run_after_create, False)
+    run_target = {
+        "node_ids": [node["client_id"] for node in normalized_nodes],
+        "scope": "selection",
+    }
+    if story_frame_targets or story_asset_targets:
+        # Story images may reuse references already connected to videos.
+        # Run only this plan's nodes, not the surrounding canvas graph.
+        run_target["direction"] = "node"
     if run_after_create:
-        run_command = {
-            "type": "run_workflow",
-            "node_ids": [node["client_id"] for node in normalized_nodes],
-            "scope": "selection",
-        }
-        if story_frame_targets or story_asset_targets:
-            # Story images may reuse references already connected to videos.
-            # Run only this plan's nodes, not the surrounding canvas graph.
-            run_command["direction"] = "node"
-        commands.append(run_command)
+        commands.append({"type": "run_workflow", **run_target})
 
     command_errors = validate_workflow_graph_commands(
         commands,
@@ -456,6 +455,7 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
         "schema_version": CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
         "workflow_instance_id": workflow_instance_id,
         "run_after_create": run_after_create,
+        "run_target": run_target,
         "commands": commands,
         "skipped_edges": skipped_edges,
         "warnings": warnings,
@@ -655,7 +655,7 @@ def _node_data(
         result.setdefault("durationMs", None)
         result.setdefault("isUploading", False)
         text = result.get("text")
-        if not audio_uses_upstream_text and (
+        if result.get("audioKind") == "music" and not audio_uses_upstream_text and (
             not isinstance(text, str) or not text.strip()
         ):
             for key in ("content", "prompt", "description"):

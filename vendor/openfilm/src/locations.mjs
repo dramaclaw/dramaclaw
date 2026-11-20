@@ -11,6 +11,7 @@
  *
  * Reads no Studio module, so the command can use it.
  */
+import { TOOL_DIR } from './film-dirs.mjs';
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statfsSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -93,7 +94,7 @@ export const libraryRoot = () => chosenFolder('projectsFolder') ?? libraryDefaul
 export function libraryProjects(root = libraryRoot()) {
   try {
     return readdirSync(root, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && !d.name.startsWith('.') && (existsSync(join(root, d.name, 'film.html')) || existsSync(join(root, d.name, '.film', 'id'))))
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.') && (existsSync(join(root, d.name, 'film.html')) || existsSync(join(root, d.name, TOOL_DIR, 'id'))))
       .map((d) => join(root, d.name));
   } catch {
     return [];

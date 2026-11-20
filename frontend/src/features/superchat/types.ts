@@ -157,6 +157,9 @@ export type ServerFrame =
       scope: ChatScope;
       history: unknown[];
       busy?: boolean;
+      turn_id?: string;
+      before?: string | null;
+      has_more?: boolean;
     }
   | {
       type: "chat.busy";
@@ -185,11 +188,30 @@ export type ServerFrame =
       error?: unknown;
     }
   | {
+      type: "chat.item";
+      scope?: ChatScope;
+      turn_id: string;
+      message_id: string;
+      item_id: string;
+      card: unknown;
+    }
+  | {
+      type: "chat.item.delta";
+      scope?: ChatScope;
+      turn_id: string;
+      message_id: string;
+      item_id: string;
+      kind: "text" | "reasoning";
+      offset: number;
+      text: string;
+    }
+  | {
       type: "assistant.delta";
       scope?: ChatScope;
-      text?: string;
       turn_id?: string;
-      accumulated?: boolean;
+      /** Keep this many UTF-16 units of the reply received so far, then append `text`. */
+      offset: number;
+      text: string;
     }
   | {
       type: "assistant.message";
@@ -216,15 +238,6 @@ export type ServerFrame =
       scope?: ChatScope;
       turn_id?: string;
       usage?: Record<string, unknown>;
-    }
-  | {
-      type: "agent.permission.requested";
-      scope?: ChatScope;
-      turn_id?: string;
-      request_id?: string | number;
-      text?: string;
-      options?: AgentPermissionOption[];
-      tool_call?: unknown;
     }
   | {
       type: "agent.tool.started" | "agent.tool.updated";
@@ -364,7 +377,8 @@ export type ChatMessagePart =
         | "tool_status"
         | "agent_plan"
         | "agent_thought"
-        | "agent_usage";
+        | "agent_usage"
+        | "context_compaction";
       event: unknown;
       seq?: number;
     };
@@ -393,37 +407,6 @@ export type ChatMessage = {
   uiEvents?: unknown[];
   timestamp: number;
   raw?: unknown;
-};
-
-export type ApprovalRequest = {
-  id: string;
-  kind: "exec" | "plugin" | "agent";
-  title: string;
-  command?: string;
-  description?: string;
-  cwd?: string | null;
-  host?: string | null;
-  security?: string | null;
-  agentId?: string | null;
-  sessionKey?: string | null;
-  expiresAtMs?: number;
-  requestId?: string | number;
-  turnId?: string;
-  scope?: ChatScope;
-  options?: AgentPermissionOption[];
-};
-
-export type ApprovalDecision =
-  | "allow-once"
-  | "allow-always"
-  | "deny"
-  | { optionId: string };
-
-export type AgentPermissionOption = {
-  optionId?: string;
-  option_id?: string;
-  kind?: string;
-  name?: string;
 };
 
 export type SuperChatSettings = {

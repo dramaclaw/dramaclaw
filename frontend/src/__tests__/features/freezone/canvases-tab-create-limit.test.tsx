@@ -19,6 +19,9 @@ const CANVASES_ZH: Record<string, string> = {
   "freezone.canvases.createPlaceholder": "新画布名称",
   "freezone.canvases.create": "创建",
   "freezone.canvases.createBusy": "创建中",
+  "freezone.canvases.createDuplicate": "已存在名为「{{name}}」的画布",
+  "freezone.canvases.createFailed": "创建失败：{{message}}",
+  "freezone.canvases.createNameRequired": "请输入画布名称",
   "freezone.canvases.switcher": "切换画布",
 };
 
@@ -35,12 +38,21 @@ vi.mock("react-i18next", () => ({
 }));
 
 const listFreezoneCanvases = vi.fn();
-const createBlankFreezoneCanvas = vi.fn();
+const createFreezoneCanvas = vi.fn();
 
 vi.mock("@/api/canvas", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/canvas")>()),
   listFreezoneCanvases: (...args: unknown[]) => listFreezoneCanvases(...args),
-  createBlankFreezoneCanvas: (...args: unknown[]) => createBlankFreezoneCanvas(...args),
+  createFreezoneCanvas: (...args: unknown[]) => createFreezoneCanvas(...args),
+}));
+
+// No request in this suite may reach the network.
+vi.mock("@/api/client", () => ({ apiCall: vi.fn(), apiCallEnvelope: vi.fn() }));
+
+const writeUrl = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/url-params", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/url-params")>()),
+  writeUrl: (...args: unknown[]) => writeUrl(...args),
 }));
 
 type NoticeOptions = { title?: string; description: string };
@@ -71,7 +83,7 @@ function myCanvas(index: number): FreezoneCanvasSummary {
       display_name: `我的画布 ${index}`,
       creator_username: "admin",
     },
-  } as FreezoneCanvasSummary;
+  };
 }
 
 async function openCanvasMenu() {
@@ -80,9 +92,22 @@ async function openCanvasMenu() {
   return user;
 }
 
+async function submitCanvasName(name = "Story lab") {
+  render(
+    <CanvasesTab project="demo" currentCanvasId="canvas_mine_0" hasPresetLabel={false} />,
+    { wrapper },
+  );
+  const user = await openCanvasMenu();
+  await user.click(await screen.findByText("新建项目画布"));
+  await user.type(await screen.findByPlaceholderText("新画布名称"), name);
+  await user.click(screen.getByRole("button", { name: "创建" }));
+}
+
 describe("CanvasesTab canvas quota", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listFreezoneCanvases.mockReset();
+    createFreezoneCanvas.mockReset();
     useAuthStore.setState({ username: "admin", role: "admin" });
   });
 
@@ -140,8 +165,8 @@ describe("CanvasesTab canvas quota", () => {
   });
 
   it("refuses to create while the canvas list is still loading", async () => {
-    // 列表没回来之前手上是空数组。按它放行，用户就能在这个窗口里多建一张——
-    // 后端不数个数，多出来的那张是真的。
+    // 列表没回来之前手上是空数组。按它放行，本地预检就形同虚设；配额和重名
+    // 由服务端强制，这里等列表回来，是为了在发请求之前就能把上限讲清楚。
     listFreezoneCanvases.mockReturnValue(new Promise(() => {}));
 
     render(
@@ -153,7 +178,7 @@ describe("CanvasesTab canvas quota", () => {
     await user.click(await screen.findByText("新建项目画布"));
 
     expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
-    expect(createBlankFreezoneCanvas).not.toHaveBeenCalled();
+    expect(createFreezoneCanvas).not.toHaveBeenCalled();
     expect(alertDialog).toHaveBeenCalledTimes(1);
     expect(alertDialog.mock.calls[0][0]).toMatchObject({
       title: "还确认不了画布数量",
@@ -162,8 +187,7 @@ describe("CanvasesTab canvas quota", () => {
   });
 
   it("refuses to create before the username has been restored", async () => {
-    // 身份没恢复时数出来的是匿名桶，既拦不住真作者，也不能当成还有余量；
-    // 真放过去，这张画布会带着 creatorUsername: null 落库，谁的配额都不算。
+    // 身份没恢复时数出来的是匿名桶，既拦不住真作者，也不能当成还有余量。
     useAuthStore.setState({ username: null, role: null });
     listFreezoneCanvases.mockResolvedValue([myCanvas(0)]);
 
@@ -176,21 +200,23 @@ describe("CanvasesTab canvas quota", () => {
     await user.click(await screen.findByText("新建项目画布"));
 
     expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
-    expect(createBlankFreezoneCanvas).not.toHaveBeenCalled();
+    expect(createFreezoneCanvas).not.toHaveBeenCalled();
     expect(alertDialog).toHaveBeenCalledTimes(1);
     expect(alertDialog.mock.calls[0][0]).toMatchObject({ title: "还确认不了画布数量" });
   });
 
   it("stops trusting the old count when the post-create refresh fails", async () => {
     // 建到第 25 张之后列表刷新失败：React Query 会把上一份 24 张的数据留着，
-    // refetch() 本身也不抛。照着这份旧数据算，第 26 张就能建出来——后端不数
-    // 个数，多出来的那张是真的。刷不动的时候只能当成「不知道」。
+    // refetch() 本身也不抛。照着这份旧数据算，本地预检会放行第 26 张；刷不动的
+    // 时候只能当成「不知道」（服务端仍会按配额拒绝）。
     const below = Array.from(
       { length: MAX_USER_CREATED_CANVASES_PER_PROJECT - 1 },
       (_unused, i) => myCanvas(i),
     );
     listFreezoneCanvases.mockResolvedValueOnce(below).mockRejectedValue(new Error("boom"));
-    createBlankFreezoneCanvas.mockResolvedValue(undefined);
+    createFreezoneCanvas.mockResolvedValue({
+      status: "created", canvas_id: "canvas_new_25", display_name: "第二十五张", revision: 1,
+    });
 
     render(
       <CanvasesTab project="demo" currentCanvasId="canvas_mine_0" hasPresetLabel={false} />,
@@ -202,7 +228,7 @@ describe("CanvasesTab canvas quota", () => {
     await user.type(await screen.findByPlaceholderText("新画布名称"), "第二十五张");
     await user.click(screen.getByRole("button", { name: "创建" }));
 
-    await waitFor(() => expect(createBlankFreezoneCanvas).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(createFreezoneCanvas).toHaveBeenCalledTimes(1));
     // 刷新失败，手上还是那份 24 张的旧列表。
     await waitFor(() => expect(listFreezoneCanvases.mock.calls.length).toBeGreaterThan(1));
 
@@ -211,7 +237,7 @@ describe("CanvasesTab canvas quota", () => {
     await user2.click(await screen.findByText("新建项目画布"));
 
     expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
-    expect(createBlankFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(createFreezoneCanvas).toHaveBeenCalledTimes(1);
     expect(alertDialog).toHaveBeenCalledTimes(1);
     expect(alertDialog.mock.calls[0][0]).toMatchObject({ title: "还确认不了画布数量" });
   });
@@ -233,5 +259,84 @@ describe("CanvasesTab canvas quota", () => {
 
     expect(alertDialog).not.toHaveBeenCalled();
     expect(await screen.findByPlaceholderText("新画布名称")).toBeTruthy();
+  });
+
+  it("creates through the server route and opens the canvas id the server returned", async () => {
+    listFreezoneCanvases.mockResolvedValue(Array.from({ length: 3 }, (_, i) => myCanvas(i)));
+    createFreezoneCanvas.mockResolvedValue({
+      status: "created", canvas_id: "canvas_from_server", display_name: "Story lab", revision: 1,
+    });
+
+    await submitCanvasName("  Story lab  ");
+
+    await waitFor(() => expect(createFreezoneCanvas).toHaveBeenCalledTimes(1));
+    expect(createFreezoneCanvas).toHaveBeenCalledWith("demo", {
+      name: "Story lab", request_id: expect.any(String), locale: "zh",
+    });
+    await waitFor(() => expect(writeUrl).toHaveBeenCalledWith({ canvas: "canvas_from_server" }));
+    expect(listFreezoneCanvases).toHaveBeenCalledTimes(2);
+    expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
+  });
+
+  it("treats a replayed request as success", async () => {
+    listFreezoneCanvases.mockResolvedValue(Array.from({ length: 3 }, (_, i) => myCanvas(i)));
+    createFreezoneCanvas.mockResolvedValue({
+      status: "exists", canvas_id: "canvas_replayed", display_name: "Story lab", revision: 1,
+    });
+
+    await submitCanvasName();
+
+    await waitFor(() => expect(writeUrl).toHaveBeenCalledWith({ canvas: "canvas_replayed" }));
+    expect(createFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(listFreezoneCanvases).toHaveBeenCalledTimes(2);
+    expect(screen.queryByPlaceholderText("新画布名称")).toBeNull();
+  });
+
+  it("shows the duplicate message when the server rejects the name", async () => {
+    listFreezoneCanvases.mockResolvedValue(Array.from({ length: 3 }, (_, i) => myCanvas(i)));
+    createFreezoneCanvas.mockResolvedValue({
+      status: "rejected", canvas_id: null, display_name: null, revision: null,
+      rejection: { code: "duplicate_name", name: "Story lab", existing_canvas_id: "canvas_other" },
+    });
+
+    await submitCanvasName();
+
+    expect(await screen.findByText("已存在名为「Story lab」的画布")).toBeTruthy();
+    expect(createFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(writeUrl).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("新画布名称")).toHaveValue("Story lab");
+    // 本地预检放行而服务端拒绝，说明手上的列表旧了：刷新一次。
+    await waitFor(() => expect(listFreezoneCanvases).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows the limit dialog when the server reports the quota is reached", async () => {
+    listFreezoneCanvases.mockResolvedValue(Array.from({ length: 3 }, (_, i) => myCanvas(i)));
+    createFreezoneCanvas.mockResolvedValue({
+      status: "rejected", canvas_id: null, display_name: null, revision: null,
+      rejection: { code: "quota_reached", limit: 25 },
+    });
+
+    await submitCanvasName();
+
+    await waitFor(() => expect(alertDialog).toHaveBeenCalledWith({
+      title: "画布已达上限",
+      description: "每人在一个项目里最多创建 25 张画布，删掉一些再新建",
+    }));
+    expect(createFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(writeUrl).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("新画布名称")).toHaveValue("Story lab");
+    await waitFor(() => expect(listFreezoneCanvases).toHaveBeenCalledTimes(2));
+  });
+
+  it("reports a failed request", async () => {
+    listFreezoneCanvases.mockResolvedValue(Array.from({ length: 3 }, (_, i) => myCanvas(i)));
+    createFreezoneCanvas.mockRejectedValue(new Error("canvas core unavailable"));
+
+    await submitCanvasName();
+
+    expect(await screen.findByText("创建失败：canvas core unavailable")).toBeTruthy();
+    expect(createFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(writeUrl).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("新画布名称")).toHaveValue("Story lab");
   });
 });

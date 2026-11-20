@@ -1,3 +1,4 @@
+import { createBrowserCanvasContextPorts } from "@/features/freezone/browserCanvasContextPorts";
 import { attachCompletedStoryAsset, attachCompletedStoryFrame, ensureVideoContinuity, syncStoryVideoReferencePrompt } from "@/features/canvas/application/videoContinuity";
 import { getOrCaptureVideoFrame } from "@/features/canvas/application/videoCaptureFrame";
 import * as videoReferenceEnvelope from "@/features/canvas/application/videoReferenceEnvelope";
@@ -15,6 +16,7 @@ import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import { subscribeNodeAction } from "@/features/canvas/application/nodeActionResult";
 import { buildCanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
+import { extractCanvasChatCommandEnvelopes } from "@/features/freezone/canvasCommandEnvelope";
 import {
   applyCanvasChatCommands,
   applyCanvasChatCommandsAsync,
@@ -25,7 +27,6 @@ import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
   type CanvasChatCommandEnvelope,
   emitCanvasCommandApproval,
-  extractCanvasChatCommandEnvelopes,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
   subscribeCanvasCommandApprovals,
   waitForImmediateCanvasCommandResult,
@@ -890,8 +891,7 @@ describe("canvas chat commands", () => {
       displayName: "Text label",
     });
     expect(text?.data).not.toHaveProperty("prompt");
-    expect(audio?.data).toMatchObject({ text: "new audio" });
-    expect(audio?.data).not.toHaveProperty("prompt");
+    expect(audio?.data).toMatchObject({ text: "old audio", prompt: "new audio" });
     expect(image?.data).toMatchObject({ prompt: "new image prompt" });
     expect(image?.data).not.toHaveProperty("content");
     expect(video?.data).toMatchObject({ prompt: "new video prompt" });
@@ -3356,25 +3356,7 @@ describe("canvas chat commands", () => {
 
   it("builds compact mainline projection asset candidates only when requested", async () => {
     const responses = await buildCanvasContextRequestResponses({
-      project: "project-1",
-      canvasId: "canvas-a",
-      nodes: [],
-      edges: [],
-      ontologyContext: null,
-      envelopes: [
-        {
-          schema_version: "canvas_context_request.v1",
-          requests: [
-            {
-              type: "mainline_projection_assets",
-              asset_kinds: ["prop", "identity"],
-              query: "耳机",
-              limit: 5,
-            },
-          ],
-        },
-      ],
-      loadMainlineProjectionAssets: async () => [
+      ports: createBrowserCanvasContextPorts("project-1", async () => [
         {
           id: "prop-headphone",
           tab: "props",
@@ -3395,6 +3377,24 @@ describe("canvas chat commands", () => {
           url: "/static/meng.png",
           exists: true,
           meta: { character: "孟遥", identity_id: "孟遥_青年时期" },
+        },
+      ]),
+      project: "project-1",
+      canvasId: "canvas-a",
+      nodes: [],
+      edges: [],
+      ontologyContext: null,
+      envelopes: [
+        {
+          schema_version: "canvas_context_request.v1",
+          requests: [
+            {
+              type: "mainline_projection_assets",
+              asset_kinds: ["prop", "identity"],
+              query: "耳机",
+              limit: 5,
+            },
+          ],
         },
       ],
     });
@@ -3427,6 +3427,7 @@ describe("canvas chat commands", () => {
 
   it("includes character projection candidates from current canvas metadata references", async () => {
     const responses = await buildCanvasContextRequestResponses({
+      ports: createBrowserCanvasContextPorts("project-1", async () => []),
       project: "project-1",
       canvasId: "canvas-a",
       nodes: [],
@@ -3455,7 +3456,6 @@ describe("canvas chat commands", () => {
           },
         ],
       },
-      loadMainlineProjectionAssets: async () => [],
     });
 
     expect(responses).toEqual([
@@ -3486,6 +3486,20 @@ describe("canvas chat commands", () => {
 
   it("includes character projection candidates even when the character has no portrait image", async () => {
     const responses = await buildCanvasContextRequestResponses({
+      ports: createBrowserCanvasContextPorts("project-1", async () => [
+        {
+          id: "character-chenmo",
+          tab: "characters",
+          kind: "character",
+          role: "character_profile",
+          label: "陈默",
+          sublabel: "主角",
+          url: null,
+          exists: true,
+          media_type: "text",
+          meta: { character: "陈默" },
+        },
+      ]),
       project: "project-1",
       canvasId: "canvas-a",
       nodes: [],
@@ -3500,20 +3514,6 @@ describe("canvas chat commands", () => {
               asset_kinds: ["character"],
             },
           ],
-        },
-      ],
-      loadMainlineProjectionAssets: async () => [
-        {
-          id: "character-chenmo",
-          tab: "characters",
-          kind: "character",
-          role: "character_profile",
-          label: "陈默",
-          sublabel: "主角",
-          url: null,
-          exists: true,
-          media_type: "text",
-          meta: { character: "陈默" },
         },
       ],
     });
@@ -3582,6 +3582,7 @@ describe("canvas chat commands", () => {
       );
 
     const responses = await buildCanvasContextRequestResponses({
+      ports: createBrowserCanvasContextPorts("project-1", async () => []),
       project: "project-1",
       canvasId: "canvas-a",
       nodes,
@@ -3598,7 +3599,6 @@ describe("canvas chat commands", () => {
           ],
         },
       ],
-      loadMainlineProjectionAssets: async () => [],
     });
 
     expect(responses).toEqual([
@@ -4215,6 +4215,7 @@ describe("canvas chat commands", () => {
       },
     ]);
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: [node],
@@ -4537,6 +4538,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes,
@@ -4631,6 +4633,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -4665,6 +4668,7 @@ describe("canvas chat commands", () => {
       { imageUrl: "/static/project/red-cup.png", prompt: "红色马克杯" },
     );
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -4711,6 +4715,7 @@ describe("canvas chat commands", () => {
       })),
     }]);
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes,
@@ -4782,6 +4787,7 @@ describe("canvas chat commands", () => {
       { type: "node_action_catalog" as const, node_id: htmlId, action: "read_source" },
     ];
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -4852,6 +4858,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -4932,6 +4939,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -5015,6 +5023,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -5081,6 +5090,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "default",
       nodes: [],
@@ -5104,6 +5114,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: personalCanvasIdForUsername("admin"),
       nodes: [],
@@ -5125,6 +5136,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: [],
@@ -5210,6 +5222,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -5280,6 +5293,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes,
@@ -5368,6 +5382,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -5399,6 +5414,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,
@@ -5434,6 +5450,7 @@ describe("canvas chat commands", () => {
     ]);
 
     const response = await buildCanvasContextRequestResponse({
+      ports: createBrowserCanvasContextPorts("project-a"),
       project: "project-a",
       canvasId: "canvas-a",
       nodes: useCanvasStore.getState().nodes,

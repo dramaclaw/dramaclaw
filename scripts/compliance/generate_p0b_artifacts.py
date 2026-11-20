@@ -57,7 +57,7 @@ THIRD_PARTY_PATH_OVERRIDES: tuple[tuple[str, str, str, str], ...] = (
         "vendor/openfilm/",
         "MIT",
         "2026 OpenFilm contributors",
-        "vendored OpenFilm v0.2.4 (upstream 53156ac), vendor/openfilm/LICENSE",
+        "vendored OpenFilm v0.2.7 (upstream b7673b5), vendor/openfilm/LICENSE",
     ),
     (
         "LICENSES/Apache-2.0.txt",
@@ -697,7 +697,7 @@ def write_notice(packages: list[PackageLicense]) -> None:
             "- @playcanvas/splat-transform ^2.0.3: MIT; optional world asset conversion tool",
             "- ffmpeg/ffprobe: external system executables; license depends on the user's system build",
             "- Ladybug JSON extension 0.16.0 (links yyjson): MIT; unmodified upstream libraries, notices in src/novelvideo/assets/ladybug-json",
-            "- OpenFilm Studio v0.2.4 (vendor/openfilm): MIT; bundled video editor runtime",
+            "- OpenFilm Studio v0.2.7 (vendor/openfilm): MIT; bundled video editor runtime",
             "- playwright-core 1.61.1: Apache-2.0; drives the editor's headless browser",
             "- Inter, Noto CJK: SIL OFL 1.1; editor and container fonts",
             "- React, React DOM: MIT; editor bundle",

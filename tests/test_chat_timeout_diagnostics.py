@@ -20,8 +20,6 @@ from novelvideo.chat.store import ChatScope
         ("first-progress", 300625, False),
         ("first-progress", 300625, True),
         ("idle", 301875, False),
-        ("total", 1800625, False),
-        ("user-input", 1800625, False),
     ],
 )
 async def test_timeout_elapsed_reaches_public_terminal_event(
@@ -51,7 +49,7 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
             ),
         )
     ]
-    if phase in {"idle", "total"}:
+    if phase == "idle":
         notifications.append(
             Notification(
                 method="item/agentMessage/delta",
@@ -61,27 +59,6 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
                         "turnId": "turn-timeout",
                         "itemId": "message-timeout",
                         "delta": "working",
-                    }
-                ),
-            )
-        )
-    elif phase == "user-input":
-        notifications.append(
-            Notification(
-                method="item/started",
-                payload=v2.ItemStartedNotification.model_validate(
-                    {
-                        "threadId": "thread-timeout",
-                        "turnId": "turn-timeout",
-                        "startedAtMs": 1,
-                        "item": {
-                            "type": "mcpToolCall",
-                            "id": "call-confirm",
-                            "server": "dramaclaw",
-                            "tool": "freezone_request_user_clarification",
-                            "arguments": {},
-                            "status": "inProgress",
-                        },
                     }
                 ),
             )
@@ -113,7 +90,10 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
     )
     monkeypatch.setattr(backend_sdk, "_start_codex_turn", lambda *a, **kw: FakeTurn())
     reads = 0
-    event_count = 2 + len(notifications)  # thread_started + egress_submitted
+    event_count = 2 + sum(  # thread_started + egress_submitted + notification events
+        2 if notification.method in {"item/started", "item/agentMessage/delta"} else 1
+        for notification in notifications
+    )
 
     async def controlled_wait_for(awaitable, *, timeout):
         nonlocal reads
@@ -187,6 +167,7 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
 
     async def fake_context(*args):
         return SimpleNamespace(
+            project_name="project-local",
             output_dir=tmp_path / "out",
             state_dir=tmp_path / "state",
             requester_user_id="user-local",
@@ -222,7 +203,6 @@ async def test_timeout_elapsed_reaches_public_terminal_event(
     monkeypatch.setattr(routes.chat_service, "stream_assistant_reply", fake_stream)
     for name in (
         "_chat_heartbeat",
-        "_interrupt_agent_on_disconnect",
         "_receive_bridge_results_during_turn",
         "_watch_pending_canvas_commands",
         "_watch_pending_canvas_context_requests",

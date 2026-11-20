@@ -6,9 +6,13 @@ from __future__ import annotations
 
 import httpx
 
+from novelvideo.shared.failure_signals import CONFIGURATION
+
 
 class MediaRelayConfigError(RuntimeError):
     """Raised when the media relay is not configured for URL input."""
+
+    failure_kind = CONFIGURATION
 
 
 class MediaStorageUnavailable(MediaRelayConfigError):

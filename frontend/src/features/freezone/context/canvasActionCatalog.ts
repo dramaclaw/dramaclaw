@@ -1,3 +1,4 @@
+import type { NodeDataDefaults } from "@/features/canvas/domain/nodeRegistry";
 import type { CanvasEdge, CanvasNode, CanvasNodeType } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import {
@@ -301,6 +302,7 @@ export const BASE_CANVAS_ACTION_CAPABILITIES: CanvasActionCapability[] = [
         audioKind: "speech | music",
         speechMode: "clone（仅自定义声线；未选择时跳过）", // i18n-exempt -- agent schema description
         text: "string",
+        prompt: "string",
         emotionPrompt: "string",
         musicLengthMs: "number",
         forceInstrumental: "boolean",
@@ -618,8 +620,8 @@ export const BASE_CANVAS_ACTION_CAPABILITIES: CanvasActionCapability[] = [
   }),
 ];
 
-export function buildCanvasActionCatalog(nodes: CanvasNode[], edges: CanvasEdge[] = []): CanvasActionCatalog {
-  const context = { nodes, edges };
+export function buildCanvasActionCatalog(nodes: CanvasNode[], edges: CanvasEdge[] = [], nodeDataDefaults?: NodeDataDefaults): CanvasActionCatalog {
+  const context = { nodes, edges, nodeDataDefaults };
   const nodeActionCatalogs = nodes.map((node) => buildCanvasNodeActionCatalog(node, context));
   const frontendCommands = nodes.flatMap((node) =>
     buildCanvasNodeActionCatalog(node, context).actions.map((entry) => commandCapability(entry, node)),

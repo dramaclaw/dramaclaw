@@ -15,10 +15,12 @@ import {
   UPSTREAM_SPAWN_WHITELIST,
 } from "@/features/canvas/domain/nodeRegistry";
 
+const noRememberedModel = { lastVideoModel: () => null };
+
 describe("canvas node registry", () => {
   it("keeps ordinary audio nodes on the stable reference-voice default", () => {
     const definition = canvasNodeDefinitions[CANVAS_NODE_TYPES.audio];
-    const data = definition.createDefaultData() as Record<string, unknown>;
+    const data = definition.createDefaultData(noRememberedModel) as Record<string, unknown>;
 
     expect(data).not.toHaveProperty("speechMode");
     expect(data).not.toHaveProperty("presetModel");
@@ -27,7 +29,7 @@ describe("canvas node registry", () => {
 
   it("creates standalone shot context nodes from the menu with local schema data", () => {
     const definition = canvasNodeDefinitions[CANVAS_NODE_TYPES.beatContext];
-    const data = definition.createDefaultData() as Record<string, unknown>;
+    const data = definition.createDefaultData(noRememberedModel) as Record<string, unknown>;
 
     expect(getMenuNodeDefinitions().map((item) => item.type)).toContain(
       CANVAS_NODE_TYPES.beatContext,

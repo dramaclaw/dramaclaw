@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Literal
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.audio_request_usage import (
     record_audio_generation_attempt,
     update_audio_generation_attempt,
@@ -594,10 +595,16 @@ async def run_indextts2_beat_audio_generation(
                     error_message=item_result.error or "IndexTTS2 generation failed",
                 )
                 if is_insufficient_credits_error(message=item_result.error or ""):
-                    raise RuntimeError(
-                        item_result.error or "IndexTTS2 generation failed"
+                    raise with_upstream_status(
+                        RuntimeError(
+                            item_result.error or "IndexTTS2 generation failed"
+                        ),
+                        item_result,
                     )
-                raise RuntimeError(item_result.error or "IndexTTS2 generation failed")
+                raise with_upstream_status(
+                    RuntimeError(item_result.error or "IndexTTS2 generation failed"),
+                    item_result,
+                )
 
             result.generated += 1
             result.generated_beats.append(beat_num)

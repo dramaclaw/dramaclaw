@@ -7,10 +7,12 @@ the same deterministic plans without duplicating the protected write boundary.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -19,26 +21,42 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import best_match
 
+from novelvideo.chat import agent_key_session
+from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
+from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
+from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
 from novelvideo.freezone.agent_workflows.catalog import (
     compile_workflow_intent,
     get_workflow_skill,
     validate_agent_workflow_plan,
+    workflow_catalog_items_scope,
 )
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.agent_workflows.registry import (
+    CatalogKind,
+    find_catalog_item,
     get_catalog_item,
     search_catalog,
+    search_catalog_items,
 )
 from novelvideo.freezone.workflow_schema import (
     normalize_workflow_tool_arguments,
     workflow_intent_json_schema,
     workflow_plan_json_schema,
-    workflow_plan_schema_diagnostics,
 )
 
 SERVER = Server("dramaclaw-workflows", version="1.0.0")
 logger = logging.getLogger("novelvideo.chat.workflow_mcp")
+
+UNSUPPORTED_RESOURCE_MESSAGE = (
+    "unsupported workflow resource URI; not retryable on this server. This server reads only "
+    "dramaclaw-workflow://skills/{skill_id}, dramaclaw-workflow://recipes/{recipe_id} and "
+    "dramaclaw-workflow://skills/{skill_id}/references/{reference}. Read file:// Agent Skill "
+    "files with the server and uri from the Skill locator (dramaclaw in the DramaClaw Codex "
+    "runtime)."
+)
 
 # References are shared host guidance, not catalog IDs.  Keep the resolver
 # inside the repository and never expose/accept arbitrary filesystem paths.
@@ -70,6 +88,9 @@ def _output_schema(
         "next_action": {"type": ["string", "null"]},
         "agent_instruction": {"type": ["string", "null"]},
         "errors": {"type": "array"},
+        "path": {"type": "string"},
+        "retryable": {"type": "boolean"},
+        "example": {"type": "object"},
         "available_skill_ids": {"type": "array", "items": {"type": "string"}},
         "skill_id": {"type": "string"},
         "reference": {"type": "string"},
@@ -152,14 +173,74 @@ _WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             "run_after_create": {"type": "boolean"},
             "skipped_edges": {"type": "array"},
             "warnings": {"type": "array"},
+            "canvas_changed": {"const": False},
+            "draft_created": {"const": False},
+            "run_started": {"const": False},
+            "next_tool": {"const": "freezone_prepare_workflow"},
+            "next_action": {"type": "string", "minLength": 1},
+            "agent_instruction": {"type": "string", "minLength": 1},
         },
-        ["schema_version", "workflow_instance_id", "commands"],
+        [
+            "schema_version", "workflow_instance_id", "commands",
+            "canvas_changed", "draft_created", "run_started",
+            "next_tool", "next_action", "agent_instruction",
+        ],
     ),
 }
 
 
 def _username() -> str:
     return str(os.environ.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
+
+
+def _agent_key_mode() -> bool:
+    return agent_key_session.agent_key_mode()
+
+
+def _server_catalog() -> dict[str, list[dict[str, Any]]] | None:
+    api_base = os.environ.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
+    if not api_base:
+        return None
+
+    def decode_success(status: int, body: str) -> dict[str, Any]:
+        obj = json.loads(body)
+        return {"status_code": status, **obj} if isinstance(obj, dict) else {"ok": False}
+
+    snapshot = {}
+    for kind in ("skills", "recipes"):
+        response = agent_key_session.protect(lambda: agent_key_session.request(
+            api_base=api_base,
+            api_path=f"/api/v1/freezone/agent-config/{kind}",
+            method="GET",
+            query_string="",
+            payload=None,
+            headers={"Accept": "application/json", "User-Agent": "dramaclaw-workflows/1.0.0"},
+            timeout=30,
+            opener=urllib.request.urlopen,
+            decode_success=decode_success,
+            shape_http_error=lambda code, body, reason: {"ok": False, "status_code": code},
+        ))
+        if response.get("ok") is not True or not isinstance(response.get("data"), list):
+            return None
+        snapshot[kind] = response["data"]
+    return snapshot
+
+
+def _search(
+    snapshot: dict[str, list[dict[str, Any]]] | None,
+    *, kind: CatalogKind, query: str, limit: int,
+) -> list[dict[str, Any]]:
+    if snapshot is not None:
+        return search_catalog_items(items=snapshot[kind], kind=kind, query=query, limit=limit)
+    return search_catalog(username=_username(), kind=kind, query=query, limit=limit)
+
+
+def _recipe(
+    snapshot: dict[str, list[dict[str, Any]]] | None, item_id: str,
+) -> dict[str, Any] | None:
+    if snapshot is not None:
+        return find_catalog_item(snapshot["recipes"], item_id)
+    return get_catalog_item(username=_username(), kind="recipes", item_id=item_id)
 
 
 def _text(payload: dict[str, Any]) -> list[types.TextContent]:
@@ -285,7 +366,10 @@ async def list_resource_templates() -> list[types.ResourceTemplate]:
         types.ResourceTemplate(
             name="DramaClaw Workflow Skill",
             uriTemplate="dramaclaw-workflow://skills/{skill_id}",
-            description="One portable Workflow Skill planning package",
+            description=(
+                "One Workflow catalog Skill selected by workflow_catalog_search; "
+                "not the dramaclaw-workflows Agent Skill file"
+            ),
             mimeType="application/json",
         ),
         types.ResourceTemplate(
@@ -309,7 +393,18 @@ async def read_resource(uri: Any) -> str:
 
     parsed = urlsplit(str(uri))
     if parsed.scheme != "dramaclaw-workflow":
-        raise ValueError("unsupported workflow resource URI")
+        raise ValueError(UNSUPPORTED_RESOURCE_MESSAGE)
+    key_mode = _agent_key_mode()
+    snapshot = _server_catalog() if key_mode else None
+    if key_mode and snapshot is None:
+        raise ValueError("workflow catalog unavailable")
+    with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
+        return _read_catalog_resource(parsed, snapshot)
+
+
+def _read_catalog_resource(
+    parsed: Any, snapshot: dict[str, list[dict[str, Any]]] | None,
+) -> str:
     kind = parsed.netloc
     item_id = unquote(parsed.path.lstrip("/"))
     if kind == "skills":
@@ -323,21 +418,16 @@ async def read_resource(uri: Any) -> str:
             if not payload.get("ok"):
                 raise ValueError("workflow skill resource not found")
     elif kind == "recipes":
-        item = get_catalog_item(
-            username=_username(),
-            kind="recipes",
-            item_id=item_id,
-        )
+        item = _recipe(snapshot, item_id)
         if item is None:
             raise ValueError("workflow recipe resource not found")
         payload = {"ok": True, "recipe": item}
     else:
-        raise ValueError("unsupported workflow resource kind")
+        raise ValueError(UNSUPPORTED_RESOURCE_MESSAGE)
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-@SERVER.list_tools()
-async def list_tools() -> list[types.Tool]:
+def _workflow_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="workflow_catalog_search",
@@ -392,7 +482,8 @@ async def list_tools() -> list[types.Tool]:
             name="workflow_skill_reference_get",
             description=(
                 "Read one allow-listed reference document for a selected Workflow Skill. "
-                "Pass only a logical filename such as custom-topology.md; never pass a filesystem path."
+                "Pass only a logical filename such as custom-topology.md; "
+                "never pass a filesystem path."
             ),
             inputSchema=_object_schema(
                 {
@@ -427,7 +518,10 @@ async def list_tools() -> list[types.Tool]:
             name="workflow_graph_compile",
             description=(
                 "Validate one freezone_workflow_plan.v1 and deterministically compile a single "
-                "canvas batch containing nodes, edges, grouping, layout, and selection. Read-only. "
+                "canvas batch containing nodes, edges, grouping, layout, and selection. "
+                "This read-only check creates no canvas nodes or drafts and runs nothing. "
+                "A successful compile must be followed by freezone_prepare_workflow "
+                "with the same plan. "
                 "For recovery, compile the same complete user workflow; never construct reduced "
                 "probe nodes or pass an empty edges array for a multi-node plan. Node ids belong "
                 "only in plan.nodes[].id and edge source/target values; do not add a top-level "
@@ -446,32 +540,50 @@ async def list_tools() -> list[types.Tool]:
     ]
 
 
+@SERVER.list_tools()
+async def list_tools() -> list[types.Tool]:
+    tools = _workflow_tools()
+    for tool in tools:
+        tool.inputSchema = schema_with_guidance(tool.inputSchema)
+    return [compact_codex_tool(tool) for tool in tools]
+
+
 @SERVER.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     args = normalize_workflow_tool_arguments(name, dict(arguments or {}))
-    tool = next((tool for tool in await list_tools() if tool.name == name), None)
+    tool = next((tool for tool in _workflow_tools() if tool.name == name), None)
     if tool is None:
         raise ValueError(f"unknown workflow tool: {name}")
     errors = list(Draft202012Validator(tool.inputSchema).iter_errors(args))
     if errors:
-        diagnostics = workflow_plan_schema_diagnostics(args, tool.inputSchema)
+        payload = workflow_argument_refusal(name, args, tool.inputSchema, best_match(errors))
         return _result(name, {
             "ok": False,
             "status": "tool_arguments_invalid",
-            "error": "; ".join(
-                f"{issue['path']}: {issue['message']}" for issue in diagnostics
-            ) if diagnostics else "; ".join(
-                f"{'.'.join(map(str, error.absolute_path)) or 'arguments'}: {error.message}"
-                for error in errors
-            ),
-            **({"errors": diagnostics} if diagnostics else {}),
+            **payload,
+            "error": payload["message"],
         })
+    key_mode = _agent_key_mode()
+    snapshot = _server_catalog() if key_mode else None
+    if key_mode and snapshot is None:
+        return _result(name, {
+            "ok": False,
+            "status": "catalog_read_failed",
+            "error": "Workflow catalog is unavailable for this agent key",
+        })
+    with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
+        return _call_catalog_tool(name, args, snapshot)
+
+
+def _call_catalog_tool(
+    name: str, args: dict[str, Any], snapshot: dict[str, list[dict[str, Any]]] | None,
+) -> types.CallToolResult:
     if name == "workflow_catalog_search":
         kind = str(args.get("kind") or "")
         if kind not in {"skills", "recipes"}:
             return _result(name, {"ok": False, "status": "invalid_catalog_kind"})
-        items = search_catalog(
-            username=_username(),
+        items = _search(
+            snapshot,
             kind=kind,  # type: ignore[arg-type]
             query=str(args.get("query") or ""),
             limit=int(args.get("limit") or 12),
@@ -483,11 +595,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         result = get_workflow_skill({**args, "compact": True})
         return _result(name, result)
     if name == "workflow_recipe_get":
-        item = get_catalog_item(
-            username=_username(),
-            kind="recipes",
-            item_id=str(args.get("recipe_id") or ""),
-        )
+        item = _recipe(snapshot, str(args.get("recipe_id") or ""))
         return _result(
             name,
             (
@@ -547,6 +655,29 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             validation.setdefault("agent_instruction", instruction)
             return _result(name, validation)
         result = build_workflow_graph_commands(args)
+        # run_target names the plan's client ids for the in-process draft runner; this
+        # read-only check creates nothing, so it is not part of the published result.
+        result.pop("run_target", None)
+        if result.get("ok") is True:
+            result.update(
+                canvas_changed=False,
+                draft_created=False,
+                run_started=False,
+                next_tool="freezone_prepare_workflow",
+                next_action=(
+                    "Call freezone_prepare_workflow with the same operation_id, this exact plan "
+                    "and run_after_create; then ask the user to confirm the draft and call "
+                    "freezone_confirm_workflow_draft."
+                ),
+                agent_instruction=(
+                    "本次仅完成只读编译检查：未创建画布节点或工作流草稿，未运行任何生成，"
+                    "不能告诉用户工作流已搭建或已开始运行。"
+                    "下一步必须立即调用 freezone_prepare_workflow，使用相同的 operation_id、"
+                    "本次编译的完整原样 plan 和预期的 run_after_create；"
+                    "用户确认返回的预览后，使用其 draft_id 和 revision 调用 "
+                    "freezone_confirm_workflow_draft。"
+                ),
+            )
         logger.info(
             "workflow_graph_compile.end elapsed_ms=%d ok=%s status=%s command_count=%s",
             int((time.monotonic() - started) * 1000),

@@ -400,6 +400,163 @@ def test_failed_action_persists_normalized_error_diagnostics(tmp_path: Path) -> 
     assert "user_error" not in retried_action
 
 
+@pytest.mark.parametrize(
+    "error,signal,category,message,retryable",
+    [
+        (
+            None, {"failure_kind": "configuration"}, "configuration",
+            "服务端配置或部署问题导致生成失败，不是节点输入的问题；"
+            "重试或修改画布都无法解决，需要管理员或部署方处理。",
+            False,
+        ),
+        *[
+            (
+                "HTTP 403: request refused", {"upstream_status": status},
+                "transient_upstream", "上游模型服务暂时不可用，系统可稍后重试。", True,
+            )
+            for status in (408, 429, 503)
+        ],
+    ],
+    ids=["configuration", "typed-408", "typed-429", "typed-503"],
+)
+def test_workflow_error_diagnostics_applies_structured_signal(
+    error, signal, category, message, retryable,
+):
+    diagnostics = workflow_error_diagnostics(error, signal=signal)
+    assert diagnostics["error_category"] == category
+    assert diagnostics["user_error"] == message
+    assert diagnostics["retryable"] is retryable
+
+
+@pytest.mark.parametrize(
+    "error,signal,category,message",
+    [
+        (
+            "HTTP 403: this parameter value is restricted",
+            {"upstream_status": 403},
+            "upstream_rejected",
+            "上游服务拒绝了本次请求（HTTP 403）。",
+        ),
+        (
+            "HTTP 403: this parameter value is restricted",
+            None,
+            "authentication",
+            "模型服务认证失败，请检查渠道地址和密钥后重试。",
+        ),
+        (
+            "could not connect to database: too many clients",
+            {"failure_kind": "server_fault", "failure_exception": "OperationalError"},
+            "server_fault",
+            "服务端处理本次生成时发生内部错误；可稍后重试，持续出现请联系管理员或部署方。",
+        ),
+        (
+            "could not connect to database: too many clients",
+            None,
+            "execution",
+            "节点生成失败，原因未知。",
+        ),
+    ],
+    ids=["typed-403", "legacy-403", "server-fault", "generic"],
+)
+def test_failed_action_stores_user_diagnostics(tmp_path, error, signal, category, message):
+    action = {"node_id": "one", "action": "generate_image"}
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="default", actions=[action],
+        owner_kind="server",
+    )
+    scope = dict(project_dir=tmp_path, canvas_id="default", run_id=run["run_id"])
+    update_workflow_run(
+        **scope, owner_kind="server",
+        action_updates=[{
+            **action, "status": "failed", "error": error,
+            **({"failure_signal": signal} if signal is not None else {}),
+        }],
+    )
+
+    stored = read_workflow_run(**scope)["actions"][0]
+    assert stored["error_category"] == category
+    assert stored["user_error"] == message
+    if category == "server_fault":
+        assert "节点输入" not in stored["user_error"]
+    assert stored["retryable"] is False
+
+
+@pytest.mark.parametrize(
+    "signal,expected",
+    [
+        (
+            {"failure_kind": "other", "upstream_status": 403,
+             "failure_exception": "invalid name", "extra": "ignored"},
+            {"upstream_status": 403},
+        ),
+        (
+            {"failure_kind": "server_fault", "upstream_status": "403",
+             "failure_exception": "db.OperationalError"},
+            {"failure_kind": "server_fault", "failure_exception": "db.OperationalError"},
+        ),
+    ],
+    ids=["valid-status-only", "valid-kind-and-exception"],
+)
+def test_action_failure_signal_round_trips_and_clears(tmp_path, signal, expected):
+    action = {"node_id": "one", "action": "generate_image"}
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="default", actions=[action],
+        owner_kind="server",
+    )
+    scope = dict(project_dir=tmp_path, canvas_id="default", run_id=run["run_id"])
+    update_workflow_run(
+        **scope, owner_kind="server",
+        action_updates=[{**action, "status": "failed", "error": "failed",
+                         "failure_signal": signal}],
+    )
+    assert read_workflow_run(**scope)["actions"][0]["failure_signal"] == expected
+
+    update_workflow_run(
+        **scope, owner_kind="server", action_updates=[{**action, "status": "running"}],
+    )
+    assert "failure_signal" not in read_workflow_run(**scope)["actions"][0]
+
+
+def test_browser_callback_cannot_supply_a_failure_signal(tmp_path):
+    action = {"node_id": "one", "action": "generate_image"}
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="default", actions=[action],
+    )
+    updated = update_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"],
+        owner_kind="browser_legacy",
+        action_updates=[{
+            **action, "status": "failed", "error": "request failed",
+            "failure_signal": {"failure_kind": "server_fault"},
+        }],
+    )
+    (stored,) = updated["actions"]
+    assert stored["error_category"] == "execution"
+    assert "failure_signal" not in stored
+
+
+def test_action_failure_signal_migrates_existing_database(tmp_path):
+    from novelvideo.freezone.workflow_runs import WORKFLOW_RUN_SCHEMA_SQL
+
+    db_path = workflow_runs_db_path(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(WORKFLOW_RUN_SCHEMA_SQL)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_run_actions)")}
+        if "failure_signal" in columns:
+            conn.execute("ALTER TABLE workflow_run_actions DROP COLUMN failure_signal")
+
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="default",
+        actions=[{"node_id": "one", "action": "generate_image"}],
+    )
+    assert "failure_signal" not in run["actions"][0]
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1]: row[2] for row in conn.execute(
+            "PRAGMA table_info(workflow_run_actions)"
+        )}
+        assert columns.get("failure_signal") == "TEXT"
+
+
 @pytest.mark.parametrize("initial_status", ["running", "completed"])
 def test_task_reconciliation_completes_run_with_existing_artifact(
     tmp_path: Path, initial_status: str
@@ -613,7 +770,21 @@ def test_task_reconciliation_rejects_unverifiable_artifact(tmp_path: Path) -> No
     assert reconciled["actions"][0]["artifact_status"] == "unverified"
 
 
-def test_task_reconciliation_classifies_task_failure(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "task_failure,category,retryable",
+    [
+        ({"error": "HTTP 503 upstream unavailable"}, "transient_upstream", True),
+        (
+            {"error": "HTTP 403: this parameter value is restricted",
+             "metadata": {"upstream_status": 403}},
+            "upstream_rejected",
+            False,
+        ),
+    ],
+)
+def test_task_reconciliation_classifies_task_failure(
+    tmp_path: Path, task_failure, category, retryable,
+) -> None:
     run = create_workflow_run(
         project_dir=tmp_path,
         project_id="project-a",
@@ -641,7 +812,7 @@ def test_task_reconciliation_classifies_task_failure(tmp_path: Path) -> None:
             "task:audio-one": {
                 "status": "failed",
                 "result": None,
-                "error": "HTTP 503 upstream unavailable",
+                **task_failure,
             }
         },
     )
@@ -650,8 +821,11 @@ def test_task_reconciliation_classifies_task_failure(tmp_path: Path) -> None:
         project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
     )
     assert reconciled is not None
-    assert reconciled["actions"][0]["error_category"] == "transient_upstream"
-    assert reconciled["actions"][0]["retryable"] is True
+    action = reconciled["actions"][0]
+    assert action["error_category"] == category
+    assert action["retryable"] is retryable
+    if "metadata" in task_failure:
+        assert action["failure_signal"] == task_failure["metadata"]
 
 
 @pytest.mark.parametrize("terminal_status", ["completed", "failed", "interrupted"])
@@ -1184,3 +1358,488 @@ def test_workflow_run_rejects_unknown_action_update(tmp_path: Path) -> None:
                 {"node_id": "other", "action": "generate_image", "status": "completed"}
             ],
         )
+
+
+RUN_CLOCK = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _create_owned_run(project_dir, *, canvas_id="default", **kwargs):
+    return create_workflow_run(
+        project_dir=project_dir,
+        project_id="project-a",
+        canvas_id=canvas_id,
+        actions=[{"node_id": "text-1", "action": "generate_text"}],
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_run_owner_is_fixed_at_creation(tmp_path, owner_kind):
+    run = _create_owned_run(
+        tmp_path, owner_kind=owner_kind,
+        metadata={"owner_kind": "browser_legacy" if owner_kind == "server" else "server"},
+    )
+    assert run["owner_kind"] == owner_kind
+    assert run["metadata"]["owner_kind"] == owner_kind
+    assert read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )["owner_kind"] == owner_kind
+
+
+def test_run_owner_defaults_to_browser_and_legacy_rows_read_as_browser(tmp_path):
+    run = _create_owned_run(tmp_path, metadata={"owner_kind": "server"})
+    assert run["owner_kind"] == "browser_legacy"
+    assert run["metadata"]["owner_kind"] == "browser_legacy"
+    with sqlite3.connect(workflow_runs_db_path(tmp_path)) as conn:
+        conn.execute("UPDATE workflow_runs SET metadata_json = '{}' WHERE run_id = ?",
+                     (run["run_id"],))
+    legacy = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert legacy["owner_kind"] == "browser_legacy"
+    assert legacy["metadata"] == {}
+
+
+def test_run_owner_rejects_invalid_kind(tmp_path):
+    with pytest.raises(ValueError, match="owner_kind"):
+        _create_owned_run(tmp_path, owner_kind="unknown")
+
+
+@pytest.mark.parametrize("runner_id", ["", "old-runner"])
+def test_running_server_run_blocks_creation_even_without_live_lease(tmp_path, runner_id):
+    run = _create_owned_run(
+        tmp_path, owner_kind="server", runner_id=runner_id, now=RUN_CLOCK,
+        idempotency_key="server-request",
+    )
+    replay = _create_owned_run(
+        tmp_path, idempotency_key="server-request", now=RUN_CLOCK + timedelta(days=1),
+    )
+    assert replay["run_id"] == run["run_id"]
+    assert replay["owner_kind"] == "server"
+    with pytest.raises(
+        WorkflowRunLeaseConflict, match="^another workflow runner is active on this canvas$"
+    ):
+        _create_owned_run(tmp_path, now=RUN_CLOCK + timedelta(days=1))
+    persisted = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert persisted == replay
+    assert persisted["status"] == "running"
+
+
+def test_server_run_acquisition_renewal_and_repeated_takeover(tmp_path):
+    from novelvideo.freezone.workflow_runs import acquire_server_workflow_run
+
+    run = _create_owned_run(tmp_path, owner_kind="server", now=RUN_CLOCK)
+    assert run["metadata"]["takeover_count"] == 0
+    args = {"project_dir": tmp_path, "canvas_id": "default", "run_id": run["run_id"]}
+    first = acquire_server_workflow_run(**args, runner_id="one", now=RUN_CLOCK)
+    assert first["acquired"] is True
+    assert first["took_over"] is False
+    assert first["run"]["runner_id"] == "one"
+    assert first["run"]["lease_expires_at"] == "2026-01-01T00:03:00Z"
+    assert first["run"]["metadata"]["takeover_count"] == 0
+    renewed = acquire_server_workflow_run(
+        **args, runner_id="one", now=RUN_CLOCK + timedelta(seconds=60),
+    )
+    assert renewed["acquired"] is True
+    assert renewed["took_over"] is False
+    assert renewed["run"]["lease_expires_at"] == "2026-01-01T00:04:00Z"
+    with pytest.raises(WorkflowRunLeaseConflict):
+        acquire_server_workflow_run(
+            **args, runner_id="two", now=RUN_CLOCK + timedelta(seconds=239),
+        )
+    second = acquire_server_workflow_run(
+        **args, runner_id="two", now=RUN_CLOCK + timedelta(seconds=240),
+    )
+    assert second["acquired"] is True
+    assert second["took_over"] is True
+    assert second["run"]["runner_id"] == "two"
+    assert second["run"]["lease_expires_at"] == "2026-01-01T00:07:00Z"
+    assert second["run"]["metadata"]["takeover_count"] == 1
+    assert second["run"]["metadata"]["last_takeover_at"] == "2026-01-01T00:04:00Z"
+    third = acquire_server_workflow_run(
+        **args, runner_id="three", now=RUN_CLOCK + timedelta(seconds=421), lease_seconds=60,
+    )
+    assert third["acquired"] is True
+    assert third["took_over"] is True
+    assert third["run"]["runner_id"] == "three"
+    assert third["run"]["lease_expires_at"] == "2026-01-01T00:08:01Z"
+    assert third["run"]["metadata"]["takeover_count"] == 2
+    assert third["run"]["metadata"]["last_takeover_at"] == "2026-01-01T00:07:01Z"
+    assert read_workflow_run(**args) == third["run"]
+
+
+def test_server_acquisition_missing_browser_and_terminal_runs(tmp_path):
+    from novelvideo.freezone.workflow_runs import (
+        WorkflowRunOwnerConflict,
+        acquire_server_workflow_run,
+    )
+
+    args = {"project_dir": tmp_path, "canvas_id": "default", "runner_id": "one",
+            "now": RUN_CLOCK}
+    assert acquire_server_workflow_run(**args, run_id="missing") is None
+    browser = _create_owned_run(tmp_path)
+    with pytest.raises(WorkflowRunOwnerConflict):
+        acquire_server_workflow_run(**args, run_id=browser["run_id"])
+    server = create_workflow_run(
+        project_dir=tmp_path, project_id="project-a", canvas_id="terminal",
+        actions=[{"node_id": "one", "action": "save"}], owner_kind="server", now=RUN_CLOCK,
+    )
+    completed = update_workflow_run(
+        project_dir=tmp_path, canvas_id="terminal", run_id=server["run_id"],
+        owner_kind="server", status="completed", now=RUN_CLOCK,
+        action_updates=[{"node_id": "one", "action": "save", "status": "completed"}],
+    )
+    assert completed["status"] == "completed"
+    result = acquire_server_workflow_run(
+        **{**args, "canvas_id": "terminal"}, run_id=server["run_id"],
+    )
+    assert result == {"run": completed, "acquired": False, "took_over": False}
+
+
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_run_updates_reject_other_executor_except_cancellation(tmp_path, owner_kind):
+    from novelvideo.freezone.workflow_runs import WorkflowRunOwnerConflict
+
+    run = _create_owned_run(tmp_path, owner_kind=owner_kind)
+    caller = {} if owner_kind == "server" else {"owner_kind": "server"}
+    args = {"project_dir": tmp_path, "canvas_id": "default", "run_id": run["run_id"], **caller}
+    updates = [{"node_id": "text-1", "action": "generate_text", "status": "running"}]
+    with pytest.raises(
+        WorkflowRunOwnerConflict, match="^workflow run is driven by another executor$"
+    ):
+        update_workflow_run(**args, action_updates=updates)
+    with pytest.raises(WorkflowRunOwnerConflict):
+        update_workflow_run(**args, status="cancelled", action_updates=updates)
+    cancelled = update_workflow_run(**args, status="cancelled", now=RUN_CLOCK)
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["owner_kind"] == owner_kind
+    assert cancelled["metadata"]["owner_kind"] == owner_kind
+    assert cancelled["actions"][0]["status"] == "skipped"
+
+
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_matching_runner_renews_with_injected_clock(tmp_path, owner_kind):
+    run = _create_owned_run(tmp_path, owner_kind=owner_kind, runner_id="one", now=RUN_CLOCK)
+    args = {"project_dir": tmp_path, "canvas_id": "default", "run_id": run["run_id"],
+            "owner_kind": owner_kind, "runner_id": "one"}
+    renewed = update_workflow_run(**args, now=RUN_CLOCK + timedelta(seconds=60))
+    assert renewed["lease_expires_at"] == "2026-01-01T00:04:00Z"
+    assert renewed["updated_at"] == "2026-01-01T00:01:00Z"
+    with pytest.raises(WorkflowRunLeaseConflict):
+        update_workflow_run(**args, now=RUN_CLOCK + timedelta(seconds=240))
+
+
+def test_stale_cleanup_preserves_expired_server_runs(tmp_path):
+    server = _create_owned_run(
+        tmp_path, owner_kind="server", runner_id="old", now=RUN_CLOCK,
+    )
+    browser = _create_owned_run(
+        tmp_path, canvas_id="browser", runner_id="old", now=RUN_CLOCK,
+    )
+    server = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=server["run_id"]
+    )
+    future = RUN_CLOCK + timedelta(days=30)
+    assert interrupt_stale_workflow_runs(
+        project_dir=tmp_path, canvas_id="default", stale_after_seconds=60, now=future,
+    ) == []
+    assert interrupt_stale_workflow_runs(
+        project_dir=tmp_path, canvas_id="browser", stale_after_seconds=60, now=future,
+    ) == [browser["run_id"]]
+    assert read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=server["run_id"]
+    ) == server
+    assert read_workflow_run(
+        project_dir=tmp_path, canvas_id="browser", run_id=browser["run_id"]
+    )["status"] == "interrupted"
+
+
+@pytest.mark.parametrize("reconciler", ["nodes", "results", "tasks"])
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_reconcilers_only_modify_browser_runs(tmp_path, reconciler, owner_kind):
+    run = _create_owned_run(tmp_path, owner_kind=owner_kind, now=RUN_CLOCK)
+    args = {"project_dir": tmp_path, "canvas_id": "default"}
+    run = read_workflow_run(**args, run_id=run["run_id"])
+    if reconciler == "nodes":
+        changed = reconcile_workflow_runs_with_canvas_nodes(**args, existing_node_ids=set())
+        expected_status = "cancelled"
+    elif reconciler == "results":
+        changed = reconcile_workflow_runs_with_canvas_results(
+            **args, canvas_nodes=[{"id": "text-1", "data": {
+                "content": "Durable text", "workflowTextGenerated": True,
+            }}],
+        )
+        expected_status = "completed"
+    else:
+        run = update_workflow_run(
+            **args, run_id=run["run_id"], owner_kind=owner_kind, now=RUN_CLOCK,
+            action_updates=[{"node_id": "text-1", "action": "generate_text",
+                             "status": "running", "task_key": "task-one"}],
+        )
+        changed = reconcile_workflow_runs_with_tasks(
+            **args, tasks_by_key={"task-one": {"status": "failed", "error": "invalid request"}},
+        )
+        expected_status = "failed"
+    persisted = read_workflow_run(**args, run_id=run["run_id"])
+    if owner_kind == "server":
+        assert changed == []
+        assert persisted == run
+        assert persisted["status"] == "running"
+    else:
+        assert changed == [run["run_id"]]
+        assert persisted["status"] == expected_status
+
+
+def test_list_server_runs_needing_driver_filters_owner_status_and_lease(tmp_path):
+    from novelvideo.freezone.workflow_runs import list_server_workflow_runs_needing_driver
+
+    unowned = _create_owned_run(tmp_path, owner_kind="server", now=RUN_CLOCK)
+    expired = _create_owned_run(
+        tmp_path, canvas_id="expired", owner_kind="server", runner_id="old", now=RUN_CLOCK,
+    )
+    _create_owned_run(
+        tmp_path, canvas_id="live", owner_kind="server", runner_id="live",
+        now=RUN_CLOCK + timedelta(seconds=60),
+    )
+    _create_owned_run(tmp_path, canvas_id="browser", now=RUN_CLOCK)
+    terminal = _create_owned_run(
+        tmp_path, canvas_id="terminal", owner_kind="server", now=RUN_CLOCK,
+    )
+    update_workflow_run(
+        project_dir=tmp_path, canvas_id="terminal", run_id=terminal["run_id"],
+        owner_kind="server", status="cancelled", now=RUN_CLOCK,
+    )
+    listed = list_server_workflow_runs_needing_driver(
+        project_dir=tmp_path, now=RUN_CLOCK + timedelta(seconds=180),
+    )
+    assert sorted(run["canvas_id"] for run in listed) == ["default", "expired"]
+    assert {run["run_id"] for run in listed} == {unowned["run_id"], expired["run_id"]}
+    assert [run["status"] for run in listed] == ["running", "running"]
+
+
+@pytest.mark.parametrize(
+    ('owner', 'result', 'status', 'artifact'),
+    [
+        ('server', {'url': '/static/x.png'}, 'completed', 'valid'),
+        ('server', {}, 'failed', 'unverified'),
+        ('browser_legacy', {'url': '/static/x.png'}, 'running', None),
+    ],
+)
+def test_server_action_result_validation(tmp_path, owner, result, status, artifact):
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind=owner,
+        actions=[{'node_id': 'image', 'action': 'generate_image'}],
+    )
+    updated = update_workflow_run(
+        project_dir=tmp_path, canvas_id='default', run_id=run['run_id'], owner_kind=owner,
+        action_updates=[{
+            'node_id': 'image', 'action': 'generate_image', 'status': 'completed',
+            'result': result,
+        }],
+    )
+    assert updated['actions'][0]['status'] == status
+    assert updated['actions'][0].get('artifact_status') == artifact
+    if status == 'failed':
+        assert updated['actions'][0]['error'] == '任务已结束但没有可核验的持久化产物。'
+
+
+def test_server_action_can_clear_task_identity(tmp_path):
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'image', 'action': 'generate_image'}],
+    )
+    for identity in ('task-one', ''):
+        updated = update_workflow_run(
+            project_dir=tmp_path, canvas_id='default', run_id=run['run_id'], owner_kind='server',
+            action_updates=[{
+                'node_id': 'image', 'action': 'generate_image', 'status': 'running',
+                'task_key': identity, 'task_type': identity, 'job_id': identity,
+            }],
+        )
+    assert [updated['actions'][0][key] for key in ('task_key', 'task_type', 'job_id')] == [
+        None, None, None,
+    ]
+
+
+def test_mark_server_drive_generation(tmp_path):
+    from novelvideo.freezone import workflow_runs as store
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'image', 'action': 'generate_image'}], now=now,
+    )
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=now) == 1
+    assert store.read_workflow_run(**scope)['metadata'].get('drive_generation', 0) == 0
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=1) == 1
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=1) is None
+    assert store.read_workflow_run(**scope)['metadata']['drive_generation'] == 1
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=now) is None
+    later = now + timedelta(seconds=store.WORKFLOW_RUN_LEASE_SECONDS)
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=later) == 2
+    store.record_server_workflow_drive_enqueue_failed(**scope, attempt=2, error_kind='RuntimeError')
+    metadata = store.read_workflow_run(**scope)['metadata']
+    assert metadata['drive_generation'] == 1
+    assert metadata['drive_enqueue_failures'] == 1
+    assert metadata['drive_last_enqueue_error'] == 'RuntimeError'
+    later += timedelta(seconds=store.WORKFLOW_RUN_LEASE_SECONDS)
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=later) == 3
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=3) == 2
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=2) is None
+    assert store.read_workflow_run(**scope)['metadata']['drive_generation'] == 2
+    store.acquire_server_workflow_run(**scope, runner_id='driver', now=later)
+    assert store.mark_server_workflow_drive_enqueued(**scope, now=later) is None
+    store.update_workflow_run(
+        **scope, status='cancelled', now=later,
+    )
+    assert store.mark_server_workflow_drive_enqueued(
+        **scope, now=later + timedelta(seconds=store.WORKFLOW_RUN_LEASE_SECONDS),
+    ) is None
+    leased = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='leased', owner_kind='server',
+        actions=[{'node_id': 'image', 'action': 'generate_image'}], now=later,
+        runner_id='active',
+    )
+    assert store.mark_server_workflow_drive_enqueued(
+        project_dir=tmp_path, canvas_id='leased', run_id=leased['run_id'], now=later,
+    ) is None
+    browser = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='browser',
+        actions=[{'node_id': 'image', 'action': 'generate_image'}], now=now,
+    )
+    assert store.mark_server_workflow_drive_enqueued(
+        project_dir=tmp_path, canvas_id='browser', run_id=browser['run_id'], now=now,
+    ) is None
+
+
+def test_drive_attempt_migrates_existing_generation(tmp_path):
+    from novelvideo.freezone import workflow_runs as store
+
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'one', 'action': 'save'}], metadata={'drive_generation': 4},
+    )
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    assert store.mark_server_workflow_drive_enqueued(**scope) == 5
+    assert store.read_workflow_run(**scope)['metadata']['drive_generation'] == 4
+
+
+@pytest.mark.parametrize('owner_kind', ['server', 'browser_legacy'])
+def test_drive_acknowledgement_preserves_terminal_run_and_lease(tmp_path, owner_kind):
+    from novelvideo.freezone import workflow_runs as store
+
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind=owner_kind,
+        runner_id='driver', actions=[{'node_id': 'one', 'action': 'save'}],
+    )
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    before = store.update_workflow_run(**scope, status='cancelled', owner_kind=owner_kind)
+    assert store.acknowledge_server_workflow_drive(**scope, attempt=1) == (
+        1 if owner_kind == 'server' else None
+    )
+    after = store.read_workflow_run(**scope)
+    for key in before.keys() - {'metadata'}:
+        assert after[key] == before[key]
+    assert after['metadata'].get('drive_generation', 0) == (owner_kind == 'server')
+    assert store.acknowledge_server_workflow_drive(
+        **{**scope, 'run_id': 'run_missing'}, attempt=1,
+    ) is None
+
+
+def test_drive_enqueue_failure_ignores_stale_and_acknowledged_attempts(tmp_path):
+    from novelvideo.freezone import workflow_runs as store
+
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id='project', canvas_id='default', owner_kind='server',
+        actions=[{'node_id': 'one', 'action': 'save'}],
+        metadata={'drive_attempt': 2, 'drive_acknowledged_attempt': 1, 'drive_generation': 1},
+    )
+    scope = dict(project_dir=tmp_path, canvas_id='default', run_id=run['run_id'])
+    before = store.read_workflow_run(**scope)
+    for attempt in (1, 3):
+        store.record_server_workflow_drive_enqueue_failed(
+            **scope, attempt=attempt, error_kind='RuntimeError',
+        )
+        assert store.read_workflow_run(**scope) == before
+    store.acknowledge_server_workflow_drive(**scope, attempt=2)
+    acknowledged = store.read_workflow_run(**scope)
+    store.record_server_workflow_drive_enqueue_failed(**scope, attempt=2, error_kind='RuntimeError')
+    assert store.read_workflow_run(**scope) == acknowledged
+    store.record_server_workflow_drive_enqueue_failed(
+        **{**scope, 'run_id': 'run_missing'}, attempt=1, error_kind='RuntimeError',
+    )
+
+
+@pytest.mark.parametrize("owner,runner,elapsed,active", [
+    ("server", "", 1000, True),
+    ("browser_legacy", "browser", 179, True),
+    ("browser_legacy", "browser", 180, False),
+])
+def test_active_workflow_run_matches_create_conflict(tmp_path, owner, runner, elapsed, active):
+    from novelvideo.freezone.workflow_runs import active_workflow_run
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    run = create_workflow_run(
+        project_dir=tmp_path, project_id="project", canvas_id="default", owner_kind=owner,
+        runner_id=runner, actions=[{"node_id": "n", "action": "save"}], now=now)
+    current = now + timedelta(seconds=elapsed)
+    found = active_workflow_run(project_dir=tmp_path, canvas_id="default", now=current)
+    assert (found["run_id"] if found else None) == (run["run_id"] if active else None)
+    if active:
+        with pytest.raises(WorkflowRunLeaseConflict):
+            create_workflow_run(project_dir=tmp_path, project_id="project", canvas_id="default",
+                                actions=[{"node_id": "other", "action": "save"}], now=current)
+    else:
+        assert create_workflow_run(
+            project_dir=tmp_path, project_id="project", canvas_id="default",
+            actions=[{"node_id": "other", "action": "save"}], now=current)["status"] == "running"
+
+
+@pytest.mark.parametrize("owner_kind", ["server", "browser_legacy"])
+def test_created_metrics_count_insert_only(tmp_path, owner_kind, caplog):
+    import logging
+
+    from novelvideo.freezone.agent_canvas_metrics import metrics_snapshot
+
+    name = f"workflow_run.created.owner_kind.{owner_kind}"
+    before = metrics_snapshot().get(name, 0)
+    kwargs = dict(
+        project_dir=tmp_path, project_id="project", canvas_id="default",
+        actions=[{"node_id": "one", "action": "generate_image"}],
+        owner_kind=owner_kind, idempotency_key="create-once",
+    )
+    with caplog.at_level(logging.INFO, logger="novelvideo.freezone.workflow_runs"):
+        run = create_workflow_run(**kwargs)
+        assert metrics_snapshot().get(name, 0) == before + 1
+        persisted = read_workflow_run(
+            project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+        )
+        assert persisted["run_id"] == run["run_id"]
+        assert persisted["owner_kind"] == owner_kind
+        assert persisted["actions"][0]["status"] == "pending"
+        assert create_workflow_run(**kwargs) == persisted
+    assert metrics_snapshot()[name] == before + 1
+    assert [record.getMessage() for record in caplog.records] == [
+        f"workflow_run_created run_id={run['run_id']} owner_kind={owner_kind} actions=1"
+    ]
+
+
+MISSING_INPUT_ERROR = (
+    'generation_input_missing[missing_media]: A source keyframe is required. '
+    'Empty inputs: "首帧" (uploadNode n1, uploading)'
+)
+
+
+def test_missing_input_error_is_not_retryable():
+    assert classify_workflow_error(MISSING_INPUT_ERROR) == ("input_missing", False)
+
+
+def test_missing_input_diagnostics_preserve_guard_message_and_source_title():
+    diagnostics = workflow_error_diagnostics(MISSING_INPUT_ERROR)
+    assert diagnostics["user_error"] == (
+        '节点缺少生成所需的输入：A source keyframe is required. '
+        'Empty inputs: "首帧" (uploadNode n1, uploading)'
+    )

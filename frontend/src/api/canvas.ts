@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { Supported } from "@/i18n/languages";
 import { apiCall, apiCallEnvelope } from "./client";
 
 /** Admit one standalone Recipe use before synchronous generation. */
@@ -52,7 +53,9 @@ export type CanvasSaveSource =
   | "projection_remove"
   | "import"
   | "agent_create"
-  | "agent_patch";
+  | "agent_patch"
+  | "agent_confirmed"
+  | "workflow_result";
 
 export type CanvasBackupStatus = "disabled" | "synced" | "pending" | "failed";
 
@@ -260,6 +263,12 @@ export function listFreezoneWorkflowRuns(
   return request;
 }
 
+const ownClientSaveIds: string[] = [];
+
+export function isOwnClientSaveId(id: unknown): boolean {
+  return typeof id === "string" && ownClientSaveIds.includes(id);
+}
+
 /**
  * Mint an idempotency token for a single canvas save attempt. Callers should
  * reuse the same id across retries of the same logical save (network blip,
@@ -267,10 +276,12 @@ export function listFreezoneWorkflowRuns(
  * is being sent — see useCanvasSync for the policy.
  */
 export function generateClientSaveId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `save-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const id = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `save-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  ownClientSaveIds.push(id);
+  if (ownClientSaveIds.length > 100) ownClientSaveIds.shift();
+  return id;
 }
 
 export interface FreezonePresetCanvasRequest {
@@ -376,32 +387,32 @@ export async function putFreezoneCanvas(
   );
 }
 
-export interface CreateBlankFreezoneCanvasRequest {
-  canvasId: string;
+export type FreezoneCanvasCreateRejection =
+  | { code: "quota_unknown" }
+  | { code: "quota_reached"; limit: number }
+  | { code: "name_required" }
+  | { code: "duplicate_name"; name: string; existing_canvas_id: string }
+  | { code: "id_taken"; name: string; canvas_id: string };
+
+export type FreezoneCanvasCreateResult =
+  | { status: "created" | "exists"; canvas_id: string; display_name: string; revision: number; rejection?: null }
+  | { status: "rejected"; canvas_id: null; display_name: null; revision: null; rejection: FreezoneCanvasCreateRejection };
+
+export interface FreezoneCanvasCreateRequest {
   name: string;
-  creatorUsername?: string | null;
+  request_id: string;
+  locale?: Supported;
 }
 
-export async function createBlankFreezoneCanvas(
+/** The server owns the id, duplicate-name and quota rules, and creator; the request carries no creator. */
+export async function createFreezoneCanvas(
   projectId: string,
-  payload: CreateBlankFreezoneCanvasRequest,
-): Promise<FreezoneCanvasSaveResult> {
-  return await putFreezoneCanvas(projectId, payload.canvasId, {
-    schema_version: 2,
-    canvas_id: payload.canvasId,
-    project_id: projectId,
-    base_revision: null,
-    client_save_id: generateClientSaveId(),
-    save_source: "manual_save",
-    nodes: [],
-    edges: [],
-    viewport: null,
-    metadata: {
-      canvas_origin: "user_created",
-      display_name: payload.name,
-      creator_username: payload.creatorUsername ?? null,
-    },
-  });
+  body: FreezoneCanvasCreateRequest,
+): Promise<FreezoneCanvasCreateResult> {
+  return apiCall<FreezoneCanvasCreateResult>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases:create`,
+    { method: "POST", json: body },
+  );
 }
 
 export async function deleteFreezoneCanvas(

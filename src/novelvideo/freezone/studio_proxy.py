@@ -280,7 +280,10 @@ def editor_chunk(body: str, prefix: str) -> str:
     # Exact counts make a vendor update fail closed instead of silently sending
     # browser traffic to the host application's unrelated /api or /projects.
     socket_path = "${location.host}/api/"
-    export_click = 'onClick:()=>{b?i.showError(`${r("project.filmCannotExport")} ${b}`):At>0?Ou(!0):i.show(r("project.filmNotReady"))}'
+    export_click = (
+        'onClick:()=>{S?i.showError(`${s("project.filmCannotExport")} ${S}`):'
+        'Zt>0?Ff(!0):i.show(s("project.filmNotReady"))}'
+    )
     if (
         body.count("location.pathname") != 3
         or body.count(socket_path) != 1
@@ -296,7 +299,7 @@ def editor_chunk(body: str, prefix: str) -> str:
     body = body.replace(
         export_click,
         export_click.replace(
-            "Ou(!0)",
+            "Ff(!0)",
             'window.parent.postMessage({type:"dramaclaw:studio-export"},location.origin)',
         ),
     )

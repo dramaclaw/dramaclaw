@@ -1,6 +1,5 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Không thể lưu lịch sử trò chuyện. Vui lòng thử lại sau; tin nhắn hiện tại vẫn được giữ trên máy.",
     "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử.",
     "ceHistory": {
       "title": "Một phần lịch sử trò chuyện chưa được tải đầy đủ",
@@ -780,6 +779,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Đang nén ngữ cảnh…",
+    "contextCompacted": "Đã nén ngữ cảnh để cuộc trò chuyện tiếp tục",
     "clearChat": {
       "title": "Xóa cuộc trò chuyện này?",
       "description": "Lịch sử trò chuyện này sẽ bị xóa. Tin nhắn tiếp theo sẽ bắt đầu ngữ cảnh Agent mới. Canvas, dự án và các cuộc trò chuyện khác không bị ảnh hưởng. Tác vụ tạo đang chạy sẽ tiếp tục.",
@@ -831,6 +832,8 @@
     "emptyTitle": "Bắt đầu trò chuyện",
     "emptyDescription": "Hỏi về tiến độ dự án, các tác vụ thất bại, hoặc nhờ trợ lý sắp xếp kế hoạch sáng tác của bạn.",
     "syncingHistoryTitle": "Đang khởi tạo cuộc trò chuyện",
+    "loadEarlierMessages": "Tải tin nhắn cũ hơn",
+    "loadingEarlierMessages": "Đang tải tin nhắn cũ hơn…",
     "syncingHistoryDescription": "Đang kết nối tới Xia Director và đồng bộ lịch sử chat. Vui lòng đợi.",
     "disclaimer": "Xia Director có thể mắc lỗi. Hãy kiểm tra lại các chi tiết quan trọng về cốt truyện, nhân vật và asset.",
     "placeholder": "Sau khi tải kịch bản lên, hãy nhờ Xia Director đẩy tiến độ tập phim, hình ảnh, âm thanh hoặc video hoàn chỉnh",
@@ -871,10 +874,6 @@
     "dropFiles": "Thả để tải file lên",
     "unsupportedDropFiles": "Chỉ hỗ trợ .txt, .md, .doc và .docx",
     "removeAttachment": "Xoá tệp đính kèm",
-    "approvalExpires": "Hết hạn sau {{seconds}}s",
-    "allowOnce": "Cho phép một lần",
-    "allowAlways": "Luôn cho phép",
-    "deny": "Từ chối",
     "instance": "Instance",
     "model": "Model",
     "noInstances": "Không có instance nào",
@@ -958,6 +957,20 @@
         "instrumental": "Nhạc không lời",
         "vocalsAllowed": "Cho phép có giọng hát",
         "continue": "Tiếp tục với giọng đã chọn"
+      },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Xóa các nút",
+          "clear_canvas": "Xóa toàn bộ canvas",
+          "paid_generation": "Chạy quá trình tạo"
+        },
+        "separator": ", ",
+        "credits": "Việc xác nhận sẽ tiêu tốn điểm.",
+        "creditsAmount": "Việc xác nhận sẽ tiêu tốn {{credits}} điểm.",
+        "expiresIn": "Có hiệu lực trong {{minutes}} phút",
+        "confirm": "Xác nhận",
+        "refuse": "Hủy",
+        "failed": "Thao tác thất bại. Vui lòng thử lại."
       },
       "canvasExecuting": "Đang thực hiện...",
       "currentSelection": "Đang chọn",
@@ -1508,6 +1521,8 @@
       "assetNamePlaceholder": "Nhập tên asset"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "Một nút bạn đã thay đổi đã bị xóa ở nơi khác. Phiên bản của bạn được giữ lại.",
+      "localDeletedRemoteChanged": "Một nút bạn đã xóa vừa được thay đổi ở nơi khác (ví dụ bởi Agent). Nút vẫn bị xóa.",
       "backupFailed": "Sao lưu lên đám mây thất bại. Vui lòng thử lại sau.",
       "backupPending": "Đã lưu trên máy; bản sao lưu đám mây sẽ thử lại.",
       "bodyOverLimit": "Dữ liệu canvas nặng {{actual}} KB, vượt giới hạn {{limit}} KB. Đã tạm dừng lưu.",
@@ -2705,7 +2720,7 @@
         "confirmDescription": "{{feature}} sẽ chạy ngay sau khi bạn xác nhận.",
         "confirmAction": "Xác nhận và chạy",
         "costLoading": "Đang tải mức giá hiện tại của tổ chức",
-        "costUnavailable": "Tạm thời chưa lấy được giá. Hãy thử lại sau.",
+        "costUnavailable": "Không lấy được giá.",
         "openWorld": "Mở Director World",
         "worldNotReady": "Director World chưa sẵn sàng"
       },
@@ -5753,7 +5768,7 @@
       "regenerateVideo": "Tạo lại video",
       "regenerateDescription": "Tạo lại video và chuyển sang GIF",
       "videoBilling": "Cố định khung hình đầu · 4 giây · 720P · Không âm thanh. Video được tính phí theo giá báo; chuyển đổi GIF miễn phí.",
-      "quoteUnavailable": "Chưa thể ước tính điểm sử dụng. Vui lòng thử lại sau.",
+      "quoteUnavailable": "Không thể ước tính điểm sử dụng.",
       "confirm": "Xác nhận tạo",
       "svgDescription": "Chuyển sang SVG trên thiết bị. Ảnh phức tạp có thể mất chi tiết.",
       "videoUnavailable": "Mô hình video không khả dụng",
@@ -5839,8 +5854,6 @@
         "conditionalBranch": "Nhánh điều kiện (else/tự động)",
         "unknownInitialValues": "Không rõ giá trị ban đầu của biến; mặc định là 0 (không có global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} vượt quá số lựa chọn nên đã bị bỏ qua.",
-        "agentRefreshConflict": "Agent đã cập nhật canvas nhưng bạn còn thay đổi cục bộ chưa lưu. Hãy lưu bản sao hoặc làm mới để tiếp tục.",
-        "refreshConflict": "Canvas đã được cập nhật trong nền nhưng bạn còn thay đổi cục bộ chưa lưu. Hãy lưu bản sao hoặc làm mới để tiếp tục.",
         "storyGroup": "Câu chuyện tương tác",
         "segmentTitle": "Đoạn {{index}}",
         "firstFrame": "khung hình đầu",
@@ -8754,6 +8767,8 @@
       "hint": "Nối ít nhất {{min}} node video để mở được",
       "counts": "Video {{video}} · Âm thanh {{audio}}",
       "open": "Mở dựng & chỉnh video",
+      "exporting": "Đang xuất…",
+      "exportFailed": "Xuất thất bại",
       "reopen": "Mở lại",
       "resultName": "Video đã dựng"
     },
@@ -8977,6 +8992,7 @@
       "noMatches": "Không có nút phù hợp"
     },
     "runtime": {
+      "waitingForConfirmation": "Đang chờ bạn xác nhận",
       "waitingForGenerationParameters": "Đang chờ chọn thông số tạo",
       "clarificationPaused": "Đã tạm dừng chờ câu trả lời"
     }

@@ -477,3 +477,103 @@ def test_bound_draft_requires_task_identity_and_claimed_state(tmp_path):
             **scope, outcome="confirmed", expected_task_id="task-1"
         )
     assert read_workflow_draft(**scope)[0]["status"] == "confirming"
+
+
+def _draft_for_confirmation_release(tmp_path, status):
+    scope = {"project_dir": tmp_path, "canvas_id": "default"}
+    draft = create_workflow_draft(
+        **scope,
+        project_id="project-a",
+        intent={"skill_id": "video-ad", "user_goal": "Create an ad"},
+        compiled=_compiled(),
+        run_after_create=True,
+    )
+    scope["draft_id"] = draft["draft_id"]
+    claimed, error = claim_workflow_draft_confirmation(**scope, revision=1)
+    assert error is None
+    assert claimed is not None
+    bind_workflow_draft_task(
+        **scope,
+        task_id="task-1",
+        root_task_id="task-1",
+        expected_confirmation_started_at=claimed["confirmation_started_at"],
+    )
+    if status != "confirming":
+        finish_workflow_draft_confirmation(
+            **scope,
+            outcome="ready" if status == "cancelled" else status,
+            expected_task_id="task-1",
+            expected_revision=1,
+        )
+    if status == "cancelled":
+        cancelled, error = cancel_workflow_draft(**scope, expected_revision=1)
+        assert error is None
+        assert cancelled is not None
+    stored, error = read_workflow_draft(**scope)
+    assert error is None
+    assert stored is not None and stored["status"] == status
+    return scope, stored
+
+
+@pytest.mark.parametrize("status", ["confirming", "submitted"])
+def test_release_workflow_draft_confirmation_allows_retry(tmp_path, monkeypatch, status):
+    from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+    scope, before = _draft_for_confirmation_release(tmp_path, status)
+    now = before["updated_at"] + 1
+    monkeypatch.setattr("novelvideo.freezone.workflow_drafts.time.time", lambda: now)
+
+    released = release_workflow_draft_confirmation(
+        **scope, expected_task_id="task-1", expected_revision=1,
+    )
+
+    assert released == {
+        **before, "status": "ready", "confirmation_started_at": None, "updated_at": now,
+    }
+    assert released["task_id"] == before["task_id"] == "task-1"
+    assert released["revision"] == before["revision"] == 1
+    assert read_workflow_draft(**scope) == (released, None)
+    claimed, error = claim_workflow_draft_confirmation(**scope, revision=1)
+    assert error is None
+    assert claimed is not None and claimed["status"] == "confirming"
+
+
+@pytest.mark.parametrize("task_id,revision", [("task-2", 1), ("task-1", 2)])
+def test_release_workflow_draft_confirmation_ignores_stale_identity(tmp_path, task_id, revision):
+    from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+    scope, before = _draft_for_confirmation_release(tmp_path, "submitted")
+
+    released = release_workflow_draft_confirmation(
+        **scope, expected_task_id=task_id, expected_revision=revision,
+    )
+
+    assert released == before
+    assert released["status"] == "submitted"
+    assert read_workflow_draft(**scope) == (before, None)
+
+
+@pytest.mark.parametrize("status", ["ready", "confirmed", "cancelled"])
+def test_release_workflow_draft_confirmation_preserves_settled_draft(tmp_path, status):
+    from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+    scope, before = _draft_for_confirmation_release(tmp_path, status)
+
+    released = release_workflow_draft_confirmation(
+        **scope, expected_task_id="task-1", expected_revision=1,
+    )
+
+    assert released == before
+    assert read_workflow_draft(**scope) == (before, None)
+
+
+def test_release_workflow_draft_confirmation_unknown_draft_returns_none(tmp_path):
+    from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+    assert release_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id="workflow_draft_" + "a" * 32,
+        expected_task_id="task-1",
+        expected_revision=1,
+    ) is None

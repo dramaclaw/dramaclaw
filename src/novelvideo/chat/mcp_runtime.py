@@ -18,6 +18,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from mcp import types
 
+from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
 from novelvideo.chat.story_validation import (
     _integer_string_argument_paths as _integer_string_argument_paths,
     _unexpected_argument_fields as _unexpected_argument_fields,
@@ -104,7 +105,7 @@ def build_mcp_tools(tool_index: ToolIndex) -> list[types.Tool]:
             types.Tool(
                 name=name,
                 description=str(schema.get("description") or ""),
-                inputSchema=parameters
+                inputSchema=schema_with_guidance(parameters)
                 if isinstance(parameters, dict)
                 else {"type": "object"},
                 outputSchema=output_schema_for_tool(name, tool_index),

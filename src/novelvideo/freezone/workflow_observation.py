@@ -5,23 +5,54 @@ import json
 from collections import Counter
 from typing import Any
 
-from novelvideo.freezone.workflow_runs import workflow_error_diagnostics
+from novelvideo.freezone.workflow_runs import classify_workflow_error, workflow_error_diagnostics
+from novelvideo.shared.failure_signals import CONFIGURATION, SERVER_FAULT, sanitize_failure_signal
+from novelvideo.utils.error_redaction import redact_error_detail
 
 TERMINAL_STATES = {"completed", "failed", "cancelled", "interrupted"}
 
+_FIXABLE_BY = {
+    "input_missing": "user",
+    "invalid_request": "user",
+    "content_policy": "user",
+    "model_unavailable": "user",
+    "artifact_missing": "user",
+    "attempt_ended": "user",
+    "transient_upstream": "retry_later",
+    "authentication": "operator",
+    "quota_exhausted": "operator",
+    CONFIGURATION: "operator",
+    SERVER_FAULT: "operator",
+}
 
-def summarize_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
+
+def summarize_workflow_run(
+    run: dict[str, Any], *, tasks_by_key: dict[str, dict[str, Any]] | None = None
+) -> dict[str, Any]:
     actions = run.get("actions") or []
     counts = Counter(str(action.get("status") or "pending") for action in actions)
     problems = []
+    dependency_problems = []
+    non_blocked_owners: set[str] = set()
     for action in actions:
-        if action.get("status") not in {"failed", "blocked"}:
+        status = action.get("status")
+        if status not in {"failed", "blocked"}:
             continue
-        diagnostics = workflow_error_diagnostics(action.get("error"))
+        task_key = action.get("task_key")
+        task = (tasks_by_key or {}).get(task_key) or {}
+        signal = {
+            **sanitize_failure_signal(action.get("failure_signal")),
+            **sanitize_failure_signal(task.get("metadata")),
+        }
+        upstream_status = signal.get("upstream_status")
+        error = action.get("error")
+        diagnostics = workflow_error_diagnostics(error, signal)
         category = diagnostics["error_category"]
+        message = diagnostics["user_error"]
+        retryable = diagnostics["retryable"]
         # A transient transport error does not prove the provider rejected the request.
         ambiguous = any(
-            marker in str(action.get("error") or "").lower()
+            marker in str(error or "").lower()
             for marker in (
                 "timeout",
                 "timed out",
@@ -30,38 +61,77 @@ def summarize_workflow_run(run: dict[str, Any]) -> dict[str, Any]:
                 "504",
             )
         )
-        next_action = (
-            "reconcile_before_retry"
-            if ambiguous
-            else (
-                "retry_after_confirmation"
-                if diagnostics["retryable"]
-                else (
-                    "resolve_dependency"
-                    if action.get("status") == "blocked"
-                    else (
-                        "correct_parameters"
-                        if category == "invalid_request"
-                        else (
-                            "resolve_access_or_quota"
-                            if category in {"authentication", "quota_exhausted"}
-                            else "review_failure"
-                        )
-                    )
-                )
-            )
+        if status == "blocked" and classify_workflow_error(error)[0] in {"execution", "unknown"}:
+            category = "dependency_blocked"
+            message = "上游节点未成功完成，本节点未执行；请先处理上游节点的问题。"
+            retryable = False
+        elif category == "execution":
+            message = "生成失败，原因未知。原始错误见 detail，可凭 diagnostics 中的编号排查。"
+        ambiguous = ambiguous or (
+            category == "transient_upstream" and upstream_status in {408, 504}
         )
+        retryable = retryable and not ambiguous
+        if category == "input_missing":
+            next_action = "fix_input_before_retry"
+        elif category == CONFIGURATION:
+            next_action = "contact_operator"
+        elif ambiguous:
+            next_action = "reconcile_before_retry"
+        elif retryable:
+            next_action = "retry_after_confirmation"
+        elif status == "blocked":
+            next_action = "resolve_dependency"
+        elif category == "invalid_request":
+            next_action = "correct_parameters"
+        elif category in {"authentication", "quota_exhausted"}:
+            next_action = "resolve_access_or_quota"
+        else:
+            next_action = "review_failure"
+        fixable_by = _FIXABLE_BY.get(category, "unknown")
+        if category == "upstream_rejected" and upstream_status in {401, 403}:
+            fixable_by = "operator"
+        detail = redact_error_detail(task.get("error") or error or "")
+        identifiers = {
+            "run_id": run["run_id"],
+            "task_key": task_key,
+            "job_id": action.get("job_id"),
+            "request_id": diagnostics["error_request_id"],
+            "error_code": signal.get("error_code"),
+            "upstream_status": upstream_status,
+            "exception": signal.get("failure_exception"),
+        }
         problems.append(
             {
                 "node_id": action.get("node_id"),
                 "action": action.get("action"),
                 "error_category": category,
-                "message": diagnostics["user_error"],
-                "retryable": diagnostics["retryable"] and not ambiguous,
+                "message": message,
+                "retryable": retryable,
                 "automatic_retry": False,
                 "next_action": next_action,
+                **({
+                    "agent_instruction": (
+                        "Tell the user this reason. Do not ask the user to confirm another paid "
+                        "run for this node, and do not change the canvas to try a different "
+                        "approach, until this cause is fixed."
+                    ),
+                } if not retryable else {}),
+                "fixable_by": fixable_by,
+                **({"detail": detail} if detail else {}),
+                "diagnostics": {
+                    key: value for key, value in identifiers.items()
+                    if value is not None and value != ""
+                },
             }
         )
+        if status != "blocked":
+            non_blocked_owners.add(fixable_by)
+        elif category == "dependency_blocked":
+            dependency_problems.append(problems[-1])
+    if len(non_blocked_owners) == 1:
+        owner = non_blocked_owners.pop()
+        for problem in dependency_problems:
+            problem["fixable_by"] = owner
     state = str(run.get("status") or "unknown")
     terminal = state in TERMINAL_STATES
     progress = [

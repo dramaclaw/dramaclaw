@@ -383,3 +383,100 @@ def test_confirmation_preserves_latest_completed_result_and_expiry(product_task)
         **before.metadata,
         "feature_credit_confirmed_reservation_id": "reservation",
     }
+
+
+@pytest.mark.parametrize("delivery_ack", [None, 2])
+@pytest.mark.parametrize(
+    "version,reserved,feature_key,task_type,expected_ack",
+    [
+        (2, False, "freezone.text_generate", "freezone_text_generate", 2),
+        (2, True, "freezone.text_generate", "freezone_text_generate", None),
+        (None, False, "freezone.text_generate", "freezone_text_generate", None),
+        ("2", False, "freezone.text_generate", "freezone_text_generate", None),
+        (True, False, "freezone.text_generate", "freezone_text_generate", None),
+        (2, False, "", "freezone_text_generate", None),
+        (2, False, "freezone.text_translate", "freezone_text_translate", None),
+    ],
+)
+def test_text_result_billing_uses_verified_request_and_durable_settlement(
+    product_task,
+    monkeypatch,
+    version,
+    reserved,
+    feature_key,
+    task_type,
+    expected_ack,
+    delivery_ack,
+):
+    from novelvideo.task_backend import run_core
+
+    ctx, manager, _, _ = product_task
+    task = manager.create_task_for_project(ctx, task_type, 0)
+    received = []
+    confirmations = []
+
+    class Meter:
+        async def resolve_feature_credit_reservation(self, identity):
+            assert identity.root_task_id == task.task_id
+            return FeatureSettlementResolution(
+                outcome="resolved" if reserved else "not_applicable",
+                reservation_id="enqueue-reservation" if reserved else "",
+                feature_key=feature_key,
+                model_call_credit_policy="feature_included" if feature_key else "",
+            )
+
+        async def settle_feature_credit_reservation(self, reservation_id, **kwargs):
+            confirmations.append(reservation_id)
+            return {"status": "completed", "action": kwargs["action"]}
+
+    def runner(envelope, _ctx):
+        received.append(dict(envelope.get("billing_metadata") or {}))
+        return {"ok": True}
+
+    async def no_external_io(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "get_project_task_runner", lambda _kind: runner)
+    monkeypatch.setattr(run_core, "is_cancel_requested", no_external_io)
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", no_external_io)
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    monkeypatch.setattr(run_core, "get_usage_meter", Meter)
+    delivery = VerifiedTaskDelivery(
+        envelope_id="envelope",
+        task_type=task_type,
+        project_id=ctx.project_id,
+        requester_user_id="alice",
+        episode=0,
+        beat_num=None,
+        scope=None,
+        queue_kind="default",
+        payload={"billing": {"result_billing_version": version}},
+        # Delivery hints must neither enable charging nor select a reservation.
+        billing_metadata={
+            "result_billing_version_ack": delivery_ack,
+            "feature_credit_reservation_id": "forged-reservation",
+        },
+        admission=AdmissionContext(
+            requester_user_id="alice",
+            billing_principal=BillingPrincipal(kind="local", id="alice"),
+            credential=CredentialReference("local", "local-newapi", 1),
+            admission_id="admission",
+            root_task_id=task.task_id,
+            admitted_at="2026-08-03T04:05:00Z",
+            authz_version=1,
+        ),
+    )
+
+    assert run_core.run_project_task_core_sync(
+        delivery, ctx, manager, run_task_id=task.task_id
+    ) == {"ok": True}
+    assert len(received) == 1
+    assert received[0].get("result_billing_version_ack") == expected_ack
+    assert received[0].get("feature_credit_reservation_id") == (
+        "enqueue-reservation" if reserved else None
+    )
+    assert confirmations == (["enqueue-reservation"] if reserved else [])

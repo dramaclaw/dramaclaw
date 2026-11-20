@@ -1,6 +1,6 @@
 # OpenFilm Studio (vendored)
 
-OpenFilm v0.2.4, upstream commit `53156ac`, MIT licensed. Only the Studio runtime is
+OpenFilm v0.2.7, upstream commit `b7673b5`, MIT licensed. Only the Studio runtime is
 vendored: `src/`, `studio/server/`, the built `studio/ui/dist/`, `product.json`,
 `SPEC.md`, `LICENSE`, and `THIRD_PARTY_NOTICES.md`.
 

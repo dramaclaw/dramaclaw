@@ -1,8 +1,8 @@
 diff --git a/packages/openfilm/studio/server/server.mjs b/packages/openfilm/studio/server/server.mjs
-index 5bd1575..cf73807 100644
+index 7184d93..8601b1a 100644
 --- a/packages/openfilm/studio/server/server.mjs
 +++ b/packages/openfilm/studio/server/server.mjs
-@@ -419,7 +419,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+@@ -453,7 +453,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
        return json(res, 200, { ...listing, ...places });
      }
      /* the example films (examples.mjs): none when the index cannot be read */
@@ -11,8 +11,8 @@ index 5bd1575..cf73807 100644
      /* a poster or preview beside an index read from this computer (examples.mjs exampleFile) */
      if (parts[0] === 'examples' && parts[1] === 'file' && parts.length > 2 && req.method === 'GET') {
        return sendMedia(req, res, exampleFile(parts.slice(2).map(decodeURIComponent).join('/')), { keep: true });
-@@ -577,6 +577,10 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
-         return json(res, 200, { project, folder: pages.folderUrl(project), ...film });
+@@ -629,6 +629,10 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+         return json(res, 200, { project, folder: pages.folderUrl(project), ...film, ...(projectMissing(project.path) === 'film' ? { filmMissing: true } : {}) });
        }
        if (req.method === 'PATCH') {
 +        /* Dramaclaw patch: a rename moves the project folder, and the host looks a film up by that
@@ -22,7 +22,7 @@ index 5bd1575..cf73807 100644
          const { name } = /** @type {{ name?: string }} */ (await readJson(req));
          if (agentIn(project.path)) throw new HttpError(409, 'An agent is running in this project: stop it first, then rename the project.', { code: 'agent-running' });
          if (exports.list(project.id).some((job) => job.status === 'waiting' || job.status === 'running')) {
-@@ -1013,7 +1017,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+@@ -1077,7 +1081,7 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
    });
    await new Promise((done, fail) => { editor.once('error', fail); editor.listen(port, '127.0.0.1', () => done(undefined)); });
    /* the examples index is asked for as Studio starts, so the Examples tab has GitHub's newest when it opens */

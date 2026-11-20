@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { parseAspectRatio } from './imageData';
+import { parseAspectRatio } from '../domain/aspectRatio';
 
 export interface ImageNodeSize {
   width: number;

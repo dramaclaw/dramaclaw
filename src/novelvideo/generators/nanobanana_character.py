@@ -14,7 +14,6 @@
 """
 
 import asyncio
-import base64
 import mimetypes
 import os
 import tempfile
@@ -25,6 +24,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from novelvideo.shared.failure_signals import upstream_status_of, with_upstream_status
 from novelvideo.config import (
     get_grid_generation_config,
     get_style_preset,
@@ -133,6 +133,7 @@ class CharacterReferenceResult(BaseModel):
     # Dry Run 模式返回的 Prompt 信息
     prompt: Optional[str] = None
     prompt_file: Optional[str] = None
+    upstream_status: Optional[int] = None
 
 
 class NanoBananaCharacterGenerator:
@@ -294,7 +295,7 @@ class NanoBananaCharacterGenerator:
 
             # Prompt-Only 模式：只生成提示词，跳过 API 调用
             if prompt_only:
-                print(f"[NanoBanana Character] Prompt-Only 模式，跳过 API 调用")
+                print("[NanoBanana Character] Prompt-Only 模式，跳过 API 调用")
                 return CharacterReferenceResult(
                     success=True,
                     character_name=character_name,
@@ -390,6 +391,7 @@ class NanoBananaCharacterGenerator:
                 success=False,
                 character_name=character_name,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -534,7 +536,7 @@ class NanoBananaCharacterGenerator:
 
             # Dry Run 模式：仅生成 Prompt，不生成图片
             if dry_run:
-                print(f"[NanoBanana Character] Dry Run 模式，跳过图片生成")
+                print("[NanoBanana Character] Dry Run 模式，跳过图片生成")
                 return CharacterReferenceResult(
                     success=True,
                     character_name=character_name,
@@ -572,7 +574,7 @@ class NanoBananaCharacterGenerator:
                 with open(reference_image_path, "rb") as f:
                     ref_image_bytes = f.read()
             else:
-                print(f"[NanoBanana Character] 无参考图，从文字描述独立生成")
+                print("[NanoBanana Character] 无参考图，从文字描述独立生成")
 
             # 加载服装参考图（如果有）
             costume_image = None
@@ -658,6 +660,7 @@ class NanoBananaCharacterGenerator:
                 success=False,
                 character_name=character_name,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -834,6 +837,7 @@ MUST AVOID:
                 success=False,
                 character_name=character_name,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -1214,7 +1218,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                     image_bytes, _text_response, error_detail = result
                     if not image_bytes and error_detail:
                         print(f"[NanoBanana Character] OpenRouter 失败详情: {error_detail}")
-                        raise RuntimeError(error_detail)
+                        raise with_upstream_status(RuntimeError(str(error_detail)), error_detail)
                 else:
                     image_bytes = result
             elif self.provider == "huimeng":
@@ -1231,7 +1235,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] HuiMeng 失败详情: {error_detail}")
-                    raise RuntimeError(error_detail)
+                    raise with_upstream_status(RuntimeError(str(error_detail)), error_detail)
             elif self.provider == "openai":
                 print(f"[NanoBanana Character] 调用 OpenAI Image API ({self.model}) 生成图像...")
                 image_bytes, _text_response, error_detail = await _call_openai_image_api(
@@ -1250,7 +1254,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] OpenAI 失败详情: {error_detail}")
-                    raise RuntimeError(error_detail)
+                    raise with_upstream_status(RuntimeError(str(error_detail)), error_detail)
             elif self.provider == "newapi":
                 print(f"[NanoBanana Character] 调用 DramaClawAPI ({self.model}) 生成图像...")
                 image_bytes, _text_response, error_detail = await _call_newapi_image_api(
@@ -1271,7 +1275,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] DramaClawAPI 失败详情: {error_detail}")
-                    raise RuntimeError(error_detail)
+                    raise with_upstream_status(RuntimeError(str(error_detail)), error_detail)
             else:
                 # Google 直连模式
                 from google.genai import types
@@ -1329,7 +1333,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                         print(f"[NanoBanana Character] API 文本响应: {part.text[:300]}")
 
             if not image_bytes:
-                print(f"[NanoBanana Character] API 未返回图像数据")
+                print("[NanoBanana Character] API 未返回图像数据")
                 return None
 
             # 保存文件
@@ -1453,7 +1457,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                     image_bytes, _text_response, error_detail = result
                     if not image_bytes and error_detail:
                         print(f"[NanoBanana Character] OpenRouter 失败详情: {error_detail}")
-                        raise RuntimeError(error_detail)
+                        raise with_upstream_status(RuntimeError(str(error_detail)), error_detail)
                 else:
                     image_bytes = result
             elif self.provider == "huimeng":
@@ -1475,7 +1479,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] HuiMeng 失败详情: {error_detail}")
-                    raise RuntimeError(error_detail)
+                    raise with_upstream_status(RuntimeError(str(error_detail)), error_detail)
             elif self.provider == "openai":
                 print(
                     f"[NanoBanana Character] 调用 OpenAI Image API ({self.model}) 生成图像（带参考图）..."
@@ -1508,7 +1512,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] OpenAI 失败详情: {error_detail}")
-                    raise RuntimeError(error_detail)
+                    raise with_upstream_status(RuntimeError(str(error_detail)), error_detail)
             elif self.provider == "newapi":
                 print(f"[NanoBanana Character] 调用 DramaClawAPI ({self.model}) 生成图像（带参考图）...")
                 ref_images = []
@@ -1541,7 +1545,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] DramaClawAPI 失败详情: {error_detail}")
-                    raise RuntimeError(error_detail)
+                    raise with_upstream_status(RuntimeError(str(error_detail)), error_detail)
             else:
                 # Google 直连模式
                 from google.genai import types
@@ -1606,7 +1610,7 @@ STRICT REQUIREMENTS (MUST AVOID):
                         print(f"[NanoBanana Character] API 文本响应: {part.text[:300]}")
 
             if not image_bytes:
-                print(f"[NanoBanana Character] API 未返回图像数据")
+                print("[NanoBanana Character] API 未返回图像数据")
                 return None
 
             # 保存文件

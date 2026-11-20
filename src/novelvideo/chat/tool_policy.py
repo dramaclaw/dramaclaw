@@ -119,6 +119,7 @@ FREEZONE_CANVAS_WRITE_TOOLS: frozenset[str] = frozenset(
         "freezone_add_next_node",
         "freezone_confirm_canvas_action",
         "freezone_confirm_workflow_draft",
+        "freezone_create_canvas",
         "freezone_create_edge",
         "freezone_create_node",
         "freezone_delete_edges",

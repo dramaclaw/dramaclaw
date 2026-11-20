@@ -425,3 +425,39 @@ it("preserves an existing Artifact when ordinary text generation fails", async (
   expect(mocks.create).not.toHaveBeenCalled();
   expect(mocks.save).not.toHaveBeenCalled();
 });
+
+
+it('leaves server-owned persisted HTML generation untouched', async () => {
+  const { resumePersistedHtmlGeneration } = await import('./workflowHtmlRuntime');
+  const data = { isGenerating: true, generationOwner: 'server', generationTaskKey: 'html-task' };
+  mocks.state.nodes = [{ id: 'page', type: 'htmlArtifactNode', data: { ...data } }];
+  await resumePersistedHtmlGeneration({ nodeId: 'page', projectId: 'p', canvasId: 'c', taskKey: 'html-task', jobId: 'job' });
+  expect(mocks.state.nodes[0].data).toEqual(data);
+});
+
+
+it('does not attach HTML when server ownership begins during result fetch', async () => {
+  const { resumePersistedHtmlGeneration } = await import('./workflowHtmlRuntime');
+  const data = { isGenerating: true, generationTaskKey: 'html-task' };
+  mocks.state.nodes = [{ id: 'page', type: 'htmlArtifactNode', data: { ...data } }];
+  mocks.fetchText.mockImplementationOnce(async () => {
+    mocks.state.nodes[0].data.generationOwner = 'server';
+    return { generated_text: '<html><body>P</body></html>' };
+  });
+  await resumePersistedHtmlGeneration({ nodeId: 'page', projectId: 'p', canvasId: 'c', taskKey: 'html-task', jobId: 'job' });
+  expect(mocks.state.nodes[0].data).toEqual({ ...data, generationOwner: 'server' });
+});
+
+
+it('does not attach or clear HTML after server ownership begins during artifact save', async () => {
+  const { resumePersistedHtmlGeneration } = await import('./workflowHtmlRuntime');
+  const data = { isGenerating: true, generationTaskKey: 'html-task', htmlSelectionToken: 'selection',
+    htmlGenerationSelectionToken: 'selection' };
+  mocks.state.nodes = [{ id: 'page', type: 'htmlArtifactNode', data: { ...data } }];
+  mocks.create.mockImplementationOnce(async () => {
+    mocks.state.nodes[0].data.generationOwner = 'server';
+    return { id: 'artifact', version: 1, title: 'Page' };
+  });
+  await resumePersistedHtmlGeneration({ nodeId: 'page', projectId: 'p', canvasId: 'c', taskKey: 'html-task', jobId: 'job' });
+  expect(mocks.state.nodes[0].data).toEqual({ ...data, htmlGenerationPhase: 'saving', generationOwner: 'server' });
+});

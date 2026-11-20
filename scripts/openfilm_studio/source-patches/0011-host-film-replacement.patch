@@ -1,0 +1,55 @@
+diff --git a/packages/openfilm/studio/server/film.mjs b/packages/openfilm/studio/server/film.mjs
+index 93b6a9d..ff6d9ef 100644
+--- a/packages/openfilm/studio/server/film.mjs
++++ b/packages/openfilm/studio/server/film.mjs
+@@ -17,7 +17,7 @@ import { readFile } from 'node:fs/promises';
+ import { join } from 'node:path';
+ import { FILM_FILE, filmHtml, readFilm, readFilmFile } from '../../src/film-doc.mjs';
+ import { EditError, applyOps } from './ops.mjs';
+-import { filmMerged, filmToMerge, filmWritten, keepAside, mergeFilmWrite, replaceIfStill } from './person-edits.mjs';
++import { filmMerged, filmReplaced, filmToMerge, filmWritten, keepAside, mergeFilmWrite, replaceIfStill } from './person-edits.mjs';
+ 
+ export { EditError };
+ 
+@@ -75,6 +75,11 @@ function serial(root, job) {
+   return next;
+ }
+ 
++/** Clear the person's edits before the host replaces the film. @param {string} root */
++export function forgetPersonEdits(root) {
++  return serial(root, async () => filmReplaced(root));
++}
++
+ /** How long an outside write of film.html must stay the same bytes to be taken as finished. */
+ const STABLE_MS = 150;
+ /** A text cut off inside a tag: a write still on its way. */
+diff --git a/packages/openfilm/studio/server/server.mjs b/packages/openfilm/studio/server/server.mjs
+index 2d76fad..77df87a 100644
+--- a/packages/openfilm/studio/server/server.mjs
++++ b/packages/openfilm/studio/server/server.mjs
+@@ -21,7 +21,7 @@ import { pipeline } from 'node:stream';
+ import { mkdir, readFile } from 'node:fs/promises';
+ import { createHash } from 'node:crypto';
+ import { spawn } from 'node:child_process';
+-import { EditError, editProjectFilm, pageClipLook, readProjectFilm, settleProjectFilm } from './film.mjs';
++import { EditError, editProjectFilm, forgetPersonEdits, pageClipLook, readProjectFilm, settleProjectFilm } from './film.mjs';
+ import { readPage, writePage } from './page-text.mjs';
+ import { FileError, bringIn, collect, extractAudio, freezeFrame, importFile, inside, listFiles, makeFolder, moveCheck, moveFile, readable, relink, trashFile } from './files.mjs';
+ import { ExportError, createExports, draftApps, exportCapabilities, exportsRoot, projectSizes } from './exports.mjs';
+@@ -220,6 +220,16 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+     authorize(req);
+     const parts = path.slice('/api/'.length).split('/').map(decodeURIComponent);
+ 
++    if (path === '/api/host/film-replaced' && req.method === 'POST') {
++      if (!sameKey(/** @type {string | undefined} */ (req.headers['x-studio-key']))) throw new HttpError(403, 'launch key header required');
++      const { path: folder } = /** @type {{ path?: unknown }} */ (await readJson(req) ?? {});
++      if (typeof folder !== 'string' || !isAbsolute(folder)) throw new HttpError(400, 'absolute film folder required');
++      let root = resolve(folder);
++      try { root = realpathSync(root); } catch { /* as given */ }
++      await forgetPersonEdits(root);
++      return json(res, 200, { ok: true });
++    }
++
+     /* stop: another app is taking over this machine's Studio, or `openfilm open` starts it afresh (`whenIdle`: not
+        while an export runs or media is made — it would be lost). `pages`: how many were open, to come back */
+     if (parts[0] === 'quit' && parts.length === 1 && req.method === 'POST') {

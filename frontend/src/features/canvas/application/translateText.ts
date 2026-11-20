@@ -4,6 +4,7 @@ import {
   fetchFreezoneTextTranslateResult,
   submitFreezoneTextTranslate,
   type FreezoneTextTranslateNodeType,
+  type FreezoneJobRef,
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { readUrl } from '@/lib/url-params';
@@ -24,6 +25,10 @@ export async function translateNodeText(
     canvasId: readUrl().canvas ?? 'default',
     nodeId: params.nodeId,
   });
+  return awaitTranslatedText(project, ref);
+}
+
+export async function awaitTranslatedText(project: string, ref: FreezoneJobRef): Promise<string> {
   await awaitTaskCompletion(ref.task_key, project);
   const result = await fetchFreezoneTextTranslateResult(project, ref.job_id);
   return result.translated_text;

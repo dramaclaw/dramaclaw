@@ -674,6 +674,39 @@ def finish_workflow_draft_confirmation(
         return deepcopy(payload)
 
 
+def release_workflow_draft_confirmation(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    draft_id: str,
+    expected_task_id: str,
+    expected_revision: int,
+) -> dict[str, Any] | None:
+    """Make a draft confirmable again when its confirmation applied nothing.
+
+    Refused, expired, voided, or executed confirmations with nothing applied
+    will never reconcile the draft.
+    """
+    _validate_scope(canvas_id, draft_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
+        if payload is None:
+            return None
+        if (
+            payload.get("status") not in {"confirming", "submitted"}
+            or not expected_task_id
+            or payload.get("task_id") != expected_task_id
+            or payload["revision"] != expected_revision
+        ):
+            return deepcopy(payload)
+        payload["status"] = "ready"
+        payload["confirmation_started_at"] = None
+        payload["updated_at"] = time.time()
+        _write_draft(conn, payload)
+        return deepcopy(payload)
+
+
 def prune_expired_workflow_drafts(
     *,
     project_dir: Path,

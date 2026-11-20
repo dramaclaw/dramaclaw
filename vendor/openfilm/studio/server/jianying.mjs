@@ -19,13 +19,17 @@
  *   · Footage keeps its own sound: the sound clip linked to it in the plan becomes the video clip's level, so nothing
  *     plays twice. Other sounds are audio clips, their fades 剪映's own fades.
  *   · A hidden track's clips come hidden, a muted track's sounds muted, one click from back on.
- *   · Subtitles are text clips on a track of their own, white with a dark edge, low in the picture.
+ *   · Subtitles are the app's own subtitles, not text clips beside them: a subtitle track (`flag` 1), each line a
+ *     `subtitle` material of one subtitle task (`config.subtitle_taskinfo`), as its recognized subtitles are, so the
+ *     app lists, restyles and edits them together. White with a dark edge, low in the picture.
  *   · Each file is in the draft's media library (draft_meta_info.json `draft_materials`, group 0, what the app lists
  *     under its media panel), and each material names its entry there (`local_material_id`): without it the app
  *     lists none of them and finds a video by nothing but its path.
  */
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { filmSubtitleLanguageOf } from './film-subtitle.mjs';
 
 /**
  * @typedef {import('./nle.mjs').NleTimeline} NleTimeline
@@ -39,16 +43,41 @@ import { join } from 'node:path';
 /** Each app's folder, in Movies on a Mac and in the local app data on Windows. */
 const APP_FOLDER = /** @type {Record<DraftApp, string>} */ ({ jianying: 'JianyingPro', capcut: 'CapCut' });
 
+/** The custom folder in Qt's INI: quotes and escapes are storage syntax, not part of the path. @param {string} settings */
+function customDraftPath(settings) {
+  let section = 'General';
+  for (const row of settings.split(/\r?\n/)) {
+    const line = row.trim();
+    const heading = /^\[(.*)\]$/.exec(line);
+    if (heading) { section = heading[1]; continue; }
+    if (section !== 'General') continue;
+    const entry = /^currentCustomDraftPath\s*=\s*(.*)$/.exec(line);
+    if (!entry) continue;
+    const value = entry[1].startsWith('"') && entry[1].endsWith('"') ? entry[1].slice(1, -1) : entry[1];
+    const escapes = /** @type {Record<string, string>} */ ({ '0': '\0', a: '\x07', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' });
+    return value.replace(/\\(?:x([0-9a-fA-F]{1,4})|(.))/g,
+      (_match, hex, char) => hex ? String.fromCharCode(parseInt(hex, 16)) : escapes[char] ?? char) || null;
+  }
+  return null;
+}
+
 /**
- * Where 剪映 or CapCut keeps its drafts by default (its Settings › Drafts location can move them): the folder when it
- * is there, else null.
+ * Where 剪映 or CapCut keeps its drafts: the folder its Settings › Drafts location names (`currentCustomDraftPath` in
+ * its `User Data/Config/globalSetting`, the same in both apps), else its default one, when that folder is there; else
+ * null. A draft made anywhere else is not on the app's home screen.
  * @param {DraftApp} app
- * @param {{ platform?: NodeJS.Platform, home: string, localAppData?: string, exists: (path: string) => boolean }} where
+ * @param {{ platform?: NodeJS.Platform, home: string, localAppData?: string, exists: (path: string) => boolean, read?: (path: string) => string }} where
  */
-export function draftsRoot(app, { platform = process.platform, home, localAppData, exists }) {
+export function draftsRoot(app, { platform = process.platform, home, localAppData, exists, read = (path) => readFileSync(path, 'utf8') }) {
   const base = platform === 'darwin' ? join(home, 'Movies') : platform === 'win32' ? localAppData ?? join(home, 'AppData', 'Local') : null;
-  const dir = base && join(base, APP_FOLDER[app], 'User Data', 'Projects', 'com.lveditor.draft');
-  return dir && exists(dir) ? dir : null;
+  if (!base) return null;
+  const user = join(base, APP_FOLDER[app], 'User Data');
+  let chosen = null;
+  try {
+    chosen = customDraftPath(read(join(user, 'Config', 'globalSetting')));
+  } catch { /* the app has saved no settings yet */ }
+  for (const dir of [chosen, join(user, 'Projects', 'com.lveditor.draft')]) if (dir && exists(dir)) return dir;
+  return null;
 }
 
 /** 剪映 ids: 32 hex digits for materials and clips, an upper-case UUID for the draft. */
@@ -78,13 +107,26 @@ const clipSettings = (/** @type {number} */ scale, /** @type {number} */ x, /** 
   alpha: 1, flip: { horizontal: false, vertical: false }, rotation: 0, scale: { x: scale, y: scale }, transform: { x, y },
 });
 
+/**
+ * A language as the app names its subtitles' (`zh-CN`, `en-US`): a region-less code takes its usual region; one the
+ * script does not tell (Latin) is English.
+ * @param {string | null | undefined} code
+ */
+function appLanguage(code) {
+  const [base, region] = String(code || 'en').split(/[-_]/);
+  if (region) return `${base.toLowerCase()}-${/^hant$/i.test(region) ? 'TW' : /^hans$/i.test(region) ? 'CN' : region.toUpperCase()}`;
+  const usual = /** @type {Record<string, string>} */ ({ zh: 'CN', ja: 'JP', ko: 'KR', en: 'US', es: 'ES', fr: 'FR', de: 'DE', pt: 'BR', ru: 'RU', th: 'TH', ar: 'SA', hi: 'IN', vi: 'VN', id: 'ID', it: 'IT' });
+  const lower = base.toLowerCase();
+  return `${lower}-${usual[lower] ?? lower.toUpperCase()}`;
+}
+
 const round6 = (/** @type {number} */ n) => { const r = Math.round(n * 1e6) / 1e6; return Object.is(r, -0) ? 0 : r; };
 
 /**
  * The draft: `info` (draft_info.json) and `meta` (draft_meta_info.json), for the folder `folder` in the app's drafts
  * folder `root`.
  * @param {NleTimeline} timeline
- * @param {{ app?: DraftApp, name: string, folder: string, root: string, cues?: readonly JianyingCue[], now?: number }} opts
+ * @param {{ app?: DraftApp, name: string, folder: string, root: string, cues?: readonly JianyingCue[], language?: string | null, now?: number }} opts
  */
 export function jianyingDraft(timeline, opts) {
   const platform = PLATFORM[opts.app ?? 'jianying'];
@@ -221,18 +263,26 @@ export function jianyingDraft(timeline, opts) {
     });
   }
 
-  /* subtitles: a text track over everything */
+  /* subtitles: the app's own, a subtitle track over everything, in the cues' language (as the app names it) */
   const cues = (opts.cues ?? []).filter((c) => c.text.trim() && c.durMs > 0);
+  /** @type {Record<string, unknown>[]} */
+  const subtitleTasks = [];
   if (cues.length) {
+    const language = appLanguage(opts.language || filmSubtitleLanguageOf(cues.map((c) => c.text).join(' ')));
+    const task = `${hex().slice(0, 24)}_0_0`;
+    const group = `${language}_${opts.now ?? Date.now()}`;
+    subtitleTasks.push({ id: task, type: 10, language, content: '', remove_invalid_task_id: '', ai_accurate_recognize_enable: false, supplies_commit_id: '', is_local_asr: false });
     const index = renderIndex++;
     const frame = (/** @type {number} */ ms) => Math.round((ms / 1000) * fps);
     tracks.push({
-      attribute: 0, flag: 0, id: hex(), is_default_name: false, name: 'Subtitles', type: 'text',
+      attribute: 0, flag: 1, id: hex(), is_default_name: false, name: 'Subtitles', type: 'text',
       segments: cues.map((cue) => {
         const id = hex();
         const text = cue.text.trim();
         materials.texts.push({
-          id, type: 'text', typesetting: 0, alignment: 1, letter_spacing: 0, line_spacing: 0.02, line_feed: 1,
+          id, type: 'subtitle', add_type: 1, recognize_task_id: task, recognize_text: text, language, group_id: group,
+          words: { start_time: [], end_time: [], text: [] }, current_words: { start_time: [], end_time: [], text: [] },
+          subtitle_keywords: { range: [] }, typesetting: 0, alignment: 1, letter_spacing: 0, line_spacing: 0.02, line_feed: 1,
           line_max_width: 0.82, force_apply_line_max_width: false, check_flag: 15, global_alpha: 1,
           content: JSON.stringify({
             styles: [{
@@ -263,7 +313,7 @@ export function jianyingDraft(timeline, opts) {
       lyrics_recognition_id: '', lyrics_sync: true, lyrics_taskinfo: [], maintrack_adsorb: false, material_save_mode: 0,
       multi_language_current: 'none', multi_language_list: [], multi_language_main: 'none', multi_language_mode: 'none',
       original_sound_last_index: 1, record_audio_last_index: 1, sticker_max_index: 1, subtitle_keywords_config: null,
-      subtitle_recognition_id: '', subtitle_sync: true, subtitle_taskinfo: [], system_font_list: [], video_mute: false,
+      subtitle_recognition_id: '', subtitle_sync: true, subtitle_taskinfo: subtitleTasks, system_font_list: [], video_mute: false,
       zoom_info_params: null,
     },
     cover: null, create_time: 0, duration, extra_info: null, fps, free_render_index_mode_on: false, group_container: null,

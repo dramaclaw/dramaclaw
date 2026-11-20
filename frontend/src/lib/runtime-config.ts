@@ -9,7 +9,7 @@ export const RuntimeConfigResponse = z.object({
     edition: z.enum(["ce", "ee"]),
     auth_required: z.boolean(),
     instance_id: z.string().optional(),
-    mcp_direct_canvas_apply: z.boolean().optional(),
+    agent_canvas_executor: z.enum(["browser", "server"]).optional(),
     openfilm_studio_enabled: z.boolean().optional(),
     browser_model_asset_base: z.string().nullable().optional(),
     browser_model_hf_endpoint: z.string().nullable().optional(),
@@ -29,7 +29,7 @@ export interface RuntimeConfig {
   authRequired: boolean;
   phoneOtpEntryVisible: boolean;
   instanceId?: string;
-  mcpDirectCanvasApply: boolean;
+  agentCanvasExecutor: "browser" | "server";
   openFilmStudioEnabled: boolean;
   /** 浏览器端推理模型与 wasm 的来源；全为 null 表示走 transformers.js 默认源。 */
   browserModelSource: BrowserModelSourceConfig;
@@ -44,7 +44,7 @@ const DEFAULT_BROWSER_MODEL_SOURCE: BrowserModelSourceConfig = {
 let runtimeConfig: RuntimeConfig = {
   edition: "ee",
   authRequired: true,
-  mcpDirectCanvasApply: false,
+  agentCanvasExecutor: "browser",
   openFilmStudioEnabled: false,
   phoneOtpEntryVisible: false,
   browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
@@ -56,7 +56,7 @@ function fallbackRuntimeConfig(): RuntimeConfig {
         edition: "ce",
         authRequired: false,
         phoneOtpEntryVisible: false,
-        mcpDirectCanvasApply: false,
+        agentCanvasExecutor: "browser",
         openFilmStudioEnabled: false,
         browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
       }
@@ -64,7 +64,7 @@ function fallbackRuntimeConfig(): RuntimeConfig {
         edition: "ee",
         authRequired: true,
         phoneOtpEntryVisible: false,
-        mcpDirectCanvasApply: false,
+        agentCanvasExecutor: "browser",
         openFilmStudioEnabled: false,
         browserModelSource: DEFAULT_BROWSER_MODEL_SOURCE,
       };
@@ -100,7 +100,7 @@ export async function loadRuntimeConfig(): Promise<void> {
       authRequired: parsed.data.auth_required,
       phoneOtpEntryVisible,
       instanceId: parsed.data.instance_id,
-      mcpDirectCanvasApply: parsed.data.mcp_direct_canvas_apply ?? false,
+      agentCanvasExecutor: parsed.data.agent_canvas_executor ?? "browser",
       openFilmStudioEnabled: parsed.data.openfilm_studio_enabled ?? false,
       browserModelSource: {
         assetBase: parsed.data.browser_model_asset_base || null,
@@ -123,8 +123,8 @@ export function authRequired(): boolean {
   return runtimeConfig.authRequired;
 }
 
-export function mcpDirectCanvasApplyEnabled(): boolean {
-  return runtimeConfig.mcpDirectCanvasApply;
+export function agentCanvasExecutorIsServer(): boolean {
+  return runtimeConfig.agentCanvasExecutor === "server";
 }
 
 export function openFilmStudioEnabled(): boolean {

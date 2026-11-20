@@ -215,7 +215,7 @@ async def test_claymore_requires_independent_pricing_before_quote_and_submit(
 
     monkeypatch.setattr(routes, "_media_model_catalog_is_authoritative", lambda: True)
     monkeypatch.setattr(novelvideo.ports, "get_credit_quote", lambda: SimpleNamespace(generation_credit_quote=quote))
-    monkeypatch.setattr(routes, "_enqueue_or_start_freezone_media_job", enqueue)
+    monkeypatch.setattr(routes, "_enqueue_freezone_background_job", enqueue)
     request = routes.FreezoneVideoUpscaleRequest(enhancement_model="claymore", source_url="/source.mp4")
     endpoints = (routes.freezone_video_upscale_quote, routes.freezone_video_upscale)
     for endpoint in endpoints:

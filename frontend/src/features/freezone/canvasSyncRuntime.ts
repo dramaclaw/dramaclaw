@@ -10,21 +10,9 @@ export type RemoteCanvasMerge = (
   localEdges: CanvasEdge[],
 ) => { nodes: CanvasNode[]; edges: CanvasEdge[] };
 
-export interface RemoteCanvasApplyOptions {
-  /**
-   * Refuse to replace the open canvas when it contains edits that have not
-   * reached the server yet. Remote writes initiated by the current Agent use
-   * this guard: a clean canvas can adopt the Agent's new revision silently,
-   * while genuine concurrent local work still gets the recovery overlay.
-   */
-  protectUnsavedLocalEdits?: boolean;
-  conflictMessage?: string;
-}
-
 type RemoteCanvasApplier = (
   remote: FreezoneCanvasPayload,
   merge?: RemoteCanvasMerge,
-  options?: RemoteCanvasApplyOptions,
 ) => boolean;
 
 type CanvasFlush = () => Promise<boolean>;
@@ -104,7 +92,6 @@ export function applyRemoteFreezoneCanvas(
   canvasId: string,
   remote: FreezoneCanvasPayload,
   merge?: RemoteCanvasMerge,
-  options?: RemoteCanvasApplyOptions,
 ): boolean | null {
   const runtime = currentRuntime;
   if (!runtime) return null;
@@ -119,7 +106,7 @@ export function applyRemoteFreezoneCanvas(
   if (latestRevision > 0 && (revision === null || revision < latestRevision)) {
     return false;
   }
-  const applied = runtime.apply(remote, merge, options);
+  const applied = runtime.apply(remote, merge);
   if (applied && revision !== null) runtime.appliedRevision = revision;
   return applied;
 }
@@ -127,7 +114,6 @@ export function applyRemoteFreezoneCanvas(
 export async function refreshRemoteFreezoneCanvas(
   project: string,
   canvasId: string,
-  options?: RemoteCanvasApplyOptions,
 ): Promise<boolean> {
   const runtime = currentRuntime;
   if (!runtime || runtime.project !== project || runtime.canvasId !== canvasId) return false;
@@ -135,7 +121,7 @@ export async function refreshRemoteFreezoneCanvas(
   // A response belongs to the registration that requested it, even if the
   // user leaves and later opens the same project/canvas URL again.
   if (currentRuntime !== runtime) return false;
-  return applyRemoteFreezoneCanvas(project, canvasId, remote, undefined, options) === true;
+  return applyRemoteFreezoneCanvas(project, canvasId, remote) === true;
 }
 
 export async function flushFreezoneCanvasRuntime(

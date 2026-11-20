@@ -7,6 +7,7 @@ from novelvideo.freezone.workflow_preflight import (
     evaluate_workflow_preflight,
     generation_clarification_request,
     preflight_failure_blocker,
+    standard_generation_tiers,
 )
 
 
@@ -987,3 +988,30 @@ def test_audio_preflight_names_the_missing_selection_or_music_field(data, field)
         assert 'music' in blocker['message']
         assert 'does not require a voice' in blocker['message']
         assert blocker['recovery'] == 'correct_audio_kind'
+
+
+# The platform's standard tier for resolution and quality reuses the recommendation
+# preferences: never the most expensive option while a cheaper one is offered.
+@pytest.mark.parametrize(("node_type", "entry", "expected"), [
+    ("imageGenNode",
+     {"resolutionOptions": ["4K", "2K", "1K"], "qualityOptions": ["high", "low", "medium"]},
+     {"size": "1K", "quality": "medium"}),
+    ("imageGenNode", {"resolutionOptions": ["4K", "2K"]}, {"size": "2K"}),
+    ("imageGenNode", {"resolutionOptions": ["4K"], "qualityOptions": ["high"]},
+     {"size": "4K", "quality": "high"}),
+    ("imageGenNode", {"resolutionOptions": ["3K", "5K"], "qualityOptions": ["hd", "sd"]},
+     {"size": None, "quality": None}),
+    ("imageGenNode", {}, {"size": None}),
+    ("videoNode", {"resolutionOptions": ["1080P", "720P", "480P"]}, {"quality": "720P"}),
+    ("videoNode", {"resolutionOptions": ["1080p", "480p"]}, {"quality": "480p"}),
+    ("videoNode", {}, {"quality": None}),
+    ("textNode", {"resolutionOptions": ["1K"]}, {}),
+], ids=[
+    "image-cheapest-preferred", "image-without-quality", "image-sole-option",
+    "image-unknown-options", "image-no-options", "video-720p", "video-next-preference",
+    "video-no-options", "not-a-generation-node",
+])
+def test_standard_generation_tiers_reuse_the_recommendation_preferences(
+    node_type, entry, expected,
+):
+    assert standard_generation_tiers(node_type, entry) == expected

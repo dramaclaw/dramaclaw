@@ -1,0 +1,244 @@
+"""In-memory sessions for servers that support agent keys (stdlib only)."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+from threading import Lock
+import time
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+_CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}
+_LOCKS: dict[tuple[str, str, str], Any] = {}
+_SECRETS: set[str] = set()
+_GLOBAL_LOCK = Lock()
+_UNSUPPORTED = (
+    "This server does not support agent keys via POST /api/v1/agent/sessions; "
+    "for a local community API use DRAMACLAW_LOCAL_AGENT_TRUST=1 instead."
+)
+_REDIRECTED = (
+    "Agent key session exchange was answered with a redirect, which is never followed "
+    "because it would send the agent key to another address; "
+    "DRAMACLAW_API_URL must be the final API address."
+)
+_REQUEST_REDIRECTED = (
+    "Agent key request was answered with a redirect, which is never followed "
+    "because it would send the agent session token to another address; "
+    "DRAMACLAW_API_URL must be the final API address."
+)
+
+
+class _RefuseRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # No follow-up request: the redirect surfaces as the response's HTTPError.
+        return None
+
+
+# The exchange carries the agent key, so it never uses a caller-supplied opener.
+_open_exchange = build_opener(_RefuseRedirects).open
+
+
+class _EveryAddressVisited(dict):
+    """Redirect history that reports every address as already visited too often."""
+
+    def get(self, key, default=None):
+        return math.inf
+
+
+def _session_request(
+    url: str, payload: bytes | None, headers: dict[str, str], method: str,
+) -> Request:
+    """Build the request that carries a session token, which no opener may redirect.
+
+    The opener is the caller's, so the refusal travels on the request: urllib's redirect
+    handler consults ``redirect_dict`` before every follow-up and raises the redirect as an
+    HTTPError, without contacting the new address, once its loop limit is reached.
+    """
+    req = Request(url, data=payload, headers=headers, method=method)
+    req.redirect_dict = _EveryAddressVisited()
+    return req
+
+
+def agent_key_mode() -> bool:
+    """Whether an agent key is configured without a turn token override."""
+    return any(
+        os.environ.get(name, "").strip()
+        for name in ("DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_KEY")
+    ) and not any(
+        os.environ.get(name, "").strip()
+        for name in ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE")
+    )
+
+
+def _remember(secret: str) -> None:
+    if secret:
+        with _GLOBAL_LOCK:
+            _SECRETS.add(secret)
+
+
+def redact(value: Any) -> Any:
+    """Remove all credentials held by this module, including expired sessions."""
+    with _GLOBAL_LOCK:
+        secrets = sorted(_SECRETS, key=len, reverse=True)
+
+    def visit(item: Any) -> Any:
+        if isinstance(item, str):
+            for secret in secrets:
+                item = item.replace(secret, "[redacted]")
+            return item
+        if isinstance(item, dict):
+            return {key: visit(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [visit(child) for child in item]
+        return item
+
+    return visit(value)
+
+
+def protect(call: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Keep exceptions and results from carrying credentials out of key mode."""
+    try:
+        result = call()
+    except Exception:
+        # Exceptions from preparation, openers or decoders may contain secrets.
+        result = {"ok": False, "code": "agent_key_request_failed", "error": "Agent key request failed"}
+    return redact(result)
+
+
+def _exchange_error(status: int, *, unsupported: bool = False) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status_code": status,
+        "code": "agent_key_exchange_unsupported" if unsupported else "agent_key_exchange_failed",
+        "error": _UNSUPPORTED if unsupported else "Agent key session exchange failed",
+    }
+
+
+def _exchange(
+    api_base: str, key: str, scope: dict[str, str], headers: dict[str, str],
+    timeout: float,
+) -> tuple[str, float] | dict[str, Any]:
+    exchange_headers = {
+        **headers,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}",
+    }
+    req = Request(
+        f"{api_base}/api/v1/agent/sessions",
+        data=json.dumps({"scope": scope}).encode("utf-8"),
+        headers=exchange_headers, method="POST",
+    )
+    try:
+        with _open_exchange(req, timeout=timeout) as resp:
+            status = resp.status
+            text = resp.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        # Never forward the exchange body, which may echo credentials.
+        exc.close()
+        if 300 <= exc.code < 400:
+            return {
+                "ok": False, "status_code": exc.code,
+                "code": "agent_key_exchange_redirected", "error": _REDIRECTED,
+            }
+        return _exchange_error(exc.code, unsupported=exc.code in {404, 405})
+    except (URLError, OSError) as exc:
+        reason = exc.reason if isinstance(exc, URLError) else str(exc)
+        return {"ok": False, "code": "agent_key_exchange_failed", "error": f"network_error: {reason}"}
+    try:
+        response = json.loads(text)
+    except ValueError:
+        return _exchange_error(status, unsupported=True)
+    data = response.get("data") if isinstance(response, dict) else None
+    token = data.get("token") if isinstance(data, dict) else None
+    if isinstance(token, str):
+        _remember(token)
+    expiry = data.get("expires_at") if isinstance(data, dict) else None
+    if (
+        not isinstance(response, dict) or response.get("ok") is not True
+        or not isinstance(token, str) or not token.strip()
+        or isinstance(expiry, bool) or not isinstance(expiry, (int, float))
+        or not math.isfinite(expiry)
+    ):
+        return _exchange_error(status, unsupported=True)
+    return token, expiry
+
+
+def request(
+    *, api_base: str, api_path: str, method: str, query_string: str,
+    payload: bytes | None, headers: dict[str, str], timeout: float,
+    opener: Callable[..., Any], decode_success: Callable[[int, str], dict[str, Any]],
+    shape_http_error: Callable[[int, str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    """Exchange a key lazily, then retry one business 401 with a fresh session."""
+    key_file = os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+    try:
+        key = (
+            Path(key_file).read_text(encoding="utf-8").strip() if key_file
+            else os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+        )
+    except (OSError, UnicodeError, ValueError):
+        key = ""
+    if not key:
+        return {"ok": False, "code": "agent_key_unavailable", "error": "Agent key is unavailable"}
+    _remember(key)
+    parsed = urlsplit(api_base)
+    if parsed.scheme != "https" and not (
+        parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    ):
+        return {
+            "ok": False, "code": "agent_key_insecure_transport",
+            "error": "Agent keys require https or a loopback http API URL",
+        }
+    project = re.search(r"/projects/([^/?#]+)", api_path)
+    project_id = unquote(project.group(1)) if project else os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
+    scope = {"kind": "project", "id": project_id} if project_id else {"kind": "home"}
+    cache_key = (api_base, hashlib.sha256(key.encode("utf-8")).hexdigest(), json.dumps(scope, sort_keys=True))
+    with _GLOBAL_LOCK:
+        entry_lock = _LOCKS.setdefault(cache_key, Lock())
+
+    for attempt in range(2):
+        with entry_lock:
+            session = _CACHE.get(cache_key)
+            if session is None or session[1] - time.time() <= 60:
+                exchanged = _exchange(api_base, key, scope, headers, timeout)
+                if isinstance(exchanged, dict):
+                    return exchanged
+                session = _CACHE[cache_key] = exchanged
+            token = session[0]
+        req = _session_request(
+            f"{api_base}{api_path}{query_string}", payload,
+            {**headers, "Authorization": f"Bearer {token}"}, method.upper(),
+        )
+        try:
+            with opener(req, timeout=timeout) as resp:
+                return decode_success(resp.status, resp.read().decode("utf-8", errors="replace"))
+        except HTTPError as exc:
+            with exc:
+                text = exc.read(65537).decode("utf-8", errors="replace")
+            if 300 <= exc.code < 400:
+                return {
+                    "ok": False, "status_code": exc.code,
+                    "code": "agent_key_request_redirected", "error": _REQUEST_REDIRECTED,
+                }
+            if exc.code == 401:
+                with entry_lock:
+                    current = _CACHE.get(cache_key)
+                    if current is not None and current[0] == token:
+                        del _CACHE[cache_key]
+                if attempt == 0:
+                    continue
+            return shape_http_error(exc.code, text, str(exc.reason))
+        except (URLError, OSError) as exc:
+            reason = exc.reason if isinstance(exc, URLError) else str(exc)
+            return {"ok": False, "error": f"network_error: {reason}"}
+    raise AssertionError("unreachable retry state")

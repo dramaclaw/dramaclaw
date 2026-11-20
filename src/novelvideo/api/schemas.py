@@ -1359,7 +1359,7 @@ class FreezoneVideoEditRequest(FreezoneWorkflowMediaLink):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneVideoExtendRequest(BaseModel):
+class FreezoneVideoExtendRequest(FreezoneWorkflowMediaLink):
     """视频延长请求。输入一个源视频，并从其结尾继续生成指定时长。"""
 
     video_url: str = Field(description="待延长的源视频静态地址，必填")
@@ -1628,7 +1628,7 @@ class FreezoneVideoEraseRequest(BaseModel):
     )
 
 
-class FreezoneVideoUpscaleRequest(BaseModel):
+class FreezoneVideoUpscaleRequest(FreezoneWorkflowMediaLink):
     """视频增强请求。模型由媒体目录能力动态选择。"""
 
     canvas_id: str = Field(default="", max_length=64, description="可选：来源画布 id，用于记录节点生成历史")
@@ -1841,16 +1841,29 @@ class FreezoneVideoComposeItem(BaseModel):
     volume: float = Field(
         default=1.0, ge=0.0, le=2.0, allow_inf_nan=False, description="音量倍率"
     )
+    fade_out: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     muted: bool = Field(default=False, description="是否静音")
     speed: float = Field(
         default=1.0, gt=0.0, le=4.0, allow_inf_nan=False, description="播放倍速"
     )
+
+    @model_validator(mode="after")
+    def validate_fade_duration(self):
+        if self.fade_out and self.fade_out > (self.source_end - self.source_start) / self.speed:
+            raise ValueError("fade_out must fit within the rendered clip duration")
+        return self
 
 
 class FreezoneVideoComposeTrack(BaseModel):
     track_id: str = Field(description="前端轨道唯一标识")
     kind: Literal["video", "audio"] = Field(description="轨道类型")
     items: list[FreezoneVideoComposeItem] = Field(default_factory=list, description="轨道片段列表")
+
+    @model_validator(mode="after")
+    def validate_audio_fades(self):
+        if self.kind != "audio" and any(item.fade_out for item in self.items):
+            raise ValueError("fade_out is supported only on audio tracks")
+        return self
 
 
 class FreezoneVideoComposeRequest(BaseModel):
@@ -1893,6 +1906,12 @@ class FreezoneVideoComposeStudioRequest(FreezoneVideoComposeRequest):
         default=False,
         description="重新生成 film.html；默认复用上次的成片目录以保留 Studio 内编辑",
     )
+
+    @model_validator(mode="after")
+    def reject_unsupported_fade(self):
+        if any(item.fade_out for track in self.tracks for item in track.items):
+            raise ValueError("Studio does not support timeline fades; use the standard compose export")
+        return self
 
 
 class FreezoneStudioFilmEditRequest(BaseModel):
@@ -2192,6 +2211,45 @@ class FreezoneStageAssetAcceptedResponse(BaseModel):
     data: FreezoneStageAssetAcceptedData
 
 
+class AgentCanvasCommandsRequest(BaseModel):
+    envelopes: list[dict] = Field(min_length=1, max_length=20)
+    locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
+
+
+class CanvasConfirmationRequest(BaseModel):
+    agent_id: str = "main"
+    turn_id: str | None = None
+    commands: list[dict] = Field(min_length=1)
+    fill_standard_tiers: list[str] = Field(default_factory=list)
+
+
+class CanvasConfirmationDecisionRequest(BaseModel):
+    decision: Literal["confirmed", "refused"]
+    via: Literal["card", "conversation"]
+    agent_id: str = "main"
+    turn_id: str | None = None
+    command_hash: str | None = None
+
+
+class AgentCanvasContextRequest(BaseModel):
+    requests: list[dict] = Field(min_length=1, max_length=20)
+    locale: str | None = None
+    include_canvas_url: bool = False
+    include_image_urls: bool = False
+
+
+class CanvasCreateOrigin(BaseModel):
+    chat_canvas_id: str
+    turn_id: str
+
+
+class CanvasCreateRequest(BaseModel):
+    name: str = Field(max_length=100)
+    request_id: str = Field(min_length=1, max_length=128)
+    locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
+    origin: Optional[CanvasCreateOrigin] = None
+
+
 class CanvasPayload(BaseModel):
     schema_version: Optional[Literal[2]] = None
     canvas_id: Optional[str] = None
@@ -2221,6 +2279,8 @@ class CanvasPayload(BaseModel):
         "import",
         "agent_create",
         "agent_patch",
+        "agent_confirmed",
+        "workflow_result",
     ] = "autosave"
     allow_empty_overwrite: bool = False
     nodes: list[dict] = Field(default_factory=list)

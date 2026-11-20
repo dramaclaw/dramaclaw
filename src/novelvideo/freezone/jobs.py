@@ -25,11 +25,12 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
 from PIL import Image
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
 from novelvideo.freezone.video_slowdown import slowdown_factor
 from novelvideo.egress_context import (
@@ -43,6 +44,9 @@ from novelvideo.task_backend.subprocesses import (
     RestrictedSubprocessPolicy,
     run_project_subprocess,
 )
+
+if TYPE_CHECKING:
+    from novelvideo.freezone.studio import StudioFilm
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +268,7 @@ async def run_freezone_upscale(
     )
     if not result or not result.success:
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"upscale failed: {err}")
+        raise with_upstream_status(RuntimeError(f"upscale failed: {err}"), result)
     if not out.exists():
         if result.image_base64:
             import base64
@@ -295,7 +299,10 @@ async def _run_volcengine_text_to_image(
     )
     if not result or not result.success:
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"Volcengine text→image generation failed: {err}")
+        raise with_upstream_status(
+            RuntimeError(f"Volcengine text→image generation failed: {err}"),
+            result,
+        )
     if not out.exists():
         if result.image_base64:
             import base64
@@ -735,7 +742,10 @@ async def _run_video_processing_model(
         project_output_dir=str(project_dir),
     )
     if not result or result.status.value != "done":
-        raise RuntimeError(result.error if result else f"{mode} failed")
+        raise with_upstream_status(
+            RuntimeError(result.error if result else f"{mode} failed"),
+            result,
+        )
     if not output_path.exists():
         raise RuntimeError(f"{mode} completed without an output file")
 
@@ -1174,7 +1184,14 @@ async def _render_audio_clip(
     source_start: float,
     duration: float,
     volume: float,
+    fade_out: float = 0.0,
+    speed: float = 1.0,
 ) -> None:
+    filters = [f"volume={volume:.4f}"]
+    if speed != 1.0:
+        filters.insert(0, _audio_tempo_filter(speed))
+    if fade_out > 0:
+        filters.append(f"afade=t=out:st={max(0, duration / speed - fade_out):.6f}:d={fade_out:.6f}")
     await _run_cmd(
         [
             "ffmpeg",
@@ -1187,7 +1204,7 @@ async def _render_audio_clip(
             source_path,
             "-vn",
             "-af",
-            f"volume={volume:.4f}",
+            ",".join(filters),
             "-c:a",
             "aac",
             "-ar",
@@ -1250,7 +1267,7 @@ async def _mix_audio_tracks(
     for index, item in enumerate(audio_items):
         if bool(item.get("muted")):
             continue
-        volume = float(item.get("volume", 1.0) or 1.0)
+        volume = float(item.get("volume", 1.0))
         if volume <= 0:
             continue
         source_start = float(item.get("source_start", 0.0) or 0.0)
@@ -1265,6 +1282,8 @@ async def _mix_audio_tracks(
             source_start=source_start,
             duration=duration,
             volume=volume,
+            fade_out=float(item.get("fade_out", 0.0)),
+            speed=float(item.get("speed", 1.0)),
         )
         audio_inputs.append((audio_path, float(item.get("timeline_start", 0.0) or 0.0)))
 
@@ -1311,7 +1330,7 @@ async def run_freezone_studio_export(
     *,
     project_dir: Path,
     job_id: str,
-    film_dir: str,
+    film: StudioFilm,
     fps: int = 30,
 ) -> Path:
     """Render a compose node's hand-cut OpenFilm film into the compose output slot.
@@ -1324,14 +1343,14 @@ async def run_freezone_studio_export(
     output_dir = outputs_dir(project_dir, "freezone_video_compose")
     output_dir.mkdir(parents=True, exist_ok=True)
     final_output_path = output_dir / f"{job_id}.mp4"
-    film = Path(film_dir).resolve()
+    root = film.root.resolve()
     try:
-        film.relative_to(Path(project_dir).resolve())
+        root.relative_to(Path(project_dir).resolve())
     except ValueError as exc:
         raise RuntimeError("studio film folder is outside the project") from exc
     try:
         return await export_studio_film(
-            film_dir=film, output_path=final_output_path, fps=int(fps or 30)
+            film=film, output_path=final_output_path, fps=int(fps or 30)
         )
     except StudioError as exc:
         raise RuntimeError(str(exc)) from exc
@@ -1449,6 +1468,11 @@ async def run_freezone_video_compose(
 
     if not final_output_path.exists():
         raise RuntimeError("video compose finished without output file")
+    try:
+        await probe_video_stream(str(final_output_path))
+    except RuntimeError as exc:
+        final_output_path.unlink(missing_ok=True)
+        raise RuntimeError(f"video compose output has no readable video stream: {exc}") from exc
     return final_output_path
 
 
@@ -1805,6 +1829,7 @@ async def run_freezone_video_gen(
     gen_mode: Optional[str] = None,
     model_params: Optional[dict[str, Any]] = None,
     request_schema: Optional[dict[str, Any]] = None,
+    accepted_job_receipt: Path | None = None,
 ) -> Path:
     """Freezone 文生视频。
 
@@ -1908,11 +1933,12 @@ async def run_freezone_video_gen(
                 {"scene_optimize": scene_optimize} if scene_optimize else None
             ),
             gen_mode=gen_mode,
+            accepted_job_receipt=accepted_job_receipt,
             **extra_kwargs,
         )
     if not result or result.status.value != "done":
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"freezone video generation failed: {err}")
+        raise with_upstream_status(RuntimeError(f"freezone video generation failed: {err}"), result)
     if not out.exists():
         raise RuntimeError(
             "video generation returned success but no output file was written"

@@ -37,7 +37,7 @@ import {
   programMarkersToMentions,
 } from "@/lib/mention-markers";
 import { sceneNameToRef, sceneRefToName } from "@/lib/scene-ref";
-import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
+import { timeOfDayLabel, timeOfDayOptions } from "@/features/canvas/domain/timeOfDay";
 
 interface InsertManualShotDialogProps {
   open: boolean;

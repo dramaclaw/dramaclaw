@@ -12,6 +12,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from novelvideo.chat.agent_key_session import agent_key_mode
 from novelvideo.freezone.workflow_schema import (
     EXTERNAL_INPUT_NODE_TYPES,
     PORTABLE_VIDEO_GENERATION_MODES,
@@ -44,15 +45,28 @@ _REQUEST_CATALOG: ContextVar[dict[str, list[dict[str, Any]]] | None] = ContextVa
 )
 
 
+class CatalogUnavailableError(RuntimeError):
+    """The key owner's server catalog has not been loaded."""
+
+
 @contextmanager
 def workflow_catalog_scope(username: str):
     """Use one authenticated catalog snapshot without changing process environment."""
     if not username.strip() or list_user_agent_config_items is None:
         raise ValueError("workflow catalog identity is unavailable")
+    items_by_kind = {
+        kind: list_user_agent_config_items(username, kind)
+        for kind in ("skills", "recipes")
+    }
+    with workflow_catalog_items_scope(items_by_kind):
+        yield
+
+
+@contextmanager
+def workflow_catalog_items_scope(items_by_kind: dict[str, list[dict[str, Any]]]):
+    """Use supplied catalog items for all reads within this scope."""
     snapshot = {
-        kind: _normalize_agent_config_items(
-            kind, list_user_agent_config_items(username, kind)
-        )
+        kind: _normalize_agent_config_items(kind, items_by_kind[kind])
         for kind in ("skills", "recipes")
     }
     token = _REQUEST_CATALOG.set(snapshot)
@@ -1456,6 +1470,7 @@ def _compile_isomorphic_plan_through_template(
     return compiled, match
 
 _UNIVERSAL_GENERATION_INPUT_KEYS = {
+    "audio_voice_ref",
     "aspect_ratio",
     "image_aspect_ratio",
     "image_model",
@@ -1494,6 +1509,16 @@ def _portable_generation_input_error(parameter_id: str, value: Any) -> str | Non
                 str(item) for item in sorted(_PORTABLE_GENERATION_VARIANT_COUNTS)
             )
             return f"unsupported option: {value}; supported values: {supported}"
+        return None
+    if parameter_id == "audio_voice_ref":
+        if (
+            not isinstance(value, dict)
+            or value.keys() != {"scope", "voiceId"}
+            or value["scope"] != "user_custom"
+            or not isinstance(value["voiceId"], str)
+            or not value["voiceId"].strip()
+        ):
+            return "must contain scope=user_custom and a non-empty voiceId"
         return None
     if parameter_id == "video_duration_seconds":
         if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -4023,7 +4048,10 @@ def _intent_item_node(
         else:
             data["audioKind"] = "speech"
             data["speechMode"] = "clone"
-            data["voiceAvailable"] = False
+            voice_ref = resolved_inputs.get("audio_voice_ref")
+            if voice_ref is not None:
+                data["voiceRef"] = dict(voice_ref)
+            data["voiceAvailable"] = voice_ref is not None
             data["languageType"] = "Chinese"
     if node_type == "htmlArtifactNode":
         data = {
@@ -4979,6 +5007,11 @@ def _load_agent_config_items(
     snapshot = _REQUEST_CATALOG.get()
     if snapshot is not None:
         return deepcopy(snapshot[kind])
+    if agent_key_mode():
+        raise CatalogUnavailableError(
+            "In agent key mode, the workflow catalog must be read from the server "
+            "for the key owner; local catalog reads are not allowed"
+        )
     if list_user_agent_config_items is not None:
         username = _catalog_username()
         if username:

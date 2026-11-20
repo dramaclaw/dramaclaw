@@ -1,18 +1,25 @@
-"""服务重启后 inline 任务的僵尸回收。
+"""inline 任务按持有文件锁的进程 owner 回收，存活任务不受时间戳影响。"""
 
-inline 后端的 worker 随 API 进程消亡:进程启动时间之前仍标记
-submitting/queued/running 的 inline 任务必然已中断,读取路径应将其
-落为 failed,避免僵尸任务永久挡住新任务(去重守卫/并发限额)。
-Celery/EE worker 独立于 API 进程,**这条进程启动时间的规则对它绝不适用**;
-它按自己的 40min TTL 回收,那一轴在 test_task_state_celery_zombie_ttl.py。
-"""
-
+import asyncio
 from datetime import datetime, timedelta, timezone
+import json
+import os
 from pathlib import Path
+import select
+import signal
+import socket
+import sqlite3
+import subprocess
+import sys
+import time
+from types import SimpleNamespace
 
 import pytest
 
+from novelvideo import config, task_state as task_state_module
 from novelvideo.project_context import ProjectContext
+from novelvideo.ports.usage import FeatureSettlementResolution, VerifiedTaskSettlementIdentity
+from tests.recording_usage_meter import RecordingUsageMeter
 from novelvideo.task_state import TaskStateManager
 
 pytestmark = pytest.mark.m07
@@ -39,138 +46,391 @@ def _ctx(tmp_path: Path) -> ProjectContext:
     )
 
 
-def _before_process_start_within_celery_ttl() -> str:
-    """早于本进程启动、但未过 celery 的 40min TTL(CELERY_STALE_TTL)。
+@pytest.fixture
+def owner_process(tmp_path, monkeypatch):
+    runtime = tmp_path / "owners_runtime"
+    monkeypatch.setattr(config, "RUNTIME_DIR", str(runtime))
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import json, time; from novelvideo.task_owner import current_owner; "
+            "print(json.dumps(current_owner()), flush=True); time.sleep(60)",
+        ],
+        env={**os.environ, "NOVELVIDEO_RUNTIME_DIR": str(runtime)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert select.select([child.stdout], [], [], 10)[0], "owner 子进程未就绪"
+        line = child.stdout.readline()
+        if not line:
+            raise AssertionError(child.stderr.read())
+        yield child, json.loads(line), runtime
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=10)
+        child.stdout.close()
+        child.stderr.close()
 
-    用来把两条轴分开:落在这个窗口里的 celery 行,只有「进程启动时间」那条
-    规则会碰它——而它不该碰。
-    """
-    stamp = (
-        datetime.now(timezone.utc) - timedelta(minutes=39)
-    ).isoformat().replace("+00:00", "Z")
-    if "." not in stamp:
-        stamp = stamp.replace("Z", ".000000Z")
-    return stamp
+
+def _kill(child):
+    os.kill(child.pid, signal.SIGKILL)
+    assert child.wait(timeout=10) == -signal.SIGKILL
 
 
-def _backdate(
-    manager: TaskStateManager,
-    ctx: ProjectContext,
-    task_id: str,
-    when: str = _ANCIENT,
-) -> None:
-    with manager._connect_context(ctx) as conn:
+def _inline_task(
+    manager, ctx, owner=None, status="running", error="", *,
+    extra_metadata=None, beat_num=None, scope=None,
+):
+    metadata = {"backend": "inline", **(extra_metadata or {})}
+    if owner is not None:
+        metadata["owner"] = owner
+    created = manager.create_task_for_project(
+        ctx, "ingest_fast", 0, metadata=metadata, beat_num=beat_num, scope=scope
+    )
+    with manager._connect_path(ctx.state_dir / "data.db", skip_auto_sweep=True) as conn:
         conn.execute(
-            "UPDATE task_states SET updated_at = ?, created_at = ? WHERE task_id = ?",
-            (when, when, task_id),
+            "UPDATE task_states SET status = ?, error = ? WHERE task_id = ?",
+            (status, error, created.task_id),
+        )
+    return created
+
+
+def test_real_owner_lock_released_on_sigkill(owner_process):
+    from novelvideo.task_owner import owner_alive
+
+    child, owner, runtime = owner_process
+    lock_file = runtime / "task_owners" / f"{owner['token']}.lock"
+    assert owner["host"] == socket.gethostname()
+    assert owner["pid"] == child.pid
+    assert len(owner["token"]) == 32
+    assert lock_file.parent.stat().st_mode & 0o777 == 0o700
+    assert owner_alive(owner) is True
+
+    _kill(child)
+
+    assert owner_alive(owner) is False
+    assert lock_file.exists() is False
+    assert owner_alive(owner) is False
+
+
+@pytest.mark.parametrize("status", ["submitting", "queued", "running"])
+def test_dead_owner_fails_even_fresh_inline_row(tmp_path, owner_process, status):
+    child, owner, _ = owner_process
+    manager = TaskStateManager()
+    ctx = _ctx(tmp_path)
+    created = _inline_task(manager, ctx, owner, status=status)
+    _kill(child)
+
+    listed = TaskStateManager().list_tasks_for_project(ctx)
+
+    assert len(listed) == 1
+    assert listed[0].task_id == created.task_id
+    assert listed[0].status == "failed"
+    assert listed[0].error == "执行该任务的服务进程已退出,任务已中断,请重新发起"
+    assert listed[0].completed_at
+    assert listed[0].expires_at
+
+
+def test_live_owner_keeps_ancient_inline_row_running(tmp_path, owner_process):
+    _, owner, _ = owner_process
+    manager = TaskStateManager()
+    ctx = _ctx(tmp_path)
+    created = _inline_task(manager, ctx, owner)
+    with manager._connect_path(ctx.state_dir / "data.db", skip_auto_sweep=True) as conn:
+        conn.execute(
+            "UPDATE task_states SET updated_at = ? WHERE task_id = ?",
+            (_ANCIENT, created.task_id),
         )
 
+    listed = TaskStateManager().list_tasks_for_project(ctx)
 
-def _restarted() -> TaskStateManager:
-    """清扫按库记忆化在 manager 实例上;新实例 = 模拟重启后的进程。"""
-    return TaskStateManager()
+    assert listed[0].status == "running"
+    assert listed[0].updated_at == "2000-01-01T00:00:00.000000Z"
+    assert listed[0].error == ""
 
 
-def test_stale_inline_running_task_is_failed_on_read(tmp_path: Path) -> None:
-    manager = TaskStateManager()
+@pytest.mark.parametrize("owner", [None, {}, {"host": "remote", "pid": 1, "token": "../bad"}])
+def test_missing_or_malformed_owner_is_failed(tmp_path, owner):
     ctx = _ctx(tmp_path)
-    created = manager.create_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_1", metadata={"backend": "inline"}
-    )
-    manager.update_progress_for_project(ctx, "ingest_fast", 0, progress=0.1, scope="job_1")
-    _backdate(manager, ctx, created.task_id)
-    manager = _restarted()
+    _inline_task(TaskStateManager(), ctx, owner)
 
-    listed = manager.list_tasks_for_project(ctx)
+    listed = TaskStateManager().list_tasks_for_project(ctx)
 
-    assert len(listed) == 1
     assert listed[0].status == "failed"
-    assert "重启" in (listed[0].error or "")
-
-    fetched = manager.get_task_for_project(ctx, "ingest_fast", 0, scope="job_1")
-    assert fetched is not None
-    assert fetched.status == "failed"
+    assert listed[0].error == "执行该任务的服务进程已退出,任务已中断,请重新发起"
 
 
-def test_stale_celery_running_task_is_untouched(tmp_path: Path) -> None:
-    """celery 行早于进程启动也不该被这条规则碰(它有自己的 TTL 轴)。"""
-    manager = TaskStateManager()
+def test_foreign_host_owner_is_untouched(tmp_path):
+    from novelvideo.task_owner import owner_alive
+
+    owner = {"host": socket.gethostname() + "-other", "pid": 123, "token": "a" * 32}
     ctx = _ctx(tmp_path)
-    created = manager.create_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_celery", metadata={"backend": "celery"}
-    )
-    manager.update_progress_for_project(ctx, "ingest_fast", 0, progress=0.1, scope="job_celery")
-    _backdate(manager, ctx, created.task_id, when=_before_process_start_within_celery_ttl())
-    manager = _restarted()
+    _inline_task(TaskStateManager(), ctx, owner)
 
-    listed = manager.list_tasks_for_project(ctx)
-
-    assert len(listed) == 1
-    assert listed[0].status == "running"
+    assert owner_alive(owner) is None
+    assert TaskStateManager().list_tasks_for_project(ctx)[0].status == "running"
 
 
-def test_fresh_inline_running_task_is_untouched(tmp_path: Path) -> None:
-    manager = TaskStateManager()
+def test_dead_owner_unblocks_reservation_and_active_count(tmp_path):
     ctx = _ctx(tmp_path)
-    manager.create_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_fresh", metadata={"backend": "inline"}
-    )
-    manager.update_progress_for_project(ctx, "ingest_fast", 0, progress=0.1, scope="job_fresh")
-
-    listed = manager.list_tasks_for_project(ctx)
-
-    assert len(listed) == 1
-    assert listed[0].status == "running"
-
-
-def test_stale_inline_task_unblocks_reservation(tmp_path: Path) -> None:
-    """准入闸(reserve)也必须看不到僵尸,否则重启后重试提交仍被去重守卫拒绝。"""
+    created = _inline_task(TaskStateManager(), ctx)
     manager = TaskStateManager()
-    ctx = _ctx(tmp_path)
-    created = manager.create_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_r", metadata={"backend": "inline"}
-    )
-    manager.update_progress_for_project(ctx, "ingest_fast", 0, progress=0.1, scope="job_r")
-    _backdate(manager, ctx, created.task_id)
-    manager = _restarted()
 
-    state, reserved = manager.reserve_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_r", metadata={"backend": "inline"}
-    )
+    assert manager.count_active_tasks_for_project(ctx) == 0
+    state, reserved = manager.reserve_task_for_project(ctx, "ingest_fast", 0)
 
     assert reserved is True
     assert state.task_id != created.task_id
 
 
-def test_sweep_runs_once_per_db_by_design(tmp_path: Path) -> None:
-    """清扫按库记忆化:进程启动后新出现的'过期'行不再被扫(启动前遗留才是僵尸)。"""
-    manager = TaskStateManager()
+def test_inline_sweep_preserves_existing_error(tmp_path):
     ctx = _ctx(tmp_path)
-    first = manager.create_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_a", metadata={"backend": "inline"}
-    )
-    _backdate(manager, ctx, first.task_id)
-    manager = _restarted()
-    assert manager.list_tasks_for_project(ctx)[0].status == "failed"
+    _inline_task(TaskStateManager(), ctx, error="先前错误")
 
-    second = manager.create_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_b", metadata={"backend": "inline"}
-    )
-    manager.update_progress_for_project(ctx, "ingest_fast", 0, progress=0.1, scope="job_b")
-    _backdate(manager, ctx, second.task_id)
+    listed = TaskStateManager().list_tasks_for_project(ctx)
 
-    statuses = {t.scope: t.status for t in manager.list_tasks_for_project(ctx)}
-    assert statuses["job_b"] == "running"
+    assert listed[0].status == "failed"
+    assert listed[0].error == "先前错误"
 
 
-def test_stale_inline_task_no_longer_blocks_active_count(tmp_path: Path) -> None:
+def test_inline_owner_axis_does_not_reach_celery(tmp_path):
     manager = TaskStateManager()
     ctx = _ctx(tmp_path)
     created = manager.create_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_2", metadata={"backend": "inline"}
+        ctx, "ingest_fast", 0, metadata={"backend": "celery"}
     )
-    manager.update_progress_for_project(ctx, "ingest_fast", 0, progress=0.1, scope="job_2")
-    _backdate(manager, ctx, created.task_id)
-    manager = _restarted()
+    stamp = (datetime.now(timezone.utc) - timedelta(minutes=39)).isoformat()
+    with manager._connect_path(ctx.state_dir / "data.db", skip_auto_sweep=True) as conn:
+        conn.execute(
+            "UPDATE task_states SET status = 'running', updated_at = ? WHERE task_id = ?",
+            (stamp.replace("+00:00", "Z"), created.task_id),
+        )
 
-    assert manager.count_active_tasks_for_project(ctx) == 0
+    assert TaskStateManager().list_tasks_for_project(ctx)[0].status == "running"
+
+
+def test_throttle_rechecks_and_notices_owner_death(tmp_path, monkeypatch, owner_process):
+    child, owner, _ = owner_process
+    ctx = _ctx(tmp_path)
+    _inline_task(TaskStateManager(), ctx, owner)
+    clock = [10.0]
+    monkeypatch.setattr(
+        task_state_module, "time", SimpleNamespace(monotonic=lambda: clock[0]), raising=False
+    )
+    manager = TaskStateManager()
+    original = manager._sweep_stale_tasks_on_connection
+    calls = []
+
+    def tracked(conn):
+        calls.append(clock[0])
+        return original(conn)
+
+    monkeypatch.setattr(manager, "_sweep_stale_tasks_on_connection", tracked)
+    assert manager.list_tasks_for_project(ctx)[0].status == "running"
+    _kill(child)
+    clock[0] = 11.9
+    assert manager.list_tasks_for_project(ctx)[0].status == "running"
+    assert calls == [10.0]
+    clock[0] = 12.0
+
+    assert manager.list_tasks_for_project(ctx)[0].status == "failed"
+    assert calls == [10.0, 12.0]
+    assert TaskStateManager.SWEEP_INTERVAL_SECONDS == 2.0
+
+
+def test_idle_auto_sweep_is_read_only_under_write_lock(tmp_path, monkeypatch, owner_process):
+    _, owner, _ = owner_process
+    ctx = _ctx(tmp_path)
+    manager = TaskStateManager()
+    _inline_task(manager, ctx, owner)
+    manager.create_task_for_project(
+        ctx, "ingest_fast", 0, scope="finished", metadata={"backend": "inline"}
+    )
+    manager.complete_task_for_project(ctx, "ingest_fast", 0, scope="finished")
+    manager.create_task_for_project(
+        ctx, "ingest_fast", 0, scope="live_celery", metadata={"backend": "celery"}
+    )
+    db_path = ctx.state_dir / "data.db"
+    with manager._connect_path(db_path, skip_auto_sweep=True) as conn:
+        before = conn.execute("SELECT * FROM task_states ORDER BY task_key").fetchall()
+
+    configure = task_state_module.configure_sqlite_connection
+
+    def short_timeout(conn, **kwargs):
+        configure(conn, **kwargs)
+        conn.execute("PRAGMA busy_timeout = 50")
+
+    monkeypatch.setattr(task_state_module, "configure_sqlite_connection", short_timeout)
+    clock = [10.0]
+    monkeypatch.setattr(task_state_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    manager = TaskStateManager()
+    writer = sqlite3.connect(db_path)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        for stamp in (10.0, 12.0):
+            clock[0] = stamp
+            started = time.monotonic()
+            with manager._connect_context(ctx) as conn:
+                after = conn.execute("SELECT * FROM task_states ORDER BY task_key").fetchall()
+                assert not conn.in_transaction
+            assert time.monotonic() - started < 1.0
+            assert after == before
+            assert manager._last_sweep_at[str(db_path.resolve())] == stamp
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_failed_auto_sweep_does_not_advance_clock(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)
+    _inline_task(TaskStateManager(), ctx)
+    manager = TaskStateManager()
+    original = manager._sweep_stale_tasks_on_connection
+    calls = []
+
+    def fail_once(conn):
+        calls.append(1)
+        return None if len(calls) == 1 else original(conn)
+
+    monkeypatch.setattr(manager, "_sweep_stale_tasks_on_connection", fail_once)
+    assert manager.list_tasks_for_project(ctx)[0].status == "running"
+    assert manager.list_tasks_for_project(ctx)[0].status == "failed"
+    assert calls == [1, 1]
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_inline_sweep_compare_and_set(tmp_path, monkeypatch, replacement):
+    from novelvideo.task_owner import current_owner
+
+    ctx = _ctx(tmp_path)
+    manager = TaskStateManager()
+    _inline_task(manager, ctx, current_owner())
+
+    def finish_before_update(owner):
+        with manager._connect_path(ctx.state_dir / "data.db", skip_auto_sweep=True) as conn:
+            if replacement:
+                conn.execute("UPDATE task_states SET task_id = 'replacement'")
+            else:
+                conn.execute("UPDATE task_states SET status = 'completed', error = 'done'")
+        return False
+
+    monkeypatch.setattr(task_state_module, "owner_alive", finish_before_update)
+
+    meter = RecordingUsageMeter(billable_task_types=["ingest_fast"])
+    with meter.registered():
+        assert manager.sweep_stale_tasks_for_project(ctx) == 0
+    assert meter.calls == []
+    listed = manager.list_tasks_for_project(ctx)
+    if replacement:
+        assert listed[0].task_id == "replacement"
+        assert listed[0].status == "running"
+    else:
+        assert listed[0].status == "completed"
+        assert listed[0].error == "done"
+
+
+@pytest.mark.parametrize("running_loop", [False, True])
+@pytest.mark.parametrize("billable", [False, True])
+def test_dead_owner_releases_reservation_once(tmp_path, owner_process, running_loop, billable):
+    child, owner, _ = owner_process
+    ctx = _ctx(tmp_path)
+    created = _inline_task(
+        TaskStateManager(), ctx, owner, beat_num=3, scope="canvas-node",
+        extra_metadata={"billing_feature_key": "canvas.generate"},
+    )
+    _kill(child)
+    meter = RecordingUsageMeter(billable_task_types=["ingest_fast"] if billable else [])
+
+    def sweep():
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 1
+        assert TaskStateManager().list_tasks_for_project(ctx)[0].status == "failed"
+
+    async def sweep_in_loop():
+        sweep()
+
+    with meter.registered():
+        if running_loop:
+            asyncio.run(sweep_in_loop())
+        else:
+            sweep()
+        expected = [
+            ("resolve_feature_credit_reservation", {"identity": VerifiedTaskSettlementIdentity(
+                root_task_id=created.task_id, project_id="proj_reconcile",
+                requester_user_id="editor", task_type="ingest_fast", episode=0,
+                beat_num=3, scope="canvas-node", feature_key="canvas.generate",
+            )}),
+        ]
+        if billable:
+            expected.append(("settle_cancelled_feature_credit_reservation", {
+                "reservation_id": f"res:{created.task_id}",
+                "metadata": {"source": "task_owner_exited"},
+            }))
+        assert meter.calls == expected
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 0
+        assert meter.calls == expected
+
+
+@pytest.mark.parametrize("status", ["completed", "running"])
+def test_unclaimed_inline_rows_do_not_resolve(tmp_path, owner_process, status):
+    child, owner, _ = owner_process
+    ctx = _ctx(tmp_path)
+    _inline_task(TaskStateManager(), ctx, owner, status=status)
+    if status == "completed":
+        _kill(child)
+    meter = RecordingUsageMeter(billable_task_types=["ingest_fast"])
+    with meter.registered():
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 0
+        assert TaskStateManager().list_tasks_for_project(ctx)[0].status == status
+    assert meter.calls == []
+
+
+@pytest.mark.parametrize("outcome", ["ambiguous", "conflict", "error"])
+def test_resolution_failure_keeps_processing_claimed_rows(
+    tmp_path, owner_process, caplog, outcome,
+):
+    child, owner, _ = owner_process
+    ctx = _ctx(tmp_path)
+    manager = TaskStateManager()
+    first = _inline_task(manager, ctx, owner, scope="first")
+    second = _inline_task(manager, ctx, owner, scope="second")
+    _kill(child)
+
+    class FailingResolutionMeter(RecordingUsageMeter):
+        async def resolve_feature_credit_reservation(self, identity):
+            # The release must observe committed terminal states from another connection.
+            with sqlite3.connect(ctx.state_dir / "data.db") as conn:
+                assert conn.execute(
+                    "SELECT DISTINCT status FROM task_states"
+                ).fetchall() == [("failed",)]
+            resolution = await super().resolve_feature_credit_reservation(identity)
+            if identity.scope == "first":
+                if outcome == "error":
+                    raise RuntimeError("private-resolution-detail")
+                return FeatureSettlementResolution(outcome=outcome)
+            return resolution
+
+    meter = FailingResolutionMeter(billable_task_types=["ingest_fast"])
+    with meter.registered():
+        assert TaskStateManager().sweep_stale_tasks_for_project(ctx) == 2
+    resolutions = [call for call in meter.calls if call[0] == "resolve_feature_credit_reservation"]
+    assert resolutions == [
+        ("resolve_feature_credit_reservation", {"identity": VerifiedTaskSettlementIdentity(
+            root_task_id=task_id, project_id="proj_reconcile", requester_user_id="editor",
+            task_type="ingest_fast", episode=0, beat_num=None, scope=scope, feature_key="",
+        )}) for task_id, scope in [(first.task_id, "first"), (second.task_id, "second")]
+    ]
+    assert [call for call in meter.calls if call[0] != "resolve_feature_credit_reservation"] == [
+        ("settle_cancelled_feature_credit_reservation", {
+            "reservation_id": f"res:{second.task_id}",
+            "metadata": {"source": "task_owner_exited"},
+        }),
+    ]
+    records = [r for r in caplog.records if r.name == "novelvideo.task_backend.run_core"]
+    assert len(records) == 1
+    assert records[0].levelname == ("ERROR" if outcome == "error" else "WARNING")
+    for value in (first.task_id, second.task_id, "proj_reconcile", "private-resolution-detail"):
+        assert value not in str(records[0].__dict__)

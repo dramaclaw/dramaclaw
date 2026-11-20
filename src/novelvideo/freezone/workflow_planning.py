@@ -35,5 +35,15 @@ WORKFLOW_PLANNING_INSTRUCTIONS = (
     "multiple video clips or video with audio, include one terminal videoComposeNode "
     "and connect each contributing video/audio node with composition_input_for. "
     "A single video output without composition does not need a videoComposeNode. "
+    "For explicit mix levels, offsets or fades, put executable tracks in the compose "
+    "node's data.draftTimeline using its schema, never its prompt (compose prompt is discarded). "
+    "Reference connected plan node IDs in clips.nodeId, leave sourceUrl empty and durationMs null; "
+    "runtime binds the generated media. All timeline and trim fields ending in Ms use milliseconds "
+    "(a 5-second clip has trimStartMs 0 and trimEndMs 5000). "
+    "Use volume for gain, timelineStartMs for placement, "
+    "and fadeOutMs for an audio fade at the clip end. Preserve existing user-edited timelines. "
+    "For speech audio nodes, keep production instructions in data.prompt and literal "
+    "user-supplied dialogue in data.text. Never put generation instructions in data.text. "
+    "If speech must be authored from upstream content, leave text unset for Recipe compilation. "
     + GENERATION_PARAMETER_PLANNING_INSTRUCTIONS
 )

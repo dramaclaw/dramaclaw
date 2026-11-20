@@ -15,12 +15,13 @@ import re
 import subprocess
 import urllib.parse
 import uuid
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from abc import ABC
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from novelvideo.shared.failure_signals import upstream_status_of, with_upstream_status
 from novelvideo.shared.provider_errors import (
     classify_provider_video_task_error,
     provider_video_error_code_from_text,
@@ -207,6 +208,60 @@ async def _confirm_video_model_call(
         pass
 
 
+ACCEPTED_VIDEO_JOB_ROUTE_CHANGED_ERROR = (
+    "The accepted video job belongs to a different gateway or account than the "
+    "current configuration and cannot be resumed. The reserved credits were "
+    "released; run the node again."
+)
+ACCEPTED_VIDEO_JOB_RECEIPT_INVALID_ERROR = (
+    "The record of the accepted video job is unreadable, so the job cannot be "
+    "resumed. Any reserved credits recorded in it were released; run the node again."
+)
+
+
+def _read_accepted_video_job_receipt(
+    path: Path, route: str
+) -> tuple[dict[str, str] | None, str]:
+    """Read the receipt of an already accepted job.
+
+    Returns ``(None, "")`` when there is no receipt.  Otherwise returns the
+    identifiers that could be read and an error that is empty only when the
+    receipt can be used to resume polling on ``route``.
+    """
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return None, ""
+    except (OSError, ValueError):
+        text = ""
+    try:
+        receipt = json.loads(text)
+    except ValueError:
+        receipt = None
+    if not isinstance(receipt, dict):
+        receipt = {}
+
+    def field(name: str) -> str:
+        value = receipt.get(name)
+        return value if isinstance(value, str) else ""
+
+    accepted = {
+        "task_id": field("task_id"),
+        "provider_request_id": field("provider_request_id"),
+        "reservation_id": field("reservation_id"),
+    }
+    if (
+        not field("route")
+        or not accepted["task_id"]
+        or not isinstance(receipt.get("provider_request_id"), str)
+        or not isinstance(receipt.get("reservation_id"), str)
+    ):
+        return accepted, ACCEPTED_VIDEO_JOB_RECEIPT_INVALID_ERROR
+    if field("route") != route:
+        return accepted, ACCEPTED_VIDEO_JOB_ROUTE_CHANGED_ERROR
+    return accepted, ""
+
+
 class VideoGenStatus(Enum):
     """视频生成状态。"""
 
@@ -241,6 +296,7 @@ class VideoGenResult:
     provider_task_id: Optional[str] = None
     error: Optional[str] = None
     duration_seconds: float = 0.0
+    upstream_status: Optional[int] = None
 
 
 class VideoGeneratorBase(ABC):
@@ -673,6 +729,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
                         error=f"Submit failed: HTTP {resp.status_code} - {error_text[:200]}",
+                        upstream_status=upstream_status_of(resp.status_code),
                     )
 
                 data = resp.json()
@@ -692,6 +749,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=f"Submit exception: {e}",
+                upstream_status=upstream_status_of(e),
             )
 
         # 2. 轮询结果
@@ -1059,6 +1117,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
                         error=f"Submit failed: HTTP {resp.status_code} - {error_text[:200]}",
+                        upstream_status=upstream_status_of(resp.status_code),
                     )
                 data = resp.json()
                 task_id = data.get("id")
@@ -1074,6 +1133,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=f"Submit exception: {e}",
+                upstream_status=upstream_status_of(e),
             )
 
         # 轮询结果
@@ -1299,12 +1359,14 @@ class GrokVideoGenerator(VideoGeneratorBase):
                         return VideoGenResult(
                             status=VideoGenStatus.FAILED,
                             error=f"Submit failed: HTTP {resp.status} - {error_text[:200]}",
+                            upstream_status=upstream_status_of(resp.status),
                         )
                     data = await resp.json()
         except Exception as e:
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=f"Submit exception: {e}",
+                upstream_status=upstream_status_of(e),
             )
 
         request_id = data.get("request_id")
@@ -1894,6 +1956,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=str(exc),
+                upstream_status=upstream_status_of(exc),
                 task_id=task_id,
             )
 
@@ -1911,6 +1974,7 @@ class NewApiVideoError(RuntimeError):
         super().__init__(message)
         self.request_id = request_id
         self.status_code = status_code
+        with_upstream_status(self, status_code)
 
 
 class NewApiVideoGenerator(VideoGeneratorBase):
@@ -2922,7 +2986,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 transition_token=claim.transition_token,
                 expected_version=expected_version,
             )
-        except Exception as exc:
+        except Exception:
             raise VideoEgressError("EGRESS_OPERATION_TRANSITION_FAILED") from None
 
     @staticmethod
@@ -2933,7 +2997,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 transition_token=claim.transition_token,
                 expected_version=claim.operation.version,
             )
-        except Exception as exc:
+        except Exception:
             raise VideoEgressError("EGRESS_OPERATION_TRANSITION_FAILED") from None
 
     async def generate(
@@ -3068,6 +3132,41 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         last_delivery_error = ""
         request_base_url = self.base_url
         request_headers = self.headers if not organization_request else None
+        receipt_path = None if organization_request else kwargs.get("accepted_job_receipt")
+        if receipt_path is not None:
+            # The receipt belongs to one Freezone job and one gateway account.
+            route = hashlib.sha256(
+                json.dumps([request_base_url, self.model, self.api_key]).encode()
+            ).hexdigest()
+            accepted, receipt_error = _read_accepted_video_job_receipt(receipt_path, route)
+            if accepted is not None:
+                provider_request_id = accepted["provider_request_id"]
+                reservation_id = accepted["reservation_id"]
+                if not receipt_error:
+                    task_id = accepted["task_id"]
+            if receipt_error:
+                # The accepted job may still be running upstream, so this run
+                # must not submit another one.  Release what the receipt
+                # reserved and drop it, so the job ends instead of failing the
+                # same way on every redelivery.
+                log(f"Accepted video job cannot be resumed: {receipt_error}")
+                if reservation_id:
+                    await _refund_video_model_call(
+                        reservation_id,
+                        source="newapi_video_generation",
+                        error="accepted_job_receipt_unusable",
+                        provider_request_id=provider_request_id,
+                        provider_task_id=accepted["task_id"],
+                    )
+                try:
+                    receipt_path.unlink(missing_ok=True)
+                except OSError as exc:
+                    log(f"Accepted video job receipt cleanup failed: {type(exc).__name__}")
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=receipt_error,
+                    task_id=accepted["task_id"] or None,
+                )
 
         if organization_request:
             from novelvideo.ports import get_egress_operation_port
@@ -3136,7 +3235,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             )
             return VideoGenResult(status=VideoGenStatus.FAILED, error=safe_error)
 
-        if requested_mode:
+        if task_id is not None:
+            log(f"继续查询已受理视频任务: {task_id}")
+        elif requested_mode:
             try:
                 await self._apply_huimeng_protocol_media_inputs(
                     metadata,
@@ -3398,104 +3499,114 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             except Exception as exc:
                 return await fail_before_submit(f"media relay upload failed: {exc}")
         try:
-            model_label = self._model_label(self.model)
-            request_resolution = str(
-                metadata.get("resolution") or self.resolution or ""
-            ).strip()
-            log(
-                f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})..."
-            )
-            progress(0.1)
-            from novelvideo.media_model_request_schema import (
-                apply_media_request_schema,
-                enforce_newapi_media_geometry_contract,
-                enforce_newapi_video_duration_contract,
-                enforce_newapi_video_mode_contract,
-            )
+            if task_id is None:
+                model_label = self._model_label(self.model)
+                request_resolution = str(
+                    metadata.get("resolution") or self.resolution or ""
+                ).strip()
+                log(
+                    f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})..."
+                )
+                progress(0.1)
+                from novelvideo.media_model_request_schema import (
+                    apply_media_request_schema,
+                    enforce_newapi_media_geometry_contract,
+                    enforce_newapi_video_duration_contract,
+                    enforce_newapi_video_mode_contract,
+                )
 
-            self._canonicalize_video_payload(payload, metadata)
-            payload = apply_media_request_schema(
-                payload, self.request_schema, self.model_params
-            )
-            payload = enforce_newapi_video_mode_contract(
-                payload,
-                mode=requested_mode,
-                fixed_duration=duration,
-            )
-            payload = enforce_newapi_media_geometry_contract(
-                payload, media_type="video"
-            )
-            payload = enforce_newapi_video_duration_contract(payload)
-            reservation_id = await _reserve_video_model_call(
-                self.model,
-                source="newapi_video_generation",
-                resolution=request_resolution,
-                duration_seconds=duration,
-            )
-            await update_current_model_call_log(
-                request_payload=payload,
-            )
-            submit_attempted = True
-            if organization_request:
-                submitted = await self._post_json(
-                    f"{request_base_url}/video/generations",
+                self._canonicalize_video_payload(payload, metadata)
+                payload = apply_media_request_schema(
+                    payload, self.request_schema, self.model_params
+                )
+                payload = enforce_newapi_video_mode_contract(
                     payload,
-                    headers=request_headers,
+                    mode=requested_mode,
+                    fixed_duration=duration,
                 )
-            else:
-                submitted = await self._post_json(
-                    f"{request_base_url}/video/generations", payload
+                payload = enforce_newapi_media_geometry_contract(
+                    payload, media_type="video"
                 )
-            await update_current_model_call_log(
-                response_payload=submitted,
-            )
-            task_id = self._task_id_from_submit_response(submitted)
-            provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
-            if not task_id:
-                if organization_request:
-                    await self._mark_operation_unknown(
-                        operation_port,
-                        operation_claim,
-                        expected_version=operation_version,
-                    )
-                    operation_terminal = True
-                await _refund_video_model_call(
-                    reservation_id,
+                payload = enforce_newapi_video_duration_contract(payload)
+                reservation_id = await _reserve_video_model_call(
+                    self.model,
                     source="newapi_video_generation",
-                    error="missing_task_id",
-                    provider_request_id=provider_request_id,
+                    resolution=request_resolution,
+                    duration_seconds=duration,
                 )
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=(
-                        "EGRESS_OPERATION_UNKNOWN"
-                        if organization_request
-                        else f"No task_id in DramaClawAPI response: {submitted}"
-                    ),
+                await update_current_model_call_log(
+                    request_payload=payload,
                 )
-            if organization_request:
-                accepted = await operation_port.mark_accepted(
-                    operation_id=operation_claim.operation.operation_id,
-                    transition_token=operation_claim.transition_token,
-                    expected_version=operation_version,
-                    provider_job_id=task_id,
-                    requester_user_id=egress_context.requester_user_id,
-                    membership_id=egress_context.membership_id,
-                    authz_version=egress_context.authz_version,
+                submit_attempted = True
+                if organization_request:
+                    submitted = await self._post_json(
+                        f"{request_base_url}/video/generations",
+                        payload,
+                        headers=request_headers,
+                    )
+                else:
+                    submitted = await self._post_json(
+                        f"{request_base_url}/video/generations", payload
+                    )
+                await update_current_model_call_log(
+                    response_payload=submitted,
                 )
-                operation_version = accepted.version
-            try:
-                await get_usage_meter().mark_current_paid_execution_attempt(
-                    status="accepted",
-                    provider_request_id=provider_request_id,
-                    provider_task_id=task_id,
-                    metadata={"source": "newapi_video_generation"},
-                )
-            except Exception as exc:  # noqa: BLE001
-                log(f"计费调用证据暂存失败，将由对账核实: {exc}")
-            record_accepted(task_id)
-            log(f"任务已提交: {task_id}")
-            progress(0.2)
+                task_id = self._task_id_from_submit_response(submitted)
+                provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
+                if not task_id:
+                    if organization_request:
+                        await self._mark_operation_unknown(
+                            operation_port,
+                            operation_claim,
+                            expected_version=operation_version,
+                        )
+                        operation_terminal = True
+                    await _refund_video_model_call(
+                        reservation_id,
+                        source="newapi_video_generation",
+                        error="missing_task_id",
+                        provider_request_id=provider_request_id,
+                    )
+                    return VideoGenResult(
+                        status=VideoGenStatus.FAILED,
+                        error=(
+                            "EGRESS_OPERATION_UNKNOWN"
+                            if organization_request
+                            else f"No task_id in DramaClawAPI response: {submitted}"
+                        ),
+                    )
+                if organization_request:
+                    accepted = await operation_port.mark_accepted(
+                        operation_id=operation_claim.operation.operation_id,
+                        transition_token=operation_claim.transition_token,
+                        expected_version=operation_version,
+                        provider_job_id=task_id,
+                        requester_user_id=egress_context.requester_user_id,
+                        membership_id=egress_context.membership_id,
+                        authz_version=egress_context.authz_version,
+                    )
+                    operation_version = accepted.version
+                if receipt_path is not None:
+                    from novelvideo.utils.state_index_files import write_json_atomic
+
+                    write_json_atomic(receipt_path, {
+                        "route": route,
+                        "task_id": task_id,
+                        "provider_request_id": provider_request_id,
+                        "reservation_id": reservation_id,
+                    })
+                try:
+                    await get_usage_meter().mark_current_paid_execution_attempt(
+                        status="accepted",
+                        provider_request_id=provider_request_id,
+                        provider_task_id=task_id,
+                        metadata={"source": "newapi_video_generation"},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log(f"计费调用证据暂存失败，将由对账核实: {exc}")
+                record_accepted(task_id)
+                log(f"任务已提交: {task_id}")
+                progress(0.2)
 
             for poll_count in range(max_polls):
                 if organization_request:
@@ -3721,6 +3832,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         return VideoGenResult(
                             status=VideoGenStatus.FAILED,
                             error=last_delivery_error,
+                            upstream_status=upstream_status_of(exc),
                             task_id=task_id,
                         )
                     provider_task_id = self._extract_provider_task_id(
@@ -3989,6 +4101,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=safe_exception_error,
+                upstream_status=upstream_status_of(exc.status_code),
                 task_id=task_id,
             )
         except Exception as exc:
@@ -4031,6 +4144,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=safe_exception_error,
+                upstream_status=upstream_status_of(exc),
                 task_id=task_id,
             )
 
@@ -4173,14 +4287,6 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         self.http_url = f"{http_scheme}://{self.server_address}"
         self.ws_url = f"{ws_scheme}://{self.server_address}"
 
-        # 根据类型选择工作流路径
-        if self.workflow_type == "fp8":
-            workflow_path = self.FP8_I2V_WORKFLOW_PATH
-        elif self.workflow_type == "ltx23":
-            workflow_path = self.LTX23_I2V_WORKFLOW_PATH
-        else:
-            workflow_path = self.GGUF_WORKFLOW_PATH
-
         # 加载工作流模板
         self._workflow_templates = {}
         for name, path in [
@@ -4212,7 +4318,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
                 f"{self.http_url}/upload/image", data=data
             ) as response:
                 if response.status != 200:
-                    raise Exception(f"上传图片失败: {await response.text()}")
+                    raise with_upstream_status(
+                        Exception(f"上传图片失败: {await response.text()}"),
+                        response.status,
+                    )
                 return await response.json()
 
     async def _queue_prompt(self, workflow: dict, client_id: str) -> dict:
@@ -4221,7 +4330,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{self.http_url}/prompt", json=p) as response:
                 if response.status != 200:
-                    raise Exception(f"提交工作流失败: {await response.text()}")
+                    raise with_upstream_status(
+                        Exception(f"提交工作流失败: {await response.text()}"),
+                        response.status,
+                    )
                 return await response.json()
 
     async def _get_history(self, prompt_id: str) -> dict:
@@ -4229,7 +4341,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{self.http_url}/history/{prompt_id}") as response:
                 if response.status != 200:
-                    raise Exception(f"获取历史失败: {await response.text()}")
+                    raise with_upstream_status(
+                        Exception(f"获取历史失败: {await response.text()}"),
+                        response.status,
+                    )
                 return await response.json()
 
     async def _download_video(self, filename: str, subfolder: str = "") -> bytes:
@@ -4239,7 +4354,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status != 200:
-                    raise Exception(f"下载视频失败: {await response.text()}")
+                    raise with_upstream_status(
+                        Exception(f"下载视频失败: {await response.text()}"),
+                        response.status,
+                    )
                 return await response.read()
 
     async def generate(
@@ -4555,6 +4673,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
             )
 
 

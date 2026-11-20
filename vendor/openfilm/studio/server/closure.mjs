@@ -20,10 +20,10 @@
  *
  * It reads through a `View`, so the same rule reads the folder now (`folderView`) or a version kept in history.
  */
+import { TOOL_DIR } from '../../src/film-dirs.mjs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { posix } from 'node:path';
 import { FILM_FILE, readFilmFile } from '../../src/film-doc.mjs';
-import { TOOL_DIR } from './projects.mjs';
 
 /**
  * A project's files as the closure reads them, by folder-relative path with `/`. `size`: a file's bytes, or null
@@ -56,7 +56,7 @@ export const isMediaFile = (/** @type {string} */ path) => {
 };
 
 /** Folders that are never part of a film, wherever a reference points: version control, Studio's own. */
-const NEVER = /^(\.git|\.film)(\/|$)/;
+const NEVER = new RegExp(`^(\\.git|${TOOL_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(/|$)`);
 
 /**
  * A reference as it is written (`../a b.png?x#t=2`) made a project path (`a b.png`), from the folder `base` it is

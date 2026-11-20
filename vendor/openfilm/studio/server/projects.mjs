@@ -14,6 +14,7 @@
  *
  * Each part is a folder of its own, so the project's export (exports.mjs, kind 'project') takes or leaves it.
  */
+import { TOOL_DIR, cacheDir, hostDirs, registerFilmDirs } from '../../src/film-dirs.mjs';
 import { moveToTrash } from './trash.mjs';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
@@ -25,8 +26,9 @@ import { FILM_FILE, filmHtml } from '../../src/film-doc.mjs';
 import { writeAtomic } from './atomic.mjs';
 import { coverAt } from './cover.mjs';
 import { libraryProjects, libraryRoot } from '../../src/locations.mjs';
+import { projectMissing } from './project-presence.mjs';
 
-export const TOOL_DIR = '.film';
+export { TOOL_DIR } from '../../src/film-dirs.mjs';
 
 /** What an export of the project may take besides the work, each a folder in `.film/` (see above); never the cache. */
 export const PROJECT_PARTS = /** @type {const} */ (['history', 'chat', 'logs']);
@@ -63,7 +65,7 @@ export function studioKey() {
 export { libraryRoot };
 
 /**
- * @typedef {{ id: string, path: string, openedAt: number, folderId?: string }} Recent
+ * @typedef {{ id: string, path: string, openedAt: number, stateDir?: string, runtimeDir?: string, folderId?: string }} Recent
  * @typedef {{ id: string, name: string, createdAt: number, parentId?: string }} ProjectFolder   a folder of the Projects
  *   list (not on disk); `parentId` the folder it is in (none: the top level)
  * @typedef {{ recent: Recent[], folders: ProjectFolder[] }} StudioState
@@ -81,13 +83,15 @@ function exclusive(change) {
 
 /** The list of projects and the person's preferences, read fresh each time (another Studio command may have written). */
 export async function readState() {
-  try {
-    const raw = JSON.parse(await readFile(join(studioHome(), 'studio.json'), 'utf8'));
-    return /** @type {StudioState} */ ({
-      recent: Array.isArray(raw.recent) ? raw.recent : [],
-      folders: Array.isArray(raw.folders) ? raw.folders.filter((/** @type {any} */ f) => f && typeof f.id === 'string' && typeof f.name === 'string') : [],
-    });
-  } catch { return /** @type {StudioState} */ ({ recent: [], folders: [] }); }
+  const raw = await readFile(join(studioHome(), 'studio.json'), 'utf8').then(JSON.parse).catch(() => null);
+  const state = /** @type {StudioState} */ ({
+    recent: Array.isArray(raw?.recent) ? raw.recent : [],
+    folders: Array.isArray(raw?.folders) ? raw.folders.filter((/** @type {any} */ f) => f && typeof f.id === 'string' && typeof f.name === 'string') : [],
+  });
+  for (const entry of state.recent) {
+    if (entry.stateDir && entry.runtimeDir) registerFilmDirs(entry.path, { stateDir: entry.stateDir, runtimeDir: entry.runtimeDir });
+  }
+  return state;
 }
 
 /* the file is shared with every OpenFilm on this computer (`npx openfilm`, the app), older or newer: what this one does
@@ -140,11 +144,14 @@ async function folderId(/** @type {string} */ folder, /** @type {StudioState} */
  * is never touched); `.film/` keeps itself out of the folder's own git. Returns the project and puts it first in the list.
  * `create` false: only a folder that is there and holds a film opens (else 'not-found' or 'no-film', and nothing is
  * written), so the editor can ask before it starts a film in a folder.
- * @param {string} path @param {{ create?: boolean }} [options]
+ * @param {string} path @param {{ create?: boolean, stateDir?: string, runtimeDir?: string }} [options]
  */
-export async function openProject(path, { create = true } = {}) {
+export async function openProject(path, { create = true, stateDir, runtimeDir } = {}) {
   const asked = resolve(path);
   refuse(asked);
+  if (hostDirs() || stateDir !== undefined || runtimeDir !== undefined) {
+    registerFilmDirs(asked, { stateDir, runtimeDir });
+  }
   if (existsSync(asked) && !statSync(asked).isDirectory()) throw new ProjectError(`${asked} is a file; a project is a folder`);
   if (!create && !existsSync(asked)) throw new ProjectError('That folder does not exist.', 404, 'not-found');
   if (!create && !existsSync(join(asked, FILM_FILE))) throw new ProjectError('There is no film.html in that folder.', 409, 'no-film');
@@ -159,7 +166,8 @@ export async function openProject(path, { create = true } = {}) {
     const id = await folderId(folder, state);
     /* reopened: it stays in its folder of the list */
     const listed = state.recent.find((r) => r.id === id)?.folderId;
-    const entry = { id, path: folder, openedAt: Date.now(), ...(listed ? { folderId: listed } : {}) };
+    if (stateDir && runtimeDir) registerFilmDirs(asked, { stateDir, runtimeDir });
+    const entry = { id, path: folder, openedAt: Date.now(), ...(stateDir && runtimeDir ? { stateDir, runtimeDir } : {}), ...(listed ? { folderId: listed } : {}) };
     state.recent = [entry, ...state.recent.filter((r) => r.id !== id && r.path !== folder)];
     await writeState(state);
     return describe(entry);
@@ -167,13 +175,14 @@ export async function openProject(path, { create = true } = {}) {
 }
 
 /** A new project in the library: "Untitled", "Untitled 2", … never an existing folder. */
-export async function createProject(name = 'Untitled') {
+/** @param {string} [name] @param {{ stateDir?: string, runtimeDir?: string }} [dirs] */
+export async function createProject(name = 'Untitled', dirs = {}) {
   const clean = folderName(name);
   const root = libraryRoot();
   await mkdir(root, { recursive: true });
   let candidate = join(root, clean);
   for (let n = 2; existsSync(candidate); n++) candidate = join(root, `${clean} ${n}`);
-  return openProject(candidate);
+  return openProject(candidate, dirs);
 }
 
 /**
@@ -194,17 +203,19 @@ function folderName(/** @type {string} */ name) {
  */
 const describe = (/** @type {Recent} */ r) => {
   const created = statSync(r.path, { throwIfNoEntry: false });
+  const missingReason = projectMissing(r.path);
   const duration = filmDuration(r.path);
   const cover = coverAt(r.path);
   return {
-    /* `missing`: its folder is gone (one that only lost its film.html is still there, and still opens) */
-    id: r.id, path: r.path, name: filmTitle(r.path) ?? basename(r.path), openedAt: r.openedAt, missing: !created?.isDirectory(),
+    id: r.id, path: r.path, name: filmTitle(r.path) ?? basename(r.path), openedAt: r.openedAt, missing: Boolean(missingReason),
+    ...(missingReason ? { missingReason } : {}),
     createdAt: created ? Math.round(created.birthtimeMs || created.ctimeMs) : r.openedAt,
     ...(duration != null ? { duration } : {}),
     ...(r.folderId ? { folderId: r.folderId } : {}),
     ...(cover != null ? { cover } : {}),
   };
 };
+
 
 /** The film's own title — what the host named the cut. Null when the document has none to give. */
 function filmTitle(/** @type {string} */ folder) {
@@ -221,7 +232,7 @@ function filmTitle(/** @type {string} */ folder) {
 function filmDuration(/** @type {string} */ folder) {
   try {
     const film = statSync(join(folder, FILM_FILE));
-    const known = JSON.parse(readFileSync(join(folder, TOOL_DIR, 'cache', 'film-duration.json'), 'utf8'));
+    const known = JSON.parse(readFileSync(cacheDir(folder, 'film-duration.json'), 'utf8'));
     return known.film === `${film.mtimeMs}:${film.size}` && Number.isFinite(known.duration) ? Number(known.duration) : null;
   } catch { return null; }
 }
@@ -439,12 +450,12 @@ export async function renameProject(/** @type {string} */ id, /** @type {string}
 
 /**
  * Delete a project: its folder goes to the system's Trash (where the person can still take it back), and it leaves the
- * list. A folder that is already gone just leaves the list.
+ * list. An unavailable project just leaves the list; any remaining files are kept.
  */
 export async function deleteProject(/** @type {string} */ id) {
   const found = (await readState()).recent.find((r) => r.id === id);
   if (!found) throw new ProjectError('no such project', 404);
-  if (existsSync(found.path)) await moveToTrash(found.path);
+  if (!projectMissing(found.path)) await moveToTrash(found.path);
   await forgetProject(id);
 }
 

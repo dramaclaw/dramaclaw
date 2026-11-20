@@ -6,3 +6,6 @@ e3763203d17c04c45b6e068c8060c8f04d264dd1:src/novelvideo/api/routes/chat.py:gener
 # The same reviewed consumer labels reappear in this staging merge diff.
 000671a4da313febce828f0fbc008ef438dc331b:scripts/benchmark_canvas_command_health.py:generic-api-key:87
 000671a4da313febce828f0fbc008ef438dc331b:src/novelvideo/api/routes/chat.py:generic-api-key:3162
+
+# Synthetic test sample: a made-up JWT-shaped string in a redaction test, since built at run time.
+fecafd5eca1704651450f32941430cc6ec48d157:tests/test_workflow_failure_reasons.py:jwt:198

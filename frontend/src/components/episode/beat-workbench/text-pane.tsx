@@ -31,7 +31,7 @@ import {
   type SceneRefRecordLike,
 } from "@/lib/scene-ref";
 import { identityRefLabel } from "@/lib/identity-period";
-import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
+import { timeOfDayLabel, timeOfDayOptions } from "@/features/canvas/domain/timeOfDay";
 import { cn } from "@/lib/utils";
 import type { Beat } from "@/types/episode";
 import type { BeatUpdate } from "@/types/script";

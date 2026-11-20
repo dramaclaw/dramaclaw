@@ -56,7 +56,6 @@ def test_canvas_story_tools_create_on_empty_canvas_and_persist_real_story(
     interactive_story_client, monkeypatch, transport,
 ) -> None:
     from novelvideo.chat import dramaclaw_mcp, interactive_story_mcp
-    from novelvideo.chat.service import _codex_freezone_write_result_succeeded
     from novelvideo.freezone import canvas_store
 
     client, state_dir, _roles = interactive_story_client
@@ -93,10 +92,6 @@ def test_canvas_story_tools_create_on_empty_canvas_and_persist_real_story(
     })
     assert repeated["idempotent"] is True
     assert repeated["revision"] == 1
-    assert _codex_freezone_write_result_succeeded(SimpleNamespace(
-        name="dramaclaw.dramaclaw_create_interactive_story", status="completed",
-        error=None, structured=created, output=None,
-    ))
     read = call("dramaclaw_get_interactive_story", {"story_id": story["story_id"]})
     assert len(read["story"]["choices"]) == len(story["choices"])
     patched = call("dramaclaw_patch_interactive_story", {

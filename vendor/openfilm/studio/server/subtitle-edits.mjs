@@ -14,13 +14,14 @@
  *
  *   GET captions/source?src=     → SourceSubtitles
  *   PUT captions/source          { src, cues } → { before: Snapshot, after: Snapshot }
- *   PUT captions/files           { src, from: Snapshot, to: Snapshot } → { ok } (409 when the files are not `from`)
+ *   PUT captions/files           { src, from: Snapshot, to: Snapshot, undo? } → { ok } (409 when the files are not `from`)
  */
 import { readFile, rm } from 'node:fs/promises';
 import { basename, dirname, extname } from 'node:path';
 import { writeAtomic } from './atomic.mjs';
 import { isFilmSubtitleLanguage } from './film-subtitle.mjs';
 import { inProject, inside } from './files.mjs';
+import { filesWritten } from './person-edits.mjs';
 import { HttpError, json, readJson } from './http.mjs';
 import { alignTranslation, segmentLine } from './subtitle-segments.mjs';
 import { readTranscript, transcriptPath, translationsOf, vttOf } from './transcripts.mjs';
@@ -161,7 +162,9 @@ export async function writeSourceSubtitles(root, src, rawCues) {
     const translated = cues.flatMap((c) => (c.alt?.[language] ? [{ text: c.alt[language], startMs: c.startMs, endMs: c.endMs }] : []));
     await writeAtomic(inside(root, transcriptPath(src, language)), vttOf(translated), 'utf8');
   }
-  return { before, after: await snapshot(root, src, paths) };
+  const after = await snapshot(root, src, paths);
+  filesWritten(root, before.files, after.files);
+  return { before, after };
 }
 
 /** Whether `path` is one of `src`'s transcript files: `name.vtt` or `name.<language>.vtt` beside it. @param {string} src @param {string} path */
@@ -188,10 +191,10 @@ function snapshotOf(v, src) {
 
 /**
  * Put `src`'s transcript files back as `to`, when they are now as `from` left them (a file `to` has as null goes:
- * the step made it). Otherwise nothing is written, and a 409 says they changed.
- * @param {string} root @param {string} src @param {unknown} rawFrom @param {unknown} rawTo
+ * the step made it). Otherwise nothing is written, and a 409 says they changed. `undo`: an edit undone.
+ * @param {string} root @param {string} src @param {unknown} rawFrom @param {unknown} rawTo @param {{ undo?: boolean }} [o]
  */
-export async function restoreSourceFiles(root, src, rawFrom, rawTo) {
+export async function restoreSourceFiles(root, src, rawFrom, rawTo, { undo = false } = {}) {
   if (!inProject(root, src)) throw new HttpError(400, `${src} is not a file inside the project`);
   const from = snapshotOf(rawFrom, src), to = snapshotOf(rawTo, src);
   const paths = [...new Set([...Object.keys(from.files), ...Object.keys(to.files)])];
@@ -204,6 +207,7 @@ export async function restoreSourceFiles(root, src, rawFrom, rawTo) {
     if (body === null) await rm(inside(root, path), { force: true });
     else await writeAtomic(inside(root, path), body, 'utf8');
   }
+  filesWritten(root, now.files, to.files, { undo });
 }
 
 /**
@@ -224,9 +228,9 @@ export async function subtitleEditRoutes(req, res, root, rest) {
     return true;
   }
   if (rest === 'captions/files' && req.method === 'PUT') {
-    const { src, from, to } = /** @type {{ src?: unknown, from?: unknown, to?: unknown }} */ (await readJson(req));
+    const { src, from, to, undo } = /** @type {{ src?: unknown, from?: unknown, to?: unknown, undo?: unknown }} */ (await readJson(req));
     if (typeof src !== 'string') throw new HttpError(400, 'which source? { src, from, to }');
-    await restoreSourceFiles(root, src, from, to);
+    await restoreSourceFiles(root, src, from, to, { undo: undo === true });
     json(res, 200, { ok: true });
     return true;
   }

@@ -1,0 +1,83 @@
+{
+  "canvas_id": "parity",
+  "nodes": [
+    {
+      "id": "source",
+      "type": "textAnnotationNode",
+      "position": {
+        "x": 10,
+        "y": 20
+      },
+      "data": {
+        "displayName": "文本",
+        "content": "Seed",
+        "model": "newapi_gpt_image2",
+        "extraParams": {},
+        "isGenerating": false
+      },
+      "selected": true
+    },
+    {
+      "id": "generated",
+      "type": "imageGenNode",
+      "position": {
+        "x": 700,
+        "y": 20
+      },
+      "data": {
+        "displayName": "图片节点",
+        "imageUrl": "/output/sea.png",
+        "previewImageUrl": "/output/sea.png",
+        "aspectRatio": "16:9",
+        "isSizeManuallyAdjusted": false,
+        "requestAspectRatio": "auto",
+        "prompt": "Sea",
+        "model": "newapi_gpt_image2",
+        "size": "2K",
+        "count": 1,
+        "styleTemplateId": null,
+        "focusRegion": null,
+        "cameraSelection": null,
+        "referenceImageUrl": null,
+        "marks": [],
+        "isGenerating": false,
+        "generationStartedAt": null,
+        "generationDurationMs": 60000
+      },
+      "selected": false
+    },
+    {
+      "id": "spare",
+      "type": "textAnnotationNode",
+      "position": {
+        "x": 1200,
+        "y": 500
+      },
+      "data": {
+        "displayName": "文本",
+        "content": "Spare",
+        "model": "newapi_gpt_image2",
+        "extraParams": {},
+        "isGenerating": false
+      },
+      "selected": false
+    }
+  ],
+  "edges": [
+    {
+      "id": "existing-edge",
+      "source": "source",
+      "target": "generated",
+      "data": {
+        "linkType": "prompt_for"
+      },
+      "type": "disconnectableEdge",
+      "sourceHandle": "source",
+      "targetHandle": "target"
+    }
+  ],
+  "metadata": null,
+  "client_save_id": "parity-save",
+  "save_source": "autosave",
+  "allow_empty_overwrite": false
+}

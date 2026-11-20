@@ -74,3 +74,20 @@ def test_empty_batch_does_not_open_database(tmp_path, monkeypatch):
 
     monkeypatch.setattr(manager, "_connect_context", unexpected)
     assert manager.get_tasks_for_project(_context(tmp_path), []) == {}
+
+
+def test_drive_tasks_do_not_consume_generation_lane_slots(tmp_path):
+    manager = TaskStateManager()
+    ctx = _context(tmp_path)
+    for scope in ('run_x:d1', 'run_x:d2'):
+        manager.create_task_for_project(
+            ctx, 'freezone_workflow_drive', 0, scope=scope,
+            metadata={'queue_kind': 'default'},
+        )
+    manager.create_task_for_project(
+        ctx, 'freezone_gen', 0, scope='image', metadata={'queue_kind': 'default'},
+    )
+    with manager._connect_context(ctx) as conn:
+        assert manager._count_active_project_tasks_on_connection(
+            conn, project_id=ctx.project_id, queue_kind='default',
+        ) == 1

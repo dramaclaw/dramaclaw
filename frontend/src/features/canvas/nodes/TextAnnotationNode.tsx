@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { textGenerationStartPatch, textGenerationOutcomePatch } from '../application/generationRequests/textGenerationResult';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import ReactMarkdown from 'react-markdown';
@@ -63,10 +64,8 @@ import { awaitTaskCompletion } from '@/api/tasks';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { readUrl } from '@/lib/url-params';
-import {
-  DEFAULT_SHARED_MODEL_ID,
-  ProviderModelPicker,
-} from '@/features/canvas/ui/ProviderModelPicker';
+import { DEFAULT_SHARED_MODEL_ID } from '@/features/canvas/domain/defaultModelIds';
+import { ProviderModelPicker } from '@/features/canvas/ui/ProviderModelPicker';
 import {
   NODE_GENERATE_BUTTON_BASE_CLASS,
   NODE_GENERATE_BUTTON_DISABLED_CLASS,
@@ -543,11 +542,7 @@ export const TextAnnotationNode = memo(({
   }, [content, id, isGenerating, isTranslating, modelTaskAccess.blocked, updateNodeData]);
 
   const runRecipeText = useCallback(async (): Promise<{ content: string }> => {
-    updateNodeData(id, {
-      isGenerating: true,
-      generationStartedAt: Date.now(),
-      generationError: null,
-    });
+    updateNodeData(id, textGenerationStartPatch(Date.now()));
     try {
       const generated = await generateWorkflowText({
         nodeId: id,
@@ -556,19 +551,15 @@ export const TextAnnotationNode = memo(({
         upstreamText: upstreamTextJoined,
         upstreamContents,
       });
-      updateNodeData(id, {
-        content: generated,
-        workflowTextGenerated: true,
-        isGenerating: false,
-        generationStartedAt: null,
-      });
+      updateNodeData(id, textGenerationOutcomePatch({
+        outcome: { kind: 'completed', content: generated },
+      }).patch);
       return { content: generated };
     } catch (error) {
-      updateNodeData(id, {
-        isGenerating: false,
-        generationStartedAt: null,
-        generationError: error instanceof Error ? error.message : '文本生成失败',
-      });
+      updateNodeData(id, textGenerationOutcomePatch({
+        outcome: { kind: 'failed', message: error instanceof Error ? error.message : String(error),
+          isError: error instanceof Error },
+      }).patch);
       throw error;
     }
   }, [content, data, id, updateNodeData, upstreamContents, upstreamTextJoined]);

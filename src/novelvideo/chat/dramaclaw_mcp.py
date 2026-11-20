@@ -13,6 +13,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 import time
 import types as py_types
@@ -23,15 +24,18 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from novelvideo.chat import mcp_runtime
+from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.mcp_runtime import (
     _integer_string_argument_paths as _integer_string_argument_paths,
     _unexpected_argument_fields as _unexpected_argument_fields,
 )
+from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 
 logger = logging.getLogger("novelvideo.chat.dramaclaw_mcp")
 ToolIndex = mcp_runtime.ToolIndex
@@ -196,9 +200,101 @@ def _plugin_tools(plugin_name: str) -> dict[str, tuple[dict[str, Any], Any]]:
     return tools
 
 
+_PROJECT_DISCOVERY_INSTRUCTIONS = (
+    "Call freezone_list_projects first, then pick the project the user means. "
+    "Ask the user if ambiguous; never guess. Pass project_id on every other Freezone "
+    "tool call. No project is bound to this connection; one connection may work on "
+    "several projects."
+)
+_MISSING_PROJECT_ERROR = (
+    "project_id is required and no current project context is configured"
+)
+_PROJECT_DISCOVERY_HINT = " Call freezone_list_projects and pass project_id."
+
+
+def _external_unbound_freezone() -> bool:
+    # Only external MCP connections opt into per-call project selection.
+    if os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() != "1":
+        return False
+    # Keep other plugins and already-bound connections on their existing paths.
+    if _agent_plugin_name() != "freezone" or _scope_kind() != "home":
+        return False
+    plugin = _plugin("freezone")
+    # Turn tokens take precedence over keys; hosted turns also set EXTERNAL_MCP.
+    return plugin._agent_key_configured() and not plugin._agent_token_configured()
+
+
+def server_instructions() -> str | None:
+    return _PROJECT_DISCOVERY_INSTRUCTIONS if _external_unbound_freezone() else None
+
+
+def _list_freezone_projects(arguments: dict[str, Any]) -> str:
+    items, error = _plugin("freezone")._project_candidates()
+    if error is not None:
+        return json.dumps(error, ensure_ascii=False)
+    projects = []
+    for item in items:
+        project_id = str(item.get("id") or "").strip()
+        if not project_id:
+            continue
+        projects.append({
+            "project_id": project_id,
+            "name": str(item.get("name") or ""),
+            **{key: item[key] for key in ("updated_at", "created_at") if key in item},
+        })
+    return json.dumps({
+        "ok": True,
+        "projects": projects,
+        "count": len(projects),
+        "agent_instruction": _PROJECT_DISCOVERY_INSTRUCTIONS,
+    }, ensure_ascii=False)
+
+
+_PROJECT_DISCOVERY_SCHEMA = {
+    "name": "freezone_list_projects",
+    "description": (
+        "Read-only: lists the projects this agent key can see. "
+        + _PROJECT_DISCOVERY_INSTRUCTIONS
+    ),
+    "parameters": {
+        "type": "object", "properties": {}, "required": [], "additionalProperties": False,
+    },
+    "output_schema": {
+        "x-dramaclaw-tool": "freezone_list_projects",
+        "type": "object",
+        "properties": {
+            "ok": {"type": "boolean"},
+            "projects": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "updated_at": {},
+                        "created_at": {},
+                    },
+                    "required": ["project_id", "name"],
+                    "additionalProperties": False,
+                },
+            },
+            "count": {"type": "integer", "minimum": 0},
+            "agent_instruction": {"type": "string"},
+        },
+        "required": ["ok"],
+        "if": {"properties": {"ok": {"const": True}}},
+        "then": {"required": ["projects", "count", "agent_instruction"]},
+    },
+}
+
+
 def _agent_tools() -> dict[str, tuple[dict[str, Any], Any]]:
     """Load only the plugin belonging to the active agent profile."""
     tools = _plugin_tools(_agent_plugin_name())
+    if _external_unbound_freezone():
+        return {**tools, "freezone_list_projects": (
+            _PROJECT_DISCOVERY_SCHEMA, _list_freezone_projects,
+        )}
     if _scope_kind() == "home":
         return {name: tools[name] for name in sorted(HOME_TOOL_NAMES) if name in tools}
     return tools
@@ -217,6 +313,17 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         result = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
         result = None
+    if (
+        name.startswith("freezone_")
+        and name != "freezone_list_projects"
+        and isinstance(result, dict)
+        and result.get("ok") is False
+        and _external_unbound_freezone()
+    ):
+        for field in ("error", "message"):
+            if result.get(field) == _MISSING_PROJECT_ERROR:
+                result[field] += _PROJECT_DISCOVERY_HINT
+        raw = json.dumps(result, ensure_ascii=False)
     if (
         isinstance(result, dict)
         and result.get("ok") is True
@@ -253,7 +360,8 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         "and generation choices are complete, call freezone_confirm_workflow_draft exactly once "
         "now with the named draft_id and revision, without asking for another confirmation. A "
         "parameter clarification card is not canvas creation; otherwise wait for confirmation. "
-        "Never prepare a replacement draft or claim success before the actual canvas write receipt. "
+        "Never prepare a replacement draft or claim success before the actual canvas "
+        "write receipt. "
     )
     instruction += (
         "Only after a later user message explicitly requests a change, call "
@@ -319,6 +427,8 @@ def _freezone_canvas_mode() -> bool:
 def _normalize_structured_result(
     schema: dict[str, Any], decoded: Any
 ) -> dict[str, Any]:
+    if schema.get("x-dramaclaw-tool") == "freezone_list_projects":
+        return decoded
     structured = mcp_runtime.normalize_structured_result(schema, decoded)
     raw = decoded if isinstance(decoded, dict) else {}
     properties = schema.get("properties") or {}
@@ -379,10 +489,7 @@ def _structured_tool_result(
 
 
 def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
-    if tool_name not in {
-        "freezone_prepare_workflow_plan_draft",
-        "workflow_graph_compile",
-    }:
+    if tool_name != "freezone_prepare_workflow_plan_draft":
         return None
     return (
         "WorkflowPlan 校验失败。先按 message/path 指出的字段逐项修正，不要逐个猜删其它字段。"
@@ -394,7 +501,10 @@ def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
         "说明计划尚未符合契约、尚未提交生成。不能无证据断言传输丢字段，也不能改用逐节点生成。"
         "不要提交单节点探测、空 edges 或 compact Intent。"
         "请保留同一份完整节点清单和所有边；每个可执行节点必须把"
-        "workflowCatalog.recipeId 放在节点 data 内。确认所有 edge 的 source/target"
+        "workflowCatalog.recipeId 放在节点 data 内。若保留 userGoal，把它移到 "
+        "data.workflowCatalog.promptBuilder.userGoal。draftTimeline 的每个 clip 都必须有 "
+        "kind（video 或 audio），与来源节点类型一致；轨道的 kind 不能代替 clip.kind。"
+        "确认所有 edge 的 source/target"
         "都对应 nodes[].id。提交前由 Agent 检查整图连通性；独立 Beat/镜头分支应通过"
         "非执行型公共输入根节点扇出连接，不能要求用户说明内部连线，也不能把需要故障"
         "隔离的兄弟分支串行连接。连线兼容性不明确时先读取 link type catalog，禁止猜测"
@@ -431,13 +541,154 @@ async def list_tools() -> list[types.Tool]:
 def build_mcp_tools(tool_index: ToolIndex) -> list[types.Tool]:
     tools = mcp_runtime.build_mcp_tools(tool_index)
     for tool in tools:
+        if tool.name == "freezone_list_projects":
+            tool.annotations = types.ToolAnnotations(readOnlyHint=True)
         if tool.name == "freezone_prepare_workflow_plan_draft":
             # Codex clears cardinality-only anyOf fragments into empty schemas.
             # Adapt only the advertised copy; call_tool still validates the
             # original registry, including node/edge cardinality.
             tool.inputSchema = deepcopy(tool.inputSchema)
             tool.inputSchema["properties"]["plan"].pop("anyOf", None)
-    return tools
+        elif tool.name in _CANVAS_COMMAND_TOOLS:
+            # Published as is, the per-type command oneOf is about twice Codex's
+            # default tool schema budget, and Codex then collapses commands[] to an
+            # empty object. Advertise a flat projection generated from the registry;
+            # call_tool still validates every call against the registry.
+            parameters = tool_index[tool.name][0]["parameters"]
+            tool.inputSchema = deepcopy(tool.inputSchema)
+            tool.inputSchema["properties"]["commands"]["items"] = _flat_command_schema(
+                parameters["properties"]["commands"]["items"]
+            )
+    return [compact_codex_tool(tool) for tool in tools]
+
+
+_FLAT_COMMAND_LEGEND = (
+    "One canvas command. properties lists the fields of all types; each type accepts "
+    "only its own fields. Required besides type, per type (a or b: either form; x|y: at "
+    "least one; f=v: fixed value; f(a|b): one of; f{...}: required inside f; -: none): "
+)
+
+
+def _schema_literals(schema: Any) -> list[Any]:
+    if not isinstance(schema, dict):
+        return []
+    if "const" in schema:
+        return [schema["const"]]
+    return list(schema.get("enum") or [])
+
+
+def _union_schema(variants: list[Any]) -> Any:
+    """A schema accepting every value one of ``variants`` accepts.
+
+    Properties are united and merged by name, ``required`` keeps what every variant
+    requires, enums are united, and any other keyword (descriptions included) is kept
+    only when every variant has the same value.
+    """
+    if not all(isinstance(variant, dict) for variant in variants):
+        return deepcopy(variants[0]) if all(v == variants[0] for v in variants) else {}
+    keys: list[str] = []
+    for variant in variants:
+        keys += [key for key in variant if key not in keys]
+    merged: dict[str, Any] = {}
+    for key in keys:
+        if key in ("const", "enum"):
+            continue
+        values = [variant[key] for variant in variants if key in variant]
+        everywhere = len(values) == len(variants)
+        if key == "properties":
+            names: list[str] = []
+            for value in values:
+                names += [name for name in value if name not in names]
+            merged[key] = {
+                name: _union_schema([value[name] for value in values if name in value])
+                for name in names
+            }
+        elif key == "required":
+            common = [
+                name for name in values[0] if all(name in value for value in values)
+            ]
+            if everywhere and common:
+                merged[key] = common
+        elif (
+            key in ("items", "additionalProperties")
+            and everywhere
+            and all(isinstance(value, dict) for value in values)
+        ):
+            merged[key] = _union_schema(values)
+        elif everywhere and all(value == values[0] for value in values):
+            merged[key] = deepcopy(values[0])
+    literal_sets = [_schema_literals(variant) for variant in variants]
+    if all(literal_sets):
+        merged["enum"] = []
+        for literals in literal_sets:
+            merged["enum"] += [
+                value for value in literals if value not in merged["enum"]
+            ]
+    return merged
+
+
+def _required_fields(
+    schema: dict[str, Any], merged: Any, skip: tuple[str, ...] = ()
+) -> str:
+    """What ``schema`` requires, in the notation of ``_FLAT_COMMAND_LEGEND``."""
+    properties = schema.get("properties") or {}
+    merged_properties = (
+        merged.get("properties") if isinstance(merged, dict) else None
+    ) or {}
+    parts = []
+    for name in schema.get("required") or []:
+        if name in skip:
+            continue
+        field = properties.get(name) if isinstance(properties.get(name), dict) else {}
+        literals = _schema_literals(field)
+        nested = _required_fields(field, merged_properties.get(name))
+        if len(literals) == 1:
+            parts.append(f"{name}={literals[0]}")
+        elif nested:
+            parts.append(f"{name}{{{nested}}}")
+        elif literals and not _schema_literals(merged_properties.get(name)):
+            # The merged property lost this type's enum; keep the values in the text.
+            parts.append(f"{name}({'|'.join(map(str, literals))})")
+        else:
+            parts.append(name)
+    alternatives = [
+        _required_fields({"properties": properties, **alternative}, merged, skip)
+        for alternative in schema.get("anyOf") or []
+        if isinstance(alternative, dict)
+    ]
+    if alternatives and all(alternatives):
+        parts.append("|".join(alternatives))
+    return ", ".join(parts)
+
+
+def _flat_command_schema(items: dict[str, Any]) -> dict[str, Any]:
+    """Project a per-type command ``oneOf`` onto one object plus a requirements text.
+
+    Every field the registry knows stays visible, and the text lists what each command
+    type requires, so the schema survives Codex's compaction budget. It is looser than
+    the registry, which remains the only schema calls are validated against.
+    """
+    variants = [
+        variant for variant in items.get("oneOf") or [] if isinstance(variant, dict)
+    ]
+    if not variants:
+        return deepcopy(items)
+    merged = _union_schema(variants)
+    by_type: dict[str, list[str]] = {}
+    for variant in variants:
+        type_values = _schema_literals((variant.get("properties") or {}).get("type"))
+        requirement = _required_fields(variant, merged, skip=("type",)) or "-"
+        if isinstance(variant.get("description"), str):
+            requirement += f" ({variant['description']})"
+        for type_value in type_values:
+            by_type.setdefault(str(type_value), []).append(requirement)
+    flat = {key: deepcopy(value) for key, value in items.items() if key != "oneOf"}
+    flat.update(merged)
+    flat["description"] = _FLAT_COMMAND_LEGEND + "; ".join(
+        f"{type_value}: {' or '.join(requirements)}"
+        for type_value, requirements in by_type.items()
+    )
+    return flat
 
 
 def _skill_resource_path(uri: str) -> Path:
@@ -588,26 +839,56 @@ def _repair_tool_arguments(
     return None
 
 
-def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, Any]:
-    from novelvideo.freezone.workflow_schema import workflow_plan_schema_diagnostics
+_CANVAS_CREATE_TOOLS = frozenset({"freezone_create_canvas"})
+_CANVAS_COMMAND_TOOLS = frozenset({
+    "freezone_emit_canvas_command", "freezone_validate_canvas_commands",
+})
 
+
+_WORKFLOW_DRAFT_TOOLS = frozenset({
+    "freezone_prepare_workflow",
+    "freezone_prepare_workflow_plan_draft",
+    "freezone_request_user_clarification",
+    "freezone_prepare_workflow_draft",
+    "freezone_revise_workflow",
+    "freezone_patch_workflow_draft",
+    "freezone_get_workflow",
+    "freezone_confirm_workflow_draft",
+    "freezone_run_workflow",
+    "freezone_observe_workflow_run",
+    "freezone_cancel_workflow_run",
+})
+
+
+def _tool_validation_error(name, arguments, schema, exc, errors) -> dict[str, Any]:
     payload = mcp_runtime.validation_error_payload(name, arguments, schema, exc, errors)
-    diagnostics = workflow_plan_schema_diagnostics(arguments, schema)
-    if diagnostics:
-        payload.update(
-            message="; ".join(
-                f"{issue['path']}: {issue['message']}" for issue in diagnostics
-            ),
-            path=diagnostics[0]["path"],
-            errors=diagnostics,
-        )
-    if name in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"}:
-        payload.update(
-            status="workflow_validation_failed", phase="graph_compile", retryable=True
-        )
-    recovery = _workflow_schema_recovery_instruction(name)
-    if recovery:
-        payload["agent_instruction"] = recovery
+    if name in _WORKFLOW_DRAFT_TOOLS and isinstance(exc, ValidationError):
+        payload.update(workflow_argument_refusal(name, arguments, schema, exc))
+        if name == "freezone_prepare_workflow_plan_draft":
+            payload.update(status="workflow_validation_failed", phase="graph_compile")
+            recovery = _workflow_schema_recovery_instruction(name)
+            payload["agent_instruction"] += f" {recovery}"
+    if name in _CANVAS_CREATE_TOOLS and isinstance(exc, ValidationError):
+        payload.update(workflow_argument_refusal(name, arguments, schema, exc))
+        payload["agent_instruction"] += " The canvas name must be 1 to 100 characters."
+    if name in _CANVAS_COMMAND_TOOLS and isinstance(exc, ValidationError):
+        refusal = workflow_argument_refusal(name, arguments, schema, exc)
+        commands = arguments.get("commands")
+        if isinstance(commands, list) and refusal["errors"] and all(
+            (match := re.match(r"^commands\[(\d+)\]\.data(\.|$)", error["path"]))
+            and int(match[1]) < len(commands)
+            and isinstance(command := commands[int(match[1])], dict)
+            and command.get("type") in {"create_node", "add_next_node"}
+            and command.get("node_type") == "textAnnotationNode"
+            for error in refusal["errors"]
+        ):
+            if any(isinstance(c, dict) and c.get("type") == "html_artifact" for c in commands):
+                refusal.pop("example", None)
+            payload.update(refusal)
+            payload["agent_instruction"] += (
+                " A textAnnotationNode needs data.displayName (the node title; title is "
+                "accepted as an alias) and data.content (the body)."
+            )
     return payload
 
 
@@ -620,10 +901,15 @@ def _tool_call_hooks(name: str) -> mcp_runtime.ToolCallHooks:
             adapt_result=_adapt_external_agent_tool_result,
             normalize_result=_normalize_structured_result,
         )
+    validation_error = _tool_validation_error
+    if name.startswith("freezone_studio_"):
+        from novelvideo.chat.studio_tool_validation import studio_validation_error
+
+        validation_error = studio_validation_error
     return mcp_runtime.ToolCallHooks(
         normalize_arguments=_normalize_tool_arguments,
         repair_arguments=_repair_tool_arguments,
-        validation_error=_tool_validation_error,
+        validation_error=validation_error,
         collect_all_errors=lambda name: False,
         adapt_result=_adapt_external_agent_tool_result,
         normalize_result=_normalize_structured_result,
@@ -646,19 +932,31 @@ async def call_tool(
             _scope_kind(),
             _workflow_plan_log_summary(arguments),
         )
-    result = await mcp_runtime.call_tool(
-        name,
-        arguments,
-        tool_index=tools,
-        hooks=_tool_call_hooks(name),
-        scope=_scope_kind(),
-        log=logger,
-    )
+    try:
+        result = await mcp_runtime.call_tool(
+            name,
+            arguments,
+            tool_index=tools,
+            hooks=_tool_call_hooks(name),
+            scope=_scope_kind(),
+            log=logger,
+        )
+    except ValueError as exc:
+        if not (
+            name.startswith("freezone_")
+            and str(exc) == _MISSING_PROJECT_ERROR
+            and _external_unbound_freezone()
+        ):
+            raise
+        result = _mcp_error_result(name, {
+            "ok": False, "error": str(exc) + _PROJECT_DISCOVERY_HINT,
+        }, tools)
     if workflow_started is not None:
         payload = result.structuredContent or {}
         if payload.get("error") == "tool_arguments_invalid":
             logger.warning(
-                "freezone_prepare_workflow_plan_draft.validation_failed elapsed_ms=%d message=%s path=%s summary=%s",
+                "freezone_prepare_workflow_plan_draft.validation_failed "
+                "elapsed_ms=%d message=%s path=%s summary=%s",
                 int((time.monotonic() - workflow_started) * 1000),
                 payload.get("message"),
                 payload.get("path"),
@@ -674,6 +972,7 @@ async def call_tool(
 
 
 async def _main() -> None:
+    SERVER.instructions = server_instructions()
     async with stdio_server() as (read_stream, write_stream):
         await SERVER.run(
             read_stream,

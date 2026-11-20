@@ -13,9 +13,14 @@ from fastapi import APIRouter
 from novelvideo.config import RUNTIME_DIR
 from novelvideo.shared import runtime_env
 
+logging.getLogger("novelvideo").setLevel(logging.INFO)
+_root_logger = logging.getLogger()
+if not _root_logger.handlers:
+    _stderr_handler = logging.StreamHandler()
+    _stderr_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    _root_logger.addHandler(_stderr_handler)
+
 _api_logger = logging.getLogger("novelvideo.api")
-_api_logger.setLevel(logging.INFO)
-_api_logger.propagate = True
 _log_path = f"{RUNTIME_DIR}/api.log"
 try:
     Path(RUNTIME_DIR).mkdir(parents=True, exist_ok=True)

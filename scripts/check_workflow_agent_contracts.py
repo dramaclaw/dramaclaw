@@ -75,6 +75,46 @@ class DiagnosticReport:
         }
 
 
+def _schema_without_descriptions(schema: Any) -> Any:
+    """Compare contracts without schema annotations, preserving literal data."""
+    if not isinstance(schema, dict):
+        return schema
+    result = {key: value for key, value in schema.items() if key != "description"}
+    for key in (
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "dependencies",
+    ):
+        if isinstance(result.get(key), dict):
+            result[key] = {
+                name: _schema_without_descriptions(child)
+                for name, child in result[key].items()
+            }
+    for key in (
+        "items",
+        "additionalItems",
+        "additionalProperties",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "contains",
+        "propertyNames",
+        "if",
+        "then",
+        "else",
+        "not",
+        "contentSchema",
+    ):
+        if key in result:
+            result[key] = _schema_without_descriptions(result[key])
+    for key in ("allOf", "anyOf", "oneOf", "prefixItems", "items"):
+        if isinstance(result.get(key), list):
+            result[key] = [_schema_without_descriptions(child) for child in result[key]]
+    return result
+
+
 def _json_payload_from_tool(result: Any) -> dict[str, Any]:
     structured = getattr(result, "structuredContent", None)
     for content in result.content:
@@ -435,13 +475,15 @@ async def _exercise_mcp(
                         f"MCP tool {tool.name} has invalid output JSON Schema: {exc}",
                     )
             report.check(
-                tool_by_name["workflow_graph_compile"].inputSchema["properties"]["plan"]
-                == workflow_plan_json_schema(),
+                _schema_without_descriptions(
+                    tool_by_name["workflow_graph_compile"].inputSchema["properties"]["plan"]
+                ) == _schema_without_descriptions(workflow_plan_json_schema()),
                 "workflow_graph_compile does not advertise the shared WorkflowPlan Schema",
             )
             report.check(
-                tool_by_name["workflow_intent_compile"].inputSchema["properties"]["intent"]
-                == workflow_intent_json_schema(),
+                _schema_without_descriptions(
+                    tool_by_name["workflow_intent_compile"].inputSchema["properties"]["intent"]
+                ) == _schema_without_descriptions(workflow_intent_json_schema()),
                 "workflow_intent_compile does not advertise the shared WorkflowIntent Schema",
             )
 

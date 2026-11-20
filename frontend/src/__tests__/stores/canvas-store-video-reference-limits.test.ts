@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { VIDEO_REFERENCE_ENVELOPE } from "@/features/canvas/domain/videoReferenceLimits";
-import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
+import type { ModelOption } from "@/features/canvas/domain/modelOptions";
 
 // 建边校验跑在 React 之外，模型目录从 useFreezoneVideoModels 的 module-level store 读。
 // 这里替掉那个读取口就能喂进任意目录；默认空列表 = 目录还没加载，行为回落到默认包络，

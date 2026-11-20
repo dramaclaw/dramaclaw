@@ -35,9 +35,9 @@ import { useUpstreamImages } from '@/features/canvas/application/useUpstreamGrap
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { backendErrorToastMessage } from '@/lib/api-errors';
 import { useModelTaskAccess } from '@/lib/model-task-access';
+import { parseAspectRatio } from '@/features/canvas/domain/aspectRatio';
 import {
   detectAspectRatio,
-  parseAspectRatio,
   pickClosestAspectRatio,
   resolveImageDisplayUrl,
 } from '@/features/canvas/application/imageData';
@@ -1071,11 +1071,17 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         selectedResolution.value
       );
       // 先把本地渲染的网格上传换成后端 URL——画布节点数据不能存 base64
-      // （会膨胀 PUT 体积、拖慢画布）。上传失败时回退 dataUrl 兜底。
-      const gridImageUrl = await uploadLocalImageToBackend(
-        gridImageDataUrl,
-        `storyboard-grid-preview-${id}-${Date.now()}.png`
-      );
+      // （会膨胀 PUT 体积、拖慢画布）。上传失败时显示错误。
+      let gridImageUrl: string;
+      try {
+        gridImageUrl = await uploadLocalImageToBackend(
+          gridImageDataUrl,
+          `storyboard-grid-preview-${id}-${Date.now()}.png`
+        );
+      } catch (uploadError) {
+        setError(uploadError instanceof Error ? uploadError.message : String(uploadError));
+        return;
+      }
       const newNodePosition = findNodePosition(
         id,
         EXPORT_RESULT_NODE_DEFAULT_WIDTH,
@@ -1163,12 +1169,24 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       selectedResolution.value
     );
     // Upload the locally-rendered grid so the generation request carries a real
-    // backend URL instead of the full base64 grid payload. Best-effort: falls
-    // back to the data URL if upload fails.
-    const gridImageUrl = await uploadLocalImageToBackend(
-      gridImageDataUrl,
-      `storyboard-grid-${id}-${Date.now()}.png`
-    );
+    // backend URL instead of the full base64 grid payload. Report upload
+    // failures before submitting the generation request.
+    let gridImageUrl: string;
+    try {
+      gridImageUrl = await uploadLocalImageToBackend(
+        gridImageDataUrl,
+        `storyboard-grid-${id}-${Date.now()}.png`
+      );
+    } catch (uploadError) {
+      const message = uploadError instanceof Error ? uploadError.message : String(uploadError);
+      setError(message);
+      updateNodeData(newNodeId, {
+        isGenerating: false,
+        generationStartedAt: null,
+        generationError: message,
+      });
+      return;
+    }
     const allReferenceImages = [...incomingImages, gridImageUrl];
     const metadataFrameNotes = nodeData.frames
       .slice(0, safeRows * safeCols)

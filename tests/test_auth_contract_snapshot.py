@@ -55,3 +55,33 @@ def test_agent_legacy_dict_key_set() -> None:
     assert data["credential_kind"] == "agent_session"
     assert isinstance(data["scopes"], list), "scopes 必须序列化为 list"
     assert data["current_scope_kind"] == "home", "默认 scope kind 为 home"
+
+
+def test_agent_legacy_dict_adds_external_key_marker_only_when_server_set() -> None:
+    """The external-key marker is additive: unset sessions keep the pinned key set."""
+    plain = AgentAuthenticatedUser(
+        id="u1", username="alice", role="owner", agent_session_id="as1"
+    )
+    assert plain.external_agent_key_id is None
+    assert set(plain.to_legacy_dict()) == AGENT_LEGACY_KEYS
+
+    blank = AgentAuthenticatedUser(
+        id="u1",
+        username="alice",
+        role="owner",
+        agent_session_id="as1",
+        external_agent_key_id="",
+    )
+    assert set(blank.to_legacy_dict()) == AGENT_LEGACY_KEYS
+
+    external = AgentAuthenticatedUser(
+        id="u1",
+        username="alice",
+        role="owner",
+        agent_session_id="as1",
+        external_agent_key_id="test-key-id-not-a-secret",
+    )
+    data = external.to_legacy_dict()
+    assert set(data) == AGENT_LEGACY_KEYS | {"external_agent_key_id"}
+    assert data["external_agent_key_id"] == "test-key-id-not-a-secret"
+    assert data["credential_kind"] == "agent_session"

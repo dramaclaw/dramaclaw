@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
     TaskTimedOut,
@@ -234,7 +235,7 @@ async def _run_single_video_async(
 
     result = await video_gen.generate(**generate_kwargs)
     if result.status.value != "done":
-        raise RuntimeError(result.error or "视频生成失败")
+        raise with_upstream_status(RuntimeError(result.error or "视频生成失败"), result)
 
     video_pool_id = None
     try:
@@ -518,6 +519,27 @@ def run_compose_episode(
             audio_path = paths.audio(beat_num)
             if not video_path.exists():
                 continue
+            duration_probe = run_checked(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(video_path),
+                ],
+                default_timeout_seconds=30,
+            )
+            try:
+                video_duration = float(duration_probe.stdout.strip())
+            except ValueError as exc:
+                raise RuntimeError("Cannot determine video stream duration") from exc
+            if duration_probe.returncode != 0 or not 0 < video_duration < float("inf"):
+                raise RuntimeError("Cannot determine video stream duration")
             clip_path = tmp_dir / f"beat_{beat_num:04d}.mp4"
             manager.update_progress_for_project(
                 ctx,
@@ -621,7 +643,9 @@ def run_compose_episode(
                         "-shortest",
                     ]
                 )
-            cmd.append(str(clip_path))
+            # Bound padded audio explicitly; -shortest can retain buffered audio
+            # beyond the last video frame on some FFmpeg builds.
+            cmd.extend(["-t", str(video_duration), str(clip_path)])
             result = run_checked(cmd, default_timeout_seconds=30 * 60)
             check_cancel()
             if result.returncode == 0:
@@ -881,7 +905,9 @@ async def _run_freezone_video_gen_async(
 
     trusted_context = envelope.get("__trusted_egress_context")
     video_leaf = run_freezone_video_gen
-    trusted_kwargs: dict[str, Any] = {}
+    trusted_kwargs: dict[str, Any] = {
+        "accepted_job_receipt": ctx.state_dir / "freezone" / "accepted_video_jobs" / f"{job_id}.json",
+    }
     if trusted_context is not None and trusted_context.billing_principal.kind in {
         "organization",
         "local",

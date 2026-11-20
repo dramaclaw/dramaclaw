@@ -39,8 +39,8 @@ import { selectNodeExclusively } from "@/features/canvas/application/nodeSelecti
 import type { UpstreamContent } from "@/features/canvas/application/ports";
 import type {
   FreezoneVideoAspectRatio,
-  MediaModelParameterDefinition,
 } from "@/api/ops";
+import type { MediaModelParameterDefinition } from '@/features/canvas/domain/modelCatalogPayload';
 import { useModelTaskAccess } from "@/lib/model-task-access";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { ReferenceTextChip } from "@/features/canvas/nodes/shared/ReferenceTextChip";

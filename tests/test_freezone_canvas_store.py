@@ -689,6 +689,61 @@ def test_save_canvas_allows_manual_clear_of_last_node(tmp_path: Path) -> None:
     assert len(list((canvas_file.parent / "_history").glob("default.rev1.*.json"))) == 1
 
 
+def test_save_canvas_allows_agent_confirmed_to_empty_canvas_with_backup(tmp_path: Path) -> None:
+    canvas_store.save_canvas(
+        tmp_path,
+        "default",
+        base_revision=None,
+        build_payload=lambda _: {"revision": 1, "nodes": [{"id": "last"}], "edges": []},
+    )
+
+    result = canvas_store.save_canvas(
+        tmp_path,
+        "default",
+        base_revision=1,
+        save_source="agent_confirmed",
+        allow_empty_overwrite=True,
+        build_payload=lambda _: {"revision": 2, "nodes": [], "edges": []},
+    )
+
+    saved = canvas_store.read_canvas(tmp_path, "default")
+    assert saved["revision"] == 2
+    assert saved["nodes"] == []
+    assert result.backup_path is not None
+    assert result.backup_path.exists()
+    assert json.loads(result.backup_path.read_text(encoding="utf-8"))["nodes"] == [{"id": "last"}]
+
+
+@pytest.mark.parametrize(
+    "save_source,allow_empty_overwrite",
+    [("agent_confirmed", False), ("workflow_result", True)],
+)
+def test_save_canvas_rejects_empty_overwrite_from_restricted_sources(
+    tmp_path: Path, save_source: str, allow_empty_overwrite: bool,
+) -> None:
+    canvas_store.save_canvas(
+        tmp_path,
+        "default",
+        base_revision=None,
+        build_payload=lambda _: {"revision": 1, "nodes": [{"id": "last"}], "edges": []},
+    )
+
+    with pytest.raises(canvas_store.DangerousEmptyCanvasOverwrite) as exc:
+        canvas_store.save_canvas(
+            tmp_path,
+            "default",
+            base_revision=1,
+            save_source=save_source,
+            allow_empty_overwrite=allow_empty_overwrite,
+            build_payload=lambda _: {"revision": 2, "nodes": [], "edges": []},
+        )
+
+    assert exc.value.save_source == save_source
+    saved = canvas_store.read_canvas(tmp_path, "default")
+    assert saved["revision"] == 1
+    assert saved["nodes"] == [{"id": "last"}]
+
+
 def test_save_rejects_multiple_story_groups_without_changing_canvas(tmp_path):
     group = {"id": "story", "type": "groupNode", "data": {"storyGroup": True}}
     original = {"revision": 1, "nodes": [group], "edges": []}

@@ -624,3 +624,167 @@ async def test_result_url_download_rejects_malformed_data_url(
     assert captured.value.retryable is False
     assert not output.exists()
     assert [path for path in tmp_path.iterdir() if path.name.endswith(".part")] == []
+
+
+@pytest.mark.asyncio
+async def test_newapi_replacement_resumes_the_accepted_freezone_job(monkeypatch, tmp_path):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from novelvideo.generators import video_generator as module
+
+    first = module.NewApiVideoGenerator(
+        api_key="test-key", endpoint="https://gateway.example/v1", model="video-model"
+    )
+    replacement = module.NewApiVideoGenerator(
+        api_key="test-key", endpoint="https://gateway.example/v1", model="video-model"
+    )
+    submit = AsyncMock(return_value={"id": "provider-task"})
+    for generator in (first, replacement):
+        monkeypatch.setattr(generator, "_post_json", submit)
+    monkeypatch.setattr(first, "_get_json", AsyncMock(side_effect=asyncio.CancelledError))
+    poll = AsyncMock(return_value={
+        "data": {"status": "success", "archive": _archive_payload("success", retryable=False)}
+    })
+    monkeypatch.setattr(replacement, "_get_json", poll)
+    monkeypatch.setattr(module, "get_video_result_delivery", _ArchiveDelivery)
+    reserve = AsyncMock(return_value="original-reservation")
+    confirm = AsyncMock()
+    monkeypatch.setattr(module, "_reserve_video_model_call", reserve)
+    monkeypatch.setattr(module, "_confirm_video_model_call", confirm)
+
+    output = tmp_path / "video.mp4"
+    kwargs = dict(image_path=None, prompt="Red cup", output_path=str(output),
+                  accepted_job_receipt=tmp_path / "accepted.json", poll_interval=0, max_polls=1)
+    with pytest.raises(asyncio.CancelledError):
+        await first.generate(**kwargs)
+
+    result = await replacement.generate(**kwargs)
+
+    assert result.status is module.VideoGenStatus.DONE
+    assert output.read_bytes() == b"archived-video"
+    submit.assert_awaited_once()
+    poll.assert_awaited_once_with("https://gateway.example/v1/video/generations/provider-task")
+    reserve.assert_awaited_once()
+    confirm.assert_awaited_once()
+    assert confirm.await_args.kwargs["reservation_id"] == "original-reservation"
+
+
+async def _accept_freezone_job_then_lose_the_worker(monkeypatch, module, receipt, output):
+    """Submit one job, write its receipt, and die while polling."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    first = module.NewApiVideoGenerator(
+        api_key="test-key", endpoint="https://gateway.example/v1", model="video-model"
+    )
+    monkeypatch.setattr(first, "_post_json", AsyncMock(return_value={"id": "provider-task"}))
+    monkeypatch.setattr(first, "_get_json", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(
+        module, "_reserve_video_model_call", AsyncMock(return_value="original-reservation")
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await first.generate(image_path=None, prompt="Red cup", output_path=str(output),
+                             accepted_job_receipt=receipt, poll_interval=0, max_polls=1)
+    assert receipt.exists()
+
+
+async def _redeliver_freezone_job(monkeypatch, module, receipt, output, *, api_key):
+    from unittest.mock import AsyncMock
+
+    replacement = module.NewApiVideoGenerator(
+        api_key=api_key, endpoint="https://gateway.example/v1", model="video-model"
+    )
+    submit = AsyncMock(return_value={"id": "second-provider-task"})
+    poll = AsyncMock(return_value={"data": {"status": "success"}})
+    reserve = AsyncMock(return_value="second-reservation")
+    refund = AsyncMock()
+    monkeypatch.setattr(replacement, "_post_json", submit)
+    monkeypatch.setattr(replacement, "_get_json", poll)
+    monkeypatch.setattr(module, "_reserve_video_model_call", reserve)
+    monkeypatch.setattr(module, "_refund_video_model_call", refund)
+    result = await replacement.generate(
+        image_path=None, prompt="Red cup", output_path=str(output),
+        accepted_job_receipt=receipt, poll_interval=0, max_polls=1,
+    )
+    return result, submit, poll, reserve, refund
+
+
+@pytest.mark.asyncio
+async def test_newapi_redelivery_fails_and_releases_credits_when_receipt_route_changed(
+    monkeypatch, tmp_path
+):
+    from novelvideo.generators import video_generator as module
+
+    receipt = tmp_path / "accepted.json"
+    output = tmp_path / "video.mp4"
+    await _accept_freezone_job_then_lose_the_worker(monkeypatch, module, receipt, output)
+
+    result, submit, poll, reserve, refund = await _redeliver_freezone_job(
+        monkeypatch, module, receipt, output, api_key="another-account-key"
+    )
+
+    assert result.status is module.VideoGenStatus.FAILED
+    assert result.error == module.ACCEPTED_VIDEO_JOB_ROUTE_CHANGED_ERROR
+    refund.assert_awaited_once()
+    assert refund.await_args.args[0] == "original-reservation"
+    assert refund.await_args.kwargs["provider_task_id"] == "provider-task"
+    assert not receipt.exists()
+    submit.assert_not_awaited()
+    poll.assert_not_awaited()
+    reserve.assert_not_awaited()
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("corrupt", "released"),
+    [
+        pytest.param(lambda data: "{not json", [], id="invalid-json"),
+        pytest.param(lambda data: "[]", [], id="not-an-object"),
+        pytest.param(lambda data: {"route": data["route"]}, [], id="only-route"),
+        pytest.param(
+            lambda data: {k: v for k, v in data.items() if k != "task_id"},
+            ["original-reservation"],
+            id="missing-task-id",
+        ),
+        pytest.param(
+            lambda data: {**data, "task_id": ""}, ["original-reservation"], id="empty-task-id"
+        ),
+        pytest.param(
+            lambda data: {k: v for k, v in data.items() if k != "route"},
+            ["original-reservation"],
+            id="missing-route",
+        ),
+        pytest.param(
+            lambda data: {k: v for k, v in data.items() if k != "reservation_id"},
+            [],
+            id="missing-reservation",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_newapi_redelivery_fails_and_releases_credits_when_receipt_is_corrupt(
+    monkeypatch, tmp_path, corrupt, released
+):
+    import json
+
+    from novelvideo.generators import video_generator as module
+
+    receipt = tmp_path / "accepted.json"
+    output = tmp_path / "video.mp4"
+    await _accept_freezone_job_then_lose_the_worker(monkeypatch, module, receipt, output)
+    content = corrupt(json.loads(receipt.read_text()))
+    receipt.write_text(content if isinstance(content, str) else json.dumps(content))
+
+    result, submit, poll, reserve, refund = await _redeliver_freezone_job(
+        monkeypatch, module, receipt, output, api_key="test-key"
+    )
+
+    assert result.status is module.VideoGenStatus.FAILED
+    assert result.error == module.ACCEPTED_VIDEO_JOB_RECEIPT_INVALID_ERROR
+    assert [call.args[0] for call in refund.await_args_list] == released
+    assert not receipt.exists()
+    submit.assert_not_awaited()
+    poll.assert_not_awaited()
+    reserve.assert_not_awaited()
+    assert not output.exists()

@@ -83,6 +83,10 @@ order) stays an agent-authored draft with the difference recorded in
    `stage` to `input`, `resource`, or `asset`. Those reserved stages and a Recipe are mutually
    exclusive on a `textAnnotationNode`. A terminal `videoComposeNode` has no Recipe.
    Put executable options inside `data` as well; do not place them beside `id`/`node_type`.
+   If supplying `userGoal`, use `data.workflowCatalog.promptBuilder.userGoal`.
+   For an exact composition timeline, set `kind` on each track and each clip. Each clip's
+   `kind` matches its source node (`video` or `audio`). Use milliseconds for positions and
+   trims, and leave `thumbUrl` null until media exists.
    For example, a background-music node must use this shape (with the actual Recipe returned by
    the selected Skill):
 

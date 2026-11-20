@@ -18,6 +18,8 @@ from novelvideo.generators import tts_generator, video_composer, video_generator
 from novelvideo.generators.tts_generator import EdgeTTSGenerator, MockTTSGenerator
 from novelvideo.generators.video_composer import SceneAsset, VideoComposer
 from novelvideo.generators.video_generator import MockVideoGenerator
+from novelvideo.task_backend import registry as task_backend_registry
+from novelvideo.task_backend import run_core
 from novelvideo.task_backend.cancel import (
     TaskCancelled,
     TaskTimedOut,
@@ -30,7 +32,7 @@ from novelvideo.task_backend.subprocesses import (
     kill_task_processes,
     run_project_subprocess,
 )
-from novelvideo.task_state import TaskStateManager
+from novelvideo.task_state import LANE_EXEMPT_TASK_TYPES, TaskStateManager
 
 pytestmark = pytest.mark.m07
 
@@ -546,6 +548,7 @@ async def test_gate3_same_lane_overflow_is_explicitly_queued_and_cancelable(
     assert backend.lane_snapshot()["world"]["queued"] == 0
     assert "l014_gate3_world_queued" not in started
     release.set()
+    await asyncio.gather(*backend._background_tasks)
 
 
 @pytest.mark.asyncio
@@ -610,6 +613,7 @@ async def test_gate3_global_lane_queue_overflow_raises_typed_limit_exception(
     assert rejected is not None
     assert rejected.status == "failed"
     release.set()
+    await asyncio.gather(*backend._background_tasks)
 
 
 def test_gate3_global_lane_queue_limit_exception_maps_to_http_429():
@@ -708,3 +712,308 @@ async def test_gate3_multi_project_lane_dispatch_is_project_fair_fifo(
     await _wait_for_status(_task_ports, ctx_b, "l014_gate3_b1", "completed")
     await _wait_for_status(_task_ports, ctx_a, "l014_gate3_a2", "completed")
     assert run_order[:3] == [ctx_a.project_id, ctx_b.project_id, ctx_a.project_id]
+
+
+@pytest.mark.asyncio
+async def test_child_enqueued_from_lane_thread_survives_parent_loop(
+    _task_ports, signed_inline_backend, tmp_path,
+):
+    ctx = _ctx(tmp_path)
+    backend = signed_inline_backend()
+    home = asyncio.get_running_loop()
+    parent_returned = asyncio.Event()
+    child_entered = asyncio.Event()
+    release = threading.Event()
+    loop_observations = []
+    original_sign = backend._producer.sign_top_level
+
+    async def sign(**kwargs):
+        if kwargs['task_type'] == 'inline_child':
+            loop_observations.append(asyncio.get_running_loop() is home)
+        return await original_sign(**kwargs)
+
+    backend._producer.sign_top_level = sign
+
+    def child(envelope, run_ctx):
+        home.call_soon_threadsafe(child_entered.set)
+        release.wait(timeout=3)
+        return {'child': 'done'}
+
+    def parent(envelope, run_ctx):
+        async def submit():
+            await backend.enqueue_project_task(
+                run_ctx, task_type='inline_child', product_surface='mainline',
+                episode=1, queue_kind='video',
+            )
+        asyncio.run(submit())
+        home.call_soon_threadsafe(parent_returned.set)
+        return {'parent': 'done'}
+
+    register_project_task_runner('inline_parent', parent)
+    register_project_task_runner('inline_child', child)
+    try:
+        await backend.enqueue_project_task(
+            ctx, task_type='inline_parent', product_surface='mainline', episode=1,
+        )
+        await asyncio.wait_for(parent_returned.wait(), 3)
+        await asyncio.wait_for(child_entered.wait(), 3)
+        assert loop_observations == [True]
+    finally:
+        release.set()
+        # Drain actual home-loop jobs without sleeping or polling wall-clock time.
+        while backend._background_tasks:
+            await asyncio.gather(*backend._background_tasks, return_exceptions=True)
+            await asyncio.sleep(0)
+    assert _task_ports.get_task_for_project(ctx, 'inline_child', 1).status == 'completed'
+    assert backend.lane_snapshot()['video']['active'] == 0
+    assert backend.lane_snapshot()['default']['active'] == 0
+
+
+@pytest.mark.asyncio
+async def test_cancellation_from_lane_thread_is_forwarded_to_home_loop(
+    _task_ports, signed_inline_backend, tmp_path,
+):
+    ctx = _ctx(tmp_path)
+    backend = signed_inline_backend()
+    home = asyncio.get_running_loop()
+    finished = asyncio.Event()
+    observed_loops = []
+
+    class CancellationStore(InMemoryCancellationStore):
+        async def request_cancel(self, **kwargs):
+            observed_loops.append(asyncio.get_running_loop() is home)
+            return await super().request_cancel(**kwargs)
+
+    registry.register_port('cancellation_store', CancellationStore())
+    child = _task_ports.create_task_for_project(ctx, 'inline_cancel_child', 1)
+
+    def parent(envelope, run_ctx):
+        result = asyncio.run(backend.cancel_project_task(run_ctx, child))
+        assert result['status'] == 'cancelled'
+        home.call_soon_threadsafe(finished.set)
+        return {'parent': 'done'}
+
+    register_project_task_runner('inline_cancel_parent', parent)
+    await backend.enqueue_project_task(
+        ctx, task_type='inline_cancel_parent', product_surface='mainline', episode=1,
+    )
+    await asyncio.wait_for(finished.wait(), 3)
+    while backend._background_tasks:
+        await asyncio.gather(*backend._background_tasks, return_exceptions=True)
+        await asyncio.sleep(0)
+    assert observed_loops == [True]
+    assert _task_ports.get_task_for_project(ctx, 'inline_cancel_child', 1).status == 'cancelled'
+    assert backend.lane_snapshot()['default']['active'] == 0
+
+
+@pytest.mark.asyncio
+async def test_closed_home_loop_is_replaced_by_the_next_serving_loop(signed_inline_backend):
+    # A test client or app restart in one process can close the first serving loop.
+    backend = signed_inline_backend()
+    stale = asyncio.new_event_loop()
+    stale.close()
+    backend._home_loop = stale
+    assert backend._forward_loop() is None
+    assert backend._home_loop is asyncio.get_running_loop()
+
+
+_ORCHESTRATION_CHILD_TIMEOUT = 3.0
+_ORCHESTRATION_CHILD_TASK_TYPE = "l014_orchestration_child"
+
+
+def _register_simulated_orchestration(
+    monkeypatch, manager, backend, task_type, *, before_child=None, after_child=None
+):
+    child_starts = []
+    starts_lock = threading.Lock()
+
+    def child(envelope, run_ctx):
+        with starts_lock:
+            child_starts.append(run_ctx.project_id)
+        return {"child": "done"}
+
+    def orchestration(envelope, run_ctx):
+        if before_child is not None:
+            before_child(run_ctx)
+        asyncio.run(backend.enqueue_project_task(
+            run_ctx,
+            task_type=_ORCHESTRATION_CHILD_TASK_TYPE,
+            product_surface="mainline",
+            episode=1,
+            queue_kind="default",
+        ))
+        deadline = time.monotonic() + _ORCHESTRATION_CHILD_TIMEOUT
+        while time.monotonic() < deadline:
+            row = manager.get_task_for_project(run_ctx, _ORCHESTRATION_CHILD_TASK_TYPE, 1)
+            if row is not None and row.status == "completed":
+                if after_child is not None:
+                    after_child(run_ctx)
+                return {"orchestration": "done"}
+            time.sleep(0.02)
+        with starts_lock:
+            started = len(child_starts)
+        raise TimeoutError(
+            f"child did not complete; child starts={started}; lanes={backend.lane_snapshot()}"
+        )
+
+    run_core._ensure_builtin_runners_registered()
+    monkeypatch.setitem(task_backend_registry._PROJECT_TASK_RUNNERS, task_type, orchestration)
+    register_project_task_runner(_ORCHESTRATION_CHILD_TASK_TYPE, child)
+    return child_starts
+
+
+async def _assert_inline_task_completed(manager, backend, ctx, task_type):
+    try:
+        return await _wait_for_status(
+            manager, ctx, task_type, "completed", timeout=_ORCHESTRATION_CHILD_TIMEOUT + 2
+        )
+    except AssertionError:
+        row = manager.get_task_for_project(ctx, task_type, 1)
+        assert row is not None, backend.lane_snapshot()
+        assert row.status == "completed", f"{row.error}; lanes={backend.lane_snapshot()}"
+        return row
+
+
+async def _drain_inline_jobs(backend):
+    while backend._background_tasks:
+        await asyncio.gather(*backend._background_tasks, return_exceptions=True)
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_saturating_orchestrations_do_not_starve_their_children(
+    monkeypatch, _task_ports, signed_inline_backend, tmp_path
+):
+    monkeypatch.delenv("ST_CE_GLOBAL_MAX_ACTIVE_DEFAULT_TASKS", raising=False)
+    backend = signed_inline_backend()
+    assert backend.lane_snapshot()["default"]["concurrency"] == 8, backend.lane_snapshot()
+    all_drives_started = threading.Barrier(8)
+    task_type = "freezone_workflow_drive"
+    child_starts = _register_simulated_orchestration(
+        monkeypatch, _task_ports, backend, task_type,
+        before_child=lambda _ctx: all_drives_started.wait(timeout=_ORCHESTRATION_CHILD_TIMEOUT),
+    )
+    contexts = [_ctx(tmp_path, f"workflow_{i}", requester=f"requester_{i}") for i in range(8)]
+
+    try:
+        for ctx in contexts:
+            await backend.enqueue_project_task(
+                ctx, task_type=task_type, product_surface="mainline", episode=1,
+                queue_kind="default",
+            )
+        for ctx in contexts:
+            drive = await _assert_inline_task_completed(_task_ports, backend, ctx, task_type)
+            assert drive.queue_kind == "default", backend.lane_snapshot()
+            await _assert_inline_task_completed(
+                _task_ports, backend, ctx, _ORCHESTRATION_CHILD_TASK_TYPE
+            )
+        assert len(child_starts) == 8, backend.lane_snapshot()
+        assert backend.lane_snapshot()["orchestration"]["concurrency"] == (
+            global_lane_concurrency("default")
+        ), backend.lane_snapshot()
+    finally:
+        await _drain_inline_jobs(backend)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_type", sorted(LANE_EXEMPT_TASK_TYPES))
+async def test_single_orchestration_completes_with_one_default_slot(
+    monkeypatch, _task_ports, signed_inline_backend, tmp_path, task_type
+):
+    monkeypatch.setenv("ST_CE_GLOBAL_MAX_ACTIVE_DEFAULT_TASKS", "1")
+    backend = signed_inline_backend()
+    ctx = _ctx(tmp_path, "single_workflow", requester="single_requester")
+    child_starts = _register_simulated_orchestration(
+        monkeypatch, _task_ports, backend, task_type
+    )
+
+    try:
+        await backend.enqueue_project_task(
+            ctx, task_type=task_type, product_surface="mainline", episode=1,
+            queue_kind="default",
+        )
+        drive = await _assert_inline_task_completed(_task_ports, backend, ctx, task_type)
+        assert drive.queue_kind == "default", backend.lane_snapshot()
+        await _assert_inline_task_completed(
+            _task_ports, backend, ctx, _ORCHESTRATION_CHILD_TASK_TYPE
+        )
+        assert len(child_starts) == 1, backend.lane_snapshot()
+    finally:
+        await _drain_inline_jobs(backend)
+
+
+@pytest.mark.asyncio
+async def test_orchestration_pool_has_its_own_cap(
+    monkeypatch, _task_ports, signed_inline_backend, tmp_path
+):
+    monkeypatch.setenv("ST_CE_GLOBAL_MAX_ACTIVE_DEFAULT_TASKS", "1")
+    backend = signed_inline_backend()
+    ctx_a = _ctx(tmp_path, "workflow_a", requester="requester_a")
+    ctx_b = _ctx(tmp_path, "workflow_b", requester="requester_b")
+    ctx_c = _ctx(tmp_path, "generation_c", requester="requester_c")
+    child_a_completed = threading.Event()
+    release_a = threading.Event()
+    task_type = "freezone_workflow_drive"
+    plain_task_type = "l014_plain_default_generation"
+
+    def hold_a(run_ctx):
+        if run_ctx.project_id == ctx_a.project_id:
+            child_a_completed.set()
+            if not release_a.wait(timeout=_ORCHESTRATION_CHILD_TIMEOUT * 3):
+                raise TimeoutError("orchestration A was not released")
+
+    child_starts = _register_simulated_orchestration(
+        monkeypatch, _task_ports, backend, task_type, after_child=hold_a
+    )
+    register_project_task_runner(plain_task_type, lambda _envelope, _ctx: {"plain": "done"})
+
+    try:
+        await backend.enqueue_project_task(
+            ctx_a, task_type=task_type, product_surface="mainline", episode=1,
+            queue_kind="default",
+        )
+        snapshot = backend.lane_snapshot()
+        assert "orchestration" in snapshot, snapshot
+        assert await asyncio.to_thread(
+            child_a_completed.wait, _ORCHESTRATION_CHILD_TIMEOUT + 2
+        ), backend.lane_snapshot()
+        await _wait_for_status(_task_ports, ctx_a, task_type, "running")
+        await backend.enqueue_project_task(
+            ctx_b, task_type=task_type, product_surface="mainline", episode=1,
+            queue_kind="default",
+        )
+        await _wait_for_status(_task_ports, ctx_b, task_type, "queued")
+        snapshot = backend.lane_snapshot()
+        assert snapshot["orchestration"] == {
+            "active": 1, "queued": 1, "concurrency": 1,
+        }, snapshot
+
+        await backend.enqueue_project_task(
+            ctx_c, task_type=plain_task_type, product_surface="mainline", episode=1,
+            queue_kind="default",
+        )
+        await _assert_inline_task_completed(_task_ports, backend, ctx_c, plain_task_type)
+        assert not release_a.is_set(), backend.lane_snapshot()
+        assert _task_ports.get_task_for_project(ctx_a, task_type, 1).status == (
+            "running"
+        ), backend.lane_snapshot()
+        assert _task_ports.get_task_for_project(ctx_b, task_type, 1).status == (
+            "queued"
+        ), backend.lane_snapshot()
+        release_a.set()
+
+        for ctx in (ctx_a, ctx_b):
+            drive = await _assert_inline_task_completed(_task_ports, backend, ctx, task_type)
+            assert drive.queue_kind == "default", backend.lane_snapshot()
+            await _assert_inline_task_completed(
+                _task_ports, backend, ctx, _ORCHESTRATION_CHILD_TASK_TYPE
+            )
+        assert len(child_starts) == 2, backend.lane_snapshot()
+        await _drain_inline_jobs(backend)
+        for lane in ("orchestration", "default"):
+            assert backend.lane_snapshot()[lane] == {
+                "active": 0, "queued": 0, "concurrency": 1,
+            }, backend.lane_snapshot()
+    finally:
+        release_a.set()
+        await _drain_inline_jobs(backend)

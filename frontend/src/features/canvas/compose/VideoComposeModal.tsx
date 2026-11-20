@@ -396,6 +396,22 @@ export function reconcileDraftWithUpstream(
   const tracks: ComposeTrack[] = draft.tracks.map((track) => ({
     ...track,
     clips: track.clips
+      .map((clip) => {
+        if (clip.sourceUrl || !clip.nodeId) return clip;
+        const candidates = seedNodeIds
+          .map((id) => nodeById.get(id))
+          .filter((node) => node && (
+            node.id === clip.nodeId || node.data.workflowPlanNodeId === clip.nodeId
+          ));
+        if (candidates.length !== 1) {
+          throw new Error(`Cannot resolve compose source: ${clip.nodeId}`);
+        }
+        const node = candidates[0];
+        if (!node || (clip.kind === "audio" ? !isAudioNode(node) : !isVideoNode(node))) {
+          throw new Error(`Invalid compose source kind: ${clip.nodeId}`);
+        }
+        return { ...clip, nodeId: node.id };
+      })
       .filter((clip) => clip.nodeId == null || connected.has(clip.nodeId))
       .map((clip) => {
         if (!clip.nodeId) return clip;
@@ -406,6 +422,9 @@ export function reconcileDraftWithUpstream(
             : clip.kind === "audio" && node && isAudioNode(node)
               ? node.data.audioUrl
               : null;
+        if (!sourceUrl && !clip.sourceUrl) {
+          throw new Error(`Compose source is not ready: ${clip.nodeId}`);
+        }
         if (!sourceUrl || sourceUrl === clip.sourceUrl) return clip;
 
         const durationMs =
@@ -419,8 +438,10 @@ export function reconcileDraftWithUpstream(
               ? node.data.previewImageUrl ?? null
               : null,
           durationMs,
-          trimStartMs: 0,
-          trimEndMs: durationMs ?? FALLBACK_CLIP_MS,
+          trimStartMs: clip.sourceUrl ? 0 : clip.trimStartMs,
+          trimEndMs: clip.sourceUrl
+            ? durationMs ?? FALLBACK_CLIP_MS
+            : Math.min(clip.trimEndMs, durationMs ?? clip.trimEndMs),
         };
       }),
   }));
@@ -539,12 +560,21 @@ function useTrackMediaSync<T extends HTMLMediaElement>(
     const el = ref.current;
     if (!el) return;
     const a = activeRef.current;
-    el.volume = a ? a.laid.clip.volume : 1;
     el.muted = forceMuted || (a ? a.laid.clip.muted : false);
     el.playbackRate = speed > 0 ? speed : 1;
     if (isPlaying && activeClipId) void el.play().catch(() => {});
     else el.pause();
   }, [isPlaying, activeClipId, forceMuted, speed, ref]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const clip = active?.laid.clip;
+    const fadeMs = clip?.fadeOutMs ?? 0;
+    const remainingMs = active ? active.laid.timelineEndMs - playheadMs : 0;
+    const gain = fadeMs > 0 ? clamp(remainingMs / fadeMs, 0, 1) : 1;
+    el.volume = clamp((clip?.volume ?? 1) * gain, 0, 1);
+  }, [active, playheadMs, ref]);
 
   // (3) scrub：暂停态把播放头镜像进媒体元素。关键是「合并 seek」——快速拖动时不要
   // 每次都直接写 currentTime，否则一连串 seek 塞满解码器、互相挤压，预览画面卡顿。

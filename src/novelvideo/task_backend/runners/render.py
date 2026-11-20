@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from novelvideo.shared.failure_signals import upstream_status_of, with_upstream_status
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
 from novelvideo.task_backend.registry import register_project_task_runner
@@ -649,11 +650,13 @@ async def _run_selected_regen_async(
     grid_paths: dict[int, str] = {}
     grid_results: list[dict[str, Any]] = []
     failed_errors: list[str] = []
+    upstream_status: int | None = None
     beat_offset = 0
     for result in results:
         if not result.success or not result.grid_image_path:
             error_text = str(result.error or "unknown error")
             failed_errors.append(error_text)
+            upstream_status = upstream_status or upstream_status_of(result)
             log(f"{'草图' if is_sketch else '网格'}生成失败: {error_text}")
             beat_offset += result.beat_count or 0
             continue
@@ -709,8 +712,11 @@ async def _run_selected_regen_async(
     if not updated_beats:
         label = "草图重生" if is_sketch else "Render 重生"
         detail = f"：{'; '.join(failed_errors[:3])}" if failed_errors else ""
-        raise RuntimeError(
-            f"{label}未生成可用图片（mode={mode_key}, beats={selected_beat_numbers}）{detail}"
+        raise with_upstream_status(
+            RuntimeError(
+                f"{label}未生成可用图片（mode={mode_key}, beats={selected_beat_numbers}）{detail}"
+            ),
+            upstream_status,
         )
 
     result_payload = {
@@ -871,7 +877,7 @@ async def _run_grid_regenerate_async(
         force_image_size="0.5K" if config.get("force_half_k") else None,
     )
     if not result.success:
-        raise RuntimeError(f"网格重新生成失败: {result.error}")
+        raise with_upstream_status(RuntimeError(f"网格重新生成失败: {result.error}"), result)
 
     if prompt_only:
         return {"prompt_only": True, "grid_index": grid_index}

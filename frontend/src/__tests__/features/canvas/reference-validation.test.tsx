@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ReferenceValidationDialog, referenceDurationIssues, referenceIssues, matchesReference, referenceIssueName } from "@/features/canvas/nodes/shared/ReferenceValidationDialog";
-import { readReferenceMediaLimits } from "@/api/referenceMediaLimits";
+import { readReferenceMediaLimits } from "@/features/canvas/domain/referenceMediaLimits";
 import { audioReferenceDurationRejection } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 
 const focus = vi.hoisted(() => vi.fn());

@@ -85,6 +85,9 @@ export declare const FILM_FILE: 'film.html';
 export declare const DEFAULT_STAGE: Readonly<{ w: number; h: number }>;
 export declare const SPEED_MIN: number;
 export declare const SPEED_MAX: number;
+export declare const MEDIA_RATE_MIN: number;
+export declare const MEDIA_RATE_MAX: number;
+export declare function mediaPlays(rate: number): boolean;
 
 export declare function isStill(src: string): boolean;
 export declare function isPage(src: string): boolean;

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from novelvideo.shared.failure_signals import CONFIGURATION
+
 
 _CREDENTIAL_ERROR_MESSAGES = {
     "ORG_CREDENTIAL_MISSING": "organization credential is missing",
@@ -16,6 +18,8 @@ _CREDENTIAL_ERROR_MESSAGES = {
 
 class ModelCredentialError(RuntimeError):
     """Stable, secret-free credential resolution failure."""
+
+    failure_kind = CONFIGURATION
 
     def __init__(self, code: str, _unsafe_detail: str | None = None) -> None:
         super().__init__(_CREDENTIAL_ERROR_MESSAGES.get(code, "credential resolution failed"))
