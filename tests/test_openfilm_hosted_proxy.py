@@ -109,6 +109,11 @@ def test_proxy_refuses_cross_project_and_host_filesystem_operations(path, method
     assert not proxy.allowed_editor_path(path, method, FILM)
 
 
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_proxy_refuses_the_host_film_replacement_notice(method):
+    assert not proxy.allowed_editor_path("api/host/film-replaced", method, "abcdef123456")
+
+
 def test_json_rewrites_preview_urls_and_preserves_film_keys(tmp_path):
     value = proxy.rewrite_json(
         {

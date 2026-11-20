@@ -167,6 +167,49 @@ def test_studio_route_lets_the_host_ask_before_replacing_an_edited_film(
     assert "edited in Studio" in response.json()["detail"]
 
 
+def test_studio_route_returns_failed_replacement_without_opening_a_session(
+    studio_client: TestClient, monkeypatch
+):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.studio import StudioError
+
+    detail = "The film was not regenerated. Try again, or restart the editor."
+
+    def refuse(**_kwargs):
+        raise StudioError(detail, 503)
+
+    async def unexpected_session(*args, **kwargs):
+        pytest.fail("a failed replacement must not open a Studio session")
+
+    monkeypatch.setattr(freezone, "build_studio_film", refuse)
+    monkeypatch.setattr(freezone, "ensure_studio_session", unexpected_session)
+
+    response = studio_client.post(
+        "/api/v1/projects/demo/freezone/video/compose/studio",
+        json={
+            "canvas_id": "canvas-1",
+            "node_id": "node-1",
+            "rebuild": True,
+            "tracks": [
+                {
+                    "track_id": "video-1",
+                    "kind": "video",
+                    "items": [
+                        {
+                            "item_id": "clip-1",
+                            "source_url": "/freezone/_uploads/a.mp4",
+                            "source_end": 1.0,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == detail
+
+
 def test_studio_request_requires_canvas_and_node_ids():
     from pydantic import ValidationError
 

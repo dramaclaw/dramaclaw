@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import html
 import json
+import logging
 import os
 import re
 import secrets
@@ -36,6 +37,8 @@ from novelvideo.freezone.paths import resolve_static_url_to_path
 
 if TYPE_CHECKING:
     from novelvideo.api.schemas import FreezoneVideoComposeTrack
+
+logger = logging.getLogger(__name__)
 
 _MEDIA_SUFFIXES = {
     ".mp4",
@@ -531,6 +534,10 @@ def build_studio_film(
         # film 目录会停在一个素材缺失的状态。
         for (_, source), asset_name in zip(resolved, asset_names):
             _copy_asset(source, assets_dir / asset_name)
+        # Studio merges any film.html it did not write into the person's remembered edits.
+        # Tell it this film is being replaced before touching the old film.html,
+        # so a failure here leaves the old film.html as it was.
+        _forget_person_edits(film_dir)
         # Studio 的素材库直接扫描 assets 目录；时间线里删掉的片段如果还留着
         # 旧拷贝，同一条片段会在库里出现两份。只清理本模块生成的素材名，
         # 目录里用户自己放的文件不动。
@@ -938,6 +945,61 @@ async def _ensure_studio() -> dict[str, Any]:
             if cancelled is not None:
                 raise cancelled
             return result
+
+
+def _studio_post_sync(
+    state: dict[str, Any], path: str, body: dict[str, Any], *, timeout: float = 5.0
+) -> tuple[int, Any]:
+    origin = str(state["origin"]).rstrip("/")
+    try:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            response = client.post(
+                f"{origin}{path}",
+                json=body,
+                headers={"x-studio-key": str(state["key"])},
+            )
+    except httpx.HTTPError as exc:
+        raise StudioError(f"OpenFilm Studio request failed: {exc}", 502) from exc
+    try:
+        said = response.json()
+    except ValueError:
+        said = None
+    return response.status_code, said
+
+
+def _forget_person_edits(film_dir: Path) -> None:
+    message = (
+        "The film was not regenerated: the open editor could not be told that the film is "
+        "being replaced, so it would have merged the earlier edits back into the new one. "
+        "Try again; if it keeps failing, restart DramaClaw and open the film again."
+    )
+    origin = os.environ.get("SUPERTALE_OPENFILM_STUDIO_ORIGIN", "").strip()
+    if origin:
+        key = os.environ.get("SUPERTALE_OPENFILM_STUDIO_KEY", "").strip()
+        if not key:
+            logger.warning("Cannot notify external Studio of film replacement without a key")
+            raise StudioError(message, 503)
+        state = {"origin": origin.rstrip("/"), "key": key}
+    else:
+        state = _read_state()
+        # Edits live in the Studio process's memory. An unavailable local editor
+        # has no in-memory edits to clear for this film.
+        if (
+            not state
+            or not _studio_group_alive(state.get("pid"))
+            or not state.get("origin")
+            or not state.get("key")
+        ):
+            return
+
+    try:
+        status, body = _studio_post_sync(state, "/api/host/film-replaced", {"path": str(film_dir)})
+    except StudioError as exc:
+        logger.warning("Studio film replacement notice failed: %s", exc)
+        raise StudioError(message, 503) from exc
+    if not (status == 200 and isinstance(body, dict) and body.get("ok") is True):
+        logger.warning("Studio did not acknowledge film replacement (HTTP %s)", status)
+        raise StudioError(message, 503)
 
 
 async def _studio_post(

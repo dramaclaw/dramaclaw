@@ -21,7 +21,7 @@ import { pipeline } from 'node:stream';
 import { mkdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { EditError, editProjectFilm, pageClipLook, readProjectFilm, settleProjectFilm } from './film.mjs';
+import { EditError, editProjectFilm, forgetPersonEdits, pageClipLook, readProjectFilm, settleProjectFilm } from './film.mjs';
 import { readPage, writePage } from './page-text.mjs';
 import { FileError, bringIn, collect, extractAudio, freezeFrame, importFile, inside, listFiles, makeFolder, moveCheck, moveFile, readable, relink, trashFile } from './files.mjs';
 import { ExportError, createExports, draftApps, exportCapabilities, exportsRoot, projectSizes } from './exports.mjs';
@@ -219,6 +219,16 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
 
     authorize(req);
     const parts = path.slice('/api/'.length).split('/').map(decodeURIComponent);
+
+    if (path === '/api/host/film-replaced' && req.method === 'POST') {
+      if (!sameKey(/** @type {string | undefined} */ (req.headers['x-studio-key']))) throw new HttpError(403, 'launch key header required');
+      const { path: folder } = /** @type {{ path?: unknown }} */ (await readJson(req) ?? {});
+      if (typeof folder !== 'string' || !isAbsolute(folder)) throw new HttpError(400, 'absolute film folder required');
+      let root = resolve(folder);
+      try { root = realpathSync(root); } catch { /* as given */ }
+      await forgetPersonEdits(root);
+      return json(res, 200, { ok: true });
+    }
 
     /* stop: another app is taking over this machine's Studio, or `openfilm open` starts it afresh (`whenIdle`: not
        while an export runs or media is made — it would be lost). `pages`: how many were open, to come back */

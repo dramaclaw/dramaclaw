@@ -98,6 +98,7 @@ def test_source_edits_are_stored_as_patches() -> None:
         "0008-host-route-gates.patch",
         "0009-hosted-render-network.patch",
         "0010-hosted-film-dirs.patch",
+        "0011-host-film-replacement.patch",
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in patches)
     for path in (

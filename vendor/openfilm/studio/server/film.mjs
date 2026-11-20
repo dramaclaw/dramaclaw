@@ -17,7 +17,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FILM_FILE, filmHtml, readFilm, readFilmFile } from '../../src/film-doc.mjs';
 import { EditError, applyOps } from './ops.mjs';
-import { filmMerged, filmToMerge, filmWritten, keepAside, mergeFilmWrite, replaceIfStill } from './person-edits.mjs';
+import { filmMerged, filmReplaced, filmToMerge, filmWritten, keepAside, mergeFilmWrite, replaceIfStill } from './person-edits.mjs';
 
 export { EditError };
 
@@ -73,6 +73,11 @@ function serial(root, job) {
   queues.set(root, settled);
   void settled.then(() => { if (queues.get(root) === settled) queues.delete(root); });
   return next;
+}
+
+/** Clear the person's edits before the host replaces the film. @param {string} root */
+export function forgetPersonEdits(root) {
+  return serial(root, async () => filmReplaced(root));
 }
 
 /** How long an outside write of film.html must stay the same bytes to be taken as finished. */

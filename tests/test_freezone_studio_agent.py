@@ -28,6 +28,13 @@ from novelvideo.freezone.studio import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolated_studio_state(monkeypatch, tmp_path_factory):
+    monkeypatch.setattr(studio, "STATE_DIR", tmp_path_factory.mktemp("studio-state"))
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ORIGIN", raising=False)
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+
+
 def _source(project_dir: Path, name: str) -> str:
     path = project_dir / "freezone" / "_uploads" / name
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import Mock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -12,11 +13,19 @@ from novelvideo.api.schemas import (
     FreezoneVideoComposeItem,
     FreezoneVideoComposeTrack,
 )
+from novelvideo.freezone import studio
 from novelvideo.freezone.studio import (
     StudioError,
     build_studio_film,
     studio_open_url,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_studio_state(monkeypatch, tmp_path_factory):
+    monkeypatch.setattr(studio, "STATE_DIR", tmp_path_factory.mktemp("studio-state"))
+    monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_ORIGIN", raising=False)
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
 
 
 def _source(project_dir: Path, name: str) -> str:
@@ -433,8 +442,6 @@ def test_rebuild_leaves_unrelated_assets_alone(tmp_path: Path):
 
 
 def test_studio_env_keeps_api_secrets_out(monkeypatch, tmp_path: Path):
-    from novelvideo.freezone import studio
-
     monkeypatch.setattr(studio, "RUNTIME_DIR", tmp_path / "runtime")
     for name in ("MODEL_API_KEY", "ST_CONTROL_PLANE_DSN", "SESSION_SECRET"):
         monkeypatch.setenv(name, "secret")
@@ -447,3 +454,162 @@ def test_studio_env_keeps_api_secrets_out(monkeypatch, tmp_path: Path):
     assert env["OPENFILM_STUDIO_KEY"] == "k" * 48
     assert env["OPENFILM_STUDIO_READY_FILE"] == str(tmp_path / "ready.json")
     assert not {"MODEL_API_KEY", "ST_CONTROL_PLANE_DSN", "SESSION_SECRET"} & set(env)
+
+
+@pytest.fixture
+def replacement_notices(monkeypatch):
+    calls = []
+
+    def record(film_dir):
+        document = film_dir / "film.html"
+        calls.append((film_dir, document.read_text() if document.exists() else None))
+
+    monkeypatch.setattr(studio, "_forget_person_edits", record, raising=False)
+    return calls
+
+
+def test_first_build_notifies_before_writing_and_reuse_skips_notice(tmp_path, replacement_notices):
+    film_dir = _build(tmp_path)
+    assert replacement_notices == [(film_dir, None)]
+
+    assert _build(tmp_path) == film_dir
+    assert replacement_notices == [(film_dir, None)]
+
+
+@pytest.mark.parametrize("hand_edited", [False, True], ids=["changed-request", "forced-rebuild"])
+def test_replacement_notifies_before_overwriting(tmp_path, replacement_notices, hand_edited):
+    film_dir = _build(tmp_path)
+    document = film_dir / "film.html"
+    old_text = document.read_text()
+    if hand_edited:
+        old_text += "\n<!-- Studio edit -->\n"
+        document.write_text(old_text)
+    replacement_notices.clear()
+    tracks = _later_tracks(tmp_path)
+
+    if hand_edited:
+        with pytest.raises(StudioError) as error:
+            _build(tmp_path, tracks=tracks)
+        assert error.value.status_code == 409
+        assert replacement_notices == []
+        assert document.read_text() == old_text
+
+    assert _build(tmp_path, tracks=tracks, rebuild=hand_edited) == film_dir
+    assert replacement_notices == [(film_dir, old_text)]
+    assert document.read_text() != old_text
+    assert "clip-0-later.mp4" in document.read_text()
+
+
+def test_failed_replacement_notice_preserves_the_existing_film(tmp_path, monkeypatch):
+    film_dir = _build(tmp_path)
+    document = film_dir / "film.html"
+    manifest = film_dir / "manifest.json"
+    assets = film_dir / "assets"
+    old_document, old_manifest = document.read_bytes(), manifest.read_bytes()
+    old_assets = {asset: asset.read_bytes() for asset in assets.iterdir()}
+
+    def refuse(path):
+        assert path == film_dir
+        assert (assets / "clip-0-later.mp4").is_file()
+        assert all(asset.is_file() for asset in old_assets)
+        raise StudioError("The film was not regenerated. Try again.", 503)
+
+    monkeypatch.setattr(studio, "_forget_person_edits", refuse, raising=False)
+    with pytest.raises(StudioError, match="was not regenerated") as error:
+        _build(tmp_path, tracks=_later_tracks(tmp_path), rebuild=True)
+
+    assert error.value.status_code == 503
+    assert document.read_bytes() == old_document
+    assert manifest.read_bytes() == old_manifest
+    assert {asset: asset.read_bytes() for asset in old_assets} == old_assets
+
+
+@pytest.fixture
+def studio_post(monkeypatch):
+    post = Mock(return_value=(200, {"ok": True}))
+    monkeypatch.setattr(studio, "_studio_post_sync", post, raising=False)
+    return post
+
+
+@pytest.mark.parametrize(
+    ("state", "alive"),
+    [
+        (None, False),
+        ({"pid": 123, "origin": "http://127.0.0.1:4747", "key": "local-key"}, False),
+        ({"pid": 123, "status": "starting", "key": "local-key"}, True),
+        ({"pid": 123, "origin": "http://127.0.0.1:4747", "key": None}, True),
+    ],
+    ids=["no-state", "dead-pid", "starting", "missing-key"],
+)
+def test_forget_skips_unavailable_local_studio(tmp_path, monkeypatch, studio_post, state, alive):
+    monkeypatch.setattr(studio, "_read_state", lambda: state)
+    monkeypatch.setattr(studio, "_studio_group_alive", lambda pid: alive)
+
+    assert studio._forget_person_edits(tmp_path) is None
+    studio_post.assert_not_called()
+
+
+@pytest.fixture
+def live_studio(monkeypatch):
+    state = {"pid": 123, "origin": "http://127.0.0.1:4747", "key": "local-key"}
+    monkeypatch.setattr(studio, "_read_state", lambda: state)
+    monkeypatch.setattr(studio, "_studio_group_alive", lambda pid: pid == state["pid"])
+    return state
+
+
+def test_forget_posts_to_the_live_studio(tmp_path, studio_post, live_studio):
+    assert studio._forget_person_edits(tmp_path) is None
+
+    studio_post.assert_called_once()
+    state, path, body = studio_post.call_args.args
+    assert state["origin"] == live_studio["origin"]
+    assert state["key"] == live_studio["key"]
+    assert path == "/api/host/film-replaced"
+    assert body == {"path": str(tmp_path)}
+
+
+@pytest.mark.parametrize(
+    "result",
+    [(404, {"error": "no such API"}), (200, {"ok": False}), StudioError("network failed", 502)],
+    ids=["missing-route", "not-acknowledged", "network-error"],
+)
+def test_forget_reports_failed_notice(tmp_path, studio_post, live_studio, result):
+    if isinstance(result, StudioError):
+        studio_post.side_effect = result
+    else:
+        studio_post.return_value = result
+
+    with pytest.raises(StudioError, match="was not regenerated") as error:
+        studio._forget_person_edits(tmp_path)
+    assert error.value.status_code == 503
+    assert "try again" in str(error.value).lower()
+    assert "restart" in str(error.value).lower()
+
+
+@pytest.mark.parametrize("key", ["external-key", None], ids=["with-key", "without-key"])
+def test_forget_uses_external_studio_without_reading_local_state(
+    tmp_path, monkeypatch, studio_post, key
+):
+    external = "https://studio.example"
+    monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_ORIGIN", external)
+
+    def unexpected(*args):
+        pytest.fail("external Studio must not inspect local process state")
+
+    monkeypatch.setattr(studio, "_read_state", unexpected)
+    monkeypatch.setattr(studio, "_studio_group_alive", unexpected)
+    if key is None:
+        monkeypatch.delenv("SUPERTALE_OPENFILM_STUDIO_KEY", raising=False)
+        with pytest.raises(StudioError, match="was not regenerated") as error:
+            studio._forget_person_edits(tmp_path)
+        assert error.value.status_code == 503
+        studio_post.assert_not_called()
+    else:
+        monkeypatch.setenv("SUPERTALE_OPENFILM_STUDIO_KEY", key)
+        assert studio._forget_person_edits(tmp_path) is None
+        studio_post.assert_called_once()
+        assert studio_post.call_args.args == (
+            {"origin": external, "key": key},
+            "/api/host/film-replaced",
+            {"path": str(tmp_path)},
+        )

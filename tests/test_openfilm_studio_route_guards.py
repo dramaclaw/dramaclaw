@@ -44,3 +44,19 @@ def test_examples_are_not_fetched_from_github_at_boot() -> None:
         "the vendored editor's example index lives on GitHub; a shared server fetching it at every "
         "start both phones home for each tenant and puts an OpenFilm address in the logs"
     )
+
+
+def test_film_replaced_requires_the_launch_key_header() -> None:
+    source = SERVER.read_text(encoding="utf-8")
+    handler = re.search(
+        r"""(?ms)^([ \t]*)if\b[^{}]*['"](?:/api/host/)?film-replaced['"][^{}]*"""
+        r"\{(.*?)^\1\}",
+        source,
+    )
+    assert handler, "Studio must expose the host's film-replaced route"
+    body = handler[2]
+    forget = re.search(r"\b\w*(?:[Ff]orget|[Rr]eplac)\w*\s*\(", body)
+    assert forget, "the route must clear the film's person-edit record"
+    guard = body[:forget.start()]
+    assert re.search(r"""req\.headers\[['"]x-studio-key['"]\]""", guard)
+    assert re.search(r"(?:HttpError\(|json\(res,\s*)403\b", guard)

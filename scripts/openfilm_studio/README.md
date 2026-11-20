@@ -14,7 +14,7 @@ content-hashed and immutable, and the new build is live on the next page load.
 | File | Purpose |
 | --- | --- |
 | `revendor.mjs` | One-command upgrade: clone → patches → build → patch bundle → install → guards |
-| `source-patches/*.patch` | Our ten edits to upstream **source** (embed chrome, host navigation and language, Chrome fallback, export branding, self-update gate, film title, server-copy branding, rename/examples route gates, hosted-render network limits, hosted film dirs) |
+| `source-patches/*.patch` | Our eleven edits to upstream **source** (embed chrome, host navigation and language, Chrome fallback, export branding, self-update gate, film title, server-copy branding, rename/examples route gates, hosted-render network limits, hosted film dirs, host film replacement notice) |
 | `patch_studio_ui.mjs` | Exact-string patches against the minified bundle (branding, embed-only UI, `hostBack`, language, version history…) |
 | `run.mjs` | Launcher the Python backend starts per Studio session |
 | `smoke.mjs` | Deployment check the image runs at build time: Chromium launches, Studio boots, the patched chunk is served, and a film actually paints with no vendored brand on screen |
@@ -105,6 +105,12 @@ folder by an older build: that film opens with an empty history.
 
 Studio runs in its own process group with `<OPENFILM_HOME>/studio.pid` as an exclusive start lock,
 so it outlives a recycled API worker and the next worker reuses it instead of starting another.
+
+Before regenerating a film, the host calls `POST /api/host/film-replaced` (patch 0011) so Studio
+forgets the person's old edits and does not merge them into the new cut. This host-only route
+requires the launch key in the `x-studio-key` header, and the host's browser proxy does not
+forward `api/host/...`. In local non-hosted mode the page itself holds the key, so this is not
+a hard boundary there.
 
 ## Deployment note
 
