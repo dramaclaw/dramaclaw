@@ -905,7 +905,9 @@ async def _run_freezone_video_gen_async(
 
     trusted_context = envelope.get("__trusted_egress_context")
     video_leaf = run_freezone_video_gen
-    trusted_kwargs: dict[str, Any] = {}
+    trusted_kwargs: dict[str, Any] = {
+        "accepted_job_receipt": ctx.state_dir / "freezone" / "accepted_video_jobs" / f"{job_id}.json",
+    }
     if trusted_context is not None and trusted_context.billing_principal.kind in {
         "organization",
         "local",

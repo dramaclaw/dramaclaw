@@ -1829,6 +1829,7 @@ async def run_freezone_video_gen(
     gen_mode: Optional[str] = None,
     model_params: Optional[dict[str, Any]] = None,
     request_schema: Optional[dict[str, Any]] = None,
+    accepted_job_receipt: Path | None = None,
 ) -> Path:
     """Freezone 文生视频。
 
@@ -1932,6 +1933,7 @@ async def run_freezone_video_gen(
                 {"scene_optimize": scene_optimize} if scene_optimize else None
             ),
             gen_mode=gen_mode,
+            accepted_job_receipt=accepted_job_receipt,
             **extra_kwargs,
         )
     if not result or result.status.value != "done":

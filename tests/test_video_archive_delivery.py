@@ -624,3 +624,47 @@ async def test_result_url_download_rejects_malformed_data_url(
     assert captured.value.retryable is False
     assert not output.exists()
     assert [path for path in tmp_path.iterdir() if path.name.endswith(".part")] == []
+
+
+@pytest.mark.asyncio
+async def test_newapi_replacement_resumes_the_accepted_freezone_job(monkeypatch, tmp_path):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from novelvideo.generators import video_generator as module
+
+    first = module.NewApiVideoGenerator(
+        api_key="test-key", endpoint="https://gateway.example/v1", model="video-model"
+    )
+    replacement = module.NewApiVideoGenerator(
+        api_key="test-key", endpoint="https://gateway.example/v1", model="video-model"
+    )
+    submit = AsyncMock(return_value={"id": "provider-task"})
+    for generator in (first, replacement):
+        monkeypatch.setattr(generator, "_post_json", submit)
+    monkeypatch.setattr(first, "_get_json", AsyncMock(side_effect=asyncio.CancelledError))
+    poll = AsyncMock(return_value={
+        "data": {"status": "success", "archive": _archive_payload("success", retryable=False)}
+    })
+    monkeypatch.setattr(replacement, "_get_json", poll)
+    monkeypatch.setattr(module, "get_video_result_delivery", _ArchiveDelivery)
+    reserve = AsyncMock(return_value="original-reservation")
+    confirm = AsyncMock()
+    monkeypatch.setattr(module, "_reserve_video_model_call", reserve)
+    monkeypatch.setattr(module, "_confirm_video_model_call", confirm)
+
+    output = tmp_path / "video.mp4"
+    kwargs = dict(image_path=None, prompt="Red cup", output_path=str(output),
+                  accepted_job_receipt=tmp_path / "accepted.json", poll_interval=0, max_polls=1)
+    with pytest.raises(asyncio.CancelledError):
+        await first.generate(**kwargs)
+
+    result = await replacement.generate(**kwargs)
+
+    assert result.status is module.VideoGenStatus.DONE
+    assert output.read_bytes() == b"archived-video"
+    submit.assert_awaited_once()
+    poll.assert_awaited_once_with("https://gateway.example/v1/video/generations/provider-task")
+    reserve.assert_awaited_once()
+    confirm.assert_awaited_once()
+    assert confirm.await_args.kwargs["reservation_id"] == "original-reservation"
