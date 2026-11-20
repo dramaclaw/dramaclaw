@@ -51,3 +51,25 @@ it('keeps the browser audio fetch failure response inside the successful context
     ...contextEnv, hostData: { audio_references: { error: { message: 'Audio unavailable' } } },
   })).toMatchObject({ status: 'answered', result: { ok: true, responses: [{ data: { current: null, options: [], error: 'Audio unavailable' } }] } });
 });
+
+it('asks the agent to clarify missing custom voice when the inventory is empty', async () => {
+  const answer = await answerContextRequests(
+    contextCanvas,
+    contextEnvelopes([{ type: 'audio_voice_options', node_id: 'audio' }]),
+    { ...contextEnv, hostData: { ...contextHostData, audio_references: { available: [] } } },
+  );
+  expect(answer).toMatchObject({
+    status: 'answered',
+    result: {
+      ok: true,
+      responses: [{
+        type: 'audio_voice_options',
+        data: {
+          current: { voiceRef: null },
+          options: [],
+          instruction: expect.stringMatching(/ask the user .* add a custom voice.*do not start speech generation/i),
+        },
+      }],
+    },
+  });
+});

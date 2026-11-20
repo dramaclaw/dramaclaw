@@ -1517,8 +1517,9 @@ async function buildAudioVoiceOptions(
         voiceLanguage: currentData?.voiceLanguage ?? null,
       },
       options,
-      instruction:
-        "To change an audio node voice/timbre, choose one option and use update_node_data with that option's data object. Do not write voiceId directly.",
+      instruction: options.length === 0
+        ? "No custom voice options are available. If requested speech has no valid voiceRef, ask the user to add a custom voice and tell you which one to use. Do not start speech generation until a valid voice is selected."
+        : "To change an audio node voice/timbre, choose one option and use update_node_data with that option's data object. Do not write voiceId directly.",
     };
   } catch (error) {
     return {
