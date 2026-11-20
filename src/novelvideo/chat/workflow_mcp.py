@@ -23,7 +23,7 @@ from mcp.server.stdio import stdio_server
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 
-from novelvideo.chat import agent_key_session
+from novelvideo.chat import agent_key_session, request_context
 from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
@@ -190,7 +190,7 @@ _WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
 
 
 def _username() -> str:
-    return str(os.environ.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
+    return str(request_context.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
 
 
 def _agent_key_mode() -> bool:

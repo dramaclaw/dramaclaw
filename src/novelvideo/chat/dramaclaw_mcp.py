@@ -29,7 +29,7 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from novelvideo.chat import mcp_runtime
+from novelvideo.chat import mcp_runtime, request_context
 from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.mcp_runtime import (
     _integer_string_argument_paths as _integer_string_argument_paths,
@@ -214,7 +214,7 @@ _PROJECT_DISCOVERY_HINT = " Call freezone_list_projects and pass project_id."
 
 def _external_unbound_freezone() -> bool:
     # Only external MCP connections opt into per-call project selection.
-    if os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() != "1":
+    if request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip() != "1":
         return False
     # Keep other plugins and already-bound connections on their existing paths.
     if _agent_plugin_name() != "freezone" or _scope_kind() != "home":
@@ -406,21 +406,23 @@ HOME_TOOL_NAMES = frozenset(
 
 
 def _scope_kind() -> str:
-    return "project" if os.environ.get("DRAMACLAW_PROJECT_ID", "").strip() else "home"
+    return (
+        "project" if request_context.get("DRAMACLAW_PROJECT_ID", "").strip() else "home"
+    )
 
 
 def _freezone_canvas_mode() -> bool:
     """Detect Freezone even when a shared App Server drops one env flag."""
-    if os.environ.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
+    if request_context.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
         return True
     return (
         bool(
-            os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
-            and os.environ.get("DRAMACLAW_AGENT_PROFILE", "")
+            request_context.get("DRAMACLAW_CANVAS_ID", "").strip()
+            and request_context.get("DRAMACLAW_AGENT_PROFILE", "")
             .strip()
             .startswith("freezone")
         )
-        or os.environ.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
+        or request_context.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
     )
 
 

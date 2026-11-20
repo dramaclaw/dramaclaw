@@ -11210,6 +11210,10 @@ def test_freezone_plugin_degrades_when_interactive_story_sibling_is_missing(
     copied = tmp_path / "plugins" / "freezone" / "__init__.py"
     copied.parent.mkdir(parents=True)
     shutil.copyfile(source, copied)
+    # The request-context sibling is required; only the story bundle is optional.
+    shutil.copyfile(
+        source.with_name("_request_context.py"), copied.with_name("_request_context.py")
+    )
 
     tools_module = types.ModuleType("tools")
     registry_module = types.ModuleType("tools.registry")

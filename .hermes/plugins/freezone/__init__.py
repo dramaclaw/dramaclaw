@@ -109,7 +109,7 @@ def _tool_input_hash(value: Any) -> str:
 
 
 def _record_structured_tool_result(tool_name: str, value: Any) -> None:
-    result_dir = os.environ.get("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "").strip()
+    result_dir = request_context.get("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "").strip()
     if not result_dir or not tool_name:
         return
     try:
@@ -212,6 +212,20 @@ except Exception:
     workflow_plan_json_schema = None
 
 
+def _load_stdlib_tool_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load agent tool module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+request_context = _load_stdlib_tool_module(
+    "_freezone_request_context", _PLUGIN_DIR / "_request_context.py"
+)
+
+
 _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.canvas_confirmations import confirmation_kinds
@@ -300,7 +314,7 @@ def _generation_answer_scope(
 ) -> tuple[str, str, str] | None:
     project_id = str(project or "").strip()
     canvas_id = str(canvas or "").strip()
-    turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    turn_id = request_context.get("DRAMACLAW_TURN_ID", "").strip()
     if not project_id or not canvas_id or not turn_id:
         return None
     return project_id, canvas_id, turn_id
@@ -391,28 +405,28 @@ def _revision_conflict_write_error(project: str | None, canvas: str | None) -> d
 
 def _agent_token_configured() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
-        or os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+        request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+        or request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     )
 
 
 def _agent_key_configured() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
-        or os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+        request_context.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+        or request_context.get("DRAMACLAW_AGENT_KEY", "").strip()
     )
 
 
 def _current_agent_token() -> str:
     """Read a turn token lazily without depending on the CE application venv."""
 
-    token_file = os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    token_file = request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     if token_file:
         try:
             return Path(token_file).read_text(encoding="utf-8").strip()
         except OSError:
             return ""
-    return os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+    return request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
 
 
 def _skill_studio_agent_instruction(
@@ -479,12 +493,12 @@ def _request_headers(user_agent: str) -> dict[str, str]:
 
 
 def _default_project_id() -> str:
-    return os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
+    return request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
 
 
 def _external_unbound_agent_key() -> bool:
     return (
-        os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+        request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
         and _agent_key_configured()
         and not _agent_token_configured()
         and not _default_project_id()
@@ -505,7 +519,7 @@ def _project_id_required() -> str:
 
 
 def _default_canvas_id() -> str:
-    return os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
+    return request_context.get("DRAMACLAW_CANVAS_ID", "").strip()
 
 
 def _bound_scope_mismatch(project: str | None, canvas: str | None) -> dict[str, Any] | None:
@@ -624,8 +638,8 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
 
 def _surface() -> str:
     return (
-        os.environ.get("DRAMACLAW_CHAT_SURFACE")
-        or os.environ.get("SUPERTALE_CHAT_SURFACE")
+        request_context.get("DRAMACLAW_CHAT_SURFACE")
+        or request_context.get("SUPERTALE_CHAT_SURFACE")
         or ""
     ).strip()
 
@@ -4715,7 +4729,7 @@ def _validate_write_commands_shape(
 
 
 def _external_mcp_agent_enabled() -> bool:
-    return os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip().lower() in {
+    return request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -4729,9 +4743,10 @@ def _turnless_external_mcp_host() -> bool:
     The plugin opens no workflow_result operation; the server alone decides
     whether the session may deliver a draft without one.
     """
-    return _external_mcp_agent_enabled() and not os.environ.get(
-        "DRAMACLAW_TURN_ID", ""
-    ).strip()
+    return (
+        _external_mcp_agent_enabled()
+        and not request_context.get("DRAMACLAW_TURN_ID", "").strip()
+    )
 
 
 def _key_deferral_host() -> bool:
@@ -4802,7 +4817,7 @@ def _clarification_listener_available() -> bool:
     waits as before. An in-app Codex turn with an empty id fails safe without waiting.
     """
     return not _external_mcp_agent_enabled() or bool(
-        os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+        request_context.get("DRAMACLAW_TURN_ID", "").strip()
     )
 
 
@@ -6314,19 +6329,22 @@ def _create_canvas_confirmation(
 
 
 def _canvas_agent_identity() -> tuple[str, str | None]:
-    profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
+    profile = request_context.get("DRAMACLAW_AGENT_PROFILE", "").strip()
     agent_id = (
         profile.removeprefix("freezone:").strip()
         if profile.startswith("freezone:")
         else "main"
     )
-    return agent_id or "main", os.environ.get("DRAMACLAW_TURN_ID", "").strip() or None
+    return (
+        agent_id or "main",
+        request_context.get("DRAMACLAW_TURN_ID", "").strip() or None,
+    )
 
 
 def _canvas_command_envelope(
     project: str, canvas: str, commands: list[Any],
 ) -> dict[str, Any]:
-    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+    external_mcp = request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
     agent_id, turn_id = _canvas_agent_identity()
     envelope = {
         "schema_version": "canvas_chat_commands.v1",
@@ -6384,7 +6402,7 @@ def _dispatch_mcp_approved_frontend_commands(
         key = canvas_command_bridge_key(
             project_id=project, canvas_id=canvas, commands=commands
         )
-    bridge_root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
+    bridge_root = request_context.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
     # The worker launcher already gives each Hermes/Codex profile its
     # profile-scoped bridge directory (``.../freezone_freezone_main``). Do not
     # append another ``freezone_main`` here: that creates a nested directory
@@ -9885,7 +9903,7 @@ def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
                 "characters. Keep the user's real values."
             ),
         })
-    turn = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    turn = request_context.get("DRAMACLAW_TURN_ID", "").strip()
     bound = _default_canvas_id()
     request_id = (
         hashlib.sha256(json.dumps(
@@ -11024,15 +11042,6 @@ def _result_field_schema(field: str) -> dict[str, Any]:
     if field in {"durable_receipt", "receipt"}:
         return {"type": ["object", "string", "null"]}
     return {"type": ["object", "array", "string", "number", "boolean", "null"]}
-
-
-def _load_stdlib_tool_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load agent tool module from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 try:
