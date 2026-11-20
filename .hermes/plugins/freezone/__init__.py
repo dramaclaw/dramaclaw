@@ -661,6 +661,19 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
     return _canvas_not_usable_from_chat(lookup_failed=False)
 
 
+def _canvas_write_refusal(project: str | None, canvas: str | None) -> dict[str, Any] | None:
+    """Refuse a canvas write batch that is out of scope or blocked by a conflict.
+
+    Called once the batch has passed its argument and shape checks, and before
+    its generation preflight or any write. A batch refused for a reason that
+    needs no server read therefore keeps that reason and costs no request; the
+    revision conflict is read only for a batch that is otherwise well formed.
+    """
+    return _chat_canvas_scope_mismatch(project, canvas) or _revision_conflict_write_error(
+        project, canvas
+    )
+
+
 def _surface() -> str:
     return (
         request_context.get("DRAMACLAW_CHAT_SURFACE")
@@ -7051,9 +7064,6 @@ def _emit_canvas_commands(
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
     if scope_error:
         return scope_error
-    blocked = _revision_conflict_write_error(project, canvas)
-    if blocked is not None:
-        return tool_result(blocked)
     if handwritten_batch and not _is_story_image_reference_batch(project, canvas, commands):
         return _emit_command_error(
             project, canvas, "wrong_tool_dynamic_workflow",
@@ -7070,6 +7080,9 @@ def _emit_canvas_commands(
     )
     if shape_error:
         return shape_error
+    refusal = _canvas_write_refusal(project, canvas)
+    if refusal is not None:
+        return tool_result(refusal)
     executor = _agent_canvas_executor()
     recommendation_error = _resolve_canvas_generation_recommendations(project, canvas, commands)
     if recommendation_error is not None:
