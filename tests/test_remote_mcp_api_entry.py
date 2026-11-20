@@ -6,8 +6,10 @@ import json
 import logging
 import os
 import random
-from threading import Thread, current_thread, main_thread
+from threading import Event, Lock, Thread, current_thread, main_thread
 import time
+from types import SimpleNamespace
+from urllib.request import OpenerDirector
 
 import httpx
 from mcp import types
@@ -26,6 +28,10 @@ from test_remote_mcp_relay import (
 )
 
 FLAG = "DRAMACLAW_REMOTE_MCP_ENABLED"
+MAX_CONCURRENT = "DRAMACLAW_REMOTE_MCP_MAX_CONCURRENT"
+MAX_CONCURRENT_PER_KEY = "DRAMACLAW_REMOTE_MCP_MAX_CONCURRENT_PER_KEY"
+UNKNOWN_KEY = "fake-entry-key-DO-NOT-USE-unknown"
+PROJECT_PATH = "/mcp/tools/projects/project-a"
 KEY_A = "fake-entry-key-DO-NOT-USE-alpha"
 KEY_B = "fake-entry-key-DO-NOT-USE-beta"
 TOKEN_A = "fake-entry-session-DO-NOT-USE-alpha"
@@ -47,6 +53,7 @@ IDENTITY_NAMES = (
     "DRAMACLAW_TOOL_MODE", "DRAMACLAW_TOOL_MODE_FILE", "DRAMACLAW_AGENT_PROFILE",
     "DRAMACLAW_LOCAL_AGENT_TRUST", "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR",
     "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "DRAMACLAW_API_URL", FLAG,
+    MAX_CONCURRENT, MAX_CONCURRENT_PER_KEY,
 )
 
 
@@ -73,6 +80,10 @@ class FakeApi:
         self.sessions = dict(sessions)
         self.exchange_status = None
         self.exchanges = []
+        # Set to hold the answer to an unknown key's exchange until the event is set.
+        self.reject_gate = None
+        # Set to answer every GET with this status and the caller's credential in the body.
+        self.callback_status = None
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -89,6 +100,8 @@ class FakeApi:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
                 fake.exchanges.append(body.get("scope"))
                 token = fake.sessions.get(key)
+                if token is None and fake.reject_gate is not None:
+                    fake.reject_gate.wait(timeout=8)
                 if self.path != "/api/v1/agent/sessions":
                     self.reply(404, {"ok": False})
                 elif fake.exchange_status is not None:
@@ -104,6 +117,11 @@ class FakeApi:
                 token = self.headers.get("Authorization", "").removeprefix("Bearer ")
                 if token not in fake.sessions.values():
                     self.reply(401, {"ok": False})
+                elif fake.callback_status is not None:
+                    echoed = f"request refused: {self.headers.get('Authorization')}"
+                    self.reply(fake.callback_status, {
+                        "ok": False, "error": echoed, "detail": echoed, "message": echoed,
+                    })
                 else:
                     self.reply(200, {"ok": True, "data": [
                         {"id": "project-a"}, {"id": "project-b"},
@@ -202,6 +220,48 @@ def identity_tools(monkeypatch):
         }, whoami)}
 
     monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", tools)
+
+
+def limits(monkeypatch, *, total, per_key):
+    monkeypatch.setenv(MAX_CONCURRENT, str(total))
+    monkeypatch.setenv(MAX_CONCURRENT_PER_KEY, str(per_key))
+
+
+def holding_tools(monkeypatch):
+    """Replace the tool list with one tool that can stay running, or fail, on request."""
+    from novelvideo.chat import dramaclaw_mcp
+
+    state = SimpleNamespace(release=Event(), running=0, lock=Lock())
+
+    def work(arguments):
+        if arguments.get("fail"):
+            raise RuntimeError("tool failed")
+        if arguments.get("hold"):
+            with state.lock:
+                state.running += 1
+            state.release.wait(timeout=10)
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", lambda: {"work": ({
+        "name": "work", "description": "",
+        "parameters": {"type": "object", "properties": {
+            "hold": {"type": "boolean"}, "fail": {"type": "boolean"},
+        }},
+        "output_schema": OUTPUT_SCHEMA,
+    }, work)})
+    return state
+
+
+async def until(condition):
+    for _ in range(500):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("The awaited state was not reached")
+
+
+def work(client, key, **arguments):
+    return client.post(PROJECT_PATH, json=call("work", arguments), headers=bearer(key))
 
 
 def test_disabled_by_default_is_not_mounted(monkeypatch):
@@ -397,6 +457,7 @@ def test_concurrent_keys_never_observe_each_other(monkeypatch, fake_api):
     from novelvideo.chat import request_context
 
     identity_tools(monkeypatch)
+    limits(monkeypatch, total=40, per_key=40)
     identities = [
         (KEY_A, "project-a", "canvas-a"),
         (KEY_B, "project-b", "canvas-b"),
@@ -470,6 +531,189 @@ def test_logs_and_error_bodies_carry_no_key_material(monkeypatch, fake_api, capl
     assert "fake-entry-key-DO-NOT-USE-unknown" not in caplog.text
 
 
+def test_failing_tool_callbacks_carry_no_key_material(monkeypatch, fake_api, caplog):
+    caplog.set_level(logging.DEBUG)
+    real_open = OpenerDirector.open
+    quoted = []
+
+    def failing_open(self, request, *args, **kwargs):
+        if request.full_url.endswith("/api/v1/agent/sessions"):
+            return real_open(self, request, *args, **kwargs)
+        quoted.append(request.get_header("Authorization"))
+        # Like a client library whose error quotes the request it could not send.
+        raise RuntimeError(f"request failed: {request.full_url} {request.header_items()}")
+
+    async def ask(client):
+        results = []
+        for mode, name, arguments in (
+            ("tools", "freezone_list_projects", {}),
+            ("workflows", "workflow_catalog_search", {"kind": "recipes"}),
+        ):
+            response = await client.post(
+                f"/mcp/{mode}", json=call(name, arguments), headers=bearer(KEY_A),
+            )
+            assert response.status_code == 200
+            assert_secret_free(response.text)
+            results.append(response.json()["result"])
+        return results
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            # The API answers the callback with an error that repeats the credential.
+            fake_api.callback_status = 500
+            echoed = await ask(client)
+            # The callback raises with the credential in the exception text.
+            monkeypatch.setattr(OpenerDirector, "open", failing_open)
+            raised = await ask(client)
+        return echoed + raised
+
+    results = asyncio.run(scenario())
+    assert [result["isError"] for result in results] == [True] * 4
+    assert f"Bearer {TOKEN_A}" in quoted
+    assert "mcp.call.end" in caplog.text
+    assert_secret_free(caplog.text)
+
+
+def test_requests_over_the_process_limit_are_refused_at_once(monkeypatch, fake_api):
+    state = holding_tools(monkeypatch)
+    limits(monkeypatch, total=2, per_key=2)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            held = [
+                asyncio.create_task(work(client, key, hold=True)) for key in (KEY_A, KEY_B)
+            ]
+            await until(lambda: state.running == 2)
+            exchanges = len(fake_api.exchanges)
+            for key in (KEY_A, UNKNOWN_KEY):
+                refused = await work(client, key)
+                assert refused.status_code == 429
+                assert refused.headers["retry-after"] == "1"
+                body = refused.json()
+                assert body["code"] == "remote_mcp_concurrency_limit"
+                assert "retry" in body["error"].lower()
+                assert MAX_CONCURRENT in body["error"]
+                assert_secret_free(refused.text)
+                assert UNKNOWN_KEY not in refused.text
+            # A full process answers without calling back into the API.
+            assert len(fake_api.exchanges) == exchanges
+            state.release.set()
+            assert [response.status_code for response in await asyncio.gather(*held)] == [200, 200]
+            assert (await work(client, KEY_A)).status_code == 200
+
+    asyncio.run(scenario())
+
+
+def test_one_key_at_its_limit_leaves_other_keys_served(monkeypatch, fake_api):
+    state = holding_tools(monkeypatch)
+    limits(monkeypatch, total=3, per_key=1)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            held = asyncio.create_task(work(client, KEY_A, hold=True))
+            await until(lambda: state.running == 1)
+            refused = await work(client, KEY_A)
+            assert refused.status_code == 429
+            assert refused.headers["retry-after"] == "1"
+            body = refused.json()
+            assert body["code"] == "remote_mcp_key_concurrency_limit"
+            assert "retry" in body["error"].lower()
+            assert MAX_CONCURRENT_PER_KEY in body["error"]
+            assert_secret_free(refused.text)
+            assert (await work(client, KEY_B)).status_code == 200
+            state.release.set()
+            assert (await held).status_code == 200
+            assert (await work(client, KEY_A)).status_code == 200
+
+    asyncio.run(scenario())
+
+
+def test_a_failed_request_gives_its_place_back(monkeypatch, fake_api):
+    from novelvideo.api import remote_mcp
+
+    holding_tools(monkeypatch)
+    limits(monkeypatch, total=1, per_key=1)
+    real_serve = remote_mcp._serve
+    failures = [RuntimeError("serve failed")]
+
+    async def serve(*args):
+        if failures:
+            raise failures.pop()
+        await real_serve(*args)
+
+    monkeypatch.setattr(remote_mcp, "_serve", serve)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            with pytest.raises(RuntimeError, match="serve failed"):
+                await work(client, KEY_A)
+            for _ in range(3):
+                failed = await work(client, KEY_A, fail=True)
+                assert failed.status_code == 200
+                assert failed.json()["result"]["isError"] is True
+            served = await work(client, KEY_A)
+            assert served.status_code == 200
+            assert served.json()["result"]["isError"] is False
+
+    asyncio.run(scenario())
+
+
+def test_a_cancelled_request_gives_its_place_back(monkeypatch, fake_api):
+    state = holding_tools(monkeypatch)
+    limits(monkeypatch, total=1, per_key=1)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            held = asyncio.create_task(work(client, KEY_A, hold=True))
+            await until(lambda: state.running == 1)
+            assert (await work(client, KEY_A)).status_code == 429
+            # As when the client goes away and the server drops the request.
+            held.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await held
+            try:
+                assert (await work(client, KEY_A)).status_code == 200
+            finally:
+                state.release.set()
+
+    asyncio.run(scenario())
+
+
+def test_requests_without_a_valid_key_take_no_place(monkeypatch, fake_api):
+    holding_tools(monkeypatch)
+    limits(monkeypatch, total=1, per_key=1)
+    fake_api.reject_gate = Event()
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            unchecked = asyncio.create_task(work(client, UNKNOWN_KEY))
+            await until(lambda: len(fake_api.exchanges) == 1)
+            try:
+                # The only place stays free while the other key is still being checked.
+                assert (await work(client, KEY_A)).status_code == 200
+            finally:
+                fake_api.reject_gate.set()
+            assert (await unchecked).status_code == 401
+            assert (await client.post(
+                PROJECT_PATH, json=call("work"), headers=MCP_HEADERS,
+            )).status_code == 401
+            assert (await work(client, KEY_A)).status_code == 200
+
+    asyncio.run(scenario())
+
+
+def test_limits_come_from_the_environment(monkeypatch):
+    from novelvideo.api import remote_mcp
+
+    total, per_key = remote_mcp.concurrency_limits()
+    assert 1 <= per_key <= total
+    limits(monkeypatch, total=5, per_key=2)
+    assert remote_mcp.concurrency_limits() == (5, 2)
+    for value in ("", " ", "0", "-3", "many", "2.5"):
+        limits(monkeypatch, total=value, per_key=value)
+        assert remote_mcp.concurrency_limits() == (total, per_key), value
+
+
 def test_workflow_catalog_is_read_off_the_event_loop(monkeypatch):
     from novelvideo.chat import request_context, workflow_mcp
 
@@ -512,6 +756,7 @@ def private_catalogs():
 
 def test_tool_calls_reach_the_api_as_the_calling_key(monkeypatch, exchange_factory):
     exchange = exchange_factory(catalogs=private_catalogs())
+    limits(monkeypatch, total=4, per_key=2)
     owners = {KEY_A: "alice", KEY_B: "bob"}
 
     async def ask(client, key, mode, name, arguments):

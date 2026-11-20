@@ -7,11 +7,17 @@ answer any request. Off unless ``DRAMACLAW_REMOTE_MCP_ENABLED`` is set.
 
 Paths and refusals follow ``agent-kit/scripts/remote_mcp_relay.py``:
 ``/mcp/{tools|workflows}[/projects/{project_id}[/canvases/{canvas_id}]]``.
+
+Requests that passed the key check are counted while they run, in total and per key.
+The count belongs to this process: with several API processes each one allows its own
+limit, and nothing is shared between them.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
+import hashlib
 import json
 import logging
 import os
@@ -30,6 +36,9 @@ from novelvideo.chat import agent_key_session, request_context
 logger = logging.getLogger("novelvideo.api.remote_mcp")
 
 ENABLE_FLAG = "DRAMACLAW_REMOTE_MCP_ENABLED"
+MAX_CONCURRENT = "DRAMACLAW_REMOTE_MCP_MAX_CONCURRENT"
+MAX_CONCURRENT_PER_KEY = "DRAMACLAW_REMOTE_MCP_MAX_CONCURRENT_PER_KEY"
+_RETRY_AFTER_SECONDS = 1
 MOUNT_PATH = "/mcp"
 _ID = r"[A-Za-z0-9._-]{1,128}"
 _ID_PATTERN = re.compile(_ID)
@@ -76,12 +85,36 @@ def enabled() -> bool:
     return os.environ.get(ENABLE_FLAG, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _concurrency_limit(name: str, default: int) -> int:
+    """A whole number of at least 1; anything else leaves the default in place."""
+    value = os.environ.get(name, "").strip()
+    return int(value) if value.isascii() and value.isdigit() and int(value) >= 1 else default
+
+
+def concurrency_limits() -> tuple[int, int]:
+    """How many requests this process runs at once: in total, and for one key.
+
+    Tools run on the event loop's default thread pool, which the API's own routes use
+    too, and a tool waits there for its callback into the API. The defaults therefore
+    stay at half of that pool, and one key at half of the total, so that neither remote
+    requests as a whole nor a single key can hold every thread the callbacks need.
+    """
+    threads = min(32, (os.cpu_count() or 1) + 4)  # asyncio's default pool size
+    total = _concurrency_limit(MAX_CONCURRENT, max(1, threads // 2))
+    return total, _concurrency_limit(MAX_CONCURRENT_PER_KEY, max(1, total // 2))
+
+
 def mount(application: Any) -> bool:
     """Serve the entry under ``/mcp`` when the flag is set; otherwise add nothing."""
     if not enabled():
         return False
-    application.mount(MOUNT_PATH, RemoteMcpApp(), name="remote-mcp")
-    logger.info("Remote MCP entry enabled at %s/{tools|workflows}", MOUNT_PATH)
+    entry = RemoteMcpApp()
+    application.mount(MOUNT_PATH, entry, name="remote-mcp")
+    logger.info(
+        "Remote MCP entry enabled at %s/{tools|workflows}; this process runs at most "
+        "%d requests at once, %d per key",
+        MOUNT_PATH, entry.max_concurrent, entry.max_concurrent_per_key,
+    )
     return True
 
 
@@ -230,6 +263,35 @@ async def _serve(server: _RequestServer, mode: str, scope: Scope, receive: Recei
 class RemoteMcpApp:
     """ASGI application mounted at ``/mcp``."""
 
+    def __init__(self) -> None:
+        self.max_concurrent, self.max_concurrent_per_key = concurrency_limits()
+        # Running requests per key digest. Only the event loop reads or changes it.
+        self._running: Counter[bytes] = Counter()
+
+    def _busy(self, key_digest: bytes) -> JSONResponse | None:
+        """The refusal for a request that would exceed a limit, without queueing it."""
+        if self._running[key_digest] >= self.max_concurrent_per_key:
+            code = "remote_mcp_key_concurrency_limit"
+            error = (
+                f"This agent key already has {self.max_concurrent_per_key} remote MCP "
+                "requests running in this API process, which is its limit. The request "
+                "itself is fine: retry it unchanged once one of them has finished. The "
+                f"server operator can raise {MAX_CONCURRENT_PER_KEY}."
+            )
+        elif self._running.total() >= self.max_concurrent:
+            code = "remote_mcp_concurrency_limit"
+            error = (
+                f"This API process is already running {self.max_concurrent} remote MCP "
+                "requests, which is its limit. The request itself is fine: retry it "
+                f"unchanged shortly. The server operator can raise {MAX_CONCURRENT}."
+            )
+        else:
+            return None
+        return JSONResponse(
+            {"error": error, "code": code}, status_code=429,
+            headers={"Retry-After": str(_RETRY_AFTER_SECONDS)},
+        )
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             if scope["type"] == "websocket":
@@ -261,6 +323,11 @@ class RemoteMcpApp:
                 {"error": _API_URL_MISSING, "code": "remote_mcp_api_url_missing"},
                 status_code=503,
             )
+        key_digest = hashlib.sha256(key.encode("utf-8")).digest()
+        # A full process answers before the key check, which is a call back into the API.
+        busy = self._busy(key_digest)
+        if busy is not None:
+            return busy
         with request_context.scope(_request_values(mode, key, project_id, canvas_id)):
             checked = await asyncio.to_thread(_check_key, api_base)
             if checked.get("ok") is not True:
@@ -269,6 +336,17 @@ class RemoteMcpApp:
                 project_id, reason = await asyncio.to_thread(_single_visible_project, api_base)
                 if reason is not None:
                     logger.debug("Unscoped path kept home scope mode=%s: %s", mode, reason)
-        with request_context.scope(_request_values(mode, key, project_id, canvas_id)):
-            await _serve(_server(mode), mode, scope, receive, send)
+        # Counted only from here, so a key that was not accepted never holds a place and
+        # a counted request never waits on the check of another one.
+        busy = self._busy(key_digest)
+        if busy is not None:
+            return busy
+        self._running[key_digest] += 1
+        try:
+            with request_context.scope(_request_values(mode, key, project_id, canvas_id)):
+                await _serve(_server(mode), mode, scope, receive, send)
+        finally:
+            self._running[key_digest] -= 1
+            if not self._running[key_digest]:
+                del self._running[key_digest]
         return None
