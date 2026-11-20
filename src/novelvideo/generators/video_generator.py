@@ -208,6 +208,60 @@ async def _confirm_video_model_call(
         pass
 
 
+ACCEPTED_VIDEO_JOB_ROUTE_CHANGED_ERROR = (
+    "The accepted video job belongs to a different gateway or account than the "
+    "current configuration and cannot be resumed. The reserved credits were "
+    "released; run the node again."
+)
+ACCEPTED_VIDEO_JOB_RECEIPT_INVALID_ERROR = (
+    "The record of the accepted video job is unreadable, so the job cannot be "
+    "resumed. Any reserved credits recorded in it were released; run the node again."
+)
+
+
+def _read_accepted_video_job_receipt(
+    path: Path, route: str
+) -> tuple[dict[str, str] | None, str]:
+    """Read the receipt of an already accepted job.
+
+    Returns ``(None, "")`` when there is no receipt.  Otherwise returns the
+    identifiers that could be read and an error that is empty only when the
+    receipt can be used to resume polling on ``route``.
+    """
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return None, ""
+    except (OSError, ValueError):
+        text = ""
+    try:
+        receipt = json.loads(text)
+    except ValueError:
+        receipt = None
+    if not isinstance(receipt, dict):
+        receipt = {}
+
+    def field(name: str) -> str:
+        value = receipt.get(name)
+        return value if isinstance(value, str) else ""
+
+    accepted = {
+        "task_id": field("task_id"),
+        "provider_request_id": field("provider_request_id"),
+        "reservation_id": field("reservation_id"),
+    }
+    if (
+        not field("route")
+        or not accepted["task_id"]
+        or not isinstance(receipt.get("provider_request_id"), str)
+        or not isinstance(receipt.get("reservation_id"), str)
+    ):
+        return accepted, ACCEPTED_VIDEO_JOB_RECEIPT_INVALID_ERROR
+    if field("route") != route:
+        return accepted, ACCEPTED_VIDEO_JOB_ROUTE_CHANGED_ERROR
+    return accepted, ""
+
+
 class VideoGenStatus(Enum):
     """视频生成状态。"""
 
@@ -3084,18 +3138,35 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             route = hashlib.sha256(
                 json.dumps([request_base_url, self.model, self.api_key]).encode()
             ).hexdigest()
-            try:
-                receipt = json.loads(receipt_path.read_text())
-            except FileNotFoundError:
-                pass
-            else:
-                if receipt["route"] != route:
-                    raise ValueError("Accepted video job belongs to a different gateway or account")
-                task_id = receipt["task_id"]
-                if not isinstance(task_id, str) or not task_id:
-                    raise ValueError("Invalid accepted video job receipt")
-                provider_request_id = receipt["provider_request_id"]
-                reservation_id = receipt["reservation_id"]
+            accepted, receipt_error = _read_accepted_video_job_receipt(receipt_path, route)
+            if accepted is not None:
+                provider_request_id = accepted["provider_request_id"]
+                reservation_id = accepted["reservation_id"]
+                if not receipt_error:
+                    task_id = accepted["task_id"]
+            if receipt_error:
+                # The accepted job may still be running upstream, so this run
+                # must not submit another one.  Release what the receipt
+                # reserved and drop it, so the job ends instead of failing the
+                # same way on every redelivery.
+                log(f"已受理视频任务无法继续查询: {receipt_error}")
+                if reservation_id:
+                    await _refund_video_model_call(
+                        reservation_id,
+                        source="newapi_video_generation",
+                        error="accepted_job_receipt_unusable",
+                        provider_request_id=provider_request_id,
+                        provider_task_id=accepted["task_id"],
+                    )
+                try:
+                    receipt_path.unlink(missing_ok=True)
+                except OSError as exc:
+                    log(f"已受理视频任务凭据清理失败: {type(exc).__name__}")
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=receipt_error,
+                    task_id=accepted["task_id"] or None,
+                )
 
         if organization_request:
             from novelvideo.ports import get_egress_operation_port
