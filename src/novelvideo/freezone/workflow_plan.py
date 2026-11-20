@@ -119,11 +119,11 @@ def _compose_timeline_issues(
         return errors
     clip_ids: set[str] = set()
     track_ids: set[str] = set()
-    for track in timeline["tracks"]:
+    for track_index, track in enumerate(timeline["tracks"]):
         if track["id"] in track_ids:
             errors.append(_issue(path, "duplicate track id"))
         track_ids.add(track["id"])
-        for clip in track["clips"]:
+        for clip_index, clip in enumerate(track["clips"]):
             expected_type = "audioNode" if clip["kind"] == "audio" else "videoNode"
             if (
                 inputs.get(clip["nodeId"]) != expected_type
@@ -152,6 +152,14 @@ def _compose_timeline_issues(
             if not all(math.isfinite(value) for value in [*numbers, fade]):
                 errors.append(_issue(path, "timeline values must be finite"))
             duration = (clip["trimEndMs"] - clip["trimStartMs"]) / clip["speed"]
+            if clip["kind"] == "video" and 0 < duration < 1000 / 30:
+                errors.append(
+                    _issue(
+                        f"{path}.tracks[{track_index}].clips[{clip_index}].trimEndMs",
+                        "Video trim must render at least one frame at 30 fps. "
+                        "Use milliseconds for trimStartMs and trimEndMs (5 seconds = 5000).",
+                    )
+                )
             if duration <= 0 or fade > duration or (fade and clip["kind"] != "audio"):
                 errors.append(
                     _issue(path, "audio fade must fit within a positive clip duration")

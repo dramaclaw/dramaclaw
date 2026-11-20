@@ -1468,6 +1468,11 @@ async def run_freezone_video_compose(
 
     if not final_output_path.exists():
         raise RuntimeError("video compose finished without output file")
+    try:
+        await probe_video_stream(str(final_output_path))
+    except RuntimeError as exc:
+        final_output_path.unlink(missing_ok=True)
+        raise RuntimeError(f"video compose output has no readable video stream: {exc}") from exc
     return final_output_path
 
 

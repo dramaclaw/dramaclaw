@@ -6094,3 +6094,22 @@ def test_plan_rejects_ignored_video_mode_and_audio_fields(monkeypatch):
     data["genMode"] = data.pop("generation_mode")
     data["generateAudio"] = data.pop("generate_audio")
     assert catalog.validate_agent_workflow_plan(plan)["ok"] is True
+
+
+def test_compose_plan_reports_sub_frame_video_trim_in_milliseconds():
+    plan = _compose_timeline_plan()
+    track = plan["nodes"][1]["data"]["draftTimeline"]["tracks"][0]
+    track["kind"] = "video"
+    track["clips"][0].update(nodeId="clip", kind="video", trimEndMs=5)
+    track["clips"][0].pop("fadeOutMs", None)
+
+    result = validate_workflow_plan(plan)
+
+    assert not result["ok"]
+    assert any(
+        error["path"].endswith("tracks[0].clips[0].trimEndMs")
+        and "milliseconds" in error["message"]
+        for error in result["errors"]
+    )
+    track["clips"][0]["trimEndMs"] = 5000
+    assert validate_workflow_plan(plan)["ok"]
