@@ -51,6 +51,7 @@ import {
 } from "@/components/assets/voice-design-dialog";
 import { VoiceDesignApiError } from "@/lib/queries/voice-design";
 import * as voiceDesignApi from "@/lib/queries/voice-design";
+import * as runtimeConfig from "@/lib/runtime-config";
 import zh from "../../../../public/locales/zh/translation.json";
 import { queryKeys } from "@/lib/query-keys";
 import { designModels } from "@/__tests__/voice-design-fixtures";
@@ -333,6 +334,24 @@ it("requires Unicode lengths and shows actual quote; retains draft on reopen", a
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   fireEvent.click(await screen.findByRole("button", { name: "打开" }));
   expect(screen.getByLabelText("音色描述")).toHaveValue("😀".repeat(500));
+});
+it("shows the gateway fee notice for a CE zero-credit quote", async () => {
+  const edition = vi.spyOn(runtimeConfig, "isCeRuntime").mockReturnValue(true);
+  try {
+    server.use(
+      http.get(`${base}/quote`, () =>
+        HttpResponse.json({
+          ok: true,
+          data: { cost: 0, display: "0", unit: "call", quantity: 1, model: designModels[0] },
+        }),
+      ),
+    );
+    mount();
+    expect(await screen.findByText("费用以所用网关为准")).toBeInTheDocument();
+    expect(screen.queryByText("本次生成：0 积分 / 次")).not.toBeInTheDocument();
+  } finally {
+    edition.mockRestore();
+  }
 });
 it("confirms occupied slot, cancel sends nothing, confirmed save uses snapshot", async () => {
   mount();

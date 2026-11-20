@@ -9705,6 +9705,7 @@
     "restartTitle": "重新开始生成？",
     "restartHint": "原任务结果未知。重新开始不会重试原任务；再次生成会创建新任务，并可能再次计费。是否继续？",
     "refreshTarget": "刷新保存位置",
+    "gatewayPrice": "费用以所用网关为准",
     "price": "本次生成：{{price}} 积分 / 次",
     "quoteLoading": "正在读取价格与可用性…",
     "close": "关闭",

@@ -148,6 +148,8 @@ docker run --rm -v dramaclaw-ce_newapi-data:/data -v "$PWD":/backup alpine \
 
 ## 6. Upgrades
 
+**Voice design costs.** If you used the old environment variables to control voice design costs, review your gateway's model access and budget before upgrading. After the upgrade, `VOICE_DESIGN_ENABLED=0` no longer disables voice design, and `VOICE_DESIGN_DAILY_LIMIT` and `VOICE_DESIGN_CHANNEL_DAILY_LIMIT` no longer limit calls. Generation can incur charges when the active catalog has an available voice design model and your gateway allows the request.
+
 Source build (both checkouts):
 
 ```bash

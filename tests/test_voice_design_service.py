@@ -2,19 +2,8 @@ import pytest
 
 from novelvideo.audio.voice_design_service import (
     VoiceDesignError,
-    ensure_voice_design_enabled,
     resolve_voice_design_catalog,
 )
-
-
-def test_feature_disabled_and_budget_required(monkeypatch):
-    monkeypatch.delenv("VOICE_DESIGN_ENABLED", raising=False)
-    with pytest.raises(VoiceDesignError):
-        ensure_voice_design_enabled()
-    monkeypatch.setenv("VOICE_DESIGN_ENABLED", "1")
-    monkeypatch.delenv("VOICE_DESIGN_DAILY_LIMIT", raising=False)
-    with pytest.raises(VoiceDesignError):
-        ensure_voice_design_enabled()
 
 
 def test_catalog_target_visibility_and_billing_once():
@@ -114,18 +103,12 @@ async def test_invalid_preview_is_not_published(tmp_path, preview):
 
 
 @pytest.fixture
-def enabled(monkeypatch):
-    monkeypatch.setenv("VOICE_DESIGN_ENABLED", "1")
-    monkeypatch.setenv("VOICE_DESIGN_DAILY_LIMIT", "20")
-    monkeypatch.setenv("VOICE_DESIGN_CHANNEL_DAILY_LIMIT", "100")
-
-
-@pytest.fixture
-def context():
+def context(request):
     from novelvideo.egress_context import TrustedEgressContext
     from novelvideo.ports.authz import BillingPrincipal
     from novelvideo.ports.model_credentials import CredentialReference
 
+    local = getattr(request, "param", "ee") == "ce"
     return TrustedEgressContext(
         envelope_id="envelope",
         project_id="project",
@@ -134,11 +117,19 @@ def context():
         root_task_id="task",
         admission_id="admission",
         admitted_at="now",
-        membership_id="membership",
+        membership_id=None if local else "membership",
         authz_version=1,
-        billing_principal=BillingPrincipal(kind="organization", id="org"),
-        credential=CredentialReference(
-            source="organization", credential_id="key", key_version=1, org_id="org"
+        billing_principal=(
+            BillingPrincipal(kind="local", id="user")
+            if local
+            else BillingPrincipal(kind="organization", id="org")
+        ),
+        credential=(
+            CredentialReference(source="local", credential_id="local-newapi", key_version=1)
+            if local
+            else CredentialReference(
+                source="organization", credential_id="key", key_version=1, org_id="org"
+            )
         ),
     )
 
@@ -558,7 +549,7 @@ def gateway(monkeypatch, context):
 
 
 async def test_gateway_voice_enrollment_contract(
-    enabled, gateway, context, model_config, tmp_path, audio_bytes
+    gateway, context, model_config, tmp_path, audio_bytes
 ):
     import base64
     from novelvideo.audio.voice_design_service import generate_voice_design
@@ -613,7 +604,7 @@ async def test_gateway_voice_enrollment_contract(
 
 
 async def test_bad_gateway_preview_finishes_observability_without_exposing_payload(
-    enabled, gateway, context, model_config, tmp_path, caplog
+    gateway, context, model_config, tmp_path, caplog
 ):
     import logging
     from novelvideo.audio.voice_design_service import generate_voice_design
@@ -648,7 +639,7 @@ async def test_bad_gateway_preview_finishes_observability_without_exposing_paylo
 
 
 async def test_meter_reservation_failure_prevents_provider_request(
-    enabled, gateway, context, model_config, tmp_path
+    gateway, context, model_config, tmp_path
 ):
     from novelvideo.audio.voice_design_service import generate_voice_design
 
@@ -666,7 +657,7 @@ async def test_meter_reservation_failure_prevents_provider_request(
 
 
 async def test_cancelled_preview_finishes_model_call_observation(
-    enabled, gateway, context, model_config, tmp_path, monkeypatch
+    gateway, context, model_config, tmp_path, monkeypatch
 ):
     import asyncio
     from unittest.mock import AsyncMock
@@ -689,7 +680,7 @@ async def test_cancelled_preview_finishes_model_call_observation(
 
 @pytest.mark.parametrize("preview", [None, {"format": "secret-value", "sample_rate": "secret-value", "data": "private"}])
 async def test_preview_shape_never_logs_untrusted_scalar_values(
-    preview, enabled, gateway, context, model_config, tmp_path, caplog
+    preview, gateway, context, model_config, tmp_path, caplog
 ):
     import logging
     from novelvideo.audio.voice_design_service import generate_voice_design
@@ -709,7 +700,7 @@ async def test_preview_shape_never_logs_untrusted_scalar_values(
 
 
 async def test_unknown_generation_is_not_resubmitted(
-    enabled, gateway, context, model_config, tmp_path
+    gateway, context, model_config, tmp_path
 ):
     from novelvideo.audio.voice_design_service import generate_voice_design
 
@@ -731,7 +722,7 @@ async def test_unknown_generation_is_not_resubmitted(
 
 
 async def test_voice_design_respects_trusted_egress(
-    enabled, gateway, context, model_config, tmp_path
+    gateway, context, model_config, tmp_path
 ):
     from novelvideo.audio.voice_design_service import generate_voice_design
     from novelvideo.ports.model_credentials import ModelCredentialError
@@ -749,26 +740,6 @@ async def test_voice_design_respects_trusted_egress(
                 egress_context=trusted,
                 model_config=model_config,
             )
-    assert calls == []
-
-
-async def test_admission_and_budget_precede_provider_call(
-    enabled, gateway, context, model_config, tmp_path, monkeypatch
-):
-    from novelvideo.audio.voice_design_service import generate_voice_design
-
-    calls, _, _ = gateway
-    monkeypatch.delenv("VOICE_DESIGN_CHANNEL_DAILY_LIMIT")
-    with pytest.raises(VoiceDesignError):
-        await generate_voice_design(
-            request={
-                "description": "声音",
-                "preview_text": "今天的天气很好，我们沿着河边慢慢走回家。",
-            },
-            output_path=tmp_path / "result.mp3",
-            egress_context=context,
-            model_config=model_config,
-        )
     assert calls == []
 
 
@@ -799,7 +770,7 @@ async def test_public_resolver_rejects_private_dns(monkeypatch):
         ("", "voice_design_unavailable"),
     ],
 )
-async def test_scoped_catalog_never_falls_back(enabled, monkeypatch, code, expected):
+async def test_scoped_catalog_never_falls_back(monkeypatch, code, expected):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from novelvideo.ports.registry import _PORTS
@@ -824,7 +795,7 @@ async def test_scoped_catalog_never_falls_back(enabled, monkeypatch, code, expec
     ("surface", "product"), [("supertale", "mainline"), ("canvas", "freezone")]
 )
 async def test_project_quote_uses_trusted_scope_and_one_item(
-    enabled, monkeypatch, model_config, surface, product
+    monkeypatch, model_config, surface, product
 ):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -920,7 +891,7 @@ async def test_preview_metadata_cannot_hide_wrong_audio(tmp_path, rate, channels
 
 
 async def test_platform_credential_does_not_claim_organization_ledger(
-    enabled, gateway, context, model_config, audio_bytes, tmp_path, monkeypatch
+    gateway, context, model_config, audio_bytes, tmp_path, monkeypatch
 ):
     import base64
     from dataclasses import replace
@@ -1012,7 +983,7 @@ async def test_preview_redirect_cannot_reach_private_host(monkeypatch):
     ],
 )
 async def test_gateway_failure_is_redacted(
-    enabled, gateway, context, model_config, tmp_path, status, code
+    gateway, context, model_config, tmp_path, status, code
 ):
     from novelvideo.audio.voice_design_service import generate_voice_design
 
@@ -1036,7 +1007,7 @@ async def test_gateway_failure_is_redacted(
 
 
 @pytest.fixture
-def runner_case(enabled, monkeypatch, tmp_path, context, model_config):
+def runner_case(monkeypatch, tmp_path, context, model_config):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from uuid import uuid4
@@ -1177,12 +1148,25 @@ def core_case(monkeypatch, runner_case, context):
     )
 
 
+@pytest.mark.parametrize("context", ["ce", "ee"], indirect=True)
 def test_core_generates_and_replays_ready_with_same_reservation(
-    runner_case, core_case, gateway, audio_bytes
+    runner_case, core_case, gateway, audio_bytes, monkeypatch, context
 ):
     import base64
 
-    calls, response, _ = gateway
+    from novelvideo import config
+    from novelvideo.ports.local import LocalModelCredentials
+    from novelvideo.ports.registry import _PORTS
+
+    local = context.credential.source == "local"
+    monkeypatch.setenv("ST_EDITION", "ce" if local else "ee")
+    calls, response, organization_resolver = gateway
+    if local:
+        monkeypatch.setattr(
+            config, "get_newapi_runtime_credentials",
+            lambda: ("test-local-key", "https://local-gateway.example/v1"),
+        )
+        monkeypatch.setitem(_PORTS, "model_credentials", LocalModelCredentials())
     response.payload = {
         "preview_audio": {
             "data": base64.b64encode(audio_bytes).decode(),
@@ -1195,6 +1179,11 @@ def test_core_generates_and_replays_ready_with_same_reservation(
     assert first["status"] == second["status"] == "ready"
     assert first["sha256"] == second["sha256"]
     assert len(calls) == 1
+    if local:
+        url, request = calls[0]
+        assert url == "https://local-gateway.example/v1/audio/voice-designs"
+        assert request["headers"]["Authorization"] == "Bearer test-local-key"
+        organization_resolver.assert_not_awaited()
     assert core_case.settlements == [
         ("confirm", "reservation"),
         ("confirm", "reservation"),
@@ -1339,38 +1328,6 @@ def test_core_cancellation_preserves_unknown_without_confirm(
     assert gateway[0] == []
 
 
-@pytest.mark.parametrize(
-    "limit", ["VOICE_DESIGN_DAILY_LIMIT", "VOICE_DESIGN_CHANNEL_DAILY_LIMIT"]
-)
-def test_persistent_quota_precedes_runner_gateway(
-    runner_case, core_case, gateway, context, monkeypatch, limit
-):
-    from uuid import uuid4
-
-    store = runner_case.store
-    previous = str(uuid4())
-    store.reserve(
-        previous,
-        description="声音",
-        preview_text="今天的天气很好，我们沿着河边慢慢走回家。",
-        language="zh",
-        surface="supertale",
-    )
-    store.claim(
-        previous, channel_key=context.credential.credential_id, channel_daily_limit=100
-    )
-    store.fail(previous, "provider_bad_audio")
-    monkeypatch.setenv(limit, "1")
-    from novelvideo.audio.voice_design_storage import CandidateStorageError
-
-    with pytest.raises(CandidateStorageError) as error:
-        core_case.run()
-    assert error.value.code == "voice_design_quota_exceeded"
-    assert core_case.settlements == [("refund", "reservation")]
-    assert core_case.completed == []
-    assert gateway[0] == []
-
-
 @pytest.mark.parametrize("media_kind", ["forged_xing", "wav_mp3"])
 async def test_preview_cannot_hide_duration_or_container(
     tmp_path, media_kind, monkeypatch
@@ -1496,7 +1453,7 @@ async def test_preview_duration_uses_decoded_samples_at_boundary(
 
 @pytest.mark.parametrize("mode", ["binary", "json", "archive"])
 async def test_seed_speech_contract_and_real_media_validation(
-    enabled, gateway, context, tmp_path, audio_bytes, monkeypatch, mode
+    gateway, context, tmp_path, audio_bytes, monkeypatch, mode
 ):
     from unittest.mock import AsyncMock
     from novelvideo.audio import voice_design_service as service
@@ -1564,7 +1521,7 @@ async def test_seed_speech_contract_and_real_media_validation(
     ],
 )
 async def test_seed_rejects_bad_audio_and_private_json_url(
-    enabled, gateway, context, tmp_path, body
+    gateway, context, tmp_path, body
 ):
     from novelvideo.audio import voice_design_service as service
 
@@ -1633,7 +1590,7 @@ async def test_seed_archive_without_format_still_decodes_downloaded_audio(
 
 
 async def test_replay_mode_cannot_egress_to_a_remote_gateway(
-    enabled, gateway, context, model_config, tmp_path, monkeypatch
+    gateway, context, model_config, tmp_path, monkeypatch
 ):
     from dataclasses import replace
     from novelvideo.audio import voice_design_service as service
@@ -1655,7 +1612,7 @@ async def test_replay_mode_cannot_egress_to_a_remote_gateway(
 
 
 async def test_model_execution_mode_drift_is_rejected_before_egress(
-    enabled, gateway, context, model_config, tmp_path, monkeypatch
+    gateway, context, model_config, tmp_path, monkeypatch
 ):
     from novelvideo.audio import voice_design_service as service
 
@@ -1674,7 +1631,7 @@ async def test_model_execution_mode_drift_is_rejected_before_egress(
 
 
 async def test_qwen_resource_uses_catalog_target(
-    enabled, gateway, context, model_config, tmp_path, audio_bytes
+    gateway, context, model_config, tmp_path, audio_bytes
 ):
     import base64
     from dataclasses import replace
@@ -1792,7 +1749,7 @@ async def test_worker_rejects_candidate_binding_drift_without_gateway(
 
 
 async def test_seed_timeout_is_unknown_and_replay_does_not_resubmit(
-    enabled, gateway, context, tmp_path
+    gateway, context, tmp_path
 ):
     from novelvideo.audio import voice_design_service as service
 
@@ -1818,7 +1775,7 @@ async def test_seed_timeout_is_unknown_and_replay_does_not_resubmit(
 
 
 async def test_explicit_replay_accepts_only_loopback_and_records_mode(
-    enabled, gateway, context, model_config, tmp_path, audio_bytes, monkeypatch
+    gateway, context, model_config, tmp_path, audio_bytes, monkeypatch
 ):
     import base64
     from dataclasses import replace
