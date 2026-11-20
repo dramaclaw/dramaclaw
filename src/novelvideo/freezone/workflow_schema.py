@@ -43,7 +43,7 @@ PLAN_TOOL_NAMES = frozenset({
 
 
 def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Repair only lossless intent serialization mistakes before strict validation.
+    """Repair only lossless workflow serialization mistakes before strict validation.
 
     Never fill missing items, merge conflicting forms, or remove arbitrary nulls:
     those may change the user's requested workflow. Stable scalar generation inputs
@@ -51,7 +51,7 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
     do not have to infer transport-level types such as ``"1"`` versus ``1``.
     """
     if name in PLAN_TOOL_NAMES and isinstance(arguments.get("plan"), dict):
-        return _normalize_plan_node_stage(arguments)
+        return _normalize_plan_node_fields(arguments)
     if name not in {"workflow_intent_compile", "freezone_prepare_workflow_draft"}:
         return arguments
     if not isinstance(arguments.get("intent"), dict):
@@ -106,26 +106,36 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
     return result
 
 
-def _normalize_plan_node_stage(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Move a node's ``data.stage`` label to its portable top-level ``stage``.
-
-    Plan readers already treat both locations as the same label and the compiler
-    strips it from emitted canvas data, so the move is lossless. A conflicting
-    top-level stage is left untouched for the validator to report.
-    """
+def _normalize_plan_node_fields(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Move known node fields to their canonical location without merging conflicts."""
     nodes = arguments["plan"].get("nodes")
     if not isinstance(nodes, list):
         return arguments
     result: dict[str, Any] | None = None
     for index, node in enumerate(nodes):
         data = node.get("data") if isinstance(node, dict) else None
-        stage = data.get("stage") if isinstance(data, dict) else None
-        if not isinstance(stage, str) or node.get("stage", stage) != stage:
+        if not isinstance(data, dict):
+            continue
+        stage = data.get("stage")
+        move_stage = isinstance(stage, str) and node.get("stage", stage) == stage
+        catalog = data.get("workflowCatalog")
+        goal = catalog.get("userGoal") if isinstance(catalog, dict) else None
+        builder = catalog.get("promptBuilder", {}) if isinstance(catalog, dict) else None
+        move_goal = (
+            isinstance(goal, str)
+            and isinstance(builder, dict)
+            and builder.get("userGoal", goal) == goal
+        )
+        if not (move_stage or move_goal):
             continue
         if result is None:
             result = deepcopy(arguments)
         moved = result["plan"]["nodes"][index]
-        moved["stage"] = moved["data"].pop("stage")
+        if move_stage:
+            moved["stage"] = moved["data"].pop("stage")
+        if move_goal:
+            moved_catalog = moved["data"]["workflowCatalog"]
+            moved_catalog.setdefault("promptBuilder", {})["userGoal"] = moved_catalog.pop("userGoal")
     return arguments if result is None else result
 
 
