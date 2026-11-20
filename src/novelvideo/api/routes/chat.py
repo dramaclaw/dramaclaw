@@ -2098,6 +2098,22 @@ async def _reauthenticate_ws_event(
     return fresh
 
 
+def _log_ws_unauthorized_close(
+    stage: str, username: str, scope: ChatScope | None, exc: Exception,
+) -> None:
+    scope_kind = scope.kind if scope is not None else "unavailable"
+    if isinstance(exc, HTTPException):
+        detail = f"{exc.status_code}: {exc.detail}"
+        exc_info = None
+    else:
+        detail = str(exc)
+        exc_info = exc
+    logger.warning(
+        "chat websocket closing stage=%s username=%s scope=%s error=%s: %s",
+        stage, username, scope_kind, type(exc).__name__, detail, exc_info=exc_info,
+    )
+
+
 async def _close_ws_unauthorized(websocket: WebSocket) -> None:
     await _send_json_best_effort(
         websocket, {"type": "error", "message": "unauthorized"}
@@ -4487,13 +4503,15 @@ async def chat_ws(websocket: WebSocket) -> None:
 
     send_lock = asyncio.Lock()
     username = str(user["username"])
+    current_scope: ChatScope | None = None
     try:
         current_scope = _scope_for_authenticated_user(user)
         _enforce_agent_chat_scope(user, current_scope, require_write=False)
         current_scope = await _send_scope_changed(
             websocket, user, username, current_scope, send_lock
         )
-    except Exception:
+    except Exception as exc:
+        _log_ws_unauthorized_close("initial_scope", username, current_scope, exc)
         await _close_ws_unauthorized(websocket)
         return
     if current_scope is None:
@@ -4540,7 +4558,8 @@ async def chat_ws(websocket: WebSocket) -> None:
                         scope=requested_scope,
                         require_write=False,
                     )
-                except Exception:
+                except Exception as exc:
+                    _log_ws_unauthorized_close("scope.set", username, requested_scope, exc)
                     await _close_ws_unauthorized(websocket)
                     return
                 if msg.history_before is not None:
@@ -4667,7 +4686,8 @@ async def chat_ws(websocket: WebSocket) -> None:
                     scope=scope,
                     require_write=True,
                 )
-            except Exception:
+            except Exception as exc:
+                _log_ws_unauthorized_close("chat.message", username, scope, exc)
                 await _close_ws_unauthorized(websocket)
                 return
 
