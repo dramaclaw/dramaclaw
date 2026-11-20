@@ -6,6 +6,7 @@ With the browser executor (the default) a card is refused only when a node saved
 canvas file does not offer the action; every other request keeps its previous outcome.
 """
 
+import json
 import logging
 from types import SimpleNamespace
 
@@ -420,7 +421,7 @@ def metered(guard, monkeypatch, core):
                  "workflowCatalog": {"recipeId": "poster", "recipeVersion": "1"}},
     }])
     _executor(guard, "server")
-    return SimpleNamespace(root=guard.root, edit=edit)
+    return SimpleNamespace(root=guard.root, edit=edit, write=write, core=core)
 
 
 PAID_NODES = [_run("i1", "generate_image"), _run("v1", "generate_video"),
@@ -463,3 +464,138 @@ async def test_paid_confirmation_requote_reports_an_edited_node(metered, node_id
     metered.edit(node_id, **patch)
 
     assert await _changes(metered, data) == changed
+
+
+AUDIO = {"displayName": "旁白", "text": "欢迎光临", "audioKind": "speech"}
+RUN_AUDIO = [_run("a1", "generate_audio")]
+
+
+@pytest.fixture
+def narrated(metered):
+    """The metered canvas plus an audio node fed by the text node, saved by the real core."""
+    canvas = canvas_store.read_canvas(metered.root, CANVAS)
+    applied = canvas_core_pool_apply(metered.core, canvas, [
+        {"type": "create_node", "client_id": "voice", "node_type": "audioNode",
+         "data": dict(AUDIO)},
+        {"type": "create_edge", "source": "t1", "target": "voice", "link_type": "prompt_for"},
+    ])
+    created = next(node["id"] for node in applied["nodes"] if node["type"] == "audioNode")
+    renamed = json.loads(json.dumps(applied).replace(json.dumps(created), '"a1"'))
+    canvas_store.save_canvas(
+        metered.root, CANVAS, base_revision=None, enforce_revision=False,
+        build_payload=lambda saved: {
+            **saved, "nodes": renamed["nodes"], "edges": renamed["edges"],
+        },
+    )
+
+    def move(node_id):
+        metered.write(lambda nodes: [
+            {**node, "position": {"x": 900, "y": 900}, "selected": True, "width": 480,
+             "height": 320, "measured": {"width": 480, "height": 320}}
+            if node["id"] == node_id else node
+            for node in nodes
+        ])
+
+    return SimpleNamespace(root=metered.root, edit=metered.edit, move=move)
+
+
+def canvas_core_pool_apply(core, canvas, commands):
+    result = core.call("apply_commands", {
+        "canvas": canvas,
+        "envelopes": [{"schema_version": "canvas_chat_commands.v1", "project_id": "proj",
+                       "canvas_id": CANVAS, "commands": commands}],
+        "env": {"locale": "zh", "catalogs": {"image": {"models": []}, "video": {"models": []}}},
+    })
+    assert result["status"] == "applied", result
+    return result["canvas"]
+
+
+async def test_unquoted_action_card_requotes_identically_on_an_unchanged_canvas(narrated):
+    data = await _confirm(RUN_AUDIO)
+    assert data["price"] == {"status": "unknown", "reason": "action_not_quoted", "items": [
+        {"node_id": "a1", "action": "generate_audio", "status": "unknown",
+         "reason": "action_not_quoted"},
+    ]}
+
+    assert await _changes(narrated, data) == []
+
+
+@pytest.mark.parametrize("node_id,patch", [
+    ("a1", {"text": "本店今日休息"}),
+    ("a1", {"presetVoice": "another-voice"}),
+    ("t1", {"content": "红杯小店今日休息。"}),
+], ids=["own-text", "own-setting", "upstream-text"])
+async def test_unquoted_action_card_reports_an_edit_to_what_the_action_consumes(
+    narrated, node_id, patch,
+):
+    data = await _confirm(RUN_AUDIO)
+    assert await _changes(narrated, data) == []
+
+    narrated.edit(node_id, **patch)
+
+    assert await _changes(narrated, data) == ["content"]
+
+
+RUN_STATE = {
+    "isGenerating": True, "generationStartedAt": 1795165545871, "generationTaskKey": "task-1",
+    "generationTaskType": "audio", "generationTaskJobId": "job-1", "generationOwner": "server",
+    "generationRunId": "run-1", "generationError": "上次失败",
+    "generationErrorRequestId": "req-1", "generationErrorDetails": {"code": "timeout"},
+}
+PRESENTATION = {
+    "displayName": "新名字", "width": 480, "height": 320, "isSizeManuallyAdjusted": True,
+    "selected": True, "autoTitleIndex": 7, "previewImageUrl": "/output/preview.png",
+    "workflowResultStale": True, "workflowInvalidatedAt": "2026-11-20T00:00:00.000Z",
+    "workflowInvalidationReason": "upstream_input_changed",
+}
+
+
+@pytest.mark.parametrize("change", [
+    lambda canvas: canvas.move("a1"),
+    lambda canvas: canvas.move("t1"),
+    lambda canvas: canvas.edit("a1", **RUN_STATE),
+    lambda canvas: canvas.edit("t1", **RUN_STATE),
+    lambda canvas: canvas.edit("a1", **PRESENTATION),
+    lambda canvas: canvas.edit("t1", **PRESENTATION),
+    lambda canvas: canvas.edit("i1", prompt="A blue cup"),
+    lambda canvas: canvas.edit("v1", durationSec=10),
+], ids=["own-move", "upstream-move", "own-run-state", "upstream-run-state",
+        "own-presentation", "upstream-presentation", "unrelated-image", "unrelated-video"])
+async def test_unquoted_action_card_ignores_changes_the_action_does_not_consume(
+    narrated, change,
+):
+    data = await _confirm(RUN_AUDIO)
+
+    change(narrated)
+
+    assert await _changes(narrated, data) == []
+
+
+async def test_unquoted_action_card_with_a_node_it_creates_requotes_identically(narrated):
+    import asyncio
+
+    data = await _confirm([
+        {"type": "create_node", "client_id": "line", "node_type": "textAnnotationNode",
+         "data": {"content": "第二句旁白。"}},
+        {"type": "create_node", "client_id": "voice-2", "node_type": "audioNode",
+         "data": {"text": "第二句旁白。"}},
+        {"type": "create_edge", "source": "line", "target": "voice-2",
+         "link_type": "prompt_for"},
+        _run("voice-2", "generate_audio"),
+    ])
+
+    assert await _changes(narrated, data) == []
+    await asyncio.sleep(1.1)
+    assert await _changes(narrated, data) == []
+
+
+def test_ignored_presentation_keys_match_the_canvas_input_change_rule():
+    import re
+
+    from novelvideo.api.freezone_confirmation_price import _PRESENTATION_DATA_KEYS
+
+    source = (
+        CANVAS_CORE_BUNDLE.parents[1] / "src/features/canvas/core/workflowInvalidation.ts"
+    ).read_text(encoding="utf-8")
+    declared = re.search(r"WORKFLOW_PRESENTATION_DATA_KEYS = new Set\(\[(.*?)\]\)", source, re.S)
+    assert set(re.findall(r'"(\w+)"', declared.group(1))) == _PRESENTATION_DATA_KEYS

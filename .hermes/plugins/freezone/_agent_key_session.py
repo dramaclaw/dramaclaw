@@ -31,6 +31,11 @@ _REDIRECTED = (
     "because it would send the agent key to another address; "
     "DRAMACLAW_API_URL must be the final API address."
 )
+_REQUEST_REDIRECTED = (
+    "Agent key request was answered with a redirect, which is never followed "
+    "because it would send the agent session token to another address; "
+    "DRAMACLAW_API_URL must be the final API address."
+)
 
 
 class _RefuseRedirects(HTTPRedirectHandler):
@@ -41,6 +46,27 @@ class _RefuseRedirects(HTTPRedirectHandler):
 
 # The exchange carries the agent key, so it never uses a caller-supplied opener.
 _open_exchange = build_opener(_RefuseRedirects).open
+
+
+class _EveryAddressVisited(dict):
+    """Redirect history that reports every address as already visited too often."""
+
+    def get(self, key, default=None):
+        return math.inf
+
+
+def _session_request(
+    url: str, payload: bytes | None, headers: dict[str, str], method: str,
+) -> Request:
+    """Build the request that carries a session token, which no opener may redirect.
+
+    The opener is the caller's, so the refusal travels on the request: urllib's redirect
+    handler consults ``redirect_dict`` before every follow-up and raises the redirect as an
+    HTTPError, without contacting the new address, once its loop limit is reached.
+    """
+    req = Request(url, data=payload, headers=headers, method=method)
+    req.redirect_dict = _EveryAddressVisited()
+    return req
 
 
 def agent_key_mode() -> bool:
@@ -190,9 +216,9 @@ def request(
                     return exchanged
                 session = _CACHE[cache_key] = exchanged
             token = session[0]
-        req = Request(
-            f"{api_base}{api_path}{query_string}", data=payload,
-            headers={**headers, "Authorization": f"Bearer {token}"}, method=method.upper(),
+        req = _session_request(
+            f"{api_base}{api_path}{query_string}", payload,
+            {**headers, "Authorization": f"Bearer {token}"}, method.upper(),
         )
         try:
             with opener(req, timeout=timeout) as resp:
@@ -200,6 +226,11 @@ def request(
         except HTTPError as exc:
             with exc:
                 text = exc.read(65537).decode("utf-8", errors="replace")
+            if 300 <= exc.code < 400:
+                return {
+                    "ok": False, "status_code": exc.code,
+                    "code": "agent_key_request_redirected", "error": _REQUEST_REDIRECTED,
+                }
             if exc.code == 401:
                 with entry_lock:
                     current = _CACHE.get(cache_key)

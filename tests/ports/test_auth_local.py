@@ -237,3 +237,57 @@ async def test_local_auth_session_never_marks_sessions_as_external_key_sessions(
 
     assert set(data) == AGENT_LEGACY_KEYS
     assert "external_agent_key_id" not in data
+
+
+@pytest.mark.asyncio
+async def test_file_auth_port_check_session_accepts_the_local_user() -> None:
+    port = FileAuthPort()
+
+    assert await port.check_session(session_id=None, user_id="local") is None
+    assert await port.check_session(session_id="any-session", user_id="local") is None
+
+
+@pytest.mark.asyncio
+async def test_local_auth_session_check_by_id_follows_revocation(tmp_path) -> None:
+    session = LocalAuthSession(tmp_path)
+    kept = await session.create_agent_session(username="alice", scopes=["projects:read"])
+    gone = await session.create_agent_session(username="alice", scopes=["projects:read"])
+
+    assert await session.check_agent_session(agent_session_id=kept.session_id) is None
+    assert await session.check_agent_session(agent_session_id=gone.session_id) is None
+
+    await session.revoke_agent_session(gone.value)
+    assert await session.check_agent_session(agent_session_id=kept.session_id) is None
+    with pytest.raises(AuthError) as exc:
+        await session.check_agent_session(agent_session_id=gone.session_id)
+    assert exc.value.reason == AuthFailureReason.INVALID
+
+
+@pytest.mark.asyncio
+async def test_local_auth_session_check_by_id_follows_expiry(tmp_path) -> None:
+    now = [1000.0]
+    session = LocalAuthSession(tmp_path, clock=lambda: now[0])
+    token = await session.create_agent_session(
+        username="alice", scopes=["projects:read"], ttl_seconds=60,
+    )
+
+    now[0] = 1059.0
+    assert await session.check_agent_session(agent_session_id=token.session_id) is None
+    now[0] = 1060.0
+    with pytest.raises(AuthError) as exc:
+        await session.check_agent_session(agent_session_id=token.session_id)
+    assert exc.value.reason == AuthFailureReason.EXPIRED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_session_id", ["", "missing", "../escape", None])
+async def test_local_auth_session_check_by_id_rejects_unknown_ids(
+    tmp_path, agent_session_id
+) -> None:
+    session = LocalAuthSession(tmp_path)
+    await session.create_agent_session(username="alice", scopes=["projects:read"])
+    (tmp_path / "broken.json").write_text("not json", encoding="utf-8")
+
+    with pytest.raises(AuthError) as exc:
+        await session.check_agent_session(agent_session_id=agent_session_id)
+    assert exc.value.reason == AuthFailureReason.INVALID

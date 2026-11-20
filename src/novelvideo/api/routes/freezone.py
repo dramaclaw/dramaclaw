@@ -56,6 +56,7 @@ from novelvideo.seedance2_i2v.character_voice_storage import (
 )
 from novelvideo.freezone.audio_node import recover_user_audio_voice_save
 from novelvideo.api.auth import (
+    _EFFECTIVE_ACCESS_DENIED,
     get_api_user,
     is_external_agent_key_session,
     require_project_scope,
@@ -176,7 +177,7 @@ from novelvideo.freezone.canvas_core_pool import CanvasCoreError
 from novelvideo.freezone.canvas_creation import create_user_canvas, describe_project_canvases
 from novelvideo.freezone.canvas_links import canvas_page_url, public_origin
 from novelvideo.freezone.canvas_presence import canvas_browser_open
-from novelvideo.freezone import canvas_confirmations, preview_media, upload_tickets
+from novelvideo.freezone import canvas_confirmations, upload_tickets
 from novelvideo.freezone.canvas_command_bridge import (
     canvas_command_idempotency_key,
     put_pending_canvas_command,
@@ -497,7 +498,15 @@ from novelvideo.project_context import (
     resolve_project_context,
 )
 from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
-from novelvideo.ports import get_project_registry, get_task_backend
+from novelvideo.ports import (
+    get_auth_port,
+    get_auth_session_port,
+    get_project_registry,
+    get_task_backend,
+)
+from novelvideo.ports.auth_contract import AuthError, AuthFailureReason
+from novelvideo.ports.registry import PortNotRegistered
+from novelvideo.task_backend.signing import TaskEnvelopeSigningConfigError
 from novelvideo.task_identity import (
     project_task_state_key,
     selection_scope,
@@ -6158,9 +6167,42 @@ async def freezone_upload_address(
             "error": "Upload address unavailable",
             "data": {"code": "upload_address_unavailable"},
         }
-    key = await run_in_threadpool(preview_media.project_key, ctx.state_dir, create=True)
+    try:
+        keys = await run_in_threadpool(upload_tickets.server_keys)
+    except TaskEnvelopeSigningConfigError:
+        logger.warning("upload address unavailable: server signing keyring is missing or invalid")
+        return {
+            "ok": False,
+            "error": (
+                "Upload address unavailable: the server signing keyring is missing or "
+                "invalid; ask the server operator to fix the signing configuration"
+            ),
+            "data": {"code": "upload_address_unavailable"},
+        }
+    # Bind the ticket to the id of the credential that asked for it, so the upload can
+    # re-check that credential. Only ids go in: the ticket travels in a URL.
+    if user.get("credential_kind") == "agent_session":
+        credential_kind = upload_tickets.AGENT_SESSION
+        credential_id = user.get("agent_session_id")
+        if not isinstance(credential_id, str) or not credential_id:
+            logger.error("upload address unavailable: agent session carries no session id")
+            return {
+                "ok": False,
+                "error": (
+                    "Upload address unavailable: the authentication adapter reported no id "
+                    "for this agent session, which points to a server version mismatch; ask "
+                    "the server operator to upgrade the server components together"
+                ),
+                "data": {"code": "upload_address_unavailable"},
+            }
+    else:
+        credential_kind = upload_tickets.SESSION
+        credential_id = user.get("session_id")
+        if not isinstance(credential_id, str) or not credential_id:
+            credential_id = None
     ticket = upload_tickets.issue(
-        key, project, ctx.requester_user_id, ctx.requester_username, int(time.time())
+        keys[0], project, ctx.requester_user_id, ctx.requester_username, int(time.time()),
+        credential_kind=credential_kind, credential_id=credential_id,
     )
     path = f"/api/v1/projects/{quote(project, safe='')}/freezone/upload"
     return {
@@ -6180,19 +6222,87 @@ async def _get_freezone_upload_user(project: str, request: Request) -> dict:
     ticket = request.query_params.get("upload_ticket")
     if ticket is None:
         return await get_api_user(request)
-    invalid = HTTPException(status_code=401, detail={"code": "upload_ticket_invalid"})
+    invalid = HTTPException(
+        status_code=401,
+        detail={
+            "code": "upload_ticket_invalid",
+            "message": (
+                "upload ticket is invalid or expired for this project; "
+                "request a new upload address"
+            ),
+        },
+    )
     record = await get_project_registry().get_project(project)
     if record is None or record.status != "active" or not is_record_home_node(record):
         raise invalid
     try:
-        key = await run_in_threadpool(preview_media.project_key, Path(record.state_dir))
-    except (OSError, ValueError):
+        keys = await run_in_threadpool(upload_tickets.server_keys)
+    except TaskEnvelopeSigningConfigError:
         raise invalid from None
-    identity = upload_tickets.verify(key, project, ticket, int(time.time()))
+    identity = upload_tickets.verify(keys, project, ticket, int(time.time()))
     if identity is None:
         raise invalid
-    user_id, username = identity
-    return {"id": user_id, "user_id": user_id, "username": username, "credential_kind": "upload_ticket"}
+    await _check_upload_ticket_minter(identity)
+    return {
+        "id": identity.user_id,
+        "user_id": identity.user_id,
+        "username": identity.username,
+        "credential_kind": "upload_ticket",
+    }
+
+
+async def _check_upload_ticket_minter(identity: upload_tickets.TicketIdentity) -> None:
+    """Refuse a ticket whose minting credential or user is no longer valid."""
+
+    def refused(message: str) -> HTTPException:
+        return HTTPException(
+            status_code=401, detail={"code": "upload_ticket_invalid", "message": message}
+        )
+
+    by_agent_session = identity.credential_kind == upload_tickets.AGENT_SESSION
+    if by_agent_session:
+        method = "check_agent_session"
+        arguments = {"agent_session_id": identity.credential_id}
+    else:
+        method = "check_session"
+        arguments = {"session_id": identity.credential_id, "user_id": identity.user_id}
+    try:
+        adapter = get_auth_session_port() if by_agent_session else get_auth_port()
+        check = getattr(adapter, method, None)
+    except PortNotRegistered:
+        check = None
+    if not callable(check):
+        # Fail closed: an adapter that cannot re-check the credential must not pass it.
+        logger.error("upload ticket refused: authentication adapter has no %s()", method)
+        raise refused(
+            "upload ticket cannot be checked because the installed authentication adapter "
+            f"does not provide {method}(), which points to a server version mismatch; ask "
+            "the server operator to upgrade the server components together"
+        )
+    try:
+        await check(**arguments)
+    except AuthError as exc:
+        if (
+            exc.reason == AuthFailureReason.USER_SUSPENDED
+            or exc.detail == _EFFECTIVE_ACCESS_DENIED
+        ):
+            why = (
+                "the account that created it is disabled or no longer has access; "
+                "ask an administrator"
+            )
+        elif exc.reason == AuthFailureReason.EXPIRED:
+            why = "the session that created it has expired; request a new upload address"
+        else:
+            why = (
+                "the session that created it was revoked or no longer exists; "
+                "request a new upload address"
+            )
+        raise refused(f"upload ticket is no longer valid because {why}") from None
+    except Exception:
+        logger.exception("upload ticket check failed in %s()", method)
+        raise HTTPException(
+            status_code=503, detail="Authentication service unavailable"
+        ) from None
 
 
 async def _save_freezone_upload(

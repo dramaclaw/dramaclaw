@@ -49,6 +49,7 @@ class FakeAPI:
     expires_in: int = 3600
     exchange_delay: float = 0
     business_statuses: list[int] = field(default_factory=list)
+    business_location: str = ""
     echo_secrets: bool = False
     allow_anonymous: bool = False
     lock: Lock = field(default_factory=Lock)
@@ -148,6 +149,8 @@ def api_factory():
                 encoded = json.dumps(body).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                if 300 <= status < 400 and api.business_location:
+                    self.send_header("Location", api.business_location)
                 self.send_header("Content-Length", str(len(encoded)))
                 self.end_headers()
                 self.wfile.write(encoded)
@@ -445,6 +448,30 @@ def test_key_exchange_does_not_follow_a_redirect(plugin, api, redirecting_api, m
     assert "redirect" in result.get("error", "")
     assert "DRAMACLAW_API_URL must be the final API address" in result.get("error", "")
     assert KEY not in json.dumps(result)
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_key_business_request_does_not_follow_a_redirect(
+    plugin, api, api_factory, monkeypatch, status, method,
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    elsewhere = api_factory()
+    api.business_statuses = [status]
+    api.business_location = f"{elsewhere.url}{PROJECT_PATH}"
+
+    result = request_result(plugin, method, PROJECT_PATH, body={} if method == "POST" else None)
+
+    # The address the redirect points at must never see the session, or anything else.
+    assert elsewhere.requests == []
+    assert len(api.exchanges) == 1
+    assert [(r["method"], r["path"]) for r in api.business] == [(method, PROJECT_PATH)]
+    assert result.get("ok") is False
+    assert result.get("code") == "agent_key_request_redirected"
+    assert result.get("status_code") == status
+    assert "redirect" in result.get("error", "")
+    assert "DRAMACLAW_API_URL must be the final API address" in result.get("error", "")
+    assert not any(token in json.dumps(result) for token in (KEY, *api.issued))
 
 
 def test_unreadable_key_file_does_not_fall_back(plugin, api, monkeypatch, tmp_path):

@@ -114,7 +114,7 @@ def _assert_media_kinds_explained(instruction):
 
 
 # SHA-256 of the ordered list of every tool name, description, and parameters.
-PRODUCT_TOOLS_SHA256 = "998a346db0ac263ef26f0fe72237fdda4be0defe081635f371a992ca47e3be25"
+PRODUCT_TOOLS_SHA256 = "fb65bf41024a01b9af263f102e0a65d74ead6cbf9067757b1d6fb853c525a9a9"
 
 
 @pytest.fixture

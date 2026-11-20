@@ -20,6 +20,7 @@ from novelvideo.freezone.generation_inputs import (
     empty_generation_inputs,
     upstream_ids,
 )
+from novelvideo.freezone.server_workflow_actions import CLEAR_GENERATION
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
 from novelvideo.project_context import ProjectContext
@@ -29,6 +30,18 @@ logger = logging.getLogger(__name__)
 
 # Minted per submission, so they are neither billed nor part of what the user was shown.
 _REQUEST_IDENTITY_KEYS = frozenset({"product_operation_id", "generation_attempt_id"})
+
+# Node data that a run or the canvas view rewrites without changing what an action consumes.
+# Presentation keys and the ``workflow`` prefix mirror the input-change rule in
+# frontend/src/features/canvas/core/workflowInvalidation.ts; the rest is run state.
+_PRESENTATION_DATA_KEYS = frozenset({
+    "autoTitleIndex", "displayName", "height", "isSizeManuallyAdjusted", "previewImageUrl",
+    "selected", "width",
+})
+_RUN_STATE_DATA_KEYS = frozenset(CLEAR_GENERATION) | {
+    "generationError", "generationErrorDetails", "generationErrorRequestId", "createdAt",
+}
+_UNCONSUMED_DATA_KEYS = _PRESENTATION_DATA_KEYS | _RUN_STATE_DATA_KEYS
 
 _GENERATION_ROUTES = {
     "generate_image": {"gen"},
@@ -223,6 +236,29 @@ async def _price_action(
     return {"status": "known", "credits": total, "display": _display_credit_cost(total)}, shown
 
 
+def _consumed_content(canvas: dict, nodes: dict[str, dict], node_id: str) -> dict:
+    """What a node and the nodes wired into it hold for an action to read."""
+    def content(source_id: str) -> dict:
+        node = nodes.get(source_id, {})
+        return {"type": node.get("type"), "data": {
+            key: value for key, value in (node.get("data") or {}).items()
+            if key not in _UNCONSUMED_DATA_KEYS and not key.startswith("workflow")
+        }}
+
+    return {
+        "node": content(node_id),
+        "upstream": {source_id: content(source_id) for source_id in upstream_ids(canvas, node_id)},
+        "edges": sorted(
+            (
+                [edge.get("source"), edge.get("sourceHandle"), edge.get("targetHandle"),
+                 edge.get("data")]
+                for edge in canvas.get("edges", []) if edge.get("target") == node_id
+            ),
+            key=lambda edge: json.dumps(edge, sort_keys=True, default=str),
+        ),
+    }
+
+
 def _digest(value: object) -> str:
     text = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -301,6 +337,12 @@ async def _quote_plan(
             "node_id": node_id, "action": action["action"],
             "execution_mode": action.get("execution_mode"),
             "parameters": action.get("parameters"), **runs,
+            # A built request already is what the action consumes; anything else is read
+            # from the canvas when it runs.
+            "consumes": (
+                None if runs["request"] is not None
+                else _consumed_content(canvas, nodes, node_id)
+            ),
         })
         earlier.add(node_id)
     content = _content_digest(shown, client_ids)

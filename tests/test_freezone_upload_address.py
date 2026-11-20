@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from novelvideo.api import auth
 from novelvideo.api import app as api_app
 from novelvideo.api.app import MAX_UPLOAD_REQUEST_BODY_BYTES, create_app
-from novelvideo.freezone import preview_media
+from novelvideo.freezone import preview_media, upload_tickets
 from novelvideo.ports import registry as ports
 from novelvideo.ports.auth_contract import AuthError, AuthFailureReason
 from novelvideo.ports.project import Principal, ProjectRecord
@@ -32,12 +32,15 @@ ALICE = "test-alice-session"
 BOB = "test-bob-session"
 AGENT = "test-alice-agent-session"
 AGENT_HEADERS = {"Authorization": f"Bearer {AGENT}"}
+AGENT_SESSION_ID = "as-alice-1"
 USERS = {
     ALICE: {"id": "u-alice", "username": "alice"},
     BOB: {"id": "u-bob", "username": "bob"},
 }
 FILE = b"fake multipart file bytes"
 TEST_BODY_LIMIT = 4096
+ACTIVE_KEY_ENV = "ST_TASK_ENVELOPE_ACTIVE_KEY_ID"
+KEYRING_ENV = "ST_TASK_ENVELOPE_KEYRING_B64_JSON"
 MULTIPART_HEADERS = {"Content-Type": "multipart/form-data; boundary=upload-test"}
 EXPECTED_SUFFIXES = sorted("""
     .png .jpg .jpeg .webp .gif .bmp .avif
@@ -55,6 +58,13 @@ def api(tmp_path, monkeypatch):
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(PUBLIC_ORIGIN, ORIGIN)
+    # The server signing keyring lives beside, never inside, project directories.
+    monkeypatch.delenv(ACTIVE_KEY_ENV, raising=False)
+    monkeypatch.delenv(KEYRING_ENV, raising=False)
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "server-state"))
+    _restart_server(monkeypatch)
 
     records = {
         project: ProjectRecord(
@@ -77,6 +87,7 @@ def api(tmp_path, monkeypatch):
     agent_user = {
         **USERS[ALICE],
         "credential_kind": "agent_session",
+        "agent_session_id": AGENT_SESSION_ID,
         "current_scope_kind": "project",
         "current_project_id": "proj",
         "scopes": ["projects:write"],
@@ -88,6 +99,8 @@ def api(tmp_path, monkeypatch):
         return agent_user.copy()
 
     bearer = AsyncMock(side_effect=verify_agent_session)
+    check_session = AsyncMock(return_value=None)
+    check_agent_session = AsyncMock(return_value=None)
     principals = AsyncMock(side_effect=lambda user: [Principal("user", user)])
     access = SimpleNamespace(
         resolve_requester_principals=principals,
@@ -97,8 +110,10 @@ def api(tmp_path, monkeypatch):
     )
     projects = SimpleNamespace(get_project=AsyncMock(side_effect=records.get))
     for name, port in {
-        "auth": SimpleNamespace(verify_session=browser),
-        "auth_session": SimpleNamespace(verify_agent_session=bearer),
+        "auth": SimpleNamespace(verify_session=browser, check_session=check_session),
+        "auth_session": SimpleNamespace(
+            verify_agent_session=bearer, check_agent_session=check_agent_session,
+        ),
         "project_access": access,
         "project_registry": projects,
     }.items():
@@ -108,9 +123,23 @@ def api(tmp_path, monkeypatch):
         yield SimpleNamespace(
             client=client, records=records, roles=roles, principals=principals,
             browser=browser, bearer=bearer, agent_user=agent_user,
+            check_session=check_session, check_agent_session=check_agent_session,
         )
     finally:
         client.close()
+
+
+def _restart_server(monkeypatch):
+    """Drop the per-process key cache, as a server restart would."""
+    monkeypatch.setattr(upload_tickets, "_SERVER_KEYS", None, raising=False)
+
+
+def _configure_keyring(monkeypatch, active, keys):
+    monkeypatch.setenv(ACTIVE_KEY_ENV, active)
+    monkeypatch.setenv(KEYRING_ENV, json.dumps({
+        key_id: base64.b64encode(value).decode("ascii") for key_id, value in keys.items()
+    }))
+    _restart_server(monkeypatch)
 
 
 def _session(cookie=ALICE):
@@ -141,7 +170,9 @@ def _upload(api, path=UPLOAD, *, ticket=None, headers=None, filename="sketch.png
 
 def _invalid(response):
     assert response.status_code == 401, response.text
-    assert response.json()["detail"]["code"] == "upload_ticket_invalid"
+    detail = response.json()["detail"]
+    assert detail["code"] == "upload_ticket_invalid"
+    assert "request a new upload address" in detail["message"]
 
 
 def _stored(api, data):
@@ -162,8 +193,8 @@ def test_mint_address_and_upload_without_session(api):
     [ticket] = params["upload_ticket"]
     segment, _ = ticket.split(".")
     identity = _decode_payload(segment)
-    assert {key: identity[key] for key in ("v", "p", "u", "n")} == {
-        "v": 1, "p": "proj", "u": "u-alice", "n": "alice",
+    assert {key: identity[key] for key in ("v", "p", "u", "n", "k", "c")} == {
+        "v": 2, "p": "proj", "u": "u-alice", "n": "alice", "k": "session", "c": None,
     }
     assert address["expires_in_seconds"] == 600
     assert address["method"] == "POST"
@@ -212,14 +243,61 @@ def test_upload_ticket_expires(api, monkeypatch, seconds):
 
 
 def test_upload_ticket_is_bound_to_one_project(api):
+    # One server key signs every project's tickets; only the payload binds the project.
     ticket = _ticket(api)
-    key = preview_media.project_key(Path(api.records["proj"].state_dir))
-    other_state = Path(api.records["other"].state_dir)
-    preview_media.project_key(other_state, create=True)
-    (other_state / ".html-preview-key").write_bytes(key)
     other_upload = UPLOAD.replace("/proj/", "/other/")
     _data(_upload(api, other_upload, headers=_session()))
     _invalid(_upload(api, other_upload, ticket=ticket))
+
+
+def test_html_preview_key_cannot_forge_upload_ticket(api):
+    _data(_mint(api))
+    preview_key = preview_media.project_key(Path(api.records["proj"].state_dir), create=True)
+    now = int(time.time())
+    forged = upload_tickets.issue(
+        preview_key, "proj", "u-alice", "alice", now,
+        credential_kind="session", credential_id=None,
+    )
+    _invalid(_upload(api, ticket=forged))
+
+    # The preview key keeps signing and verifying HTML preview grants.
+    expires = now + preview_media.TTL
+    grant = preview_media.signature(preview_key, "proj", "artifact", "sketch.png", expires)
+    assert preview_media.verify(preview_key, "proj", "artifact", "sketch.png", expires, grant)
+
+
+def test_upload_ticket_key_is_kept_out_of_project_directories(api):
+    _data(_upload(api, ticket=_ticket(api)))
+    for record in api.records.values():
+        for directory in (record.state_dir, record.runtime_dir):
+            assert not [path for path in Path(directory).rglob("*") if path.is_file()]
+
+
+def test_upload_ticket_follows_the_server_keyring(api, monkeypatch):
+    old, new = b"o" * 32, b"n" * 32
+    _configure_keyring(monkeypatch, "old", {"old": old})
+    ticket = _ticket(api)
+    # A retired key that is still listed keeps in-flight tickets valid.
+    _configure_keyring(monkeypatch, "new", {"old": old, "new": new})
+    _data(_upload(api, ticket=ticket))
+    _data(_upload(api, ticket=_ticket(api)))
+    # Once the key leaves the keyring its tickets stop working.
+    _configure_keyring(monkeypatch, "new", {"new": new})
+    _invalid(_upload(api, ticket=ticket))
+
+
+def test_mint_is_unavailable_without_a_valid_server_keyring(api, monkeypatch, caplog):
+    monkeypatch.setenv(ACTIVE_KEY_ENV, "broken")
+    monkeypatch.setenv(KEYRING_ENV, "not-a-keyring")
+    _restart_server(monkeypatch)
+    response = _mint(api)
+    payload = response.json()
+    assert payload["ok"] is False, response.text
+    assert payload["data"]["code"] == "upload_address_unavailable"
+    assert "server operator" in payload["error"]
+    assert "upload_url" not in response.text
+    assert "not-a-keyring" not in response.text + caplog.text
+    _invalid(_upload(api, ticket="A" * 8 + "." + "0" * 64))
 
 
 @pytest.mark.parametrize(("method", "path"), [
@@ -258,6 +336,171 @@ def test_upload_ticket_is_not_a_browser_session(api):
     api.browser.assert_awaited_once_with(ticket)
 
 
+def _agent_ticket(api):
+    url = _data(api.client.post(MINT, headers=AGENT_HEADERS))["upload_url"]
+    return parse_qs(urlsplit(url).query)["upload_ticket"][0]
+
+
+def _refused(response, *expected):
+    assert response.status_code == 401, response.text
+    detail = response.json()["detail"]
+    assert set(detail) == {"code", "message"}
+    assert detail["code"] == "upload_ticket_invalid"
+    for text in expected:
+        assert text in detail["message"]
+    return detail["message"]
+
+
+def test_ticket_binds_the_minting_credential_by_id_only(api):
+    api.browser.side_effect = None
+    api.browser.return_value = {**USERS[ALICE], "session_id": "bs-alice-1"}
+    browser_payload = _decode_payload(_ticket(api).split(".")[0])
+    agent_payload = _decode_payload(_agent_ticket(api).split(".")[0])
+    assert set(browser_payload) == set(agent_payload) == {"v", "p", "u", "n", "e", "k", "c"}
+    assert (browser_payload["k"], browser_payload["c"]) == ("session", "bs-alice-1")
+    assert (agent_payload["k"], agent_payload["c"]) == ("agent_session", AGENT_SESSION_ID)
+    for raw in (ALICE, AGENT):
+        assert raw not in json.dumps(browser_payload) + json.dumps(agent_payload)
+
+
+def test_ticket_upload_checks_the_minting_browser_session(api):
+    api.browser.side_effect = None
+    api.browser.return_value = {**USERS[ALICE], "session_id": "bs-alice-1"}
+    ticket = _ticket(api)
+    _data(_upload(api, ticket=ticket))
+    api.check_session.assert_awaited_once_with(session_id="bs-alice-1", user_id="u-alice")
+    api.check_agent_session.assert_not_awaited()
+
+
+def test_ticket_upload_checks_the_user_when_no_session_id_is_exposed(api):
+    _data(_upload(api, ticket=_ticket(api)))
+    api.check_session.assert_awaited_once_with(session_id=None, user_id="u-alice")
+
+
+@pytest.mark.parametrize(("reason", "expected"), [
+    (AuthFailureReason.REVOKED, ("revoked", "request a new upload address")),
+    (AuthFailureReason.INVALID, ("revoked", "request a new upload address")),
+    (AuthFailureReason.EXPIRED, ("expired", "request a new upload address")),
+    (AuthFailureReason.USER_SUSPENDED, ("account", "disabled", "administrator")),
+], ids=["revoked", "invalid", "expired", "user-disabled"])
+def test_agent_minted_ticket_stops_working_with_its_session(api, reason, expected):
+    ticket = _agent_ticket(api)
+    api.bearer.reset_mock()
+    _data(_upload(api, ticket=ticket))
+    api.check_agent_session.assert_awaited_once_with(agent_session_id=AGENT_SESSION_ID)
+    api.check_session.assert_not_awaited()
+    api.bearer.assert_not_awaited()
+
+    api.check_agent_session.side_effect = AuthError(reason, "internal detail")
+    message = _refused(_upload(api, ticket=ticket), *expected)
+    assert "internal detail" not in message
+    assert len(list(Path(api.records["proj"].output_dir).rglob("*.png"))) == 1
+
+
+@pytest.mark.parametrize(("reason", "expected"), [
+    (AuthFailureReason.USER_SUSPENDED, ("account", "disabled", "administrator")),
+    (AuthFailureReason.REVOKED, ("revoked", "request a new upload address")),
+], ids=["user-disabled", "session-revoked"])
+def test_browser_minted_ticket_stops_working_with_its_minter(api, reason, expected):
+    ticket = _ticket(api)
+    _data(_upload(api, ticket=ticket))
+    api.check_session.side_effect = AuthError(reason)
+    _refused(_upload(api, ticket=ticket), *expected)
+    # Somebody else's live browser session does not rescue the ticket.
+    _refused(_upload(api, ticket=ticket, headers=_session(BOB)), *expected)
+
+
+def test_ticket_is_refused_when_access_is_denied_for_the_minter(api):
+    ticket = _ticket(api)
+    api.check_session.side_effect = AuthError(
+        AuthFailureReason.INVALID, "effective access denied"
+    )
+    _refused(_upload(api, ticket=ticket), "account", "administrator")
+
+
+@pytest.mark.parametrize("kind", ["session", "agent_session"])
+def test_ticket_is_refused_when_the_auth_adapter_cannot_check_it(api, monkeypatch, kind):
+    ticket = _ticket(api) if kind == "session" else _agent_ticket(api)
+    # An adapter built against the older port contract has no id-based check.
+    monkeypatch.setitem(ports._PORTS, "auth", SimpleNamespace(verify_session=api.browser))
+    monkeypatch.setitem(
+        ports._PORTS, "auth_session", SimpleNamespace(verify_agent_session=api.bearer),
+    )
+    message = _refused(_upload(api, ticket=ticket), "version", "server operator")
+    assert "request a new upload address" not in message
+    assert not any(path.is_file() for path in Path(api.records["proj"].output_dir).rglob("*"))
+
+
+def test_ticket_check_outage_is_not_reported_as_an_invalid_ticket(api):
+    ticket = _ticket(api)
+    api.check_session.side_effect = RuntimeError("backend down")
+    response = _upload(api, ticket=ticket)
+    assert response.status_code == 503, response.text
+    assert "backend down" not in response.text
+
+
+def test_agent_session_without_an_id_cannot_mint(api):
+    del api.agent_user["agent_session_id"]
+    response = api.client.post(MINT, headers=AGENT_HEADERS)
+    payload = response.json()
+    assert payload["ok"] is False, response.text
+    assert payload["data"]["code"] == "upload_address_unavailable"
+    assert "version" in payload["error"] and "server operator" in payload["error"]
+    assert "upload_url" not in response.text
+
+
+def test_ticket_from_the_previous_payload_version_is_refused(api):
+    key = upload_tickets.server_keys()[0]
+    payload = {"v": 1, "p": "proj", "u": "u-alice", "n": "alice", "e": int(time.time()) + 600}
+    segment = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode()
+    ).decode().rstrip("=")
+    _invalid(_upload(api, ticket=f"{segment}.{upload_tickets._signature(key, segment)}"))
+    api.check_session.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("kind", "credential_id"), [
+    ("agent_session", None), ("agent_session", ""), ("api_key", "x"), ("session", 7),
+    ("session", ""),
+])
+def test_ticket_with_malformed_credential_binding_is_refused(api, kind, credential_id):
+    key = upload_tickets.server_keys()[0]
+    now = int(time.time())
+    ticket = upload_tickets.issue(
+        key, "proj", "u-alice", "alice", now, credential_kind=kind, credential_id=credential_id,
+    )
+    _invalid(_upload(api, ticket=ticket))
+    api.check_session.assert_not_awaited()
+    api.check_agent_session.assert_not_awaited()
+
+
+def test_local_install_tickets_follow_local_sessions(api, tmp_path, monkeypatch):
+    import asyncio
+
+    from novelvideo.ports.local.auth import FileAuthPort, LocalAuthSession
+
+    sessions = LocalAuthSession(tmp_path / "agent-sessions")
+    monkeypatch.setitem(ports._PORTS, "auth", FileAuthPort())
+    monkeypatch.setitem(ports._PORTS, "auth_session", sessions)
+    api.roles["local", "proj"] = "editor"
+
+    # The single local user is always valid.
+    _data(_upload(api, ticket=_ticket(api)))
+
+    token = asyncio.run(sessions.create_agent_session(
+        username="local", scopes=["projects:write"],
+        current_scope_kind="project", current_project_id="proj",
+    ))
+    headers = {"Authorization": f"Bearer {token.value}"}
+    url = _data(api.client.post(MINT, headers=headers))["upload_url"]
+    ticket = parse_qs(urlsplit(url).query)["upload_ticket"][0]
+    assert token.value not in json.dumps(_decode_payload(ticket.split(".")[0]))
+    _data(_upload(api, ticket=ticket))
+
+    asyncio.run(sessions.revoke_agent_session(token.value))
+    _refused(_upload(api, ticket=ticket), "revoked", "request a new upload address")
+
+
 def _decode_payload(segment):
     return json.loads(base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)))
 
@@ -292,7 +535,7 @@ def test_invalid_ticket_does_not_fall_back_to_session(api, monkeypatch, kind):
     elif kind == "truncated":
         signature = signature[:-1]
     else:
-        key = preview_media.project_key(Path(api.records["proj"].state_dir))
+        key = preview_media.project_key(Path(api.records["proj"].state_dir), create=True)
         signature = preview_media.signature(key, "proj", "artifact", "sketch.png",
                                             int(time.time()) + 600)
     api.browser.reset_mock()

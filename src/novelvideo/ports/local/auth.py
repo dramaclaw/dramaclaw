@@ -28,6 +28,10 @@ class FileAuthPort:
         username = os.environ.get("ST_LOCAL_USERNAME", "").strip() or "local"
         return AuthenticatedUser(id="local", username=username, role="owner").to_legacy_dict()
 
+    async def check_session(self, *, session_id: str | None, user_id: str) -> None:
+        # The single local user has no sessions to revoke and cannot be disabled.
+        return None
+
     async def revoke_session(self, raw_cookie: str) -> None:
         return None
 
@@ -117,6 +121,24 @@ class LocalAuthSession:
     async def verify_agent_session(self, token: str) -> dict:
         session, _ = self._load_session(token)
         return session.to_legacy_dict()
+
+    async def check_agent_session(self, *, agent_session_id: str) -> None:
+        # Session files are named after the token hash, so an id lookup reads each one.
+        # A revoked session's file is gone, which reads the same as an unknown id.
+        if isinstance(agent_session_id, str) and agent_session_id:
+            for path in self._root.glob("*.json"):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    if data["agent_session_id"] != agent_session_id:
+                        continue
+                    expired = data["exp"] <= self._clock()
+                except (OSError, ValueError, TypeError, KeyError):
+                    continue
+                if expired:
+                    path.unlink(missing_ok=True)
+                    raise AuthError(AuthFailureReason.EXPIRED, "agent session expired")
+                return None
+        raise AuthError(AuthFailureReason.INVALID, "agent session not found")
 
     async def update_agent_session_scope(
         self,
