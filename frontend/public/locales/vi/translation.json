@@ -966,6 +966,7 @@
         },
         "separator": ", ",
         "credits": "Việc xác nhận sẽ tiêu tốn điểm.",
+        "creditsAmount": "Việc xác nhận sẽ tiêu tốn {{credits}} điểm.",
         "expiresIn": "Có hiệu lực trong {{minutes}} phút",
         "confirm": "Xác nhận",
         "refuse": "Hủy",

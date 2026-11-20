@@ -18845,6 +18845,16 @@ async def create_canvas_confirmation(
         except Exception as exc:
             logger.warning("Confirmation price plan unavailable: %s", type(exc).__name__)
             data["price"] = {"status": "unknown", "reason": "plan_unavailable", "items": []}
+        try:
+            directory = await asyncio.to_thread(
+                canvas_confirmations.confirmations_dir, str(user["username"]),
+                body.agent_id, state_dir,
+            )
+            await asyncio.to_thread(
+                canvas_confirmations.save_price, directory, record["id"], data["price"],
+            )
+        except Exception as exc:
+            logger.warning("Confirmation price persistence failed: %s", type(exc).__name__)
     return {"ok": True, "data": data}
 
 
@@ -18897,7 +18907,10 @@ async def list_canvas_confirmations(
         "id", "agent_id", "turn_id", "kinds", "targets", "command_hash", "created_at", "expires_at",
     )
     return {"ok": True, "data": {"confirmations": [
-        {field: record[field] for field in fields}
+        {
+            **{field: record[field] for field in fields},
+            **({"price": record["price"]} if "price" in record else {}),
+        }
         for record in sorted(pending, key=lambda item: item["created_at"])
     ]}}
 

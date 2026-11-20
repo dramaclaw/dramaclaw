@@ -11,6 +11,21 @@ export type CanvasConfirmation = {
   command_hash: string;
   created_at: number;
   expires_at: number;
+  price?: {
+    status: "known" | "unknown" | "not_metered";
+    credits?: number;
+    display?: string;
+    known_credits?: number;
+    reason?: string;
+    items?: {
+      node_id: string;
+      action: string;
+      status: string;
+      credits?: number;
+      display?: string;
+      reason?: string;
+    }[];
+  };
 };
 
 export type CanvasConfirmationDecision = "confirmed" | "refused";

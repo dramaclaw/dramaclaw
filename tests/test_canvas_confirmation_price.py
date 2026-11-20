@@ -188,6 +188,8 @@ def test_default_ports_add_not_metered_without_pricing(setup, monkeypatch, gener
         "expires_at": stored["expires_at"], "browser_open": False,
     }
     assert data == {**expected, "price": {"status": "not_metered"}}
+    assert listed_confirmation(setup, data)["price"] == {"status": "not_metered"}
+    assert stored["price"] == {"status": "not_metered"}
 
 
 @pytest.mark.parametrize(
@@ -306,12 +308,56 @@ def test_request_and_command_data_cannot_supply_price(setup, pricing):
         ],
     })
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["price"] == baseline["price"]
+    created = response.json()["data"]
+    assert created["price"] == baseline["price"]
     assert baseline["price"]["credits"] == 30
     assert pricing.calls[0] == pricing.calls[1]
+    listed = listed_confirmation(setup, created)
+    assert listed["price"] == baseline["price"]
+    assert "credits" not in listed
+    assert "price_text" not in listed
 
 
 def test_non_paid_confirmation_has_no_price(setup, pricing, generation_core):
     data = create(setup, commands=DELETE)
     assert "price" not in data
     assert pricing.calls == generation_core == []
+
+
+def listed_confirmation(setup, created):
+    response = setup.client.get(BASE + "/confirmations")
+    assert response.status_code == 200, response.text
+    return next(
+        item for item in response.json()["data"]["confirmations"]
+        if item["id"] == created["confirmation_id"]
+    )
+
+
+def test_lists_persisted_single_action_price(setup, pricing):
+    data = create(setup, commands=set_plan(setup, PAID[0]))
+
+    assert data["price"]["status"] == "known"
+    assert data["price"]["credits"] == 30
+    assert listed_confirmation(setup, data)["price"] == data["price"]
+    assert record(setup, data)["price"] == data["price"]
+
+
+def test_lists_total_and_items_for_two_paid_actions(setup, pricing):
+    set_frame(setup, image_url=FRAME)
+    data = create(setup, commands=set_plan(setup, PAID[0], VIDEO))
+
+    assert data["price"]["status"] == "known"
+    assert data["price"]["credits"] == 150
+    price = listed_confirmation(setup, data)["price"]
+    assert price["status"] == "known"
+    assert price["credits"] == 150
+    assert [(item["node_id"], item["action"], item["credits"]) for item in price["items"]] == [
+        ("n1", "generate_image", 30),
+        ("n2", "generate_video", 120),
+    ]
+
+
+def test_list_omits_price_for_non_paid_confirmation(setup, pricing):
+    data = create(setup, commands=DELETE)
+
+    assert "price" not in listed_confirmation(setup, data)

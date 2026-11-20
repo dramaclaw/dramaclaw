@@ -1012,6 +1012,7 @@
         },
         "separator": ", ",
         "credits": "A confirmação irá consumir créditos.",
+        "creditsAmount": "A confirmação irá consumir {{credits}} créditos.",
         "expiresIn": "Válido por {{minutes}} min",
         "confirm": "Confirmar",
         "refuse": "Cancelar",

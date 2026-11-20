@@ -21,6 +21,8 @@ export function CanvasConfirmationCard({
   const title = confirmation.kinds.map((kind) => t(`freezone.chat.canvasConfirmation.kind.${kind}`))
     .join(t("freezone.chat.canvasConfirmation.separator"));
   const minutes = Math.max(1, Math.ceil((confirmation.expires_at * 1000 - nowMs) / 60_000));
+  const { price } = confirmation;
+  const credits = price?.status === "known" ? price.credits : undefined;
 
   return (
     <div className="mt-3 w-full min-w-0 overflow-hidden rounded-xl border border-amber-400/25 bg-background/95 text-xs text-muted-foreground shadow-lg backdrop-blur-sm">
@@ -32,7 +34,9 @@ export function CanvasConfirmationCard({
           <p key={`${target.node_id}:${index}`}>{target.title || target.node_id} · {target.node_type}</p>
         ))}
         {confirmation.kinds.includes("paid_generation") && (
-          <p>{t("freezone.chat.canvasConfirmation.credits")}</p>
+          <p>{typeof credits === "number" && Number.isFinite(credits) && credits > 0
+            ? t("freezone.chat.canvasConfirmation.creditsAmount", { credits })
+            : t("freezone.chat.canvasConfirmation.credits")}</p>
         )}
         <p>{t("freezone.chat.canvasConfirmation.expiresIn", { minutes })}</p>
         {error && <p role="alert" className="text-destructive">{error}</p>}

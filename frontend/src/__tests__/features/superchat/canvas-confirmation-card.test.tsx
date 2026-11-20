@@ -33,6 +33,53 @@ describe("CanvasConfirmationCard", () => {
     expect(container.textContent).not.toMatch(/\d\s*积分|积分\s*\d/);
   });
 
+  it.each([
+    { label: "single quote", credits: 30, items: [
+      { node_id: "n2", action: "generate_video", status: "known", credits: 30 },
+    ] },
+    { label: "multi-item quote", credits: 150, items: [
+      { node_id: "n1", action: "generate_image", status: "known", credits: 30 },
+      { node_id: "n2", action: "generate_video", status: "known", credits: 120 },
+    ] },
+  ] as const)("shows the quoted total for a $label", ({ credits, items }) => {
+    const quoted = {
+      ...confirmation,
+      price: {
+        status: "known" as const,
+        credits,
+        items: items.map((item) => ({ ...item, display: String(item.credits) })),
+      },
+    };
+    render(card({ confirmation: quoted }));
+    expect(screen.getByText(`确认后会消耗 ${credits} 积分。`)).toBeInTheDocument();
+    expect(screen.queryByText("确认后会消耗积分。")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { label: "unknown quote", price: { status: "unknown", known_credits: 30 } },
+    { label: "unmetered quote", price: { status: "not_metered" } },
+    { label: "missing quote" },
+    { label: "zero credits", price: { status: "known", credits: 0 } },
+    { label: "negative credits", price: { status: "known", credits: -1 } },
+    { label: "infinite credits", price: { status: "known", credits: Infinity } },
+    { label: "NaN credits", price: { status: "known", credits: NaN } },
+  ] as const)("keeps the generic warning for $label", ({ label: _label, ...quote }) => {
+    const { container } = render(card({ confirmation: { ...confirmation, ...quote } }));
+    expect(screen.getByText("确认后会消耗积分。")).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/\d\s*积分|积分\s*\d/);
+  });
+
+  it("omits the credits line for deletion with a stray price", () => {
+    const deletion = {
+      ...confirmation,
+      kinds: ["delete_nodes"] satisfies CanvasConfirmation["kinds"],
+      targets: [confirmation.targets[0]],
+      price: { status: "known" as const, credits: 30 },
+    };
+    render(card({ confirmation: deletion }));
+    expect(screen.queryByText(/积分/)).not.toBeInTheDocument();
+  });
+
   it("submits the selected decision", () => {
     const onDecide = vi.fn();
     render(card({ onDecide }));

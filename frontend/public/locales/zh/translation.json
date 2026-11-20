@@ -987,6 +987,7 @@
         },
         "separator": "、",
         "credits": "确认后会消耗积分。",
+        "creditsAmount": "确认后会消耗 {{credits}} 积分。",
         "expiresIn": "{{minutes}} 分钟内有效",
         "confirm": "确认执行",
         "refuse": "取消",

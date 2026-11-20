@@ -512,6 +512,18 @@ def _locked_record(directory: Path, confirmation_id: str) -> Iterator[dict]:
         yield record
 
 
+def save_price(directory: str | Path, confirmation_id: str, price: dict) -> None:
+    directory = Path(directory)
+    try:
+        with _locked_record(directory, confirmation_id) as record:
+            if record["status"] == "pending":
+                record["price"] = price
+                _save(directory, record)
+    except CanvasConfirmationError as exc:
+        if exc.code != "not_found":
+            raise
+
+
 def claim(
     directory: str | Path, confirmation_id: str, *, decision: Literal["confirmed", "refused"],
     via: Literal["card", "conversation"], username: str, agent_id: str, turn_id: str | None,

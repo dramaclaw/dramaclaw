@@ -987,6 +987,7 @@
         },
         "separator": ", ",
         "credits": "Confirming will consume credits.",
+        "creditsAmount": "Confirming will consume {{credits}} credits.",
         "expiresIn": "Valid for {{minutes}} min",
         "confirm": "Confirm",
         "refuse": "Cancel",
