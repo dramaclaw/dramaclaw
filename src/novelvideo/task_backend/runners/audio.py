@@ -235,12 +235,10 @@ async def _await_voice_design_result(storage: Any, candidate_id: str) -> dict[st
 async def _run_voice_design(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
-    import os
     from dataclasses import asdict
 
     from novelvideo.audio.voice_design_service import (
         VoiceDesignError,
-        ensure_voice_design_enabled,
         generate_voice_design,
         resolve_voice_design_config,
     )
@@ -267,13 +265,7 @@ async def _run_voice_design(
     if record["status"] != "generating" or record.get("claimed"):
         return await _await_voice_design_result(storage, candidate_id)
     try:
-        daily_limit = ensure_voice_design_enabled()
-        record = storage.claim(
-            candidate_id,
-            daily_limit=daily_limit,
-            channel_key=context.credential.credential_id,
-            channel_daily_limit=int(os.environ["VOICE_DESIGN_CHANNEL_DAILY_LIMIT"]),
-        )
+        record = storage.claim(candidate_id)
         if record is None:
             return await _await_voice_design_result(storage, candidate_id)
         config = await resolve_voice_design_config(

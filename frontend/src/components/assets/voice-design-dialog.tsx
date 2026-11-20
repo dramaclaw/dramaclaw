@@ -42,6 +42,7 @@ import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
 import { VoiceDesignRetentionHint } from "@/components/assets/voice-design-history";
 import { VoicePreview } from "@/components/assets/voice-design-preview";
 import { queryKeys } from "@/lib/query-keys";
+import { isCeRuntime } from "@/lib/runtime-config";
 import { matchesVoiceDesignModel } from "@/types/voice-design";
 import type {
   ExpectedVoiceSlot,
@@ -941,7 +942,9 @@ function VoiceDesignSession(props: Props) {
               : quote.isError
                 ? feedback(knownMessage(quote.error))
                 : quote.data
-                  ? t("voiceDesign.price", { price: quote.data.display })
+                  ? isCeRuntime()
+                    ? t("voiceDesign.gatewayPrice")
+                    : t("voiceDesign.price", { price: quote.data.display })
                   : t("voiceDesign.quoteLoading")}
           </p>
         </div>
