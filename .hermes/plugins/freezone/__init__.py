@@ -8420,12 +8420,16 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         args.get("generation_answers"),
         _remembered_generation_answers(project_id, canvas_id),
     )
+    shot_durations = []
     if generation_answers is not None:
+        shot_durations = _explicit_intent_shot_durations(intent)
         choices, answers_error = _generation_choices_from_answers(
-            generation_answers
+            generation_answers, allow_per_shot_duration=bool(shot_durations)
         )
         if answers_error is not None:
             return tool_result(answers_error)
+        if "video_model" not in choices or "video_duration_seconds" in choices:
+            shot_durations = []
         intent = _clone_json(intent)
         current_inputs = intent.get("inputs")
         intent["inputs"] = {
@@ -8435,6 +8439,19 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     compiled = compile_workflow_intent(intent)
     if not compiled.get("ok"):
         return tool_result(compiled)
+    if shot_durations and shot_durations != [
+        node["data"].get("durationSec") for node in _plan_video_nodes(compiled.get("plan"))
+    ]:
+        return tool_result({
+            "ok": False,
+            "status": "generation_answers_incomplete",
+            "error": "compiled video shots do not match the explicit durations",
+            "agent_instruction": (
+                "Preserve every planner unit and duration, or call "
+                "freezone_prepare_workflow_plan_draft with an explicit durationSec "
+                "for each videoNode. Reuse the confirmed generation answers."
+            ),
+        })
     preflight = _workflow_runtime_preflight(compiled, project_id=project_id)
     compiled["preflight"] = preflight
     if preflight["blockers"]:
@@ -8841,8 +8858,21 @@ def _plan_has_explicit_video_durations(plan: Any) -> bool:
     return bool(_plan_video_nodes(plan)) and not _video_nodes_missing_duration(plan)
 
 
+def _explicit_intent_shot_durations(intent: dict[str, Any]) -> list[int]:
+    if intent.get("items") or intent.get("shots"):
+        return []
+    planner = intent.get("planner")
+    units = _safe_list(planner.get("units")) if isinstance(planner, dict) else []
+    durations = [
+        unit.get("duration_seconds") if isinstance(unit, dict) else None for unit in units
+    ]
+    if all(type(duration) is int and 0 < duration <= 600 for duration in durations):
+        return durations
+    return []
+
+
 def _generation_choices_from_answers(
-    answers: Any, *, plan: Any = None,
+    answers: Any, *, plan: Any = None, allow_per_shot_duration: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     receipt_choices: Any = None
     if isinstance(answers, dict) and "answers" in answers:
@@ -8901,7 +8931,10 @@ def _generation_choices_from_answers(
             ):
                 for field in mandatory:
                     key = f"{media}_{field}"
-                    if key == "video_duration_seconds" and _plan_has_explicit_video_durations(plan):
+                    if key == "video_duration_seconds" and (
+                        _plan_has_explicit_video_durations(plan)
+                        or allow_per_shot_duration
+                    ):
                         continue
                     if key == "video_duration_seconds" and key not in choices:
                         missing_nodes = _video_nodes_missing_duration(plan)

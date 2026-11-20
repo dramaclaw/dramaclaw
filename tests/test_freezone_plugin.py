@@ -12787,3 +12787,51 @@ def test_landed_draft_scope_and_skill_guidance():
     assert schema["parameters"]["properties"]["scope"]["description"] == _LANDED_SCOPE_DESCRIPTION
     skill = Path("src/novelvideo/agent_skills/dramaclaw-workflows/SKILL.md").read_text()
     assert _LANDED_SKILL_LINE in skill.splitlines()
+
+
+@pytest.mark.parametrize(("item_count", "durations", "expected_error"), [
+    (4, [4, 4, 4, 3], None),
+    (4, [4, 4, 4, None], "missing generation answer: video_duration_seconds"),
+    (3, [4, 4, 4, 3], "compiled video shots do not match the explicit durations"),
+])
+def test_intent_draft_accepts_card_without_global_duration_for_explicit_shots(
+    monkeypatch, tmp_path, item_count, durations, expected_error,
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+
+    monkeypatch.setattr(plugin, "_workflow_runtime_preflight",
+                        lambda *_args, **_kwargs: {"blockers": []})
+    result = plugin._handle_prepare_workflow_draft({
+        "intent": {
+            "skill_id": "text-to-image-video", "user_goal": "15 秒红杯广告",
+            "planner": {
+                "mode": "standard", "item_count": item_count, "total_duration_seconds": 15,
+                "units": [
+                    {"title": f"镜头 {i}", "prompt": "红杯", "duration_seconds": seconds}
+                    for i, seconds in enumerate(durations)
+                ],
+            },
+        },
+        "generation_answers": {
+            "video_model": {"option_ids": ["happyhorse-1.0"]},
+            "video_aspect_ratio": {"option_ids": ["16:9"]},
+            "video_resolution": {"option_ids": ["720p"]},
+            "video_variants_per_node": {"option_ids": ["1"]},
+        },
+    })
+
+    if expected_error is not None:
+        assert result["ok"] is False
+        assert result["error"] == expected_error
+        return
+    assert result["ok"] is True, result
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=result["draft_id"]
+    )
+    assert error is None
+    assert [
+        node["data"]["durationSec"] for node in stored["compiled"]["plan"]["nodes"]
+        if node["node_type"] == "videoNode"
+    ] == durations
