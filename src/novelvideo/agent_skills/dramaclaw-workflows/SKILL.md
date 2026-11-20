@@ -376,9 +376,10 @@ and `freezone_patch_workflow_draft`; do not fall back to another write after an 
   target a workflow and asks to run, execute, continue, or resume it, call `freezone_run_workflow`
   directly without reading node detail first; never downgrade it to `freezone_run_node_action`.
 - Freezone speech uses custom/reference voices only; never select or generate with a preset/system
-  voice. Preserve an existing valid `voiceRef`. If no valid custom voice is selected, skip that
-  audio node without submitting TTS and continue the remaining workflow. Required voice-over or
-  composition speech is blocked during draft preflight instead of being admitted and skipped.
+  voice. Preserve an existing valid `voiceRef`. If requested speech lacks a valid custom voice,
+  ask the user in chat to select one, or to add a custom voice if none is available. Pause that
+  speech without submitting TTS. Independent steps may continue. Draft preflight blocks any
+  workflow that needs the missing voice-over or composition speech.
   Never select the first available voice automatically or open `open_voice_picker` unless the user
   explicitly requests it.
 - Treat `awaiting_approval`, `accepted`, and `running` as non-final states. Do not claim that canvas

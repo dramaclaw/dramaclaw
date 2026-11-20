@@ -502,16 +502,34 @@ def video_model_reselection_clarification(
     if not options:
         return None
 
-    planned_video_ids = {
-        str(node.get("id") or "")
-        for node in (compiled.get("plan") or {}).get("nodes") or []
+    video_nodes = [
+        node for node in (compiled.get("plan") or {}).get("nodes") or []
         if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    ]
+    video_by_id = {
+        str(node.get("id") or ""): (index, node)
+        for index, node in enumerate(video_nodes, start=1)
     }
     affected_node_ids = []
+    duration_conflicts = []
     for blocker in relevant:
-        node_id = _blocker_node_id(str(blocker.get("path") or ""))
-        if node_id in planned_video_ids and node_id not in affected_node_ids:
+        path = str(blocker.get("path") or "")
+        node_id = _blocker_node_id(path)
+        if node_id not in video_by_id:
+            continue
+        if node_id not in affected_node_ids:
             affected_node_ids.append(node_id)
+        if not path.endswith(".durationSec"):
+            continue
+        index, node = video_by_id[node_id]
+        duration = (node.get("data") or {}).get("durationSec")
+        if not isinstance(duration, (int, float)):
+            continue
+        minimum, maximum = blocker.get("minimum"), blocker.get("maximum")
+        if isinstance(minimum, (int, float)) and duration < minimum:
+            duration_conflicts.append(f"第 {index} 镜为 {duration:g} 秒，所选模型最少需要 {minimum:g} 秒。")
+        elif isinstance(maximum, (int, float)) and duration > maximum:
+            duration_conflicts.append(f"第 {index} 镜为 {duration:g} 秒，所选模型最多支持 {maximum:g} 秒。")
     if not affected_node_ids:
         return None
 
@@ -529,8 +547,8 @@ def video_model_reselection_clarification(
             "id": "compatible_video_model",
             "title": "确认兼容的视频模型",
             "prompt": (
-                "当前选择的视频模型不能同时满足参考模式和镜头时长。切换模型可能影响"
-                "成本或效果，请确认替代模型。"
+                ("".join(duration_conflicts) or "当前选择的视频模型与已确认的镜头参数不兼容。")
+                + "切换模型可能影响成本或效果，请确认替代模型。"
             ),
             "mode": "single",
             "options": options,

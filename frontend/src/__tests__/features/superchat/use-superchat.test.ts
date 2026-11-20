@@ -6954,6 +6954,23 @@ describe("tool status parts", () => {
     })).toBe("待重新整理 Skill 方案");
   });
 
+  it("shows a model choice instead of a generated draft when preflight needs a decision", () => {
+    const toolMessage = (toolCard({
+      turn_id: "turn-a",
+      call_id: "call-model-choice",
+      name: "freezone_prepare_workflow_plan_draft",
+      status: "completed",
+      result_json: { ok: true, status: "video_model_clarification_required", draft_created: false },
+    }) as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: zhT,
+      status: "done",
+      title: genericToolTitleForTest(toolMessage),
+      toolMessage,
+    })).toBe("等待选择生成参数");
+  });
+
   it("uses friendly labels for Workflow Skill draft tool status", () => {
     const prepareCompleted = (toolCard({
       turn_id: "turn-a",

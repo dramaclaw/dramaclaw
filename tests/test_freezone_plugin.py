@@ -7320,6 +7320,8 @@ def test_prepare_exact_plan_only_offers_models_matching_every_shot_constraint(
                     "path": "runtime.models.shot-2.durationSec",
                     "code": "model_capability_unsupported",
                     "message": "selected does not support the shot duration",
+                    "minimum": 4,
+                    "maximum": 6,
                     "compatible_models": ["compatible", "duration-only"],
                     "recovery": "choose_compatible_model",
                 },
@@ -7354,6 +7356,7 @@ def test_prepare_exact_plan_only_offers_models_matching_every_shot_constraint(
     assert result["draft_created"] is False
     assert [option["id"] for option in result["question"]["options"]] == ["compatible"]
     assert requests == [("GET", "/projects/project-a/freezone/video/models")]
+    assert "第 2 镜为 8 秒，所选模型最多支持 6 秒" in result["question"]["prompt"]
     assert plan == original_plan
 
 
