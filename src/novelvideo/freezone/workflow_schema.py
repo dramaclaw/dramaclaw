@@ -929,6 +929,16 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "Use the declared JSON scalar types for the stable controls."
                 ),
                 "properties": {
+                    "audio_voice_ref": {
+                        "type": "object",
+                        "description": "Already selected custom voice shared by speech nodes. Use the user's exact voice ID.",
+                        "properties": {
+                            "scope": {"const": "user_custom"},
+                            "voiceId": {"type": "string", "pattern": r"\S"},
+                        },
+                        "required": ["scope", "voiceId"],
+                        "additionalProperties": False,
+                    },
                     "aspect_ratio": {"type": "string", "minLength": 1},
                     "image_aspect_ratio": {"type": "string", "minLength": 1},
                     "image_model": {"type": "string", "minLength": 1},
@@ -947,6 +957,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "video_generate_audio": {"type": "boolean"},
                     "video_generation_mode": {
                         "type": "string",
+                        "description": "Confirmed video mode. When shots consume image references, use a reference-capable mode supported by the selected model.",
                         "enum": list(PORTABLE_VIDEO_GENERATION_MODES),
                     },
                     "video_model": {"type": "string", "minLength": 1},

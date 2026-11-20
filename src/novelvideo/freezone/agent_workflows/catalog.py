@@ -1470,6 +1470,7 @@ def _compile_isomorphic_plan_through_template(
     return compiled, match
 
 _UNIVERSAL_GENERATION_INPUT_KEYS = {
+    "audio_voice_ref",
     "aspect_ratio",
     "image_aspect_ratio",
     "image_model",
@@ -1508,6 +1509,16 @@ def _portable_generation_input_error(parameter_id: str, value: Any) -> str | Non
                 str(item) for item in sorted(_PORTABLE_GENERATION_VARIANT_COUNTS)
             )
             return f"unsupported option: {value}; supported values: {supported}"
+        return None
+    if parameter_id == "audio_voice_ref":
+        if (
+            not isinstance(value, dict)
+            or value.keys() != {"scope", "voiceId"}
+            or value["scope"] != "user_custom"
+            or not isinstance(value["voiceId"], str)
+            or not value["voiceId"].strip()
+        ):
+            return "must contain scope=user_custom and a non-empty voiceId"
         return None
     if parameter_id == "video_duration_seconds":
         if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -4037,7 +4048,10 @@ def _intent_item_node(
         else:
             data["audioKind"] = "speech"
             data["speechMode"] = "clone"
-            data["voiceAvailable"] = False
+            voice_ref = resolved_inputs.get("audio_voice_ref")
+            if voice_ref is not None:
+                data["voiceRef"] = dict(voice_ref)
+            data["voiceAvailable"] = voice_ref is not None
             data["languageType"] = "Chinese"
     if node_type == "htmlArtifactNode":
         data = {

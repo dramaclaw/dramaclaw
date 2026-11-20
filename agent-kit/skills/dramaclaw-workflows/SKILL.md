@@ -165,6 +165,12 @@ to choose system voice versus custom voice. A speech node uses an already select
 completion. A plan that requires that speech as voice-over or composition input must not be ready
 until a valid `voiceRef` is bound.
 
+For a compact Intent, copy the user's selected custom voice as
+`inputs.audio_voice_ref={"scope":"user_custom","voiceId":"<selected ID>"}`. Pass the
+confirmed `inputs.video_generation_mode` for workflows consuming image references. If the
+requested workflow needs references and no compatible mode is confirmed, clarify before preparing
+the draft. Preserve the user's exact narration and shot durations in `planner.units`.
+
 For an exact Plan, put audio settings inside `node.data`. Use the selected voice reference:
 `{"audioKind":"speech","voiceRef":{"scope":"user_custom","voiceId":"<selected ID>"}}`.
 `voice_ref` is also accepted; preparation normalizes the selection consistently with revision.

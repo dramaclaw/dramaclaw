@@ -6113,3 +6113,43 @@ def test_compose_plan_reports_sub_frame_video_trim_in_milliseconds():
     )
     track["clips"][0]["trimEndMs"] = 5000
     assert validate_workflow_plan(plan)["ok"]
+
+
+def test_quick_drama_intent_binds_selected_voice_and_mode(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    ref = {"scope": "user_custom", "voiceId": "selected-voice"}
+    intent = {
+        "skill_id": "short-drama-quick",
+        "user_goal": "两镜头短剧",
+        "inputs": {
+            "visual_style": "温暖写实",
+            "video_generation_mode": "imageReference",
+            "audio_voice_ref": ref,
+        },
+        "include_audio": True,
+        "planner": {
+            "mode": "standard",
+            "item_count": 2,
+            "units": [
+                {"title": "开场", "duration_seconds": 7, "narration": "她推开门。"},
+                {"title": "结尾", "duration_seconds": 8, "narration": "她决定留下。"},
+            ],
+        },
+    }
+
+    result = catalog.compile_workflow_intent(intent)
+    assert result["ok"], result
+    nodes = [node["data"] for node in result["plan"]["nodes"]]
+    speech = [data for data in nodes if data.get("audioKind") == "speech"]
+    assert [data.get("voiceRef") for data in speech] == [ref, ref]
+    assert all(data.get("voiceAvailable") is True for data in speech)
+    assert [data["genMode"] for data in nodes if "genMode" in data] == [
+        "imageReference", "imageReference",
+    ]
+    assert all("voiceRef" not in data for data in nodes if data.get("audioKind") == "music")
+
+    intent["inputs"]["audio_voice_ref"] = {"scope": "user_custom", "voiceId": " "}
+    invalid = catalog.compile_workflow_intent(intent)
+    assert not invalid["ok"]
+    assert invalid["errors"][0]["path"] == "inputs.audio_voice_ref"
