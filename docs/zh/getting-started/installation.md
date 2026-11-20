@@ -116,9 +116,10 @@ API 启动时会记录 `canvas_core unavailable` 警告，创建画布会返回 
 能否执行，但不能据此证明它带有凭据保护补丁，请勿用官方原版 Codex CLI 替代。
 下载或校验失败时，脚本会在启动服务前退出，不会回退到其他后端。
 
-v2.1.1 Docker 构建已内置凭据保护版 Codex 0.164.0。源码和发布版 Compose 均默认选择 Codex；
-如显式设置 `DRAMACLAW_CHAT_BACKEND`，请保持为 `codex`。
-上面本地 Python 命令中的 `CODEX_BIN` 是宿主机路径，不是容器内路径。
+从当前源码构建的 Docker 镜像内置凭据保护版 Codex 0.162.0（`926a8f2`），与 Claymore Piko 共用同一构建，
+工具输出的图片保留原始尺寸。已发布的 v2.1.1 镜像内置 Codex 0.164.0。源码和发布版 Compose 均默认选择 Codex。
+如需显式选择 Codex，请设置 `DRAMACLAW_CHAT_BACKEND=codex`。
+上面本地 Python 命令中的 `CODEX_BIN` 指向宿主机上的二进制文件。
 CE 默认 `ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
 
 ### 3. 验证

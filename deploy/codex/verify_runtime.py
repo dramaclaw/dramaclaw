@@ -33,6 +33,7 @@ def verify_runtime(
             raise ValueError(f"Codex runtime {key} mismatch")
     if ref_file.read_text(encoding="utf-8").strip() != ref:
         raise ValueError("Codex runtime ref file mismatch")
+    # Shared builds can include other gates, such as tool-output image tests.
     if not REQUIRED_TESTS.issubset(manifest.get("tests", [])):
         raise ValueError("Codex runtime is missing credential-safety test evidence")
     if binary.stat().st_size != manifest.get("bytes"):

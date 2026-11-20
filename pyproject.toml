@@ -24,7 +24,7 @@ dependencies = [
     "pydantic-ai-slim[anthropic,google,openai,openrouter]==1.107.0",
     "openai>=2.29.0",
     # Keep the tested Python SDK protocol pin independent of CODEX_BIN. Docker
-    # ships the credential-safe 0.164.0 runtime; do not use the SDK's stock binary.
+    # uses the credential-safe runtime pinned in Dockerfile.
     "openai-codex @ git+https://github.com/openai/codex.git@25b5957f0e263fbf48e0b8844ba764a9841162c4#subdirectory=sdk/python",
     "pydantic>=2.0.0",
     "psycopg[binary]>=3.2.0",

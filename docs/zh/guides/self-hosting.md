@@ -67,7 +67,8 @@ DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
 docker compose -f docker-compose.release.yml config --images
 ```
 
-v2.1.1 的发布版和源码 Compose 均默认选择镜像内置的凭据保护版 Codex 0.164.0。
+发布版和源码 Compose 均默认选择镜像内置的凭据保护版 Codex。当前源码构建使用与 Claymore Piko 共用的
+Codex 0.162.0（`926a8f2`）。已发布的 v2.1.1 镜像内置 Codex 0.164.0。
 终端环境或 `.env` 中显式设置的 `DRAMACLAW_CHAT_BACKEND` 会覆盖默认值；
 若旧配置选择了其他后端，请改为 `codex`。
 虾导后端的选择不等于模型网关模式的选择，

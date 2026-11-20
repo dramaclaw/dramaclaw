@@ -67,11 +67,11 @@ version clear. Check the resolved images without starting anything:
 docker compose -f docker-compose.release.yml config --images
 ```
 
-Both release and source Compose select the bundled credential-safe Codex 0.164.0 runtime
-at v2.1.1 by default. An explicit `DRAMACLAW_CHAT_BACKEND` value in your shell or `.env`
-overrides the Compose default; use `codex` if an older configuration selects another backend.
-Agent backend selection
-does not select your Official/Custom/Hybrid model gateway mode; configure that in the UI.
+Both release and source Compose select the bundled credential-safe Codex runtime by
+default. Images built from this source ship Codex 0.162.0 (`926a8f2`), shared with Claymore
+Piko. The published v2.1.1 image ships Codex 0.164.0. To override the Compose default, set
+`DRAMACLAW_CHAT_BACKEND` in your shell or `.env`. Use `codex` if an older configuration
+selects another backend. Choose your Official/Custom/Hybrid model gateway mode separately in the UI.
 
 Source builds use the local checkout's Dockerfile and code. Setting `DRAMACLAW_VERSION`
 does not upgrade a source build or change its Codex pin; pull the desired code and rebuild.
