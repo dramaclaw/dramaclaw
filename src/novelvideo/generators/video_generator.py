@@ -3149,7 +3149,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 # must not submit another one.  Release what the receipt
                 # reserved and drop it, so the job ends instead of failing the
                 # same way on every redelivery.
-                log(f"已受理视频任务无法继续查询: {receipt_error}")
+                log(f"Accepted video job cannot be resumed: {receipt_error}")
                 if reservation_id:
                     await _refund_video_model_call(
                         reservation_id,
@@ -3161,7 +3161,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 try:
                     receipt_path.unlink(missing_ok=True)
                 except OSError as exc:
-                    log(f"已受理视频任务凭据清理失败: {type(exc).__name__}")
+                    log(f"Accepted video job receipt cleanup failed: {type(exc).__name__}")
                 return VideoGenResult(
                     status=VideoGenStatus.FAILED,
                     error=receipt_error,
