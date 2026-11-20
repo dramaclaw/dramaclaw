@@ -17,7 +17,7 @@ import { ClipBar, PREVIZ_TRACK_HEADER_PX } from './PrevizTimelineTrack';
 import { PrevizHoverTip } from './PrevizHoverTip';
 
 const ICON_BUTTON =
-  'flex h-6 w-6 shrink-0 items-center justify-center rounded text-[#8b93a3] hover:bg-[#2a2f3a] hover:text-[#c7cedb] disabled:opacity-30 disabled:hover:bg-transparent';
+  'flex h-6 w-6 shrink-0 items-center justify-center rounded text-white/50 hover:bg-white/[0.07] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent';
 
 /** 循环分隔线之间至少隔这么多像素；缩得再小就是一片白，不如不画。 */
 const MIN_LOOP_SPACING_PX = 4;
@@ -93,12 +93,12 @@ export function PrevizActionRow({
   );
 
   return (
-    <div data-testid="previz-action-row" className="flex h-8 items-stretch bg-[#12151b]">
+    <div data-testid="previz-action-row" className="flex h-8 items-stretch bg-neutral-950/60">
       <div
-        className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#12151b] pl-6 pr-2"
+        className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-neutral-950/60 pl-6 pr-2"
         style={{ width: PREVIZ_TRACK_HEADER_PX }}
       >
-        <span className="min-w-0 flex-1 truncate text-[11px] text-[#8b93a3]">{t('previz.motion.row')}</span>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-white/50">{t('previz.motion.row')}</span>
         <PrevizHoverTip label={t('previz.motion.razor')}>
           <button
             type="button"
@@ -128,7 +128,7 @@ export function PrevizActionRow({
         {clips.length === 0 && (
           <button
             type="button"
-            className="absolute left-1 top-1 h-6 rounded border border-dashed border-[#3a4252] px-2 text-[11px] text-[#6d7585] hover:border-[#3fae5f] hover:text-[#c7cedb]"
+            className="absolute left-1 top-1 h-6 rounded border border-dashed border-white/15 px-2 text-[11px] text-white/40 hover:border-[#3fae5f] hover:text-white"
             onClick={onAdd}
           >
             {t('previz.motion.add')}

@@ -10,8 +10,9 @@ import { PrevizSelect } from './PrevizSelect';
 
 /** 表头那只下拉。样式串太长，拆到行内会把 JSX 挤过 100 列，提成常量。 */
 const CUT_PICKER =
-  'h-6 max-w-[104px] rounded border border-white/10 bg-white/[0.04] px-1 text-[11px] ' +
-  'text-white/80 outline-none focus:border-white/25 disabled:opacity-40';
+  'h-6 max-w-[104px] rounded-md border border-white/[0.06] bg-white/[0.04] px-1.5 text-[11px] ' +
+  'text-white/80 outline-none transition-colors duration-150 hover:border-white/[0.12] ' +
+  'focus:border-white/25 disabled:opacity-40';
 
 /** 空轨提示：只是一行字，pointer-events-none 让点击穿过去落到轨道区上。 */
 const EMPTY_HINT =
@@ -60,10 +61,10 @@ export function PrevizProgramTrack({
   return (
     <div
       data-testid="previz-program-track"
-      className="flex h-8 items-stretch border-b border-[#1c202a]"
+      className="flex h-8 items-stretch border-b border-white/[0.06]"
     >
       <div
-        className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
+        className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-white/[0.06] bg-neutral-900 pl-1 pr-2"
         style={{ width: PREVIZ_TRACK_HEADER_PX }}
       >
         {/*
@@ -72,7 +73,7 @@ export function PrevizProgramTrack({
         */}
         <span aria-hidden="true" className="h-6 w-6 shrink-0" />
         <SwitchCamera className="h-3.5 w-3.5 shrink-0 text-[#d69a24]" />
-        <span className="min-w-0 flex-1 truncate text-xs text-[#c7cedb]">
+        <span className="min-w-0 flex-1 truncate text-xs text-white/80">
           {t('previz.program.title')}
         </span>
         {/* title 只裹住下拉本身：挂在整条表头上，鼠标划过图标与行名也会弹，读起来像在说这一行。 */}

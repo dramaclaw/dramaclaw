@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "catalogVersion": "2026.10.08.1",
+  "catalogVersion": "2026.11.19.1",
   "name": "DramaClaw CE official media models",
   "mediaModels": {
     "LingShan-G2": {
@@ -409,6 +409,64 @@
       "aliases": [],
       "config": {
         "request": {"endpoint": "chat/completions", "parameters": []}
+      }
+    },
+    "voice-enrollment": {
+      "provider": "newapi",
+      "upstreamModel": "voice-enrollment",
+      "mediaType": "audio",
+      "label": "CosyVoice",
+      "enabled": true,
+      "sortOrder": 10,
+      "config": {
+        "request": {"endpoint": "audio/voice-designs", "parameters": []},
+        "targetModel": "cosyvoice-v3.5-flash"
+      }
+    },
+    "cosyvoice-v3.5-flash": {
+      "provider": "newapi",
+      "upstreamModel": "cosyvoice-v3.5-flash",
+      "mediaType": "audio",
+      "label": "CosyVoice 3.5 Flash",
+      "enabled": true,
+      "sortOrder": 11,
+      "config": {
+        "request": {"endpoint": "audio/speech", "parameters": []}
+      }
+    },
+    "qwen-voice-design": {
+      "provider": "newapi",
+      "upstreamModel": "qwen-voice-design",
+      "mediaType": "audio",
+      "label": "Qwen Voice Design",
+      "enabled": true,
+      "sortOrder": 12,
+      "config": {
+        "request": {"endpoint": "audio/voice-designs", "parameters": []},
+        "targetModel": "qwen3-tts-vd-2026-01-26"
+      }
+    },
+    "qwen3-tts-vd-2026-01-26": {
+      "provider": "newapi",
+      "upstreamModel": "qwen3-tts-vd-2026-01-26",
+      "mediaType": "audio",
+      "label": "Qwen TTS Voice Design",
+      "enabled": true,
+      "sortOrder": 13,
+      "config": {
+        "request": {"endpoint": "audio/speech", "parameters": []}
+      }
+    },
+    "seed-audio-1.0": {
+      "provider": "newapi",
+      "upstreamModel": "seed-audio-1.0",
+      "mediaType": "audio",
+      "label": "Seed Audio",
+      "enabled": true,
+      "sortOrder": 14,
+      "config": {
+        "request": {"endpoint": "audio/speech", "parameters": []},
+        "voiceDesignMode": "prompted_speech"
       }
     }
   }

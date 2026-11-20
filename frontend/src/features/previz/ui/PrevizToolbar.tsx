@@ -28,6 +28,14 @@ import { PrevizHoverTip } from "@/features/previz/ui/PrevizHoverTip";
 import { PrevizKeyCap } from "@/features/previz/ui/PrevizKeyCap";
 import { cn } from "@/lib/utils";
 
+import {
+  PREVIZ_FLOAT_PANEL,
+  PREVIZ_HAIRLINE,
+  PREVIZ_ICON_ITEM,
+  PREVIZ_ICON_ON,
+  PREVIZ_KEYCAP_CORNER,
+} from "./previzChrome";
+
 /**
  * 视口里的工具，照 Blender 的模型做成**一条互斥列表**：任意时刻只有一颗亮。
  *
@@ -154,8 +162,8 @@ export interface PrevizToolbarProps {
   onTimelineOpen: (open: boolean) => void;
 }
 
-const RAIL_ITEM = "text-white/80 hover:bg-white/10 hover:text-white";
-const RAIL_ON = "bg-white/15 text-white hover:bg-white/20";
+const RAIL_ITEM = PREVIZ_ICON_ITEM;
+const RAIL_ON = PREVIZ_ICON_ON;
 
 /**
  * `disabled:pointer-events-auto` 是故意覆盖 buttonVariants 的 `disabled:pointer-events-none`：
@@ -219,7 +227,11 @@ function RailButton({
         aria-pressed={on}
       >
         <Icon className="h-4 w-4" />
-        {shortcut && <PrevizKeyCap className="absolute -right-1 -top-1">{shortcut}</PrevizKeyCap>}
+        {shortcut && (
+          <PrevizKeyCap className={PREVIZ_KEYCAP_CORNER}>
+            {shortcut}
+          </PrevizKeyCap>
+        )}
       </Button>
     </PrevizHoverTip>
   );
@@ -243,7 +255,7 @@ function RailGroup({ label, children }: { label: string; children: ReactNode }) 
 }
 
 function RailDivider() {
-  return <div className="my-1 h-px shrink-0 bg-white/10" />;
+  return <div className={cn("mx-1 my-1.5 h-px shrink-0", PREVIZ_HAIRLINE)} />;
 }
 
 /**
@@ -305,7 +317,7 @@ export function PrevizToolbar({
         动作库）：它们开着时面板照样能点，`handleAdd` 靠的就是这一点——点另一个加号先把
         当前浮层收掉再开新的。
       */}
-      <div className="absolute left-4 top-4 z-30 flex max-h-[calc(100%-2rem)] flex-col rounded-xl border border-white/10 bg-black/55 backdrop-blur-sm">
+      <div className={cn("absolute left-4 top-4 z-30 flex max-h-[calc(100%-2rem)] flex-col rounded-2xl", PREVIZ_FLOAT_PANEL)}>
         {/*
           内边距放在滚动层上而不是外框上：角标探出按钮右上角 4px，而 CSS Overflow 规定
           overflow-y 一旦不是 visible，overflow-x 会跟着变成 auto——滚动层要是贴着按钮边，

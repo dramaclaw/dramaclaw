@@ -12,7 +12,7 @@ export function PrevizKeyCap({ children, className }: { children: string; classN
     <kbd
       aria-hidden
       className={cn(
-        "pointer-events-none inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full border border-white/20 bg-black/80 px-1 font-sans text-[9px] font-medium leading-none text-white/75",
+        "pointer-events-none inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-neutral-800 px-1 font-sans text-[9px] font-medium leading-none text-neutral-500 ring-1 ring-white/10",
         className,
       )}
     >

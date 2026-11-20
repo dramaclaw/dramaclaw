@@ -13,14 +13,14 @@ import type { PendingAudioClip, PrevizUpstreamAudio } from './useAudioImport';
 
 /** 样式串太长，写在 JSX 里会把行挤过 100 列，提成常量。以下四个同理。 */
 const ICON_BUTTON =
-  'flex h-6 w-6 items-center justify-center rounded text-[#8b93a5] hover:bg-[#2a2f3a] ' +
+  'flex h-6 w-6 items-center justify-center rounded text-white/50 hover:bg-white/[0.07] ' +
   'hover:text-white disabled:opacity-40 disabled:hover:bg-transparent';
 
 const MENU =
-  'absolute left-6 top-7 z-40 flex min-w-44 flex-col rounded border border-[#2f3542] ' +
-  'bg-[#1d222b] py-1 shadow-lg';
+  'absolute left-6 top-7 z-40 flex min-w-44 flex-col rounded-lg border border-white/10 ' +
+  'bg-[var(--ui-surface-modal)] p-1 shadow-[var(--ui-shadow-panel)]';
 
-const MENU_ITEM = 'px-2 py-1 text-left text-xs text-[#c7cedb] hover:bg-[#2a2f3a]';
+const MENU_ITEM = 'rounded-md px-2 py-1 text-left text-xs text-white/80 hover:bg-white/[0.07]';
 
 const PENDING_BAR =
   'absolute top-1 flex h-6 items-center overflow-hidden rounded border border-dashed ' +
@@ -92,11 +92,11 @@ export function PrevizAudioTrack({
   return (
     <div
       data-testid="previz-audio-track"
-      className="flex h-8 items-stretch border-b border-[#1c202a]"
+      className="flex h-8 items-stretch border-b border-white/[0.06]"
     >
       <div
         ref={header}
-        className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
+        className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-white/[0.06] bg-neutral-900 pl-1 pr-2"
         style={{ width: PREVIZ_TRACK_HEADER_PX }}
       >
         {/*
@@ -127,11 +127,11 @@ export function PrevizAudioTrack({
               视觉上那行字标成装饰，免得读屏念两遍。
             */}
             <div role="group" aria-label={t('previz.audio.upstream')} className="flex flex-col">
-              <span aria-hidden="true" className="px-2 pb-0.5 pt-1 text-[10px] text-[#6d7585]">
+              <span aria-hidden="true" className="px-2 pb-0.5 pt-1 text-[10px] text-white/40">
                 {t('previz.audio.upstream')}
               </span>
               {upstreamAudio.length === 0 && (
-                <span className="px-2 py-1 text-[11px] text-[#6d7585]">
+                <span className="px-2 py-1 text-[11px] text-white/40">
                   {t('previz.audio.noUpstream')}
                 </span>
               )}
@@ -166,7 +166,7 @@ export function PrevizAudioTrack({
           }}
         />
         <AudioLines className="h-3.5 w-3.5 shrink-0 text-[#37b39c]" />
-        <span className="min-w-0 flex-1 truncate text-xs text-[#c7cedb]">
+        <span className="min-w-0 flex-1 truncate text-xs text-white/80">
           {t('previz.audio.title')}
         </span>
         <span title={hint} className="flex shrink-0">

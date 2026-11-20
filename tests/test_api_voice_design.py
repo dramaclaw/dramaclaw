@@ -444,7 +444,7 @@ def test_openapi_exports_input_limits_discriminators_and_errors(client):
 
 
 @pytest.fixture
-def production_api(tmp_path, monkeypatch):
+def production_api(tmp_path, monkeypatch, request):
     import sys
     from types import SimpleNamespace
     from fastapi import FastAPI
@@ -551,16 +551,17 @@ def production_api(tmp_path, monkeypatch):
         if state.queue_error:
             raise RuntimeError("secret provider key")
 
-    monkeypatch.setitem(
-        sys.modules,
-        "novelvideo.audio.voice_design_service",
-        SimpleNamespace(
-            ensure_voice_design_enabled=enabled,
-            resolve_voice_design_config=config,
-            list_voice_design_configs=list_configs,
-            VoiceDesignError=ServiceError,
-        ),
-    )
+    if getattr(request, "param", None) != "real_service":
+        monkeypatch.setitem(
+            sys.modules,
+            "novelvideo.audio.voice_design_service",
+            SimpleNamespace(
+                ensure_voice_design_enabled=enabled,
+                resolve_voice_design_config=config,
+                list_voice_design_configs=list_configs,
+                VoiceDesignError=ServiceError,
+            ),
+        )
     monkeypatch.setattr(module, "resolve_project_context", resolve)
     monkeypatch.setattr(
         module,
@@ -1659,6 +1660,59 @@ def test_selected_model_is_persisted_and_replay_survives_catalog_removal(
         s.client.post(s.url, json={**body, "config_digest": "0" * 64}).status_code
         == 409
     )
+
+
+@pytest.mark.parametrize("production_api", ["real_service"], indirect=True)
+@pytest.mark.parametrize(
+    "model, target",
+    [
+        ("voice-enrollment", "cosyvoice-v3.5-flash"),
+        ("qwen-voice-design", "qwen3-tts-vd-2026-01-26"),
+        ("seed-audio-1.0", None),
+    ],
+)
+def test_ce_official_voice_design_catalog_can_submit(
+    production_api, monkeypatch, tmp_path, model, target
+):
+    from novelvideo import config
+    from novelvideo.audio import voice_design_service as service
+    from novelvideo.ports.registry import PortNotRegistered
+
+    def missing_catalog(name):
+        raise PortNotRegistered(name)
+
+    monkeypatch.setattr(service, "get_port", missing_catalog)
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path)
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.setenv("VOICE_DESIGN_ENABLED", "1")
+    monkeypatch.setenv("VOICE_DESIGN_DAILY_LIMIT", "20")
+    monkeypatch.setenv("VOICE_DESIGN_CHANNEL_DAILY_LIMIT", "20")
+    monkeypatch.delenv("VOICE_DESIGN_TEST_REPLAY", raising=False)
+
+    s = production_api
+    listing = s.client.get(s.url.removesuffix("/candidates") + "/models")
+    assert listing.status_code == 200
+    selected = next(
+        item for item in listing.json()["data"]["models"] if item["model"] == model
+    )
+    assert selected["target_model"] == (
+        {"catalog_id": target, "model": target} if target else None
+    )
+
+    candidate = s.client.post(
+        s.url,
+        json={
+            **CREATE,
+            "catalog_id": selected["catalog_id"],
+            "config_digest": selected["config_digest"],
+        },
+    )
+    assert candidate.status_code == 202
+    assert candidate.json()["data"]["model"] == selected
+    billing_config = s.calls[0]["payload"]["billing"]["voice_design_config"]
+    assert billing_config["model"] == model
+    assert billing_config.get("target_model") == target
+    assert billing_config["config_digest"] == selected["config_digest"]
 
 
 def test_create_requires_selected_catalog_and_current_digest(production_api):

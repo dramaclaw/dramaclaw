@@ -31,7 +31,7 @@ import { PrevizHoverTip } from './PrevizHoverTip';
 export const PREVIZ_TRACK_HEADER_PX = 240;
 
 const ICON_BUTTON =
-  'flex h-6 w-6 shrink-0 items-center justify-center rounded text-[#8b93a3] hover:bg-[#2a2f3a] hover:text-[#c7cedb] disabled:opacity-30 disabled:hover:bg-transparent';
+  'flex h-6 w-6 shrink-0 items-center justify-center rounded text-white/50 hover:bg-white/[0.07] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent';
 
 /*
   剃刀、置顶、删除是低频操作：平时藏起来，鼠标停在这一行或焦点落进来才显形。
@@ -166,10 +166,10 @@ export function PrevizTimelineTrack({
   const lastEnd = clips.reduce((end, clip) => Math.max(end, clip.endFrame), 0);
 
   return (
-    <li aria-label={name} className="border-b border-[#1c202a]">
+    <li aria-label={name} className="border-b border-white/[0.06]">
       <div className="group/track flex h-8 items-stretch">
         <div
-          className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
+          className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-white/[0.06] bg-neutral-900 pl-1 pr-2"
           style={{ width: PREVIZ_TRACK_HEADER_PX }}
         >
           {hasKeyframes ? (
@@ -187,8 +187,8 @@ export function PrevizTimelineTrack({
             // 没有路径行可展开时不摆箭头，留出同样的宽度让图标与标题和别的轨道对齐。
             <span aria-hidden="true" className="h-6 w-6 shrink-0" />
           )}
-          <KindIcon className="h-3.5 w-3.5 shrink-0 text-[#6d7585]" />
-          <span className="min-w-0 flex-1 truncate text-xs text-[#c7cedb]">{name}</span>
+          <KindIcon className="h-3.5 w-3.5 shrink-0 text-white/40" />
+          <span className="min-w-0 flex-1 truncate text-xs text-white/80">{name}</span>
           {/* 直播标、切换机位、跟拍都只对机位轨有意义，同一个判断管三个。 */}
           {kind === 'camera' && (
             <>
@@ -232,16 +232,16 @@ export function PrevizTimelineTrack({
                 <PopoverContent
                   data-testid="previz-closeup-menu"
                   sideOffset={4}
-                  className="flex max-h-64 w-auto min-w-40 flex-col overflow-y-auto rounded border border-[#2f3542] bg-[#1d222b] p-0 py-1 shadow-lg ring-0"
+                  className="flex max-h-64 w-auto min-w-40 flex-col overflow-y-auto rounded-lg border border-white/10 bg-[var(--ui-surface-modal)] p-1 shadow-[var(--ui-shadow-panel)] ring-0"
                 >
-                  <span className="px-2 py-0.5 text-[10px] text-[#6d7585]">
+                  <span className="px-2 py-0.5 text-[10px] text-white/40">
                     {t('previz.timeline.closeupTarget')}
                   </span>
                   {closeupTargets.map((target) => (
                     <button
                       key={target.objectId}
                       type="button"
-                      className="px-2 py-1 text-left text-xs text-[#c7cedb] hover:bg-[#2a2f3a]"
+                      className="px-2 py-1 text-left text-xs text-white/80 hover:bg-white/[0.07]"
                       onClick={() => {
                         setPicking(false);
                         onAddCloseup(target);
@@ -324,7 +324,7 @@ export function PrevizTimelineTrack({
               type="button"
               aria-label={t('previz.timeline.appendClip')}
               title={t('previz.timeline.appendClip')}
-              className="absolute top-1 flex h-6 w-6 items-center justify-center rounded border border-dashed border-[#3a4252] text-[#6d7585] hover:border-[#5b8cff] hover:text-[#c7cedb]"
+              className="absolute top-1 flex h-6 w-6 items-center justify-center rounded border border-dashed border-white/15 text-white/40 hover:border-white/30 hover:text-white"
               style={{ left: lastEnd * pxPerFrame + 4 }}
               onClick={onAppend}
             >
@@ -335,12 +335,12 @@ export function PrevizTimelineTrack({
       </div>
 
       {expanded && hasKeyframes && (
-        <div className="flex h-7 items-stretch bg-[#12151b]">
+        <div className="flex h-7 items-stretch bg-neutral-950/60">
           <div
-            className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#12151b] pl-6 pr-2"
+            className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-white/[0.06] bg-neutral-900 pl-6 pr-2"
             style={{ width: PREVIZ_TRACK_HEADER_PX }}
           >
-            <span className="min-w-0 flex-1 truncate text-[11px] text-[#8b93a3]">
+            <span className="min-w-0 flex-1 truncate text-[11px] text-white/50">
               {t('previz.timeline.motionPath')}
             </span>
             <PrevizHoverTip label={t('previz.timeline.prevKeyframe')}>

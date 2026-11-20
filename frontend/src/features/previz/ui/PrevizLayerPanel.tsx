@@ -6,6 +6,7 @@ import {
   Camera,
   Eye,
   EyeOff,
+  Layers,
   Lightbulb,
   Lock,
   LockOpen,
@@ -89,7 +90,7 @@ function LayerRowButton({
       type="button"
       variant="ghost"
       size="icon-xs"
-      className={cn("text-white/55 hover:bg-white/10 hover:text-white", className)}
+      className={cn("rounded-md text-white/45 hover:bg-white/[0.08] hover:text-white", className)}
       aria-label={label}
       aria-pressed={pressed}
       onClick={(event) => {
@@ -116,12 +117,16 @@ export function PrevizLayerPanel({
   const { t } = useTranslation();
   const idPrefix = useId();
 
-  const panelClass = "flex w-64 shrink-0 flex-col border-l border-white/10 bg-black/30";
+  const panelClass =
+    "flex w-64 shrink-0 flex-col border-l border-white/[0.06] bg-neutral-900";
 
   if (objects.length === 0) {
     return (
-      <div className={cn(panelClass, "items-center justify-center px-4 text-center text-[12px] text-white/45")}>
-        {t("previz.layers.empty")}
+      <div className={cn(panelClass, "items-center justify-center gap-3 px-6 text-center")}>
+        <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/[0.06] bg-white/[0.03] text-white/35">
+          <Layers className="h-4.5 w-4.5" />
+        </span>
+        <p className="text-[12px] leading-relaxed text-white/45">{t("previz.layers.empty")}</p>
       </div>
     );
   }
@@ -129,16 +134,21 @@ export function PrevizLayerPanel({
   const titleId = `${idPrefix}-title`;
 
   return (
-    <div className={cn(panelClass, "overflow-y-auto py-2")}>
-      <div id={titleId} className="px-3 pb-1 text-[11px] uppercase tracking-wide text-white/40">
-        {t("previz.layers.title")}
+    <div className={cn(panelClass, "ui-scrollbar overflow-y-auto pb-2")}>
+      <div className="sticky top-0 z-10 flex h-10 shrink-0 items-center justify-between border-b border-white/[0.06] bg-neutral-900 px-3">
+        <span id={titleId} className="text-[12px] font-semibold text-white/80">
+          {t("previz.layers.title")}
+        </span>
+        <span aria-hidden className="rounded-full bg-white/[0.06] px-2 py-0.5 font-mono text-[11px] tabular-nums text-white/50">
+          {objects.length}
+        </span>
       </div>
       {/*
         role="listbox" 不只是装饰：`aria-selected` 只有落在 option 上才有意义，没有
         listbox 父级的裸 option 对读屏是个孤儿角色。分组用 role="group"，它是 listbox
         合法的中间层。
       */}
-      <div role="listbox" aria-labelledby={titleId} className="flex flex-col">
+      <div role="listbox" aria-labelledby={titleId} className="flex flex-col px-1.5 pt-1">
         {KIND_ORDER.map((kind) => {
           const group = objects.filter((object) => object.kind === kind);
           if (group.length === 0) return null;
@@ -148,7 +158,7 @@ export function PrevizLayerPanel({
           return (
             <div key={kind} role="group" aria-labelledby={headingId}>
               {/* 分组名只写一遍：可见标题即 group 的无障碍名，不再挂一份 aria-label。 */}
-              <div id={headingId} className="px-3 pt-2 pb-1 text-[11px] text-white/35">
+              <div id={headingId} className="px-2 pt-3 pb-1 text-[11px] font-medium text-white/40">
                 {t(`previz.layers.kind.${kind}`)}
               </div>
 
@@ -178,8 +188,11 @@ export function PrevizLayerPanel({
                       }
                     }}
                     className={cn(
-                      "flex cursor-pointer items-center gap-1 px-3 py-1 text-[13px]",
-                      selected ? "bg-white/[0.10] text-white" : "text-white/75 hover:bg-white/[0.05]",
+                      "flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] transition-colors duration-150",
+                      "focus-visible:ring-2 focus-visible:ring-white/25 focus-visible:outline-none",
+                      selected
+                        ? "bg-white/10 text-white ring-1 ring-inset ring-white/10"
+                        : "text-white/75 hover:bg-white/[0.05]",
                     )}
                   >
                     {/*

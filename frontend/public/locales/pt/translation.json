@@ -1,7 +1,17 @@
 {
   "chatSnapshot": {
     "saveFailed": "Não foi possível salvar o histórico do chat. Tente novamente mais tarde; a mensagem atual continua disponível localmente.",
-    "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico."
+    "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico.",
+    "ceHistory": {
+      "title": "Parte do histórico não pôde ser carregada por completo",
+      "description": "Esta conversa contém registros grandes ou inválidos, por isso parte do raciocínio e dos registros de ferramentas não foi carregada. O texto das mensagens continua disponível. Isso não significa que uma chamada ao modelo falhou.",
+      "help": "Ver instruções de resolução",
+      "support": "Contatar o suporte da comunidade",
+      "continue": "Se ainda consegue enviar mensagens normalmente, pode continuar nesta conversa. Não é necessário limpar o chat nem excluir o projeto.",
+      "backup": "Para recuperar o histórico completo, pare primeiro o aplicativo e os serviços relacionados, faça uma cópia completa do banco de dados do chat (chat.db, incluindo os arquivos WAL existentes) e siga o guia para verificar e compactar os registros. A compactação não corrige todos os registros grandes ou inválidos.",
+      "privacy": "Ao pedir ajuda, informe a versão do aplicativo, o sistema operacional, capturas de tela e logs sem dados sensíveis. O banco de dados pode conter conversas privadas e informações sensíveis. Não o envie diretamente para uma issue pública.",
+      "recoveryGuide": "Abrir o guia detalhado de recuperação do histórico"
+    }
   },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirmar criação do fluxo de trabalho",
@@ -7019,6 +7029,7 @@
         "submit": "Gerar vídeo em HD",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "claymoreModel": "Aprimoramento de vídeo RelayClaw",
         "modelUnavailable": "O modelo de aprimoramento salvo está indisponível. Selecione um modelo disponível para continuar."
       }
     },
@@ -10194,9 +10205,9 @@
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Picture check",
-      "pictureCheckHint": "Project the blockout back onto the picture and check that positions, sizes and camera agree; one or two extra model rounds, so slower",
+      "pictureCheckHint": "Align positions and sizes to the picture; 1–2 extra rounds",
       "renderCheck": "Render check",
-      "renderCheckHint": "Render the blockout and let the model compare it with the picture and rewrite, twice; two extra model rounds, so slower",
+      "renderCheckHint": "Render and refine against the picture; 2 extra rounds",
       "model": "Model",
       "modelDefault": "{{name}} (default)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
@@ -10211,13 +10222,7 @@
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
-      "guide": {
-        "title": "Images that work well",
-        "space": "A scene whose layout is readable: a room, a street, a courtyard",
-        "floor": "The floor is visible, along with at least one wall or clear boundary",
-        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
-        "occlusion": "People or foreground objects do not cover the main pieces"
-      },
+      "guide": "Works best with a wide, eye-level shot that shows the floor and walls",
       "hint": {
         "title": "This image may affect the result; you can still continue",
         "small": "The image is small (short edge under 512 px), so details may be hard to read",
@@ -10254,6 +10259,7 @@
       "close": "Close model library",
       "categories": "Categories",
       "all": "All",
+      "recent": "Recentes",
       "category": {
         "primitive": "Primitives",
         "furniture": "Furniture",
