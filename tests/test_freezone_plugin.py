@@ -907,6 +907,7 @@ def _install_workflow_draft_api(monkeypatch, plugin, project_dir: Path) -> None:
         finish_workflow_draft_confirmation,
         patch_workflow_draft,
         read_workflow_draft,
+        workflow_draft_revision_conflict_pending,
     )
 
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
@@ -927,9 +928,17 @@ def _install_workflow_draft_api(monkeypatch, plugin, project_dir: Path) -> None:
                     "allowed": True,
                 },
             }
+        parts = path.strip("/").split("/")
+        if method == "GET" and path.endswith("/workflow-draft-revision-conflict"):
+            pending = workflow_draft_revision_conflict_pending(
+                project_dir=project_dir, canvas_id=parts[4],
+            )
+            return {
+                "ok": True,
+                "data": {"confirmation_required": pending is not None, **(pending or {})},
+            }
         if "/workflow-drafts" not in path:
             raise AssertionError(path)
-        parts = path.strip("/").split("/")
         project_id = parts[1]
         canvas_id = parts[4]
         draft_id = parts[6] if len(parts) > 6 else ""
@@ -9099,7 +9108,7 @@ def test_freezone_plugin_recipe_only_manifest_admits_and_delivers_each_recipe(
         )
 
     finished = handlers["freezone_finish_agent_catalog_draft"](base)
-    draft = plugin._PENDING_SKILL_STUDIO_DRAFTS["recipe-only-a"]
+    draft = plugin._OFFLINE_SKILL_STUDIO_DRAFTS["recipe-only-a"]
 
     assert begin["ok"] is True
     assert finished["ok"] is True
@@ -9187,17 +9196,16 @@ def test_freezone_plugin_rejects_put_for_terminal_generation_operation(
         "operations": operations,
         "recipes": {},
     }
-    plugin._PENDING_SKILL_STUDIO_DRAFTS[session_id] = draft
+    requests = []
+
+    def request(method, path, **_kwargs):
+        requests.append((method, path))
+        if "/agent-generation-sessions/" in path:
+            return {"ok": True, "data": {"draft": draft}}
+        return {"ok": True, "data": {**operation, "status": "delivered"}}
 
     monkeypatch.setattr(plugin, "_available", lambda: True)
-    monkeypatch.setattr(
-        plugin,
-        "_request",
-        lambda method, path, **_kwargs: {
-            "ok": True,
-            "data": {**operation, "status": "delivered"},
-        },
-    )
+    monkeypatch.setattr(plugin, "_request", request)
 
     result = handlers[tool_name](
         {
@@ -9212,6 +9220,7 @@ def test_freezone_plugin_rejects_put_for_terminal_generation_operation(
     assert result["status"] == "agent_product_generation_attempt_required"
     assert draft.get("skill") is None
     assert draft["recipes"] == {}
+    assert [method for method, _path in requests if method != "GET"] == []
 
 
 def test_freezone_plugin_chunked_draft_revision_preserves_unchanged_recipes(
@@ -10755,9 +10764,35 @@ def test_canvas_command_handlers_reject_legacy_scope_instead_of_using_defaults()
         assert "project" in result["error"]
 
 
-def test_revision_conflict_blocks_follow_up_canvas_writes_until_explicit_confirmation():
+def test_revision_conflict_blocks_follow_up_canvas_writes_until_explicit_confirmation(
+    monkeypatch, tmp_path,
+):
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        patch_workflow_draft,
+    )
+
     plugin = _load_plugin_module()
-    plugin._block_canvas_after_revision_conflict("project-a", "canvas-a")
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    compiled = {
+        "ok": True, "skill_id": "video-ad", "edge_count": 0,
+        "plan": {"summary": "ad", "nodes": [], "edges": [], "phases": []},
+    }
+    intent = {"skill_id": "video-ad", "user_goal": "ad"}
+    draft = create_workflow_draft(
+        project_dir=tmp_path, project_id="project-a", canvas_id="canvas-a",
+        intent=intent, compiled=compiled,
+    )
+    scope = {"project_dir": tmp_path, "canvas_id": "canvas-a", "draft_id": draft["draft_id"]}
+    patch_workflow_draft(**scope, expected_revision=1, intent=intent, compiled=compiled)
+    stale = plugin._handle_confirm_workflow_draft(
+        {"draft_id": draft["draft_id"], "revision": 1}
+    )
+    assert stale["status"] == "workflow_draft_revision_conflict"
 
     result = plugin._emit_canvas_commands(
         "project-a",
@@ -10770,7 +10805,9 @@ def test_revision_conflict_blocks_follow_up_canvas_writes_until_explicit_confirm
     assert result["status"] == "canvas_revision_confirmation_required"
     assert "未执行画布操作" in result["user_message"]
 
-    plugin._clear_canvas_revision_conflict("project-a", "canvas-a")
+    _claimed, error = claim_workflow_draft_confirmation(**scope, revision=2)
+    assert error is None
+    bind_workflow_draft_task(**scope, task_id="task-1", root_task_id="task-1")
     # The guard is the only concern of this regression test; the next stage
     # may fail because no local frontend bridge is running.
     assert plugin._revision_conflict_write_error("project-a", "canvas-a") is None
@@ -11304,16 +11341,29 @@ def test_confirm_draft_revision_conflict_requires_fresh_user_confirmation(monkey
     calls = []
 
     def request(method, path, **kwargs):
-        calls.append(method)
-        assert method == "GET", "Revision conflict must fail before claim or dispatch"
-        return {"ok": True, "data": {"revision": 2, "status": "ready", "run_after_create": True}}
+        calls.append((method, path.rsplit("/", 1)[-1], kwargs.get("body")))
+        if method == "GET":
+            return {
+                "ok": True,
+                "data": {"revision": 2, "status": "ready", "run_after_create": True},
+            }
+        # The server refuses the stale revision and records the conflict.
+        return {
+            "ok": False,
+            "status": "workflow_draft_revision_conflict",
+            "current_revision": 2,
+        }
 
     monkeypatch.setattr(plugin, "_request", request)
     result = plugin._handle_confirm_workflow_draft(
         {"draft_id": "workflow_draft_example", "revision": 1}
     )
     assert result["status"] == "workflow_draft_revision_conflict"
-    assert calls == ["GET"]
+    # Only the stale revision is ever offered to the server, so nothing can be claimed.
+    assert calls == [
+        ("GET", "workflow_draft_example", None),
+        ("POST", "claim", {"revision": 1}),
+    ]
     # The user confirmed revision 1; revision 2 may hold changes they never
     # reviewed, so the agent must re-present it, never confirm it on its own.
     assert result["retryable"] is False
@@ -11327,8 +11377,6 @@ def test_confirm_draft_revision_conflict_requires_fresh_user_confirmation(monkey
         if name == "freezone_confirm_workflow_draft"
     )
     Draft202012Validator(schema["output_schema"]).validate(result)
-
-    assert plugin._revision_conflict_write_error("p", "c") is not None
 
 
 def test_canvas_http_revision_conflict_preserves_current_revision():

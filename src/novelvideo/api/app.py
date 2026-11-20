@@ -595,6 +595,10 @@ def create_app() -> FastAPI:
 
     application.include_router(api_router)
 
+    from novelvideo.api import remote_mcp
+
+    remote_mcp.mount(application)
+
     @application.get(
         "/static/projects/{project}/{file_path:path}", include_in_schema=False
     )

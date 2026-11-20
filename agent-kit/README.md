@@ -259,3 +259,15 @@ GET 流的会话按 idle timeout 回收。DELETE 请求、子进程退出和中�
 会话建立后，后续请求体直接交给 MCP SDK，中继不再限制其大小。
 每个通过预检查的新 initialize 请求还会向 API 发起一次 Key 校验。
 会话数量上限不能替代这些入口限制；默认仍只监听回环地址，用于本地验证。
+
+## API 进程内的远程 MCP 入口
+
+API 进程设置 `DRAMACLAW_REMOTE_MCP_ENABLED=true` 后，在自身端口的 `/mcp/` 下提供与中继相同的
+路径、请求头和工具（默认关闭，未开启时这些路径返回 404）。与中继的区别：
+
+- 无状态：每个 POST 独立完成，返回 JSON，不签发 `mcp-session-id`，不启动子进程；GET、DELETE 返回 405。
+- 每个请求都必须携带 `Authorization: Bearer <agent key>`，并在执行任何工具代码前校验；
+  `DRAMACLAW_LOCAL_AGENT_TRUST` 以及 API 进程环境中的 Key、Token、项目、画布、用户变量对该入口无效。
+- 拒绝响应沿用中继的 `error` 文案，并附带 `code` 与 Key 交换返回的 `status_code`。
+- API 进程必须设置 `DRAMACLAW_API_URL`（工具回调 API 的地址）；未设置时返回 503 并说明原因。
+- 不提供中继的会话数限额与请求体上限；对外暴露时仍需按上一节在入口处设置。

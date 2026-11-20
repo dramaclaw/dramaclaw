@@ -171,14 +171,20 @@ def _tool_index(*plugins: Any) -> dict[str, tuple[dict[str, Any], Any]]:
     return index
 
 
-_PLUGIN_CACHE: dict[tuple[str, bool], Any] = {}
-_PLUGIN_TOOL_CACHE: dict[tuple[str, bool], ToolIndex] = {}
+_PLUGIN_CACHE: dict[tuple[str, bool, bool], Any] = {}
+_PLUGIN_TOOL_CACHE: dict[tuple[str, bool, bool], ToolIndex] = {}
 SERVER = Server("dramaclaw", version="0.1.0")
 _EXCLUDE_STORY_TOOLS = False
 
 
+def _plugin_cache_key(plugin_name: str) -> tuple[str, bool, bool]:
+    # A plugin fixes host-dependent tools and schemas while it loads, so one loaded
+    # from the process environment is not reused inside a request scope, or the reverse.
+    return (plugin_name, _EXCLUDE_STORY_TOOLS, request_context.active())
+
+
 def _plugin(plugin_name: str) -> Any:
-    cache_key = (plugin_name, _EXCLUDE_STORY_TOOLS)
+    cache_key = _plugin_cache_key(plugin_name)
     plugin = _PLUGIN_CACHE.get(cache_key)
     if plugin is None:
         plugin = _load_plugin(plugin_name)
@@ -192,7 +198,7 @@ def _agent_plugin_name() -> str:
 
 
 def _plugin_tools(plugin_name: str) -> dict[str, tuple[dict[str, Any], Any]]:
-    cache_key = (plugin_name, _EXCLUDE_STORY_TOOLS)
+    cache_key = _plugin_cache_key(plugin_name)
     tools = _PLUGIN_TOOL_CACHE.get(cache_key)
     if tools is None:
         tools = _tool_index(_plugin(plugin_name))

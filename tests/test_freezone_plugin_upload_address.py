@@ -25,6 +25,8 @@ KEY = "test-fake-agent-key-not-a-secret"
 TICKET = "test-fake-upload-ticket-not-a-secret"
 MINT = "/api/v1/projects/proj/freezone/upload-address"
 CONTEXT = "/api/v1/projects/proj/freezone/canvases/default/agent-context"
+# Read before every canvas write batch; the fake API answers "no conflict".
+REVISION_CHECK = "/api/v1/projects/proj/freezone/canvases/default/workflow-draft-revision-conflict"
 ADDRESS = f"https://upload.example.test/api/v1/projects/proj/freezone/upload?upload_ticket={TICKET}"
 ADDRESS_DATA = {
     "upload_url": ADDRESS,
@@ -168,6 +170,9 @@ def load_host(monkeypatch):
                 assert context_request["type"] == "node_create_schema"
                 assert set(context_request) == {"type", "node_type"}
                 response = {"ok": True, "data": _server_schema_answer(context_request["node_type"])}
+            elif (method, parts.path) == ("GET", REVISION_CHECK):
+                assert not parts.query and not request.data
+                response = {"ok": True, "data": {"confirmation_required": False}}
             else:
                 pytest.fail(f"Unexpected API request {method} {parts.path}")
             return _Response(200, json.dumps(response).encode())
@@ -365,7 +370,10 @@ def test_external_refuses_new_upload_node_holding_video_or_audio(
     }))
     assert created["ok"] is False
     assert created["status"] == "upload_node_media_kind"
-    assert all(path == "/api/v1/config" for _, path in host.requests)
+    # The tool reads the revision check once, then refuses; nothing is written.
+    assert [sent for sent in host.requests if sent[1] != "/api/v1/config"] == [
+        ("GET", REVISION_CHECK)
+    ]
 
 
 def test_upload_node_media_kind_rule_leaves_other_commands_alone(load_host):

@@ -304,13 +304,18 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
     # 三条画布确认路由（创建、列表、决定）与 agent_canvas_commands 一样 placement-free。
     # The canvas create route and the agent view route are placement-free like list_canvases.
     # The upload-address route (TAG_FREEZONE_MEDIA) is not a canvas route; default guard.
-    assert router_decorators == 130
-    assert len(canvas_routes) == 39
+    # The workflow-draft revision-conflict read is a canvas route that reads the drafts
+    # table in the project's local SQLite, so it keeps the default guard like the draft routes.
+    assert router_decorators == 131
+    assert len(canvas_routes) == 40
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
     assert "cancel_canvas_workflow_draft" in canvas_routes
     assert canvas_routes["cancel_canvas_workflow_draft"]
     assert not any(_opts_out_of_the_guard(call) for call in canvas_routes["cancel_canvas_workflow_draft"])
+    conflict_read = canvas_routes["get_canvas_workflow_draft_revision_conflict"]
+    assert conflict_read
+    assert not any(_opts_out_of_the_guard(call) for call in conflict_read)
 
     # 正向：白名单路由必须全部、且每一处调用都 opt-out。
     missing = {

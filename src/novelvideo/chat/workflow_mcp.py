@@ -7,6 +7,7 @@ the same deterministic plans without duplicating the protected write boundary.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -395,7 +396,8 @@ async def read_resource(uri: Any) -> str:
     if parsed.scheme != "dramaclaw-workflow":
         raise ValueError(UNSUPPORTED_RESOURCE_MESSAGE)
     key_mode = _agent_key_mode()
-    snapshot = _server_catalog() if key_mode else None
+    # The catalog read blocks on HTTP; the loop may be the one that has to answer it.
+    snapshot = await asyncio.to_thread(_server_catalog) if key_mode else None
     if key_mode and snapshot is None:
         raise ValueError("workflow catalog unavailable")
     with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
@@ -564,7 +566,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             "error": payload["message"],
         })
     key_mode = _agent_key_mode()
-    snapshot = _server_catalog() if key_mode else None
+    snapshot = await asyncio.to_thread(_server_catalog) if key_mode else None
     if key_mode and snapshot is None:
         return _result(name, {
             "ok": False,
@@ -699,8 +701,6 @@ async def _main() -> None:
 
 
 def main() -> None:
-    import asyncio
-
     asyncio.run(_main())
 
 
