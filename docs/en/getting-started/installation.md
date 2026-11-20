@@ -119,10 +119,11 @@ is operator-managed: the script checks that it runs, but cannot prove it contain
 credential-safety patches. Do not use the stock Codex CLI. A download/checksum failure
 stops startup before either service is launched and never falls back to another backend.
 
-Docker builds at v2.1.1 already include credential-safe Codex 0.164.0. Both source and
-release Compose select Codex by default; keep `DRAMACLAW_CHAT_BACKEND=codex` if setting
-it explicitly. `CODEX_BIN` in the native instructions above is a host-side path, not a
-container path.
+Docker images built from this source use credential-safe Codex 0.162.0 (`926a8f2`),
+the build shared with Claymore Piko. It preserves the dimensions of tool-output
+images. The published v2.1.1 image ships Codex 0.164.0. Both source and release Compose
+select Codex by default. Use `DRAMACLAW_CHAT_BACKEND=codex` to select it explicitly.
+`CODEX_BIN` in the native instructions above points to a binary on the host.
 CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inline task execution
 (no Ray/Redis/Celery).
 

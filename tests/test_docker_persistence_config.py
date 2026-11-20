@@ -215,6 +215,7 @@ def test_env_example_configures_data_root_instead_of_individual_directories() ->
     assert "# NOVELVIDEO_DATA_ROOT=" in env_example
 
 
+CODEX_VERSION = "0.162.0"
 CODEX_REF_RE = re.compile(r'^ARG CODEX_REF="([0-9a-f]{40})"$', re.MULTILINE)
 CODEX_RUNTIME_IMAGE_RE = re.compile(
     r'^ARG CODEX_RUNTIME_IMAGE="docker\.io/claymorelab/codex-dramaclaw:'
@@ -240,7 +241,7 @@ def test_container_consumes_only_the_pinned_prebuilt_codex_runtime() -> None:
     assert dockerfile.index("ARG CODEX_RUNTIME_IMAGE=") < first_from
 
     assert tag_ref == codex_ref[:7]
-    assert 'ARG CODEX_VERSION="0.164.0"' in dockerfile
+    assert f'ARG CODEX_VERSION="{CODEX_VERSION}"' in dockerfile
 
     assert "FROM ${CODEX_RUNTIME_IMAGE} AS codex-runtime" in dockerfile
     assert (
@@ -299,12 +300,25 @@ def test_pinned_codex_runtime_verification(
     verifier = runpy.run_path(str(REPOSITORY_ROOT / "deploy/codex/verify_runtime.py"))
     ref = CODEX_REF_RE.findall((REPOSITORY_ROOT / "Dockerfile").read_text())[0]
     content = b"mock-codex-binary"
+    receipt_tests = [
+        "debug_redacts_responses_api_client_metadata_values",
+        "turn_metadata_extracts_dramaclaw_gateway_key_without_serializing_it",
+        "turn_scoped_responses_auth_replaces_the_provider_placeholder",
+        "detail_policies_apply_the_expected_budgets",
+        "preparation_reports_tool_output_item_id",
+        "resize_notices_count_file_backed_images_and_skip_failed_images",
+        "preparation_replaces_only_failed_tool_images_and_preserves_metadata",
+        "tool_output_and_message_images_use_separate_cache_entries",
+        "large_tool_output_png_uses_first_jpeg_quality_that_fits",
+        "large_tool_output_png_flattens_alpha_onto_white",
+        "tool_output_jpeg_over_budget_keeps_dimensions_and_warns_once",
+    ]
     manifest = {
         "repo": "https://github.com/claymorelab/codex",
         "commit": ref,
-        "upstream_version": "0.164.0",
+        "upstream_version": CODEX_VERSION,
         "target": verifier["TARGETS"][arch],
-        "tests": sorted(verifier["REQUIRED_TESTS"]),
+        "tests": receipt_tests,
         "bytes": len(content),
         "sha256": hashlib.sha256(content).hexdigest(),
     }
@@ -314,16 +328,16 @@ def test_pinned_codex_runtime_verification(
     binary.write_bytes(content)
     ref_file.write_text("wrong" if corrupt == "ref_file" else ref)
     if corrupt and corrupt != "ref_file":
-        manifest[corrupt] = [] if corrupt == "tests" else "wrong"
+        manifest[corrupt] = receipt_tests[1:] if corrupt == "tests" else "wrong"
     metadata.write_text(json.dumps(manifest))
     if corrupt:
         with pytest.raises(ValueError):
             verifier["verify_runtime"](
-                binary, metadata, ref_file, ref=ref, version="0.164.0", arch=arch
+                binary, metadata, ref_file, ref=ref, version=CODEX_VERSION, arch=arch
             )
     else:
         verifier["verify_runtime"](
-            binary, metadata, ref_file, ref=ref, version="0.164.0", arch=arch
+            binary, metadata, ref_file, ref=ref, version=CODEX_VERSION, arch=arch
         )
 
 

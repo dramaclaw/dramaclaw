@@ -11,6 +11,7 @@ attention: high
 - **更准确的错误提示**: 本地助手启动失败会提示检查应用，避免误报为上游模型连接失败。
 - **原生启动更简单**: macOS 与 Linux 的 x64、ARM64 源码启动自动下载、校验并缓存配套 Codex 0.164.0，无需私有源码仓库权限。
 - **部署版本一致**: 发布版 Compose 默认使用 Codex，API 与网页镜像默认版本均为 2.1.1；同步完善中英文部署指南。
+- **Docker 共用 Codex 构建**: 当前源码的 Docker 运行时从 Codex 0.164.0 降至 0.162.0（`926a8f2`），与 Claymore Piko 共用同一构建。工具输出的图片保留原始尺寸。
 - **升级页面缓存修复**: 调整应用入口页与静态资源缓存策略，避免升级后仍引用旧资源而出现空白页。
 
 ## User-facing Highlights (en)
@@ -20,6 +21,7 @@ attention: high
 - **Clearer errors**: Local assistant startup failures now suggest checking the app instead of reporting an upstream model connection failure.
 - **Simpler native startup**: macOS and Linux x64/ARM64 source launches automatically download, verify and cache the matching Codex 0.164.0 runtime without private repository access.
 - **Consistent deployment versions**: Release Compose defaults to Codex and version 2.1.1 for both API and web images, with updated English and Chinese deployment guides.
+- **Shared Codex build for Docker**: Docker builds from this source move from Codex 0.164.0 down to 0.162.0 (`926a8f2`) to share a build with Claymore Piko. Tool-output images retain their original dimensions.
 - **Upgrade cache fix**: Corrected app-shell and static-asset caching to prevent blank pages caused by stale resource references after an upgrade.
 
 ## Fixes

@@ -1,11 +1,12 @@
 # Codex runtime pin — the single source of truth for every image that ships the
 # credential-safe Codex App Server. The fork includes per-turn credential
 # redaction and Responses authentication; the old 0.149 patch is historical.
+# Share the Claymore Piko build that preserves tool-output image dimensions.
 # Pin the fork commit, upstream version and multi-arch index together.
 # This published index provides native linux/amd64 and linux/arm64 binaries.
-ARG CODEX_REF="27f7ff4d5c458953a9a54d48cc26ef93309cf8c9"
-ARG CODEX_VERSION="0.164.0"
-ARG CODEX_RUNTIME_IMAGE="docker.io/claymorelab/codex-dramaclaw:27f7ff4@sha256:a1c05773ea6c8449f258e3969fdfcd85649f58d62920f3c48c4fb6206114b856"
+ARG CODEX_REF="926a8f2ee9aa122eb0673928aca9a952e06e0239"
+ARG CODEX_VERSION="0.162.0"
+ARG CODEX_RUNTIME_IMAGE="docker.io/claymorelab/codex-dramaclaw:926a8f2@sha256:beb8072115732875203336ad8f7472697e0580bc22f33ef665e5c07f6901e280"
 
 FROM rust:1.95-bookworm AS vtracer-builder
 RUN cargo install --locked --version 1.0.0-alpha.3 vtracer-cli
