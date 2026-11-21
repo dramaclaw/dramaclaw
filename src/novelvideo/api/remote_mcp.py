@@ -23,6 +23,7 @@ import logging
 import os
 import re
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 import anyio
@@ -32,6 +33,7 @@ from starlette.types import Receive, Scope, Send
 from starlette.websockets import WebSocketClose
 
 from novelvideo.chat import agent_key_session, request_context
+from novelvideo.chat import service as chat_service
 
 logger = logging.getLogger("novelvideo.api.remote_mcp")
 
@@ -72,10 +74,11 @@ _CONFIGURATION_CODES = frozenset({
     "agent_key_exchange_unsupported", "agent_key_exchange_redirected",
     "agent_key_insecure_transport",
 })
-_API_URL_MISSING = (
-    "Remote MCP entry is not configured: DRAMACLAW_API_URL is not set for the API "
-    "process. The server operator must set it to the address this API is reached at "
-    "and restart the API."
+_API_UNREACHABLE = (
+    "The remote MCP entry could not reach the API at {address} to check the key. This "
+    "is a server-side problem, not a problem with the key or the request: the server "
+    "operator must make sure DRAMACLAW_API_URL for the API process points to an address "
+    "the API itself can reach."
 )
 
 _open_direct = build_opener(ProxyHandler({})).open
@@ -119,13 +122,15 @@ def mount(application: Any) -> bool:
 
 
 def _request_values(
-    mode: str, key: str, project_id: str | None, canvas_id: str | None,
+    mode: str, key: str, api_base: str, project_id: str | None, canvas_id: str | None,
 ) -> dict[str, str]:
     values = {
         name: value for name, value in os.environ.items()
         if not name.startswith(IDENTITY_PREFIXES) and name not in IDENTITY_NAMES
     }
     values["DRAMACLAW_AGENT_KEY"] = key
+    # Tools call back to the address the key was checked at.
+    values["DRAMACLAW_API_URL"] = api_base
     if project_id:
         values["DRAMACLAW_PROJECT_ID"] = project_id
     if canvas_id:
@@ -188,7 +193,20 @@ def _single_visible_project(api_base: str) -> tuple[str | None, str | None]:
     return project["id"], None
 
 
-def _refusal(result: dict[str, Any]) -> JSONResponse:
+def _shown_address(api_base: str) -> str:
+    """The address without any user or password written into it."""
+    try:
+        parts = urlsplit(api_base)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return "the configured address"
+    if not host:
+        return "the configured address"
+    host = f"[{host}]" if ":" in host else host
+    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
+
+
+def _refusal(result: dict[str, Any], api_base: str) -> JSONResponse:
     """Shape a failed exchange like the relay does, plus the exchange's own reason."""
     code = str(result.get("code") or "agent_key_exchange_failed")
     status = result.get("status_code")
@@ -201,6 +219,11 @@ def _refusal(result: dict[str, Any]) -> JSONResponse:
         body["status_code"] = status
     if code in _CONFIGURATION_CODES:
         body["detail"] = str(result.get("error") or "")
+    elif code == "agent_key_exchange_failed" and not isinstance(status, int):
+        # The exchange ended without any HTTP answer: the API was not reached.
+        address = _shown_address(api_base)
+        body["detail"] = _API_UNREACHABLE.format(address=address)
+        logger.warning("Remote MCP entry could not reach the API at %s", address)
     return JSONResponse(body, status_code=401 if rejected else 503)
 
 
@@ -317,21 +340,17 @@ class RemoteMcpApp:
         key = key.strip()
         if scheme.lower() != "bearer" or not key:
             return JSONResponse({"error": "Bearer key required"}, status_code=401)
-        api_base = os.environ.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
-        if not api_base:
-            return JSONResponse(
-                {"error": _API_URL_MISSING, "code": "remote_mcp_api_url_missing"},
-                status_code=503,
-            )
+        # Resolved like the chat backend does for its own agents, so it is never empty.
+        api_base = chat_service._load_api_url()
         key_digest = hashlib.sha256(key.encode("utf-8")).digest()
         # A full process answers before the key check, which is a call back into the API.
         busy = self._busy(key_digest)
         if busy is not None:
             return busy
-        with request_context.scope(_request_values(mode, key, project_id, canvas_id)):
+        with request_context.scope(_request_values(mode, key, api_base, project_id, canvas_id)):
             checked = await asyncio.to_thread(_check_key, api_base)
             if checked.get("ok") is not True:
-                return _refusal(checked)
+                return _refusal(checked, api_base)
             if project_id is None:
                 project_id, reason = await asyncio.to_thread(_single_visible_project, api_base)
                 if reason is not None:
@@ -343,7 +362,9 @@ class RemoteMcpApp:
             return busy
         self._running[key_digest] += 1
         try:
-            with request_context.scope(_request_values(mode, key, project_id, canvas_id)):
+            with request_context.scope(
+                _request_values(mode, key, api_base, project_id, canvas_id)
+            ):
                 await _serve(_server(mode), mode, scope, receive, send)
         finally:
             self._running[key_digest] -= 1

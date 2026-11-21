@@ -55,6 +55,11 @@ IDENTITY_NAMES = (
     "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "DRAMACLAW_API_URL", FLAG,
     MAX_CONCURRENT, MAX_CONCURRENT_PER_KEY,
 )
+# Every name the API address is resolved from, so that no test reads the developer's own.
+API_ADDRESS_NAMES = (
+    "DRAMACLAW_API_URL", "NOVELVIDEO_API_URL", "NOVELVIDEO_API_HOST", "NOVELVIDEO_API_PORT",
+    "SUPERTALE_API_URL",
+)
 
 
 def rpc(method, params=None, request_id=1):
@@ -144,7 +149,7 @@ class FakeApi:
 @pytest.fixture(autouse=True)
 def process_env(monkeypatch):
     # The entry must take identity from the request only, so the process starts with none.
-    for name in IDENTITY_NAMES:
+    for name in IDENTITY_NAMES + API_ADDRESS_NAMES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
@@ -368,7 +373,7 @@ def test_revoked_or_expired_key_surfaces_the_exchange_reason(
     asyncio.run(scenario())
 
 
-def test_unreachable_exchange_is_unavailable(monkeypatch):
+def test_unreachable_api_tells_the_operator_which_address_to_fix(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_API_URL", "http://127.0.0.1:1")
 
     async def scenario():
@@ -377,22 +382,94 @@ def test_unreachable_exchange_is_unavailable(monkeypatch):
                 "/mcp/tools", json=rpc("tools/list"), headers=bearer(KEY_A),
             )
             assert response.status_code == 503
-            assert response.json()["error"] == "Agent key check unavailable"
+            body = response.json()
+            assert body["error"] == "Agent key check unavailable"
+            assert body["code"] == "agent_key_exchange_failed"
+            assert "status_code" not in body
+            assert body["detail"] == (
+                "The remote MCP entry could not reach the API at http://127.0.0.1:1 to "
+                "check the key. This is a server-side problem, not a problem with the key "
+                "or the request: the server operator must make sure DRAMACLAW_API_URL for "
+                "the API process points to an address the API itself can reach."
+            )
             assert_secret_free(response.text)
 
     asyncio.run(scenario())
 
 
-def test_missing_api_address_names_the_setting(monkeypatch):
+@pytest.mark.parametrize("address,shown", [
+    (None, "http://127.0.0.1:8780"),
+    ("http://operator:fake-password-DO-NOT-USE@api.example.test:9000/", "http://api.example.test:9000"),
+])
+def test_unreachable_api_names_the_resolved_address_without_credentials(
+    monkeypatch, address, shown,
+):
+    from novelvideo.api import remote_mcp
+
+    if address is not None:
+        monkeypatch.setenv("DRAMACLAW_API_URL", address)
+    asked = []
+
+    def unreachable(api_base):
+        asked.append(api_base)
+        return {"ok": False, "code": "agent_key_exchange_failed", "error": "network_error: refused"}
+
+    monkeypatch.setattr(remote_mcp, "_check_key", unreachable)
+
     async def scenario():
         async with client_for(entry_app(monkeypatch)) as client:
             response = await client.post(
                 "/mcp/tools", json=rpc("tools/list"), headers=bearer(KEY_A),
             )
             assert response.status_code == 503
-            assert "DRAMACLAW_API_URL" in response.json()["error"]
+            detail = response.json()["detail"]
+            assert f"the API at {shown} to" in detail
+            assert "DRAMACLAW_API_URL" in detail
+            assert "fake-password-DO-NOT-USE" not in response.text
+            assert "network_error" not in response.text
+            assert_secret_free(response.text)
 
     asyncio.run(scenario())
+    assert asked == [(address or shown).rstrip("/")]
+
+
+@pytest.mark.parametrize("names", [
+    ("NOVELVIDEO_API_URL",), ("NOVELVIDEO_API_HOST", "NOVELVIDEO_API_PORT"),
+    ("NOVELVIDEO_API_PORT",), ("SUPERTALE_API_URL",),
+])
+def test_api_address_is_resolved_like_the_chat_backend(monkeypatch, fake_api, names):
+    from novelvideo.chat import request_context
+
+    monkeypatch.delenv("DRAMACLAW_API_URL")
+    host, _, port = fake_api.url.removeprefix("http://").partition(":")
+    values = {
+        "NOVELVIDEO_API_URL": fake_api.url, "SUPERTALE_API_URL": fake_api.url,
+        # A listen address of every interface is called on loopback.
+        "NOVELVIDEO_API_HOST": "0.0.0.0", "NOVELVIDEO_API_PORT": port,
+    }
+    for name in names:
+        monkeypatch.setenv(name, values[name])
+    from novelvideo.chat import dramaclaw_mcp
+
+    def whoami(arguments):
+        return json.dumps({"ok": True, "seen": {
+            "DRAMACLAW_API_URL": request_context.get("DRAMACLAW_API_URL", ""),
+        }})
+
+    monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", lambda: {"whoami": ({
+        "name": "whoami", "description": "", "parameters": {"type": "object", "properties": {}},
+        "output_schema": OUTPUT_SCHEMA,
+    }, whoami)})
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_A))
+            assert response.status_code == 200
+            return json.loads(response.json()["result"]["content"][0]["text"])["seen"]
+
+    # The tool calls back to the address its key was checked at.
+    assert asyncio.run(scenario()) == {"DRAMACLAW_API_URL": f"http://{host}:{port}"}
+    assert fake_api.exchanges
 
 
 @pytest.mark.parametrize("path", [
@@ -667,7 +744,7 @@ def test_a_cancelled_request_gives_its_place_back(monkeypatch, fake_api):
             held = asyncio.create_task(work(client, KEY_A, hold=True))
             await until(lambda: state.running == 1)
             assert (await work(client, KEY_A)).status_code == 429
-            # As when the client goes away and the server drops the request.
+            # The task running the request is cancelled; its place must come back.
             held.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await held

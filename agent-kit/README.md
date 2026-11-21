@@ -269,7 +269,12 @@ API 进程设置 `DRAMACLAW_REMOTE_MCP_ENABLED=true` 后，在自身端口的 `/
 - 每个请求都必须携带 `Authorization: Bearer <agent key>`，并在执行任何工具代码前校验；
   `DRAMACLAW_LOCAL_AGENT_TRUST` 以及 API 进程环境中的 Key、Token、项目、画布、用户变量对该入口无效。
 - 拒绝响应沿用中继的 `error` 文案，并附带 `code` 与 Key 交换返回的 `status_code`。
-- API 进程必须设置 `DRAMACLAW_API_URL`（工具回调 API 的地址）；未设置时返回 503 并说明原因。
+- 入口校验 Key 和工具回调 API 时使用的地址，与对话后端的解析顺序相同：`DRAMACLAW_API_URL` →
+  `NOVELVIDEO_API_URL` → `NOVELVIDEO_API_HOST`/`NOVELVIDEO_API_PORT` → `SUPERTALE_API_URL` →
+  `http://127.0.0.1:8780`，通常无需额外设置。API 不在默认地址时，为 API 进程设置 `DRAMACLAW_API_URL`，
+  指向 API 进程自身可达的地址。
+- 入口连不上该地址时返回 503，`code` 为 `agent_key_exchange_failed`，`detail` 写明入口尝试连接的地址，
+  并说明这是服务端问题、需由运维检查 `DRAMACLAW_API_URL`；请求和 Key 本身无需修改。
 - 不提供中继的会话数限额与请求体上限；请求体上限等入口限制仍需按上一节在对外入口处设置。
   并发上限见下。
 
