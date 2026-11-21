@@ -34,6 +34,9 @@ from starlette.websockets import WebSocketClose
 
 from novelvideo.chat import agent_key_session, request_context
 from novelvideo.chat import service as chat_service
+from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
+from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+from novelvideo.project_context import require_project_home_node, resolve_project_context
 
 logger = logging.getLogger("novelvideo.api.remote_mcp")
 
@@ -51,8 +54,9 @@ _PATH_PATTERN = re.compile(
 _CHECK_TIMEOUT_SECONDS = 10.0
 
 # Names a request must never inherit from the process: credentials, the scope they act
-# in, the user they act as, and the host kind that selects tools. The relay strips the
-# same credentials, scope and host-kind names from its child processes.
+# in, the user they act as, the host kind that selects tools, and the directory canvas
+# events are written to, which belongs to one project. The relay strips the same
+# credentials, scope and host-kind names from its child processes.
 IDENTITY_PREFIXES = ("DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_TOKEN")
 IDENTITY_NAMES = frozenset({
     "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID", "DRAMACLAW_TURN_ID",
@@ -60,7 +64,7 @@ IDENTITY_NAMES = frozenset({
     "DRAMACLAW_TOOL_MODE", "DRAMACLAW_TOOL_MODE_FILE", "DRAMACLAW_AGENT_PROFILE",
     "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "DRAMACLAW_LOCAL_AGENT_TRUST",
     "DRAMACLAW_USERNAME", "DRAMACLAW_USER", "ST_LOCAL_USERNAME",
-    "FREEZONE_USER", "SUPERTALE_USER",
+    "FREEZONE_USER", "SUPERTALE_USER", "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
 })
 # What the stdio launcher sets for a key connection to the tools server.
 _TOOLS_HOST = {
@@ -123,6 +127,7 @@ def mount(application: Any) -> bool:
 
 def _request_values(
     mode: str, key: str, api_base: str, project_id: str | None, canvas_id: str | None,
+    bridge_dir: str | None = None,
 ) -> dict[str, str]:
     values = {
         name: value for name, value in os.environ.items()
@@ -137,6 +142,8 @@ def _request_values(
         values["DRAMACLAW_CANVAS_ID"] = canvas_id
     if mode == "tools":
         values.update(_TOOLS_HOST)
+    if bridge_dir:
+        values["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"] = bridge_dir
     return values
 
 
@@ -191,6 +198,47 @@ def _single_visible_project(api_base: str) -> tuple[str | None, str | None]:
             or _ID_PATTERN.fullmatch(project["id"]) is None):
         return None, "project listing unavailable"
     return project["id"], None
+
+
+def _caller_username(api_base: str) -> str | None:
+    """The user the request's session acts as, as the API reports it."""
+    result = _session_request(api_base, "/api/v1/auth/me", _open_direct)
+    data = result.get("data")
+    if result.get("ok") is not True or not isinstance(data, dict):
+        return None
+    username = data.get("username")
+    return username.strip() or None if isinstance(username, str) else None
+
+
+async def _project_bridge_dir(api_base: str, project_id: str) -> tuple[str | None, str | None]:
+    """The directory every chat session of the project watches for canvas events.
+
+    It lives under the project's state directory, which only the project's home node
+    holds. A request names no canvas agent, so it gets the project's shared directory
+    rather than the one of a single agent.
+    """
+    username = await asyncio.to_thread(_caller_username, api_base)
+    if username is None:
+        return None, "caller unavailable"
+    # Exception messages may quote request data, so only their type is reported.
+    try:
+        context = await resolve_project_context(
+            user={"username": username}, project_id=project_id, required_role="viewer",
+        )
+    except Exception as exc:
+        return None, f"project unavailable ({type(exc).__name__})"
+    try:
+        require_project_home_node(context)
+    except Exception:
+        return None, "project is kept on another node"
+    try:
+        home = await asyncio.to_thread(
+            ensure_user_hermes_workspace, username, profile="freezone",
+            project_state_dir=context.state_dir,
+        )
+    except Exception as exc:
+        return None, f"project workspace unavailable ({type(exc).__name__})"
+    return str(canvas_bridge_dir_for_profile(home, "freezone")), None
 
 
 def _shown_address(api_base: str) -> str:
@@ -343,6 +391,7 @@ class RemoteMcpApp:
         # Resolved like the chat backend does for its own agents, so it is never empty.
         api_base = chat_service._load_api_url()
         key_digest = hashlib.sha256(key.encode("utf-8")).digest()
+        bridge_dir = None
         # A full process answers before the key check, which is a call back into the API.
         busy = self._busy(key_digest)
         if busy is not None:
@@ -355,6 +404,13 @@ class RemoteMcpApp:
                 project_id, reason = await asyncio.to_thread(_single_visible_project, api_base)
                 if reason is not None:
                     logger.debug("Unscoped path kept home scope mode=%s: %s", mode, reason)
+            if mode == "tools" and project_id:
+                bridge_dir, reason = await _project_bridge_dir(api_base, project_id)
+                if reason is not None:
+                    # Canvas events then go where no browser of the project looks.
+                    logger.warning(
+                        "Project request kept the default event directory: %s", reason,
+                    )
         # Counted only from here, so a key that was not accepted never holds a place and
         # a counted request never waits on the check of another one.
         busy = self._busy(key_digest)
@@ -363,7 +419,7 @@ class RemoteMcpApp:
         self._running[key_digest] += 1
         try:
             with request_context.scope(
-                _request_values(mode, key, api_base, project_id, canvas_id)
+                _request_values(mode, key, api_base, project_id, canvas_id, bridge_dir)
             ):
                 await _serve(_server(mode), mode, scope, receive, send)
         finally:

@@ -31,6 +31,7 @@ FLAG = "DRAMACLAW_REMOTE_MCP_ENABLED"
 MAX_CONCURRENT = "DRAMACLAW_REMOTE_MCP_MAX_CONCURRENT"
 MAX_CONCURRENT_PER_KEY = "DRAMACLAW_REMOTE_MCP_MAX_CONCURRENT_PER_KEY"
 UNKNOWN_KEY = "fake-entry-key-DO-NOT-USE-unknown"
+BRIDGE_DIR = "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"
 PROJECT_PATH = "/mcp/tools/projects/project-a"
 KEY_A = "fake-entry-key-DO-NOT-USE-alpha"
 KEY_B = "fake-entry-key-DO-NOT-USE-beta"
@@ -89,6 +90,10 @@ class FakeApi:
         self.reject_gate = None
         # Set to answer every GET with this status and the caller's credential in the body.
         self.callback_status = None
+        # The user the sessions belong to; without one the API does not say who is calling.
+        self.username = None
+        self.projects = ["project-a", "project-b"]
+        self.gets = []
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -120,6 +125,7 @@ class FakeApi:
 
             def do_GET(self):
                 token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+                fake.gets.append(self.path)
                 if token not in fake.sessions.values():
                     self.reply(401, {"ok": False})
                 elif fake.callback_status is not None:
@@ -127,9 +133,17 @@ class FakeApi:
                     self.reply(fake.callback_status, {
                         "ok": False, "error": echoed, "detail": echoed, "message": echoed,
                     })
+                elif self.path == "/api/v1/auth/me":
+                    if fake.username is None:
+                        self.reply(404, {"ok": False})
+                    else:
+                        self.reply(200, {"ok": True, "data": {
+                            "username": fake.username, "role": "user",
+                            "credential_kind": "agent_session",
+                        }})
                 else:
                     self.reply(200, {"ok": True, "data": [
-                        {"id": "project-a"}, {"id": "project-b"},
+                        {"id": project_id} for project_id in fake.projects
                     ]})
 
             def log_message(self, *args):
@@ -225,6 +239,59 @@ def identity_tools(monkeypatch):
         }, whoami)}
 
     monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", tools)
+
+
+def project_home(monkeypatch, state_dir, *, home_node=True):
+    """Resolve every project to ``state_dir``, on this node or on another one."""
+    from novelvideo.api import remote_mcp
+    from novelvideo.project_context import ProjectContext
+
+    asked = []
+
+    async def resolve(*, user, project_id, required_role):
+        asked.append((user, project_id, required_role))
+        return ProjectContext(
+            project_id=project_id, project_name="demo", owner_type="user", owner_id="u1",
+            owner_username=user["username"], requester_user_id="u1",
+            requester_username=user["username"], requester_principals=(),
+            effective_role="owner", home_node_id="local" if home_node else "other-node",
+            output_dir=state_dir, state_dir=state_dir, runtime_dir=state_dir,
+            is_home_node=home_node,
+        )
+
+    monkeypatch.setattr(remote_mcp, "resolve_project_context", resolve)
+    return asked
+
+
+def bridge_tools(monkeypatch):
+    """Replace the tool list with one tool that reports its event directory."""
+    from novelvideo.chat import dramaclaw_mcp, request_context
+
+    def whoami(arguments):
+        return json.dumps({"ok": True, "seen": {
+            BRIDGE_DIR: request_context.get(BRIDGE_DIR, "<unset>"),
+        }})
+
+    monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", lambda: {"whoami": ({
+        "name": "whoami", "description": "", "parameters": {"type": "object", "properties": {}},
+        "output_schema": OUTPUT_SCHEMA,
+    }, whoami)})
+
+
+def expected_bridge_dir(username, state_dir):
+    """The project directory the chat routes watch whichever canvas agent is open."""
+    from novelvideo.api.routes import chat as chat_routes
+
+    return str(chat_routes._canvas_bridge_dir(
+        username, profile="freezone", project_state_dir=state_dir,
+    ))
+
+
+async def seen_bridge_dir(client, path, key=KEY_A):
+    response = await client.post(path, json=call("whoami"), headers=bearer(key))
+    assert response.status_code == 200
+    assert_secret_free(response.text)
+    return json.loads(response.json()["result"]["content"][0]["text"])["seen"][BRIDGE_DIR]
 
 
 def limits(monkeypatch, *, total, per_key):
@@ -935,6 +1002,7 @@ def test_process_identity_never_reaches_a_request(monkeypatch, fake_api):
         "DRAMACLAW_USERNAME": "process-user", "DRAMACLAW_USER": "process-user",
         "DRAMACLAW_LOCAL_AGENT_TRUST": "1", "DRAMACLAW_TOOL_MODE": "process-mode",
         "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR": "/process/results",
+        BRIDGE_DIR: "/process/bridge",
     }
     for name, value in process_values.items():
         monkeypatch.setenv(name, value)
@@ -962,3 +1030,151 @@ def test_process_identity_never_reaches_a_request(monkeypatch, fake_api):
     assert seen.pop("DRAMACLAW_PROJECT_ID") == "project-a"
     assert seen.pop("DRAMACLAW_TOOL_MODE") == "freezone_canvas"
     assert set(seen.values()) == {""}
+
+
+@pytest.mark.parametrize("path,projects", [
+    (PROJECT_PATH, ["project-a", "project-b"]),
+    (PROJECT_PATH + "/canvases/canvas-a", ["project-a", "project-b"]),
+    # An unscoped path is bound to the key's only project first.
+    ("/mcp/tools", ["project-a"]),
+])
+def test_project_tools_request_writes_events_to_the_project_directory(
+    monkeypatch, fake_api, tmp_path, path, projects,
+):
+    fake_api.username, fake_api.projects = "alice", projects
+    asked = project_home(monkeypatch, tmp_path / "state")
+    bridge_tools(monkeypatch)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            return await seen_bridge_dir(client, path)
+
+    assert asyncio.run(scenario()) == expected_bridge_dir("alice", tmp_path / "state")
+    assert asked == [({"username": "alice"}, "project-a", "viewer")]
+    # Who is calling is asked with the session the key check already opened.
+    assert len(fake_api.exchanges) == 1
+
+
+def test_process_event_directory_never_reaches_a_request(monkeypatch, fake_api, tmp_path):
+    monkeypatch.setenv(BRIDGE_DIR, str(tmp_path / "process"))
+    fake_api.username = "alice"
+    project_home(monkeypatch, tmp_path / "state")
+    bridge_tools(monkeypatch)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            # The key sees two projects, so the unscoped path stays without one.
+            return [await seen_bridge_dir(client, path) for path in (PROJECT_PATH, "/mcp/tools")]
+
+    assert asyncio.run(scenario()) == [
+        expected_bridge_dir("alice", tmp_path / "state"), "<unset>",
+    ]
+
+
+@pytest.mark.parametrize("failure", [
+    "username unavailable", "username malformed", "project unavailable",
+    "project on another node", "workspace unavailable",
+])
+def test_unresolved_event_directory_is_left_unset_and_the_request_served(
+    monkeypatch, fake_api, tmp_path, caplog, failure,
+):
+    from fastapi import HTTPException
+    from novelvideo.api import remote_mcp
+
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setenv(BRIDGE_DIR, str(tmp_path / "process"))
+    fake_api.username = "alice"
+    asked = project_home(
+        monkeypatch, tmp_path / "state", home_node=failure != "project on another node",
+    )
+    if failure == "username unavailable":
+        fake_api.username = None
+    elif failure == "username malformed":
+        fake_api.username = ["alice"]
+    elif failure == "project unavailable":
+        async def refuse(**kwargs):
+            raise HTTPException(status_code=404, detail=f"Project not found for {KEY_A}")
+
+        monkeypatch.setattr(remote_mcp, "resolve_project_context", refuse)
+    elif failure == "workspace unavailable":
+        def broken(*args, **kwargs):
+            raise OSError(f"cannot prepare the workspace for {KEY_A}")
+
+        monkeypatch.setattr(remote_mcp, "ensure_user_hermes_workspace", broken)
+    bridge_tools(monkeypatch)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            return await seen_bridge_dir(client, PROJECT_PATH)
+
+    assert asyncio.run(scenario()) == "<unset>"
+    assert "/api/v1/auth/me" in fake_api.gets
+    assert bool(asked) == (failure in {"project on another node", "workspace unavailable"})
+    assert "kept the default event directory" in caplog.text
+    assert_secret_free(caplog.text)
+    assert not (tmp_path / "state").exists()
+
+
+def test_workflows_request_resolves_no_event_directory(monkeypatch, fake_api, tmp_path):
+    fake_api.username = "alice"
+    asked = project_home(monkeypatch, tmp_path / "state")
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post(
+                "/mcp/workflows/projects/project-a", json=rpc("tools/list"),
+                headers=bearer(KEY_A),
+            )
+            assert response.status_code == 200
+
+    asyncio.run(scenario())
+    assert asked == []
+    assert fake_api.gets == []
+    assert not (tmp_path / "state").exists()
+
+
+def test_event_written_through_the_entry_lands_in_the_project_directory(
+    monkeypatch, fake_api, tmp_path,
+):
+    import tempfile
+
+    from novelvideo.chat import dramaclaw_mcp
+    from novelvideo.freezone import canvas_command_bridge
+
+    system_tmp = tmp_path / "system-tmp"
+    system_tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(system_tmp))
+    fake_api.username = "alice"
+    project_home(monkeypatch, tmp_path / "state")
+
+    def emit(arguments):
+        # Written like the tools write it: without naming a directory.
+        canvas_command_bridge.put_pending_skill_studio_event(
+            key="entry-event", project_id="project-a", canvas_id="canvas-a",
+            event={"type": "entry-test"},
+        )
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", lambda: {"emit": ({
+        "name": "emit", "description": "", "parameters": {"type": "object", "properties": {}},
+        "output_schema": OUTPUT_SCHEMA,
+    }, emit)})
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post(
+                PROJECT_PATH + "/canvases/canvas-a", json=call("emit"), headers=bearer(KEY_A),
+            )
+            assert response.status_code == 200
+            assert response.json()["result"]["isError"] is False
+
+    asyncio.run(scenario())
+
+    def pending(directory):
+        return [item["key"] for item in canvas_command_bridge.list_pending_bridge_messages(
+            project_id="project-a", canvas_id="canvas-a", bridge_dir=directory,
+        )]
+
+    assert pending(expected_bridge_dir("alice", tmp_path / "state")) == ["entry-event"]
+    assert pending(system_tmp / "supertale_canvas_command_bridge") == []
+    assert list(system_tmp.iterdir()) == []
