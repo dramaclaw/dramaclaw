@@ -52,6 +52,11 @@ AGENT_PRODUCT_PRICE_REFERENCE = tuple(
         ("recipe_generate", "Recipe 定义生成"),
     )
 )
+# Kinds whose product only an Agent turn produces: the server records their
+# model evidence when it observes the turn's result tool call, so no evidence
+# means the Agent did no work. Result kinds wait on an external provider and
+# may have incurred cost without such evidence.
+AGENT_TURN_PRODUCT_KINDS = frozenset({"workflow_generate", "recipe_generate"})
 PENDING_STATUSES = {"admitting", "reserved", "running", "accepted", "submitted"}
 TERMINAL_STATUSES = {"delivered", "failed", "cancelled"}
 OPERATION_ID_RE = re.compile(r"^agent_product_[a-zA-Z0-9_-]{1,96}$")
