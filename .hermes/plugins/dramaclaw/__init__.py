@@ -7,6 +7,7 @@ Python's stdlib HTTP client and the DramaClaw agent environment injected by
 
 from __future__ import annotations
 
+from contextvars import copy_context
 import importlib.util
 import json
 import os
@@ -97,6 +98,11 @@ def _load_stdlib_tool_module(name: str, path: Path):
     return module
 
 
+request_context = _load_stdlib_tool_module(
+    "_dramaclaw_request_context", Path(__file__).resolve().parent / "_request_context.py"
+)
+
+
 try:
     _SHARED_AGENT_KEY_SESSION = _load_stdlib_tool_module(
         "_dramaclaw_agent_key_session", Path(__file__).resolve().parent / "_agent_key_session.py"
@@ -107,28 +113,28 @@ except Exception:
 
 def _agent_token_configured() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
-        or os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+        request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+        or request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     )
 
 
 def _agent_key_configured() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
-        or os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+        request_context.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+        or request_context.get("DRAMACLAW_AGENT_KEY", "").strip()
     )
 
 
 def _current_agent_token() -> str:
     """Read a turn token lazily without depending on the CE application venv."""
 
-    token_file = os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    token_file = request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     if token_file:
         try:
             return Path(token_file).read_text(encoding="utf-8").strip()
         except OSError:
             return ""
-    return os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+    return request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
 
 
 def _has_text_content_filter(value: Any) -> bool:
@@ -288,17 +294,17 @@ def _with_chat_error_hints(value: Any) -> Any:
 
 
 def _tool_mode_path() -> Path | None:
-    explicit = os.environ.get("DRAMACLAW_TOOL_MODE_FILE", "").strip()
+    explicit = request_context.get("DRAMACLAW_TOOL_MODE_FILE", "").strip()
     if explicit:
         return Path(explicit)
-    home = os.environ.get("HERMES_HOME", "").strip()
+    home = request_context.get("HERMES_HOME", "").strip()
     if home:
         return Path(home) / "tmp" / "dramaclaw_tool_mode.json"
     return None
 
 
 def _current_tool_mode() -> str:
-    env_mode = os.environ.get("DRAMACLAW_TOOL_MODE", "").strip()
+    env_mode = request_context.get("DRAMACLAW_TOOL_MODE", "").strip()
     if env_mode:
         return env_mode
     path = _tool_mode_path()
@@ -424,13 +430,13 @@ def _request_headers(user_agent: str) -> dict[str, str]:
 
 
 def _default_project_id() -> str:
-    return os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
+    return request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
 
 
 def _project_output_dir() -> Path | None:
     value = (
-        os.environ.get("DRAMACLAW_PROJECT_OUTPUT_DIR")
-        or os.environ.get("SUPERTALE_PROJECT_OUTPUT_DIR")
+        request_context.get("DRAMACLAW_PROJECT_OUTPUT_DIR")
+        or request_context.get("SUPERTALE_PROJECT_OUTPUT_DIR")
         or ""
     ).strip()
     return Path(value) if value else None
@@ -668,8 +674,9 @@ def _launch_capacity_aware_batch_dispatcher(
             with _AGENT_BATCH_DISPATCHERS_LOCK:
                 _AGENT_BATCH_DISPATCHERS.pop(batch_id, None)
 
+    context = copy_context()
     thread = threading.Thread(
-        target=run,
+        target=lambda: context.run(run),
         name=f"dramaclaw-batch-{batch_id[-12:]}",
         daemon=True,
     )
@@ -1212,9 +1219,13 @@ def _handle_list_ingest_uploads(args: dict[str, Any], **_: Any) -> str:
         if current_project and project != current_project:
             raise ValueError("can only list uploads for the current Hermes project scope")
 
-        project_dir_raw = os.environ.get("DRAMACLAW_PROJECT_OUTPUT_DIR", "").strip()
+        project_dir_raw = request_context.get(
+            "DRAMACLAW_PROJECT_OUTPUT_DIR", ""
+        ).strip()
         if not project_dir_raw:
-            project_dir_raw = os.environ.get("SUPERTALE_PROJECT_OUTPUT_DIR", "").strip()
+            project_dir_raw = request_context.get(
+                "SUPERTALE_PROJECT_OUTPUT_DIR", ""
+            ).strip()
         if not project_dir_raw:
             return tool_result(
                 {

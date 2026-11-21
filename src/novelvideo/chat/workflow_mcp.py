@@ -7,6 +7,7 @@ the same deterministic plans without duplicating the protected write boundary.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -23,7 +24,7 @@ from mcp.server.stdio import stdio_server
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 
-from novelvideo.chat import agent_key_session
+from novelvideo.chat import agent_key_session, request_context
 from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
@@ -190,7 +191,7 @@ _WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
 
 
 def _username() -> str:
-    return str(os.environ.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
+    return str(request_context.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
 
 
 def _agent_key_mode() -> bool:
@@ -395,7 +396,8 @@ async def read_resource(uri: Any) -> str:
     if parsed.scheme != "dramaclaw-workflow":
         raise ValueError(UNSUPPORTED_RESOURCE_MESSAGE)
     key_mode = _agent_key_mode()
-    snapshot = _server_catalog() if key_mode else None
+    # The catalog read blocks on HTTP; the loop may be the one that has to answer it.
+    snapshot = await asyncio.to_thread(_server_catalog) if key_mode else None
     if key_mode and snapshot is None:
         raise ValueError("workflow catalog unavailable")
     with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
@@ -564,7 +566,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             "error": payload["message"],
         })
     key_mode = _agent_key_mode()
-    snapshot = _server_catalog() if key_mode else None
+    snapshot = await asyncio.to_thread(_server_catalog) if key_mode else None
     if key_mode and snapshot is None:
         return _result(name, {
             "ok": False,
@@ -699,8 +701,6 @@ async def _main() -> None:
 
 
 def main() -> None:
-    import asyncio
-
     asyncio.run(_main())
 
 

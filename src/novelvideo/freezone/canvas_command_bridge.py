@@ -21,6 +21,7 @@ from typing import Any
 
 import portalocker
 
+from novelvideo.chat import request_context
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS = 30
@@ -70,7 +71,7 @@ logger = logging.getLogger(__name__)
 def _bridge_dir(bridge_dir: str | Path | None = None) -> Path:
     if bridge_dir:
         return Path(bridge_dir)
-    root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
+    root = request_context.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
     if root:
         return Path(root)
     return Path(tempfile.gettempdir()) / "supertale_canvas_command_bridge"

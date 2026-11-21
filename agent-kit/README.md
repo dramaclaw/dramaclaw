@@ -259,3 +259,50 @@ GET 流的会话按 idle timeout 回收。DELETE 请求、子进程退出和中�
 会话建立后，后续请求体直接交给 MCP SDK，中继不再限制其大小。
 每个通过预检查的新 initialize 请求还会向 API 发起一次 Key 校验。
 会话数量上限不能替代这些入口限制；默认仍只监听回环地址，用于本地验证。
+
+## API 进程内的远程 MCP 入口
+
+API 进程设置 `DRAMACLAW_REMOTE_MCP_ENABLED=true` 后，在自身端口的 `/mcp/` 下提供与中继相同的
+路径、请求头和工具（默认关闭，未开启时这些路径返回 404）。与中继的区别：
+
+- 无状态：每个 POST 独立完成，返回 JSON，不签发 `mcp-session-id`，不启动子进程；GET、DELETE 返回 405。
+- 每个请求都必须携带 `Authorization: Bearer <agent key>`，并在执行任何工具代码前校验；
+  `DRAMACLAW_LOCAL_AGENT_TRUST` 以及 API 进程环境中的 Key、Token、项目、画布、用户变量对该入口无效。
+- 拒绝响应沿用中继的 `error` 文案，并附带 `code` 与 Key 交换返回的 `status_code`。
+- 入口校验 Key 和工具回调 API 时使用的地址，与对话后端的解析顺序相同：`DRAMACLAW_API_URL` →
+  `NOVELVIDEO_API_URL` → `NOVELVIDEO_API_HOST`/`NOVELVIDEO_API_PORT` → `SUPERTALE_API_URL` →
+  `http://127.0.0.1:8780`，通常无需额外设置。API 不在默认地址时，为 API 进程设置 `DRAMACLAW_API_URL`，
+  指向 API 进程自身可达的地址。
+- 入口连不上该地址时返回 503，`code` 为 `agent_key_exchange_failed`，`detail` 写明入口尝试连接的地址，
+  并说明这是服务端问题、需由运维检查 `DRAMACLAW_API_URL`；请求和 Key 本身无需修改。
+- 带项目的 `tools` 请求（路径中指定项目，或 Key 只能访问一个项目）把画布命令和卡片事件写入该项目自己的
+  事件目录，即浏览器中该项目的会话所监听的目录；API 进程环境中的 `DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR`
+  对该入口无效。该目录位于项目数据所在的节点上：多节点部署时，请求必须落在项目的归属节点，
+  否则入口无法确定目录（日志有一条 warning），需要浏览器执行的画布命令会等待到超时。
+- 不提供中继的会话数限额与请求体上限；请求体上限等入口限制仍需按上一节在对外入口处设置。
+  并发上限见下。
+
+### 并发上限（按进程计数）
+
+入口限制同时执行的请求数，超限的请求立即返回 HTTP 429，不排队：
+
+| 环境变量 | 含义 | 默认值 |
+| --- | --- | --- |
+| `DRAMACLAW_REMOTE_MCP_MAX_CONCURRENT` | 单个 API 进程同时执行的远程 MCP 请求总数 | 进程默认线程池大小 `min(32, CPU 数 + 4)` 的一半，至少为 1 |
+| `DRAMACLAW_REMOTE_MCP_MAX_CONCURRENT_PER_KEY` | 单个 API 进程内同一 Agent Key 同时执行的请求数 | 总数上限的一半，至少为 1 |
+
+- **按进程计数，不是全局限制**：进程之间不共享计数。以多个 worker 运行 API 时，
+  实际总上限 = 配置值 × worker 数，单 Key 的实际上限同理。一个请求落在哪个进程由前置的负载分配决定，
+  因此同一 Key 在未达到“配置值 × worker 数”时也可能在某个进程上被拒绝。
+- 两个值必须是 ≥ 1 的整数；空值、0、负数、小数或非数字按未设置处理，使用默认值。
+  启动日志会输出实际生效的两个上限。
+- 工具在进程的默认线程池中执行，并在其中等待对 API 的回调，而 API 自身的路由也使用同一线程池。
+  调高总数上限时应低于该线程池的大小，为回调留出线程；否则工具与其回调会互相等待直到超时。
+- 只有通过 Key 校验的请求才计数，计数覆盖校验通过之后的执行阶段，直到响应结束；
+  缺少 Key、Key 无效或校验不可用的请求不占名额。请求结束、执行出错或被取消时都会释放名额。
+- 进程总数已满时，请求在 Key 校验之前即被拒绝，不调用 Key 交换接口；此时无效 Key 得到的也是 429 而不是 401。
+- 单 Key 按 SHA-256 摘要计数，Key 及其摘要不写入日志或响应。
+- 拒绝响应带 `Retry-After: 1`，JSON 为 `{"error": "...", "code": "..."}`，`code` 为
+  `remote_mcp_concurrency_limit`（进程总数已满）或 `remote_mcp_key_concurrency_limit`（该 Key 已满）。
+  两种情况下请求本身都没有问题，稍后原样重试即可，无需修改参数。
+- 该上限不排队、不限速、不跨进程计数，不能替代上一节的入口限制。

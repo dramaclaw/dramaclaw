@@ -778,7 +778,7 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     freezone_plugin = dramaclaw_mcp._plugin("freezone")
-    freezone_plugin._PENDING_SKILL_STUDIO_DRAFTS.clear()
+    freezone_plugin._OFFLINE_SKILL_STUDIO_DRAFTS.clear()
     bridge_counter = iter(range(20))
     monkeypatch.setattr(
         freezone_plugin,

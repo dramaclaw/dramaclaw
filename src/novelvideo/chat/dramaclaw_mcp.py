@@ -29,7 +29,7 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from novelvideo.chat import mcp_runtime
+from novelvideo.chat import mcp_runtime, request_context
 from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.mcp_runtime import (
     _integer_string_argument_paths as _integer_string_argument_paths,
@@ -171,14 +171,20 @@ def _tool_index(*plugins: Any) -> dict[str, tuple[dict[str, Any], Any]]:
     return index
 
 
-_PLUGIN_CACHE: dict[tuple[str, bool], Any] = {}
-_PLUGIN_TOOL_CACHE: dict[tuple[str, bool], ToolIndex] = {}
+_PLUGIN_CACHE: dict[tuple[str, bool, bool], Any] = {}
+_PLUGIN_TOOL_CACHE: dict[tuple[str, bool, bool], ToolIndex] = {}
 SERVER = Server("dramaclaw", version="0.1.0")
 _EXCLUDE_STORY_TOOLS = False
 
 
+def _plugin_cache_key(plugin_name: str) -> tuple[str, bool, bool]:
+    # A plugin fixes host-dependent tools and schemas while it loads, so one loaded
+    # from the process environment is not reused inside a request scope, or the reverse.
+    return (plugin_name, _EXCLUDE_STORY_TOOLS, request_context.active())
+
+
 def _plugin(plugin_name: str) -> Any:
-    cache_key = (plugin_name, _EXCLUDE_STORY_TOOLS)
+    cache_key = _plugin_cache_key(plugin_name)
     plugin = _PLUGIN_CACHE.get(cache_key)
     if plugin is None:
         plugin = _load_plugin(plugin_name)
@@ -192,7 +198,7 @@ def _agent_plugin_name() -> str:
 
 
 def _plugin_tools(plugin_name: str) -> dict[str, tuple[dict[str, Any], Any]]:
-    cache_key = (plugin_name, _EXCLUDE_STORY_TOOLS)
+    cache_key = _plugin_cache_key(plugin_name)
     tools = _PLUGIN_TOOL_CACHE.get(cache_key)
     if tools is None:
         tools = _tool_index(_plugin(plugin_name))
@@ -214,7 +220,7 @@ _PROJECT_DISCOVERY_HINT = " Call freezone_list_projects and pass project_id."
 
 def _external_unbound_freezone() -> bool:
     # Only external MCP connections opt into per-call project selection.
-    if os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() != "1":
+    if request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip() != "1":
         return False
     # Keep other plugins and already-bound connections on their existing paths.
     if _agent_plugin_name() != "freezone" or _scope_kind() != "home":
@@ -406,21 +412,23 @@ HOME_TOOL_NAMES = frozenset(
 
 
 def _scope_kind() -> str:
-    return "project" if os.environ.get("DRAMACLAW_PROJECT_ID", "").strip() else "home"
+    return (
+        "project" if request_context.get("DRAMACLAW_PROJECT_ID", "").strip() else "home"
+    )
 
 
 def _freezone_canvas_mode() -> bool:
     """Detect Freezone even when a shared App Server drops one env flag."""
-    if os.environ.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
+    if request_context.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
         return True
     return (
         bool(
-            os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
-            and os.environ.get("DRAMACLAW_AGENT_PROFILE", "")
+            request_context.get("DRAMACLAW_CANVAS_ID", "").strip()
+            and request_context.get("DRAMACLAW_AGENT_PROFILE", "")
             .strip()
             .startswith("freezone")
         )
-        or os.environ.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
+        or request_context.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
     )
 
 

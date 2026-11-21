@@ -21,7 +21,7 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from novelvideo.chat import mcp_runtime, story_tools
+from novelvideo.chat import mcp_runtime, request_context, story_tools
 from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.story_mcp_policy import STORY_HOOKS
 from novelvideo.chat.agent_api_errors import _http_error_result, _maybe_json
@@ -37,14 +37,14 @@ def _request(method: str, path: str, *, query=None, body=None) -> dict[str, Any]
         raise ValueError("interactive-story API URL is not configured")
     if not path.startswith("/api/v1/projects/") or ".." in path.split("/"):
         raise ValueError("interactive-story API path is invalid")
-    token_file = os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    token_file = request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     if token_file:
         try:
             token = Path(token_file).read_text(encoding="utf-8").strip()
         except OSError:
             token = ""
     else:
-        token = os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+        token = request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
     local_trust = (
         os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower()
         in {"1", "true", "yes", "on"}

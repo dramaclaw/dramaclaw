@@ -6,7 +6,7 @@ from collections.abc import Callable
 import hashlib
 import json
 import math
-import os
+import importlib.util
 from pathlib import Path
 import re
 from threading import Lock
@@ -15,6 +15,21 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+def _load_request_context():
+    path = Path(__file__).with_name("_request_context.py")
+    if not path.is_file():
+        path = path.with_name("request_context.py")
+    spec = importlib.util.spec_from_file_location("_dramaclaw_request_context", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load request context from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+request_context = _load_request_context()
 
 
 _CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}
@@ -71,10 +86,10 @@ def _session_request(
 def agent_key_mode() -> bool:
     """Whether an agent key is configured without a turn token override."""
     return any(
-        os.environ.get(name, "").strip()
+        request_context.get(name, "").strip()
         for name in ("DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_KEY")
     ) and not any(
-        os.environ.get(name, "").strip()
+        request_context.get(name, "").strip()
         for name in ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE")
     )
 
@@ -180,11 +195,11 @@ def request(
     shape_http_error: Callable[[int, str, str], dict[str, Any]],
 ) -> dict[str, Any]:
     """Exchange a key lazily, then retry one business 401 with a fresh session."""
-    key_file = os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+    key_file = request_context.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
     try:
         key = (
             Path(key_file).read_text(encoding="utf-8").strip() if key_file
-            else os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+            else request_context.get("DRAMACLAW_AGENT_KEY", "").strip()
         )
     except (OSError, UnicodeError, ValueError):
         key = ""
@@ -200,7 +215,11 @@ def request(
             "error": "Agent keys require https or a loopback http API URL",
         }
     project = re.search(r"/projects/([^/?#]+)", api_path)
-    project_id = unquote(project.group(1)) if project else os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
+    project_id = (
+        unquote(project.group(1))
+        if project
+        else request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
+    )
     scope = {"kind": "project", "id": project_id} if project_id else {"kind": "home"}
     cache_key = (api_base, hashlib.sha256(key.encode("utf-8")).hexdigest(), json.dumps(scope, sort_keys=True))
     with _GLOBAL_LOCK:
