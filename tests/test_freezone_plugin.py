@@ -9177,14 +9177,14 @@ def _recipe_only_draft_awaiting_finish(monkeypatch, plugin, session_id):
         assert handlers["freezone_put_agent_catalog_recipe"](
             {**base, "index": index, "recipe": {"id": recipe_id}}
         )["ok"] is True
-    draft = plugin._PENDING_SKILL_STUDIO_DRAFTS[session_id]
+    draft = plugin._OFFLINE_SKILL_STUDIO_DRAFTS[session_id]
     assert len(draft["operations"]["recipes"]) == 2
     original_persist = plugin._persist_skill_studio_session
     monkeypatch.setattr(
         plugin,
         "_persist_skill_studio_session",
-        lambda value: seen.persisted.append(copy.deepcopy(value))
-        or original_persist(value),
+        lambda key, value: seen.persisted.append(copy.deepcopy(value))
+        or original_persist(key, value),
     )
     seen.finish = lambda: handlers["freezone_finish_agent_catalog_draft"](base)
     seen.draft_cards = lambda: [
@@ -9250,7 +9250,7 @@ def test_finish_draft_on_host_without_chat_turn_returns_at_once_and_keeps_operat
         "no-listener-a"
     ]
     assert sorted(seen.persisted[0]["recipes"]) == [0, 1]
-    assert "no-listener-a" in plugin._PENDING_SKILL_STUDIO_DRAFTS
+    assert "no-listener-a" in plugin._OFFLINE_SKILL_STUDIO_DRAFTS
 
 
 @pytest.mark.parametrize(
