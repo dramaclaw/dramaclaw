@@ -16,7 +16,7 @@ from mcp import types
 import pytest
 from starlette.applications import Starlette
 
-from test_remote_mcp_relay import (
+from support.remote_mcp_api import (
     FAKE_TOKEN,
     KEY,
     LAUNCHER,
@@ -934,9 +934,9 @@ def test_tool_calls_reach_the_api_as_the_calling_key(monkeypatch, exchange_facto
 
 @pytest.mark.parametrize("path,projects,scope", [
     ("/mcp/tools", ["project-a", "project-b"], {}),
-    ("/mcp/tools", ["relay-test-project"], {"DRAMACLAW_PROJECT_ID": "relay-test-project"}),
-    ("/mcp/tools/projects/relay-test-project/canvases/relay-test-canvas", [], {
-        "DRAMACLAW_PROJECT_ID": "relay-test-project", "DRAMACLAW_CANVAS_ID": "relay-test-canvas",
+    ("/mcp/tools", ["entry-test-project"], {"DRAMACLAW_PROJECT_ID": "entry-test-project"}),
+    ("/mcp/tools/projects/entry-test-project/canvases/entry-test-canvas", [], {
+        "DRAMACLAW_PROJECT_ID": "entry-test-project", "DRAMACLAW_CANVAS_ID": "entry-test-canvas",
     }),
     ("/mcp/workflows", [], {}),
 ])

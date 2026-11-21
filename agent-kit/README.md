@@ -174,113 +174,71 @@ python3 agent-kit/scripts/render_config.py --host codex --ce-dir . --project-id 
 
 发布整个 `agent-kit/` 目录即可。许可证见 `LICENSES/Elastic-2.0.txt`，第三方声明见 `NOTICE`。
 
-## 远程 MCP 中继（仅限本地验证）
+## 远程 MCP 入口（API 进程内）
 
-在仓库根目录使用已安装的 Python 环境启动：
+API 进程可以在自身端口的 `/mcp/` 下提供远程 MCP 入口，供外部 Agent 用 Agent Key 接入。默认关闭，
+不挂载这些路径。
+
+### 在本机开启
+
+为 API 进程设置开关后启动（取值 `1`、`true`、`yes`、`on` 均视为开启，不区分大小写）：
 
 ```bash
-.venv/bin/python agent-kit/scripts/remote_mcp_relay.py --ce-dir "$PWD"
+DRAMACLAW_REMOTE_MCP_ENABLED=true uv run novelvideo api --host 127.0.0.1 --port 8780
 ```
 
-可通过 `--api-url`、`--port` 指定 API 地址和监听端口。`/mcp/workflows` 读取的 Skills/Recipes 目录由 API 识别的 Agent Key 所有者决定，与 `--username` 无关；`--username` 只命名中继本机的本地状态（如 tools 子进程的画布命令桥接目录），未指定时沿用中继环境的 `DRAMACLAW_USERNAME`，否则为 `local`。
-`--api-url` 默认是 `http://127.0.0.1:8780`，必须使用 https 或回环地址 http。
-`--api-url` 指向的 API 必须提供 `POST /api/v1/agent/sessions`；缺少此接口会使每个新会话返回 503。
-中继在启动会话前通过 API（`POST /api/v1/agent/sessions`）校验 Key；拒绝返回 401，校验不可用返回 503。
-新会话在确认携带 Bearer 后，先校验请求头及 JSON-RPC `initialize` 请求，再校验 Key、启动子进程。
-初始化请求体最多 4 MiB，超过返回 413；无效请求返回可读的 JSON 错误，不调用 Key 校验接口或启动子进程。
+开启后启动日志会输出一行 `Remote MCP entry enabled at /mcp/{tools|workflows}` 以及生效的并发上限。
+入口用 Agent Key 换取会话（`POST /api/v1/agent/sessions`），因此入口所用的 API 必须提供该接口；
+缺少该接口时每个请求都返回 503，`code` 为 `agent_key_exchange_unsupported`。
 
-使用 Streamable HTTP MCP 客户端连接 `http://127.0.0.1:8790/mcp/tools` 或
-`http://127.0.0.1:8790/mcp/workflows`，并携带请求头
-`Authorization: Bearer <agent key>`。这是唯一的凭据传入渠道；中继通过
-`DRAMACLAW_AGENT_KEY` 将 Key 传给子进程，忽略中继自身环境中的 Agent Key/Token 变量。
+### 接入
 
-路径支持以下形式，均可带末尾斜杠：
+使用 Streamable HTTP MCP 客户端连接以下地址，并在每个请求上携带
+`Authorization: Bearer <agent key>`，这是唯一的凭据传入渠道：
 
-- `/mcp/{tools|workflows}`：自动绑定 Key 唯一可见的项目，否则保留 home scope。
-- `/mcp/{tools|workflows}/projects/<project_id>`：项目 scope。
-- `/mcp/{tools|workflows}/projects/<project_id>/canvases/<canvas_id>`：指定项目和画布。
+- `http://127.0.0.1:8780/mcp/tools`：画布工具。Key 恰好能看到一个项目且其 ID 有效时，自动绑定该项目；
+  没有可见项目、有多个项目或项目列表不可用时保留 home scope。
+- `http://127.0.0.1:8780/mcp/tools/projects/<project_id>`：指定项目。
+- `http://127.0.0.1:8780/mcp/tools/projects/<project_id>/canvases/<canvas_id>`：指定项目和画布。
+- `http://127.0.0.1:8780/mcp/workflows`：Skills/Recipes 工作流服务，读取的目录由 Key 的所有者决定。
+  同样支持上面的 `/projects/<project_id>[/canvases/<canvas_id>]` 后缀。
 
-ID 仅允许 `[A-Za-z0-9._-]`，长度为 1–128 个字符。路径包含项目时，Key 校验使用项目 scope。
-tools 服务无需带画布的项目路径也可提供 Freezone 画布工具；带画布路径用于预先绑定项目和画布。
-子进程的项目和画布不继承中继环境中的值。也不继承以下回合／模式变量：
-`DRAMACLAW_EXTERNAL_MCP`、`DRAMACLAW_TURN_ID`、`DRAMACLAW_FREEZONE_TOOL_RESULT_DIR`、
-`DRAMACLAW_CHAT_SURFACE`（含 `SUPERTALE_CHAT_SURFACE` 回退）、`DRAMACLAW_TOOL_MODE`、
-`DRAMACLAW_TOOL_MODE_FILE`、`DRAMACLAW_AGENT_PROFILE`、`DRAMACLAW_LOCAL_AGENT_TRUST`；
-模式由子进程启动器设置。
+路径均可带末尾斜杠。ID 仅允许 `[A-Za-z0-9._-]`，长度为 1–128 个字符；其他路径返回 404。
+路径包含项目时，Key 以该项目的 scope 校验；显式项目或画布路径不查询项目列表。
 
-home 路径先以 home scope 校验 Key，再用交换得到的 Token 请求 `GET /api/v1/projects`。
-恰好有一个可见项目且 ID 有效时，子进程绑定该项目 scope，画布保持未设置。
-没有可见项目、存在多个项目或列表不可用（包括无效 ID）时，保留 home scope，并记录一行
-`Home path kept home scope: <reason>`；原因分别为 `no visible project`、
-`several visible projects` 或 `project listing unavailable`。
-Token 仅在内存中用于此次查询，查询结束即丢弃，不写入 Session 或日志。
-会话后续请求仍使用原 home URL；携带该会话 ID 访问项目路径会返回 404。
-显式项目或画布路径不查询项目列表，始终使用路径指定的 scope。
+入口无状态：每个 POST 独立完成，返回 JSON，不签发 `mcp-session-id`，不启动子进程；
+GET、DELETE 返回 405，WebSocket 连接被关闭。每个请求都要通过 Key 校验：API 进程在内存中按 Key 和 scope
+缓存交换得到的短期会话，会话距过期超过 60 秒时直接复用，否则重新调用交换接口。
 
-当 Agent Key 的 home 路径保留 home scope（没有或有多个可见项目等情况）时，tools 服务提供
-完整 Freezone 工具集和只读的 `freezone_list_projects`。模型应先列出项目，选择用户所指的项目
-（有歧义时询问，不猜测），再在每次其他 Freezone 工具调用中传入 `project_id`；同一连接可操作多个项目。
-服务的 initialize instructions 会说明此流程；因缺少 `project_id` 而失败的调用会在错误中提示
-`freezone_list_projects`。单项目自动绑定和上述显式项目／画布路径保持不变，workflows 服务不受影响。
-
-每个会话启动一个子进程。以下参数默认读取对应环境变量，显式 CLI 参数优先：
-
-| CLI 参数 | 环境变量 | 默认值 |
-| --- | --- | --- |
-| `--max-children` | `REMOTE_MCP_MAX_CHILDREN` | 32 |
-| `--max-children-per-key` | `REMOTE_MCP_MAX_CHILDREN_PER_KEY` | 8 |
-| `--idle-timeout` | `REMOTE_MCP_IDLE_TIMEOUT` | 600 秒 |
-| `--disconnect-grace` | `REMOTE_MCP_DISCONNECT_GRACE` | 10 秒 |
-
-两个上限必须是 ≥ 1 的整数，两个时间必须是有限正数。总会话数或单 Key 会话数达到上限时，
-新初始化请求返回 HTTP 429，JSON-RPC 错误保留请求 id，并说明限额；现有会话不受影响。
-限额包含正在创建的会话，单 Key 按 SHA-256 摘要计数，不保存原始 Key 用于计数。
-限额仅作用于单个中继进程，不排队、不跨实例计数。未验证的 Key 不占名额。
-无效的初始请求或预检查时限额已满的请求不调用 Key 交换接口（`POST /api/v1/agent/sessions`）。
-通过预检查的请求会调用一次 Key 交换；验证成功后若名额已被其他请求占满，仍返回 429，
-丢弃交换所得 Token，不启动子进程。
-
-空闲时间从最后一次 POST 结束时开始计算；没有 POST 请求进行时，即使 GET 流保持打开，
-达到 idle timeout 也会结束会话。曾打开 GET 流的会话，在所有 GET 流关闭且没有 POST
-请求进行时，从最后一次 POST 或 GET 结束起经过 disconnect grace 后结束。未打开过
-GET 流的会话按 idle timeout 回收。DELETE 请求、子进程退出和中继关闭也会结束会话；
-回收后释放名额。
-
-中继默认只监听回环地址，仅用于本地验证，不用于生产环境。
-
-### 对外入口的必要限制
-
-如需通过反向代理对外暴露中继，公共入口必须同时设置：
-- 所有请求的请求体大小上限（包括已建立会话的请求）。
-- 每个客户端及全局的并发连接上限，并建议设置请求速率限制。
-- 请求头和请求体的读取超时，避免慢速上传长期占用连接。
-
-中继在验证 Key 前读取 initialize 请求体（最多 4 MiB）；大量或缓慢的未认证上传会占用缓冲内存。
-会话建立后，后续请求体直接交给 MCP SDK，中继不再限制其大小。
-每个通过预检查的新 initialize 请求还会向 API 发起一次 Key 校验。
-会话数量上限不能替代这些入口限制；默认仍只监听回环地址，用于本地验证。
-
-## API 进程内的远程 MCP 入口
-
-API 进程设置 `DRAMACLAW_REMOTE_MCP_ENABLED=true` 后，在自身端口的 `/mcp/` 下提供与中继相同的
-路径、请求头和工具（默认关闭，未开启时这些路径返回 404）。与中继的区别：
-
-- 无状态：每个 POST 独立完成，返回 JSON，不签发 `mcp-session-id`，不启动子进程；GET、DELETE 返回 405。
-- 每个请求都必须携带 `Authorization: Bearer <agent key>`，并在执行任何工具代码前校验；
-  `DRAMACLAW_LOCAL_AGENT_TRUST` 以及 API 进程环境中的 Key、Token、项目、画布、用户变量对该入口无效。
-- 拒绝响应沿用中继的 `error` 文案，并附带 `code` 与 Key 交换返回的 `status_code`。
+- 缺少 Bearer 或 Key 为空时返回 401（`Bearer key required`）。Key 被 API 拒绝时返回 401
+  （`Agent key rejected`）；校验无法完成时返回 503（`Agent key check unavailable`）。
+  两者都附带 `code`，有 HTTP 状态时附带 Key 交换返回的 `status_code`。
+- 每个请求都在执行任何工具代码前校验 Key；`DRAMACLAW_LOCAL_AGENT_TRUST` 以及 API 进程环境中的
+  Key、Token、项目、画布、用户变量对该入口无效，项目和画布只取自请求路径或自动绑定。
 - 入口校验 Key 和工具回调 API 时使用的地址，与对话后端的解析顺序相同：`DRAMACLAW_API_URL` →
   `NOVELVIDEO_API_URL` → `NOVELVIDEO_API_HOST`/`NOVELVIDEO_API_PORT` → `SUPERTALE_API_URL` →
   `http://127.0.0.1:8780`，通常无需额外设置。API 不在默认地址时，为 API 进程设置 `DRAMACLAW_API_URL`，
-  指向 API 进程自身可达的地址。
+  指向 API 进程自身可达的地址。该地址必须是 https 或回环地址 http，否则返回 503，
+  `code` 为 `agent_key_insecure_transport`。
 - 入口连不上该地址时返回 503，`code` 为 `agent_key_exchange_failed`，`detail` 写明入口尝试连接的地址，
   并说明这是服务端问题、需由运维检查 `DRAMACLAW_API_URL`；请求和 Key 本身无需修改。
 - 带项目的 `tools` 请求（路径中指定项目，或 Key 只能访问一个项目）把画布命令和卡片事件写入该项目自己的
   事件目录，即浏览器中该项目的会话所监听的目录；API 进程环境中的 `DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR`
   对该入口无效。该目录位于项目数据所在的节点上：多节点部署时，请求必须落在项目的归属节点，
   否则入口无法确定目录（日志有一条 warning），需要浏览器执行的画布命令会等待到超时。
-- 不提供中继的会话数限额与请求体上限；请求体上限等入口限制仍需按上一节在对外入口处设置。
-  并发上限见下。
+
+当 `/mcp/tools` 保留 home scope 时，tools 服务提供完整 Freezone 工具集和只读的
+`freezone_list_projects`。模型应先列出项目，选择用户所指的项目（有歧义时询问，不猜测），再在每次其他
+Freezone 工具调用中传入 `project_id`；同一连接可操作多个项目。initialize 返回的 instructions 会说明此流程。
+
+### 对外入口的必要限制
+
+入口本身不限制请求体大小，也不限速。如需对外暴露，前置的公共入口必须同时设置：
+- 所有请求的请求体大小上限。
+- 每个客户端及全局的并发连接上限，并建议设置请求速率限制。
+- 请求头和请求体的读取超时，避免慢速上传长期占用连接。
+
+未缓存会话的 Key（包括无效 Key）每个请求都会向 API 发起一次 Key 交换。
 
 ### 并发上限（按进程计数）
 

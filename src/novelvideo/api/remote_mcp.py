@@ -5,8 +5,10 @@ is checked before any tool code runs, and sees only its own key, project and can
 through ``request_context``. Nothing is kept between requests, so any API process can
 answer any request. Off unless ``DRAMACLAW_REMOTE_MCP_ENABLED`` is set.
 
-Paths and refusals follow ``agent-kit/scripts/remote_mcp_relay.py``:
-``/mcp/{tools|workflows}[/projects/{project_id}[/canvases/{canvas_id}]]``.
+Paths are ``/mcp/{tools|workflows}[/projects/{project_id}[/canvases/{canvas_id}]]``;
+a path without a project binds the key's only visible project when it has exactly one.
+A request without a bearer key gets 401; a key the API rejects gets 401 and a key check
+that cannot complete gets 503, both with the exchange's own ``code``.
 
 Requests that passed the key check are counted while they run, in total and per key.
 The count belongs to this process: with several API processes each one allows its own
@@ -55,8 +57,8 @@ _CHECK_TIMEOUT_SECONDS = 10.0
 
 # Names a request must never inherit from the process: credentials, the scope they act
 # in, the user they act as, the host kind that selects tools, and the directory canvas
-# events are written to, which belongs to one project. The relay strips the same
-# credentials, scope and host-kind names from its child processes.
+# events are written to, which belongs to one project. The request's own key, scope and
+# host kind are set afresh in their place.
 IDENTITY_PREFIXES = ("DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_TOKEN")
 IDENTITY_NAMES = frozenset({
     "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID", "DRAMACLAW_TURN_ID",
@@ -184,7 +186,7 @@ def _check_key(api_base: str) -> dict[str, Any]:
 
 
 def _single_visible_project(api_base: str) -> tuple[str | None, str | None]:
-    """Like the relay, bind an unscoped path to the key's project when it has one."""
+    """Bind an unscoped path to the key's project when it sees exactly one."""
     result = _session_request(api_base, "/api/v1/projects", _open_direct)
     projects = result.get("data")
     if result.get("ok") is not True or not isinstance(projects, list):
@@ -255,7 +257,7 @@ def _shown_address(api_base: str) -> str:
 
 
 def _refusal(result: dict[str, Any], api_base: str) -> JSONResponse:
-    """Shape a failed exchange like the relay does, plus the exchange's own reason."""
+    """Turn a failed exchange into a 401 or 503 that carries the exchange's own reason."""
     code = str(result.get("code") or "agent_key_exchange_failed")
     status = result.get("status_code")
     rejected = code == "agent_key_exchange_failed" and status in (401, 403)
