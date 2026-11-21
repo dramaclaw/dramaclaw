@@ -278,20 +278,16 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(
     assert "operation_status=submitted" in caplog.text
 
 
-@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
-def test_abandoned_generate_waiter_is_bounded_by_task_timeout_without_refund(
-    monkeypatch, tmp_path, kind
-):
-    """Characterization: the real waiter, the real deadline, no Celery.
+def _run_generate_waiter_to_timeout(monkeypatch, tmp_path, kind, *, model_call_id=""):
+    """Run the real waiter through the core until the real 1s deadline, no Celery.
 
-    The core is called the way the inline backend calls it. The waiter is
-    interrupted by the cooperative deadline, but the pending operation turns
-    that timeout into a settlement review: no refund, operation stays pending.
+    The core is called the way the inline backend calls it; returns the core
+    result, the usage-meter calls, the task manager and the operation id.
     """
     from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
         bind_agent_product_task,
         create_agent_product_operation,
-        read_agent_product_operation,
     )
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
@@ -314,6 +310,16 @@ def test_abandoned_generate_waiter_is_bounded_by_task_timeout_without_refund(
         task_id="task_1",
         root_task_id="task_1",
     )
+    if model_call_id:
+        bind_agent_product_model_execution(
+            project_dir=tmp_path,
+            operation_id=operation_id,
+            model_call_id=model_call_id,
+            executed_at=1.0,
+            source="server_chat_turn",
+            turn_id="turn-1",
+            tool_call_id="call-1",
+        )
     task_type = operation["task_type"]
     events: list[tuple[str, str]] = []
 
@@ -334,8 +340,10 @@ def test_abandoned_generate_waiter_is_bounded_by_task_timeout_without_refund(
             events.append(("review", reservation_id))
             return {"status": "awaiting"}
 
-        async def settle_cancelled_feature_credit_reservation(self, *_args, **_kwargs):
-            events.append(("refund", "cancelled"))
+        async def settle_cancelled_feature_credit_reservation(
+            self, reservation_id, *, metadata=None
+        ):
+            events.append(("refund", reservation_id))
 
         async def settle_feature_credit_reservation(self, *_args, action, **_kwargs):
             events.append((action, "settle"))
@@ -383,11 +391,73 @@ def test_abandoned_generate_waiter_is_bounded_by_task_timeout_without_refund(
         register_project_task_runner(
             task_type, run_freezone_agent_product, requires_home_node=True
         )
-    elapsed = time.monotonic() - started
-
     # Bounded by the existing task deadline, with no Celery involved.
-    assert 0.9 <= elapsed < 10
-    # ...but it does not end as TASK_TIMEOUT and nothing is refunded.
+    assert 0.9 <= time.monotonic() - started < 10
+    return result, events, manager, operation_id
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_abandoned_generate_without_agent_work_times_out_and_refunds(
+    monkeypatch, tmp_path, kind
+):
+    """No result tool call was observed, so the Agent did no billable work."""
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+
+    result, events, manager, operation_id = _run_generate_waiter_to_timeout(
+        monkeypatch, tmp_path, kind
+    )
+
+    assert result == {"failed": True, "error_code": "TASK_TIMEOUT", "timeout_seconds": 1}
+    assert events == [("refund", "reservation_1")]
+    assert manager.completed == []
+    assert len(manager.failed) == 1
+    assert manager.failed[0]["error"] == "任务超过 1 分钟未完成，已自动放弃"
+    assert manager.failed[0]["metadata"]["error_code"] == "TASK_TIMEOUT"
+    operation = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )
+    assert operation["status"] == "failed"
+    assert operation["completed_at"] is not None
+
+    # A late result can no longer turn the refunded operation into a charge.
+    with pytest.raises(ValueError, match="already terminal"):
+        bind_agent_product_model_execution(
+            project_dir=tmp_path,
+            operation_id=operation_id,
+            model_call_id="late-call",
+            executed_at=2.0,
+            source="server_chat_turn",
+        )
+    with pytest.raises(ValueError, match="another terminal outcome"):
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id="task_1",
+            result_ref={"kind": "workflow_skill_definition", "id": "artifact-a"},
+        )
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["status"] == "failed"
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_with_agent_work_times_out_into_settlement_review(
+    monkeypatch, tmp_path, kind
+):
+    """Observed Agent work keeps the reservation open for late reconciliation."""
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+
+    result, events, manager, operation_id = _run_generate_waiter_to_timeout(
+        monkeypatch, tmp_path, kind, model_call_id="turn-1:call-1"
+    )
+
     assert result == {
         "pending": True,
         "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
@@ -399,15 +469,9 @@ def test_abandoned_generate_waiter_is_bounded_by_task_timeout_without_refund(
     assert manager.completed == []
     assert len(manager.failed) == 1
     assert manager.failed[0]["error"] == "产品结果仍在等待对账"
-    assert manager.failed[0]["metadata"]["error_code"] == (
-        "AGENT_PRODUCT_SETTLEMENT_PENDING"
-    )
-    assert (
-        read_agent_product_operation(project_dir=tmp_path, operation_id=operation_id)[
-            "status"
-        ]
-        == "reserved"
-    )
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["status"] == "reserved"
 
 
 @pytest.mark.parametrize(

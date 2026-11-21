@@ -983,45 +983,149 @@ async def test_recipe_waiter_does_not_hold_worker_slot_while_run_is_live(
     )["status"] == "reserved"
 
 
-def test_product_task_timeout_preserves_pending_operation(tmp_path, monkeypatch):
-    from novelvideo.task_backend.cancel import TaskTimedOut
+def _interrupt_product_task(monkeypatch, tmp_path, operation, exc):
+    """Run the product task entrypoint with its wait interrupted by ``exc``."""
     from novelvideo.task_backend.runners import freezone as freezone_runner
 
-    operation = _create(tmp_path, kind="recipe_result")
+    def interrupted(_envelope, coro, **_kwargs):
+        coro.close()
+        raise exc
+
+    monkeypatch.setattr(freezone_runner, "_run_cancellable", interrupted)
+    return freezone_runner.run_freezone_agent_product(
+        {
+            "task_type": operation["task_type"],
+            "__run_task_id": "task-a",
+            "payload": {
+                "operation_id": operation["operation_id"],
+                "product_kind": operation["product_kind"],
+            },
+        },
+        SimpleNamespace(state_dir=tmp_path),
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [
+        ("recipe_result", "submitted"),
+        ("recipe_result", "reserved"),
+        ("workflow_result", "reserved"),
+    ],
+)
+def test_product_task_timeout_preserves_pending_operation(
+    tmp_path, monkeypatch, kind, status
+):
+    # Result operations wait on an external provider: without model evidence
+    # they may still have incurred cost, so a timeout never refunds them.
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
     bind_agent_product_task(
         project_dir=tmp_path,
         operation_id=operation["operation_id"],
         task_id="task-a",
         root_task_id="task-a",
     )
-    finish_agent_product_operation(
-        project_dir=tmp_path,
-        operation_id=operation["operation_id"],
-        outcome="submitted",
-        expected_task_id="task-a",
-    )
-
-    def time_out(_envelope, coro, **_kwargs):
-        coro.close()
-        raise TaskTimedOut(timeout_seconds=1)
-
-    monkeypatch.setattr(freezone_runner, "_run_cancellable", time_out)
+    if status != "reserved":
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation["operation_id"],
+            outcome=status,
+            expected_task_id="task-a",
+        )
 
     with pytest.raises(AgentProductSettlementPending) as exc_info:
-        freezone_runner.run_freezone_agent_product(
-            {
-                "task_type": "freezone_agent_recipe_result",
-                "__run_task_id": "task-a",
-                "payload": {
-                    "operation_id": operation["operation_id"],
-                    "product_kind": "recipe_result",
-                },
-            },
-            SimpleNamespace(state_dir=tmp_path),
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
         )
 
     assert exc_info.value.operation_id == operation["operation_id"]
-    assert exc_info.value.status == "submitted"
+    assert exc_info.value.status == status
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == status
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_timeout_without_agent_work_fails_operation(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+
+    # The ordinary timeout reaches the generic failure path, which refunds once.
+    with pytest.raises(TaskTimedOut):
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
+        )
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )
+    assert stored["status"] == "failed"
+    assert stored["model_evidence"] == {}
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_timeout_with_agent_work_preserves_pending_operation(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="turn-a:call-a",
+        executed_at=1.0,
+        source="server_chat_turn",
+    )
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
+        )
+
+    assert exc_info.value.status == "reserved"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_cancel_keeps_existing_behavior(tmp_path, monkeypatch, kind):
+    # Cancellation is outside the timeout rule: a reserved operation is left
+    # as is and the cancellation propagates to the generic cancel path.
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+
+    with pytest.raises(TaskCancelled):
+        _interrupt_product_task(monkeypatch, tmp_path, operation, TaskCancelled())
+
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
 
 
 @pytest.mark.asyncio

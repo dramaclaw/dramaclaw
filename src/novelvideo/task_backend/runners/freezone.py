@@ -266,8 +266,10 @@ def run_freezone_agent_product(
         # ordinary timeout must never turn an unknown provider outcome into a
         # refund.
         from novelvideo.freezone.agent_product_operations import (
+            AGENT_TURN_PRODUCT_KINDS,
             AgentProductSettlementPending,
             PENDING_STATUSES,
+            finish_agent_product_operation,
             read_agent_product_operation,
         )
 
@@ -275,14 +277,38 @@ def run_freezone_agent_product(
             envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
         )
         operation_id = str(payload.get("operation_id") or "").strip()
+        project_dir = Path(ctx.state_dir)
         operation = (
-            read_agent_product_operation(
-                project_dir=Path(ctx.state_dir), operation_id=operation_id
-            )
+            read_agent_product_operation(project_dir=project_dir, operation_id=operation_id)
             if operation_id
             else None
         )
         status = str((operation or {}).get("status") or "")
+        if (
+            isinstance(exc, TaskTimedOut)
+            and status in PENDING_STATUSES
+            and operation.get("product_kind") in AGENT_TURN_PRODUCT_KINDS
+            and not (operation.get("model_evidence") or {}).get("model_call_id")
+        ):
+            # No result tool call was observed, so the Agent did no work and
+            # the outcome is known: end the operation undelivered (a late
+            # result is then rejected) and let the timeout fail the task,
+            # which refunds the reservation once.
+            try:
+                finish_agent_product_operation(
+                    project_dir=project_dir,
+                    operation_id=operation_id,
+                    outcome="failed",
+                    expected_task_id=str(operation.get("task_id") or ""),
+                )
+            except ValueError:
+                # Settled concurrently; handle the stored outcome as before.
+                operation = read_agent_product_operation(
+                    project_dir=project_dir, operation_id=operation_id
+                )
+                status = str((operation or {}).get("status") or "")
+            else:
+                raise
         preserve_statuses = (
             PENDING_STATUSES
             if isinstance(exc, TaskTimedOut)
