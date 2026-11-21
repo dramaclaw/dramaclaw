@@ -278,6 +278,138 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(
     assert "operation_status=submitted" in caplog.text
 
 
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_abandoned_generate_waiter_is_bounded_by_task_timeout_without_refund(
+    monkeypatch, tmp_path, kind
+):
+    """Characterization: the real waiter, the real deadline, no Celery.
+
+    The core is called the way the inline backend calls it. The waiter is
+    interrupted by the cooperative deadline, but the pending operation turns
+    that timeout into a settlement review: no refund, operation stays pending.
+    """
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_task,
+        create_agent_product_operation,
+        read_agent_product_operation,
+    )
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+    from novelvideo.task_backend.runners.freezone import run_freezone_agent_product
+
+    operation = create_agent_product_operation(
+        project_dir=tmp_path,
+        project_id="proj_timeout",
+        product_kind=kind,
+        idempotency_key="abandoned-draft",
+        generation_session_id="abandoned-draft",
+        canvas_id="default",
+        artifact_id="artifact-a",
+        metadata={},
+    )
+    operation_id = operation["operation_id"]
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation_id,
+        task_id="task_1",
+        root_task_id="task_1",
+    )
+    task_type = operation["task_type"]
+    events: list[tuple[str, str]] = []
+
+    class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved",
+                reservation_id="reservation_1",
+                feature_key=f"freezone.agent.{kind}",
+                model_call_credit_policy="feature_included",
+            )
+
+        async def mark_feature_credit_settlement_for_review(
+            self, reservation_id, *, metadata=None
+        ):
+            events.append(("review", reservation_id))
+            return {"status": "awaiting"}
+
+        async def settle_cancelled_feature_credit_reservation(self, *_args, **_kwargs):
+            events.append(("refund", "cancelled"))
+
+        async def settle_feature_credit_reservation(self, *_args, action, **_kwargs):
+            events.append((action, "settle"))
+
+    def waiter(envelope, ctx):
+        envelope["payload"] = {"operation_id": operation_id, "product_kind": kind}
+        return run_freezone_agent_product(envelope, ctx)
+
+    async def not_cancelled(**_kwargs):
+        return False
+
+    async def no_metrics(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", not_cancelled)
+    monkeypatch.setattr(cancel_module, "is_cancel_requested", not_cancelled)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", no_metrics)
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    monkeypatch.setenv("ST_PROJECT_TASK_TIMEOUT_S", "1")
+    register_project_task_runner(task_type, waiter, requires_home_node=True)
+
+    manager = _FakeTaskManager()
+    started = time.monotonic()
+    try:
+        result = run_core.run_project_task_core_sync(
+            _verified_delivery(
+                task_type=task_type,
+                billing_metadata={"feature_credit_reservation_id": "reservation_1"},
+            ),
+            SimpleNamespace(
+                project_id="proj_timeout",
+                requester_user_id="usr_1",
+                is_home_node=True,
+                state_dir=tmp_path,
+            ),
+            manager,
+            run_task_id="task_1",
+        )
+    finally:
+        register_project_task_runner(
+            task_type, run_freezone_agent_product, requires_home_node=True
+        )
+    elapsed = time.monotonic() - started
+
+    # Bounded by the existing task deadline, with no Celery involved.
+    assert 0.9 <= elapsed < 10
+    # ...but it does not end as TASK_TIMEOUT and nothing is refunded.
+    assert result == {
+        "pending": True,
+        "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        "operation_id": operation_id,
+        "operation_status": "reserved",
+        "settlement_status": "awaiting_reconciliation",
+    }
+    assert events == [("review", "reservation_1")]
+    assert manager.completed == []
+    assert len(manager.failed) == 1
+    assert manager.failed[0]["error"] == "产品结果仍在等待对账"
+    assert manager.failed[0]["metadata"]["error_code"] == (
+        "AGENT_PRODUCT_SETTLEMENT_PENDING"
+    )
+    assert (
+        read_agent_product_operation(project_dir=tmp_path, operation_id=operation_id)[
+            "status"
+        ]
+        == "reserved"
+    )
+
+
 @pytest.mark.parametrize(
     "compile_mode",
     ["timeout_fallback", "memory_cache", "persistent_cache", "deterministic", "direct_voice"],

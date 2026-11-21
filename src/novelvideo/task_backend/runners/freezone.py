@@ -74,6 +74,11 @@ AGENT_PRODUCT_TASK_TYPES = (
     "freezone_agent_recipe_generate",
 )
 
+# Generate waiters poll until delivery or the task deadline; back off so an
+# idle wait costs one read every two seconds rather than five per second.
+_AGENT_PRODUCT_POLL_INITIAL_SECONDS = 0.2
+_AGENT_PRODUCT_POLL_MAX_SECONDS = 2.0
+
 
 async def _run_freezone_agent_product_async(
     envelope: dict[str, Any],
@@ -104,6 +109,8 @@ async def _run_freezone_agent_product_async(
         operation_id,
         product_kind,
     )
+    last_observed: tuple[Any, ...] | None = None
+    poll_seconds = _AGENT_PRODUCT_POLL_INITIAL_SECONDS
     while True:
         operation = await asyncio.to_thread(
             read_agent_product_operation,
@@ -118,18 +125,25 @@ async def _run_freezone_agent_product_async(
         if bound_task_id and bound_task_id != run_task_id:
             raise RuntimeError("agent product operation is bound to another task")
         status = str(operation.get("status") or "")
-        logger.info(
-            "agent_product_waiter.observed task_id=%s operation_id=%s "
-            "product_kind=%s operation_status=%s bound_task_id=%s "
-            "has_model_evidence=%s has_result_ref=%s",
-            run_task_id,
-            operation_id,
-            product_kind,
+        observed = (
             status,
             bound_task_id or "none",
             bool((operation.get("model_evidence") or {}).get("model_call_id")),
             bool(operation.get("result_ref")),
         )
+        if observed != last_observed:
+            # Only state changes are worth a line; an abandoned generation
+            # otherwise logs every poll until the task deadline.
+            last_observed = observed
+            logger.info(
+                "agent_product_waiter.observed task_id=%s operation_id=%s "
+                "product_kind=%s operation_status=%s bound_task_id=%s "
+                "has_model_evidence=%s has_result_ref=%s",
+                run_task_id,
+                operation_id,
+                product_kind,
+                *observed,
+            )
         if status == "delivered":
             evidence = operation.get("model_evidence") or {}
             result_ref = operation.get("result_ref") or {}
@@ -232,7 +246,8 @@ async def _run_freezone_agent_product_async(
                 operation_id=operation_id,
                 status="awaiting_delivery",
             )
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(poll_seconds)
+        poll_seconds = min(poll_seconds * 2, _AGENT_PRODUCT_POLL_MAX_SECONDS)
 
 
 def run_freezone_agent_product(
