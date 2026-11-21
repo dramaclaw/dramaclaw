@@ -1107,9 +1107,11 @@ def test_generate_timeout_with_agent_work_preserves_pending_operation(
 
 
 @pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
-def test_generate_cancel_keeps_existing_behavior(tmp_path, monkeypatch, kind):
-    # Cancellation is outside the timeout rule: a reserved operation is left
-    # as is and the cancellation propagates to the generic cancel path.
+def test_generate_cancel_without_agent_work_cancels_operation(
+    tmp_path, monkeypatch, kind
+):
+    # Same rule as the timeout branch: no Agent work means nothing is owed, so
+    # the operation ends cancelled and the generic cancel path refunds once.
     from novelvideo.task_backend.cancel import TaskCancelled
 
     operation = _create(tmp_path, kind=kind)
@@ -1123,6 +1125,40 @@ def test_generate_cancel_keeps_existing_behavior(tmp_path, monkeypatch, kind):
     with pytest.raises(TaskCancelled):
         _interrupt_product_task(monkeypatch, tmp_path, operation, TaskCancelled())
 
+    stored = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )
+    assert stored["status"] == "cancelled"
+    assert stored["model_evidence"] == {}
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_cancel_with_agent_work_preserves_pending_operation(
+    tmp_path, monkeypatch, kind
+):
+    # Same rule as the timeout branch: observed Agent work means the outcome
+    # is not "no work done", so the reservation is kept for reconciliation.
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="turn-a:call-a",
+        executed_at=1.0,
+        source="server_chat_turn",
+    )
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        _interrupt_product_task(monkeypatch, tmp_path, operation, TaskCancelled())
+
+    assert exc_info.value.status == "reserved"
     assert read_agent_product_operation(
         project_dir=tmp_path, operation_id=operation["operation_id"]
     )["status"] == "reserved"

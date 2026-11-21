@@ -261,10 +261,10 @@ def run_freezone_agent_product(
             task_type=str(envelope.get("task_type") or ""),
         )
     except (TaskTimedOut, TaskCancelled) as exc:
-        # A product result can arrive after the local worker deadline. Preserve
-        # the reservation for the authenticated result path to reconcile; an
-        # ordinary timeout must never turn an unknown provider outcome into a
-        # refund.
+        # A product result can arrive after the local worker deadline or a
+        # cancellation. Preserve the reservation for the authenticated result
+        # path to reconcile; an interruption must never turn an unknown
+        # provider outcome into a refund.
         from novelvideo.freezone.agent_product_operations import (
             AGENT_TURN_PRODUCT_KINDS,
             AgentProductSettlementPending,
@@ -285,20 +285,27 @@ def run_freezone_agent_product(
         )
         status = str((operation or {}).get("status") or "")
         if (
-            isinstance(exc, TaskTimedOut)
-            and status in PENDING_STATUSES
+            status in PENDING_STATUSES
             and operation.get("product_kind") in AGENT_TURN_PRODUCT_KINDS
-            and not (operation.get("model_evidence") or {}).get("model_call_id")
         ):
+            # An Agent-turn product is charged when the Agent did the work,
+            # whether the task timed out or the user cancelled it.
+            if (operation.get("model_evidence") or {}).get("model_call_id"):
+                # A result tool call was observed: settle by reconciliation.
+                raise AgentProductSettlementPending(
+                    operation_id=operation_id, status=status
+                ) from exc
             # No result tool call was observed, so the Agent did no work and
-            # the outcome is known: end the operation undelivered (a late
-            # result is then rejected) and let the timeout fail the task,
-            # which refunds the reservation once.
+            # the outcome is known: end the operation undelivered (late
+            # evidence or a late result is then rejected) and let the
+            # interruption reach the generic path, which refunds once.
             try:
                 finish_agent_product_operation(
                     project_dir=project_dir,
                     operation_id=operation_id,
-                    outcome="failed",
+                    outcome=(
+                        "cancelled" if isinstance(exc, TaskCancelled) else "failed"
+                    ),
                     expected_task_id=str(operation.get("task_id") or ""),
                 )
             except ValueError:

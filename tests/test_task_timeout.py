@@ -284,6 +284,29 @@ def _run_generate_waiter_to_timeout(monkeypatch, tmp_path, kind, *, model_call_i
     The core is called the way the inline backend calls it; returns the core
     result, the usage-meter calls, the task manager and the operation id.
     """
+    started = time.monotonic()
+    outcome = _run_generate_waiter_through_core(
+        monkeypatch, tmp_path, kind, model_call_id=model_call_id
+    )
+    # Bounded by the existing task deadline, with no Celery involved.
+    assert 0.9 <= time.monotonic() - started < 10
+    return outcome
+
+
+def _run_generate_waiter_to_cancel(monkeypatch, tmp_path, kind, *, model_call_id=""):
+    """Run the real waiter through the core and cancel it once it is running.
+
+    The task is admitted (not cancelled before start); the waiter's own cancel
+    watch then observes the cancel flag, as after a user stops the task.
+    """
+    return _run_generate_waiter_through_core(
+        monkeypatch, tmp_path, kind, model_call_id=model_call_id, cancel=True
+    )
+
+
+def _run_generate_waiter_through_core(
+    monkeypatch, tmp_path, kind, *, model_call_id="", cancel=False
+):
     from novelvideo.freezone.agent_product_operations import (
         bind_agent_product_model_execution,
         bind_agent_product_task,
@@ -355,23 +378,31 @@ def _run_generate_waiter_to_timeout(monkeypatch, tmp_path, kind, *, model_call_i
     async def not_cancelled(**_kwargs):
         return False
 
+    async def cancel_requested(**_kwargs):
+        return True
+
     async def no_metrics(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    # The pre-start check in the core stays clear so the waiter really runs;
+    # only the waiter's cancel watch sees the flag when ``cancel`` is set.
     monkeypatch.setattr(run_core, "is_cancel_requested", not_cancelled)
-    monkeypatch.setattr(cancel_module, "is_cancel_requested", not_cancelled)
+    monkeypatch.setattr(
+        cancel_module,
+        "is_cancel_requested",
+        cancel_requested if cancel else not_cancelled,
+    )
     monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
     monkeypatch.setattr(run_core, "_emit_project_task_metrics", no_metrics)
     monkeypatch.setattr(
         run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
-    monkeypatch.setenv("ST_PROJECT_TASK_TIMEOUT_S", "1")
+    monkeypatch.setenv("ST_PROJECT_TASK_TIMEOUT_S", "60" if cancel else "1")
     register_project_task_runner(task_type, waiter, requires_home_node=True)
 
     manager = _FakeTaskManager()
-    started = time.monotonic()
     try:
         result = run_core.run_project_task_core_sync(
             _verified_delivery(
@@ -391,8 +422,6 @@ def _run_generate_waiter_to_timeout(monkeypatch, tmp_path, kind, *, model_call_i
         register_project_task_runner(
             task_type, run_freezone_agent_product, requires_home_node=True
         )
-    # Bounded by the existing task deadline, with no Celery involved.
-    assert 0.9 <= time.monotonic() - started < 10
     return result, events, manager, operation_id
 
 
@@ -472,6 +501,107 @@ def test_generate_with_agent_work_times_out_into_settlement_review(
     assert read_agent_product_operation(
         project_dir=tmp_path, operation_id=operation_id
     )["status"] == "reserved"
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_without_agent_work_cancel_refunds(monkeypatch, tmp_path, kind):
+    """No result tool call was observed, so cancelling owes the user a refund."""
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+
+    result, events, manager, operation_id = _run_generate_waiter_to_cancel(
+        monkeypatch, tmp_path, kind
+    )
+
+    assert result == {"cancelled": True}
+    assert events == [("refund", "reservation_1")]
+    assert manager.completed == []
+    assert manager.failed == []
+    assert manager.updates[-1]["status"] == "cancelled"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_with_agent_work_cancel_goes_to_settlement_review(
+    monkeypatch, tmp_path, kind
+):
+    """Observed Agent work is settled by reconciliation, as on timeout."""
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+
+    result, events, manager, operation_id = _run_generate_waiter_to_cancel(
+        monkeypatch, tmp_path, kind, model_call_id="turn-1:call-1"
+    )
+
+    assert events == [("review", "reservation_1")]
+    # The core projects the pending settlement as a task failure; a task the
+    # cancel request already marked cancelled keeps that status.
+    assert manager.completed == []
+    assert [item["error"] for item in manager.failed] == ["产品结果仍在等待对账"]
+    assert result == {
+        "pending": True,
+        "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        "operation_id": operation_id,
+        "operation_status": "reserved",
+        "settlement_status": "awaiting_reconciliation",
+    }
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["status"] == "reserved"
+
+
+@pytest.mark.parametrize("has_agent_work", [True, False])
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_cancel_never_refunds_then_accepts_late_delivery(
+    monkeypatch, tmp_path, kind, has_agent_work
+):
+    """A refunded cancellation must not later be turned into a delivered charge."""
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+
+    _result, events, _manager, operation_id = _run_generate_waiter_to_cancel(
+        monkeypatch,
+        tmp_path,
+        kind,
+        model_call_id="turn-1:call-1" if has_agent_work else "",
+    )
+    refunded = ("refund", "reservation_1") in events
+
+    # The Agent turn keeps running after the task is cancelled; its result
+    # tool call is then observed and the result is submitted.
+    late_delivery_accepted = True
+    try:
+        if not has_agent_work:
+            bind_agent_product_model_execution(
+                project_dir=tmp_path,
+                operation_id=operation_id,
+                model_call_id="turn-1:call-late",
+                executed_at=2.0,
+                source="server_chat_turn",
+            )
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id="task_1",
+            result_ref={"kind": "workflow_skill_definition", "id": "artifact-a"},
+        )
+    except ValueError:
+        late_delivery_accepted = False
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )
+    assert not (refunded and late_delivery_accepted), (
+        f"refund events={events}, late operation status={stored['status']}"
+    )
 
 
 @pytest.mark.parametrize(
