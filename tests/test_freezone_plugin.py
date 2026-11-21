@@ -9118,6 +9118,193 @@ def test_freezone_plugin_recipe_only_manifest_admits_and_delivers_each_recipe(
     assert all(item[2]["outcome"] == "delivered" for item in finished_operations)
 
 
+def _recipe_only_draft_awaiting_finish(monkeypatch, plugin, session_id):
+    """A two-Recipe draft with open product operations, ready for finish."""
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    seen = types.SimpleNamespace(pending=[], waits=[], finished=[], persisted=[])
+    monkeypatch.setattr(
+        plugin,
+        "skill_studio_bridge_key",
+        lambda **_kwargs: f"skill-studio-{len(seen.pending) + 1}",
+    )
+    monkeypatch.setattr(
+        plugin,
+        "put_pending_skill_studio_event",
+        lambda **kwargs: seen.pending.append(kwargs),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_finish_agent_product_generation",
+        lambda project_id, operation, **kwargs: seen.finished.append(
+            (project_id, operation, kwargs)
+        )
+        or {"ok": True},
+    )
+    base = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "skill_studio_session_id": session_id,
+    }
+    recipe_ids = ("recipe-a", "recipe-b")
+    handlers["freezone_put_agent_catalog_draft_outline"](
+        {
+            **base,
+            "reuse_goal": "只生成节点工艺",
+            "stages": [
+                {
+                    "id": recipe_id,
+                    "recipe_id": recipe_id,
+                    "reuse": "new",
+                    "new_recipe_craft_gap": "现有 Recipe 缺少该阶段的输入输出契约。",
+                }
+                for recipe_id in recipe_ids
+            ],
+            "expected_recipe_count": 2,
+            "catalog_checked": True,
+        }
+    )
+    assert handlers["freezone_begin_agent_catalog_draft"](
+        {
+            **base,
+            "mode": "create",
+            "artifact_mode": "recipe_only",
+            "expected_recipe_count": 2,
+            "recipe_targets": list(recipe_ids),
+            "generation_attempt_id": "attempt-a",
+        }
+    )["ok"] is True
+    for index, recipe_id in enumerate(recipe_ids):
+        assert handlers["freezone_put_agent_catalog_recipe"](
+            {**base, "index": index, "recipe": {"id": recipe_id}}
+        )["ok"] is True
+    draft = plugin._PENDING_SKILL_STUDIO_DRAFTS[session_id]
+    assert len(draft["operations"]["recipes"]) == 2
+    original_persist = plugin._persist_skill_studio_session
+    monkeypatch.setattr(
+        plugin,
+        "_persist_skill_studio_session",
+        lambda value: seen.persisted.append(copy.deepcopy(value))
+        or original_persist(value),
+    )
+    seen.finish = lambda: handlers["freezone_finish_agent_catalog_draft"](base)
+    seen.draft_cards = lambda: [
+        item for item in seen.pending if item["event"]["type"] == "skill_studio.draft"
+    ]
+    return seen
+
+
+def _set_skill_studio_host(monkeypatch, external_mcp, turn_id):
+    for name, value in (
+        ("DRAMACLAW_EXTERNAL_MCP", external_mcp),
+        ("DRAMACLAW_TURN_ID", turn_id),
+    ):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
+def test_finish_draft_on_host_without_chat_turn_returns_at_once_and_keeps_operations_open(
+    monkeypatch,
+):
+    """An external MCP host has no product chat turn, so nothing reads the card."""
+    _set_skill_studio_host(monkeypatch, "1", None)
+    plugin = _load_plugin_module()
+    seen = _recipe_only_draft_awaiting_finish(monkeypatch, plugin, "no-listener-a")
+    monkeypatch.setattr(
+        plugin,
+        "wait_skill_studio_result",
+        lambda key, **kwargs: seen.waits.append((key, kwargs)),
+    )
+
+    finished = seen.finish()
+
+    assert seen.draft_cards() == []
+    assert seen.waits == []
+    assert finished["ok"] is False
+    assert finished["status"] == finished["code"] == "skill_studio_ui_unavailable"
+    assert finished["tool_call_status"] == "completed"
+    assert finished["skill_studio_status"] == "not_shown"
+    assert finished["retryable"] is False
+    assert finished["project_id"] == "project-a"
+    assert finished["canvas_id"] == "canvas-a"
+    assert finished["type"] == "skill_studio.draft"
+    assert finished["skill_studio_session_id"] == "no-listener-a"
+    assert "bridge_key" not in finished
+    message = finished["message"]
+    for phrase in (
+        "no product chat turn",
+        "was not shown",
+        "nothing was saved to the catalog",
+        "Only the user can",
+        "draft session is kept",
+        "in-product chat on this canvas",
+    ):
+        assert phrase in message, message
+    assert finished["next_action"] == "ask_user_to_finish_in_product_chat"
+    assert "Do not repeat this Skill Studio call" in finished["agent_instruction"]
+    # Same as a card nobody answered in time: the operations stay open and the
+    # draft session is kept for the product chat to pick up.
+    assert seen.finished == []
+    assert [item["manifest"]["generation_session_id"] for item in seen.persisted] == [
+        "no-listener-a"
+    ]
+    assert sorted(seen.persisted[0]["recipes"]) == [0, 1]
+    assert "no-listener-a" in plugin._PENDING_SKILL_STUDIO_DRAFTS
+
+
+@pytest.mark.parametrize(
+    ("external_mcp", "turn_id"),
+    [
+        (None, "turn-1"),  # in-app Hermes or Codex with a product chat turn
+        (None, None),  # in-app Hermes sessions do not always carry a turn id
+        ("1", "turn-1"),  # in-app Codex sets DRAMACLAW_EXTERNAL_MCP for its MCP server
+    ],
+)
+def test_finish_draft_with_a_listener_still_waits_on_the_card(
+    monkeypatch, external_mcp, turn_id
+):
+    _set_skill_studio_host(monkeypatch, external_mcp, turn_id)
+    plugin = _load_plugin_module()
+    seen = _recipe_only_draft_awaiting_finish(monkeypatch, plugin, "listener-a")
+    monkeypatch.setattr(
+        plugin,
+        "wait_skill_studio_result",
+        lambda key, **kwargs: seen.waits.append((key, kwargs)),
+    )
+
+    finished = seen.finish()
+
+    (card,) = seen.draft_cards()
+    assert [key for key, _kwargs in seen.waits] == [card["key"]]
+    assert finished["status"] == "skill_studio_frontend_timeout"
+    assert finished["skill_studio_status"] == "pending_user_input"
+    assert finished["bridge_key"] == card["key"]
+    assert "code" not in finished
+    assert seen.finished == []
+    assert len(seen.persisted) == 1
+
+
+def test_finish_draft_rejected_by_the_frontend_still_fails_the_operations(monkeypatch):
+    _set_skill_studio_host(monkeypatch, None, "turn-1")
+    plugin = _load_plugin_module()
+    seen = _recipe_only_draft_awaiting_finish(monkeypatch, plugin, "rejected-a")
+    monkeypatch.setattr(
+        plugin,
+        "wait_skill_studio_result",
+        lambda key, **_kwargs: {
+            "ok": False,
+            "status": "skill_studio_frontend_result",
+            "bridge_key": key,
+            "errors": ["invalid draft"],
+        },
+    )
+
+    seen.finish()
+
+    assert [item[2]["outcome"] for item in seen.finished] == ["failed", "failed"]
+
+
 def _begin_catalog_create_with_recipes(handlers, base_args, recipe_ids):
     handlers["freezone_put_agent_catalog_draft_outline"](
         {
