@@ -6416,9 +6416,29 @@ export function buildSkillStudioQuestionResponseForTest(
   ].join("\n");
 }
 
+// The live frame or stored event may omit scope; the reply must still reach the
+// bridge of the project the card is shown in, so fall back to the current page.
+interface BridgeResultScopeOptions {
+  projectId?: string;
+  canvasId?: string;
+  agentId?: string;
+}
+
+function bridgeResultScope(
+  event: { project_id?: string | null; canvas_id?: string | null; agent_id?: string | null },
+  options: BridgeResultScopeOptions,
+) {
+  return {
+    project_id: event.project_id || options.projectId || undefined,
+    canvas_id: event.canvas_id || options.canvasId || undefined,
+    agent_id: event.agent_id || options.agentId || undefined,
+  };
+}
+
 export function buildSkillStudioQuestionToolResultForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.questions" }>,
   selections: SkillStudioQuestionSelections,
+  options: BridgeResultScopeOptions = {},
 ) {
   const safeSelections = Object.fromEntries(
     Object.entries(selections).filter(([key]) => !key.startsWith("__")),
@@ -6427,9 +6447,7 @@ export function buildSkillStudioQuestionToolResultForTest(
     turn_id: event.turn_id ?? undefined,
     anchor_text_prefix: event.anchor_text_prefix ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     skill_studio_status: "answered",
     ok: true,
@@ -6469,7 +6487,7 @@ export function buildAssistantClarificationResponseForTest(
 export function buildAssistantClarificationToolResultForTest(
   event: AssistantClarificationUiEvent,
   answers: AssistantClarificationAnswers,
-  options: { skillStudioRevision?: boolean; projectId?: string; canvasId?: string; agentId?: string; cancelMessage?: string } = {},
+  options: BridgeResultScopeOptions & { skillStudioRevision?: boolean; cancelMessage?: string } = {},
 ) {
   const cancelled = answers.__action === "cancel";
   const safeAnswers = Object.fromEntries(
@@ -6493,9 +6511,7 @@ export function buildAssistantClarificationToolResultForTest(
     turn_id: event.turn_id ?? undefined,
     anchor_text_prefix: event.anchor_text_prefix ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id || options.projectId || undefined,
-    canvas_id: event.canvas_id || options.canvasId || undefined,
-    agent_id: event.agent_id || options.agentId || undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     clarification_status: cancelled ? "cancelled" : "answered",
     ok: !cancelled,
@@ -6598,6 +6614,7 @@ export const normalizeSkillStudioDraftForCatalogForTest = normalizeSkillStudioDr
 export function buildSkillStudioDraftToolResultForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
   draft: Record<string, unknown>,
+  options: BridgeResultScopeOptions = {},
 ) {
   const normalizedDraft = normalizeSkillStudioDraftForCatalog(draft);
   const skill = normalizedDraft.skill && typeof normalizedDraft.skill === "object" && !Array.isArray(normalizedDraft.skill)
@@ -6614,9 +6631,7 @@ export function buildSkillStudioDraftToolResultForTest(
   return {
     turn_id: event.turn_id ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     skill_studio_status: "catalog_saved",
     ok: true,
@@ -6646,13 +6661,12 @@ interface SkillStudioToolResultResponse {
 
 export function buildSkillStudioDraftCancelToolResultForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
+  options: BridgeResultScopeOptions = {},
 ) {
   return {
     turn_id: event.turn_id ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     skill_studio_status: "catalog_cancelled",
     ok: true,
@@ -6681,6 +6695,7 @@ export function buildSkillStudioDraftCancelToolResultForTest(
 export function buildSkillStudioDraftRevisionToolResultForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
   draft: Record<string, unknown>,
+  options: BridgeResultScopeOptions = {},
 ) {
   const skill = draft.skill && typeof draft.skill === "object" && !Array.isArray(draft.skill)
     ? draft.skill as Record<string, unknown>
@@ -6696,9 +6711,7 @@ export function buildSkillStudioDraftRevisionToolResultForTest(
   return {
     turn_id: event.turn_id ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     skill_studio_status: "revision_started",
     ok: true,
@@ -15433,6 +15446,12 @@ export function SuperChatPanel({
     }
   };
 
+  const bridgeResultScopeOptions = useMemo(() => ({
+    projectId: params.project || undefined,
+    canvasId: effectiveFreezoneCanvasId || undefined,
+    agentId: effectiveFreezoneAgentId || undefined,
+  }), [params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId]);
+
   const submitSkillStudioQuestionResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.questions" }>,
     selections: SkillStudioQuestionSelections,
@@ -15452,7 +15471,7 @@ export function SuperChatPanel({
           ? "skip"
           : "submit";
       const payload = {
-        ...buildSkillStudioQuestionToolResultForTest(event, selections),
+        ...buildSkillStudioQuestionToolResultForTest(event, selections, bridgeResultScopeOptions),
         action,
         skill_studio_status: action === "submit" ? "answered" : action,
         client_debug: skillStudioResultClientDebug(event, "questions_card_ws", {
@@ -15490,7 +15509,7 @@ export function SuperChatPanel({
       toast.error("提交 Skill Studio 选择失败，请重试");
       return false;
     }
-  }, [chat, updateChatUiEvent]);
+  }, [chat, bridgeResultScopeOptions, updateChatUiEvent]);
 
   const submitAssistantClarificationResponse = useCallback(async (
     event: AssistantClarificationUiEvent,
@@ -15527,10 +15546,8 @@ export function SuperChatPanel({
       const skillStudioRevision = activeAssistantClarificationIsSkillStudioRevision(visibleMessages, event);
       const payload = {
         ...buildAssistantClarificationToolResultForTest(event, answers, {
+          ...bridgeResultScopeOptions,
           skillStudioRevision,
-          projectId: params.project || undefined,
-          canvasId: effectiveFreezoneCanvasId || undefined,
-          agentId: effectiveFreezoneAgentId || undefined,
           cancelMessage: t("freezone.chat.generationParams.catalog.exitMessage"),
         }),
         action,
@@ -15603,7 +15620,7 @@ export function SuperChatPanel({
       toast.error(t("freezone.chat.clarification.submitFailed"));
       return false;
     }
-	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, updateChatUiEvent, visibleMessages, t]);
+	  }, [chat, bridgeResultScopeOptions, updateChatUiEvent, visibleMessages, t]);
 
   const submitSkillStudioDraftResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -15615,7 +15632,7 @@ export function SuperChatPanel({
     }
     try {
       const payload = {
-        ...buildSkillStudioDraftToolResultForTest(event, draftPayload),
+        ...buildSkillStudioDraftToolResultForTest(event, draftPayload, bridgeResultScopeOptions),
         client_debug: skillStudioResultClientDebug(event, "draft_confirm_add_http", {
           active_turn_id: chat.activeTurnId,
           chat_busy: chat.busy,
@@ -15686,7 +15703,7 @@ export function SuperChatPanel({
       toast.error("添加 Skill / Recipe 失败，请检查必填字段后重试");
       return false;
     }
-  }, [chat.activeTurnId, chat.busy, queryClient, updateChatUiEvent]);
+  }, [bridgeResultScopeOptions, chat.activeTurnId, chat.busy, queryClient, updateChatUiEvent]);
 
   const handleSkillStudioDraftChange = useCallback((
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -15715,7 +15732,7 @@ export function SuperChatPanel({
     }
     try {
       const payload = {
-        ...buildSkillStudioDraftRevisionToolResultForTest(event, draftPayload),
+        ...buildSkillStudioDraftRevisionToolResultForTest(event, draftPayload, bridgeResultScopeOptions),
         client_debug: skillStudioResultClientDebug(event, "draft_start_revision_button_ws", {
           active_turn_id: chat.activeTurnId,
           chat_busy: chat.busy,
@@ -15743,7 +15760,7 @@ export function SuperChatPanel({
       toast.error("启动草稿调整失败，请重试");
       return false;
     }
-  }, [chat, updateChatUiEvent]);
+  }, [chat, bridgeResultScopeOptions, updateChatUiEvent]);
 
   const handleCancelSkillStudioDraft = useCallback((
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -15755,7 +15772,7 @@ export function SuperChatPanel({
       return;
     }
     const payload = {
-      ...buildSkillStudioDraftCancelToolResultForTest(event),
+      ...buildSkillStudioDraftCancelToolResultForTest(event, bridgeResultScopeOptions),
       client_debug: skillStudioResultClientDebug(event, "draft_cancel_button_ws", {
         active_turn_id: chat.activeTurnId,
         chat_busy: chat.busy,
@@ -15775,7 +15792,7 @@ export function SuperChatPanel({
         cancelled: true,
       }),
     );
-  }, [chat, updateChatUiEvent]);
+  }, [chat, bridgeResultScopeOptions, updateChatUiEvent]);
 
   const handleComposerKeyDown = (event: ReactKeyboardEvent) => {
     if (!shouldSubmitComposerEnter(event)) return;

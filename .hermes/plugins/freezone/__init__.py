@@ -1007,6 +1007,8 @@ def _emit_skill_studio_event(
     mismatch = _bound_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
+    if not _clarification_listener_available():
+        return tool_result(_skill_studio_no_ui_result(project, canvas, event))
     key = skill_studio_bridge_key(project_id=project, canvas_id=canvas, event=event)
     put_pending_skill_studio_event(
         key=key,
@@ -3488,7 +3490,8 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     )
     explicit_failure = bool(
         result_payload
-        and str(result_payload.get("status") or "") != "skill_studio_frontend_timeout"
+        and str(result_payload.get("status") or "")
+        not in _SKILL_STUDIO_CARD_UNANSWERED_STATUSES
         and not delivered
     )
     if project_id and (delivered or explicit_failure):
@@ -4840,6 +4843,47 @@ def _clarification_no_ui_result(
             "freezone_confirm_canvas_action."
         ) + (_TURNLESS_NO_UI_CANVAS_GUIDANCE if _turnless_external_mcp_host() else "")
         + (_KEY_NO_UI_TIER_GUIDANCE if _key_deferral_host() else ""),
+    }
+
+
+# The draft card got no answer from the product interface: either nobody answered
+# in time or nothing could show it. The draft session and its product operations
+# stay open so the product chat can still finish them.
+_SKILL_STUDIO_CARD_UNANSWERED_STATUSES = frozenset(
+    {"skill_studio_frontend_timeout", "skill_studio_ui_unavailable"}
+)
+
+
+def _skill_studio_no_ui_result(
+    project: str | None, canvas: str | None, event: dict[str, Any]
+) -> dict[str, Any]:
+    message = (
+        "This session has no product chat turn, so no DramaClaw interface is reading "
+        "Skill Studio cards. The card was not shown and nothing was saved to the catalog. "
+        "Only the user can finish this; the Agent cannot confirm or save the draft here. "
+        "The draft session is kept. Saving a Skill or Recipe needs the user to confirm "
+        "it in the DramaClaw in-product chat on this canvas."
+    )
+    return {
+        "ok": False,
+        "status": "skill_studio_ui_unavailable",
+        "code": "skill_studio_ui_unavailable",
+        "tool_call_status": "completed",
+        "skill_studio_status": "not_shown",
+        "project_id": project,
+        "canvas_id": canvas,
+        "type": event.get("type"),
+        "skill_studio_session_id": event.get("skill_studio_session_id"),
+        "error": message,
+        "message": message,
+        "retryable": False,
+        "next_action": "ask_user_to_finish_in_product_chat",
+        "agent_instruction": (
+            "Do not repeat this Skill Studio call in this session and do "
+            "not tell the user the Skill or Recipe was saved. Tell the user the draft is "
+            "prepared but not saved, and that saving it needs their confirmation in the "
+            "DramaClaw in-product chat on this canvas."
+        ),
     }
 
 
