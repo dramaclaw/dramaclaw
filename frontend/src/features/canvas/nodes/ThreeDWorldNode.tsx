@@ -72,10 +72,8 @@ import {
   mergeDirectorSavedSceneMaps,
 } from '@/features/canvas/domain/directorWorldSources';
 import { setDirectorWorldSceneSaveHandler } from '@/features/canvas/domain/directorWorldSceneSaveRegistry';
-import {
-  ThreeDDirectorDialog,
-  type ThreeDDirectorCaptureMeta,
-} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+import type { ThreeDDirectorCaptureMeta } from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+import { LazyThreeDDirectorDialog as ThreeDDirectorDialog } from '@/features/viewer-kit/three-d/LazyThreeDDirectorDialog';
 import type { ThreeDSceneSnapshot } from '@/features/viewer-kit/three-d/engine/viewerApp';
 import type {
   DirectorControlFrameBundle,

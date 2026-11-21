@@ -21,6 +21,7 @@
 import {
   memo,
   useEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
   type ComponentType,
@@ -139,13 +140,15 @@ function resolveShellImage(
   }
 }
 
-function LodShell({ type, id, data, selected, width, height }: {
+function LodShell({ type, id, data, selected, width, height, deferMedia }: {
   type: string;
   id: string;
   data: ShellData;
   selected: boolean | undefined;
   width: number | undefined;
   height: number | undefined;
+  /** 节点还没被 React Flow 测量过（见 unmeasuredSelector）：不发任何媒体请求。 */
+  deferMedia: boolean;
 }) {
   const fallback = SHELL_FALLBACK_SIZES[type] ?? DEFAULT_SHELL_SIZE;
   const w = width ?? fallback.width;
@@ -161,11 +164,13 @@ function LodShell({ type, id, data, selected, width, height }: {
     getLodStill(videoSource)
   );
   useEffect(() => {
+    if (deferMedia) return;
     requestLodStill(videoSource);
-  }, [videoSource]);
+  }, [videoSource, deferMedia]);
 
-  const imageSrc =
-    type === 'videoNode'
+  const imageSrc = deferMedia
+    ? null
+    : type === 'videoNode'
       ? (lodStill
           ?? (data.previewImageUrl
             ? withMediaVariant(resolveImageDisplayUrl(data.previewImageUrl), variant)
@@ -194,6 +199,25 @@ function LodShell({ type, id, data, selected, width, height }: {
 
 const lowDetailSelector = (state: { transform: [number, number, number] }) =>
   isLowDetailZoom(state.transform[2]);
+
+/**
+ * 节点是否还没被 React Flow 测量过（internals.handleBounds 为空）。
+ *
+ * 为什么要看这个：onlyRenderVisibleElements 对没有 handleBounds 的节点一律强制
+ * 渲染（@xyflow/system getNodesInside 的 forceInitialRender），所以首屏会把画布
+ * 上**所有**节点挂一遍，测量完才按视口裁掉。若这一遍挂的是完整组件，屏外几百个
+ * 节点的原图和视频会在同一次提交里全部发出请求（实测冷加载 575 节点：285 张原图
+ * 421MB + 175 个 <video>），卸载也撤不回已发出的请求。
+ *
+ * hydrate burst 的两个 rAF 窗口罩不住这一遍：冷加载时 React Flow 真正挂节点的
+ * 那次提交常常落在窗口关闭之后。这里直接用 React Flow 自己的判据，与时序无关。
+ *
+ * handleBounds 一旦写入，后续 setNodes 都会沿用（adoptUserNodes 的 parseHandles），
+ * 被裁剪卸载再挂回的节点也是已测量的，不受影响；只有真正首次出现的节点会翻转。
+ */
+const unmeasuredSelector = (id: string) =>
+  (state: { nodeLookup?: Map<string, { internals?: { handleBounds?: unknown } }> }) =>
+    !state.nodeLookup?.get(id)?.internals?.handleBounds;
 
 /**
  * 把节点组件包成「低缩放档渲染 shell、其余渲染原组件」。
@@ -228,6 +252,12 @@ export function withLodShell(
     );
     const wantShell =
       lowDetail && !exempt && !isActiveSelection && !isNodeMediaActive(props.id);
+    // 首次测量前的那一遍强制渲染（见 unmeasuredSelector）：先出不带媒体的 shell，
+    // 测量完、裁剪把屏外节点卸掉之后，留在视口里的才进升级队列。
+    const unmeasured = useStore(
+      useMemo(() => unmeasuredSelector(props.id), [props.id])
+    );
+    const holdForMeasure = unmeasured && !exempt && !isActiveSelection;
 
     // shell → 完整组件的切换永远经过升级队列（每帧限量放行，手势中不放行）：
     //   - 手势进行中新挂载的节点（视口裁剪把它换进来的）从 shell 起步，避免
@@ -240,6 +270,7 @@ export function withLodShell(
     const [heldShell, setHeldShell] = useState(
       () =>
         wantShell ||
+        holdForMeasure ||
         (!exempt &&
           !isActiveSelection &&
           (isCanvasGestureActive() || isCanvasHydrateBurstActive()))
@@ -249,10 +280,11 @@ export function withLodShell(
       setHeldShell(true);
     }
     useEffect(() => {
-      if (!heldShell || wantShell) return;
+      // 未测量时不排队：屏外节点测量后会被裁剪直接卸掉，排进去只会白升级几个。
+      if (!heldShell || wantShell || holdForMeasure) return;
       // 返回的取消函数在卸载/重新降档时把自己撤出队列。
       return requestShellUpgrade(() => setHeldShell(false));
-    }, [heldShell, wantShell]);
+    }, [heldShell, wantShell, holdForMeasure]);
 
     // 跨项目粘贴的素材占位遮罩、参考拾取遮罩都挂在每个节点上（shell 档也要有）：
     // `.react-flow__node` 本身是定位元素，遮罩用 inset-0 就精确贴合这个节点的盒子，
@@ -267,6 +299,7 @@ export function withLodShell(
             selected={props.selected}
             width={props.width}
             height={props.height}
+            deferMedia={holdForMeasure}
           />
           <AssetMigrationNodeOverlay nodeId={props.id} data={props.data} />
           <ForeignMediaNodeOverlay nodeId={props.id} />

@@ -36,7 +36,7 @@ describe("dynamic workflow node action contract", () => {
     );
 
     expect(source).toContain("WORKFLOW_RUN_UPDATED_EVENT");
-    expect(source).toContain("onlyRenderVisibleElements={!workflowExecutionActive && !lowDetailActive}");
+    expect(source).toContain("onlyRenderVisibleElements={!workflowExecutionActive}");
   });
 
   it("allows long-running media tasks to finish before timing out", () => {

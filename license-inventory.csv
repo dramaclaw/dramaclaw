@@ -1145,6 +1145,7 @@ frontend/src/__tests__/features/canvas/inline-media-replace-gate.test.ts,Elastic
 frontend/src/__tests__/features/canvas/key-elements-bar.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/lod-audio-playback.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/lod-shell-fallback-sizes.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/lod-shell-unmeasured-initial-render.test.tsx,Elastic-2.0,2026 ClaymoreLab,SPDX header
 frontend/src/__tests__/features/canvas/matte-image-application.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/media-model-options.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/media-model-parameter-chip.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2970,6 +2971,7 @@ frontend/src/features/viewer-kit/pano/PanoCaptureDialog.tsx,Elastic-2.0,2026 Sup
 frontend/src/features/viewer-kit/pano/PanoCaptureSurface.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/viewer-kit/pano/panoCapture.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/viewer-kit/pano/panoManifest.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/viewer-kit/three-d/LazyThreeDDirectorDialog.tsx,Elastic-2.0,2026 ClaymoreLab,SPDX header
 frontend/src/features/viewer-kit/three-d/ThreeDDirectorDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/viewer-kit/three-d/ThreeDStageCanvas.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/viewer-kit/three-d/directorManifest.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
