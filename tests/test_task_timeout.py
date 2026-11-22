@@ -312,12 +312,14 @@ def _run_generate_waiter_through_core(
     model_call_id="",
     cancel=False,
     evidence_before_finish=False,
+    deliver_at=None,
 ):
     from novelvideo.freezone import agent_product_operations
     from novelvideo.freezone.agent_product_operations import (
         bind_agent_product_model_execution,
         bind_agent_product_task,
         create_agent_product_operation,
+        finish_agent_product_operation,
     )
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
@@ -374,6 +376,60 @@ def _run_generate_waiter_through_core(
             agent_product_operations,
             "finish_agent_product_operation",
             finish_after_late_evidence,
+        )
+
+    def deliver():
+        # Same transition the delivery route writes before it confirms credit.
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id="task_1",
+            result_ref={
+                "kind": "workflow_skill_definition"
+                if kind == "workflow_generate"
+                else "recipe_definition",
+                "id": "artifact-a",
+            },
+        )
+
+    if deliver_at == "before_start":
+        deliver()
+    elif deliver_at == "before_finish":
+        # Delivery commits after the runner's post-interruption read but before
+        # its terminal write.
+        original_finish = agent_product_operations.finish_agent_product_operation
+
+        def finish_after_delivery(**kwargs):
+            if kwargs.get("outcome") in {"cancelled", "failed"}:
+                deliver()
+            return original_finish(**kwargs)
+
+        monkeypatch.setattr(
+            agent_product_operations,
+            "finish_agent_product_operation",
+            finish_after_delivery,
+        )
+    elif deliver_at == "before_read":
+        # Delivery commits just before the interruption: the waiter's last poll
+        # missed it, the runner's post-interruption read sees it. The waiter
+        # polls from worker threads; the runner's handler reads on this thread.
+        import threading
+
+        original_read = agent_product_operations.read_agent_product_operation
+        caller_thread = threading.current_thread()
+
+        def read_after_delivery(**kwargs):
+            if threading.current_thread() is caller_thread:
+                stored = original_read(**kwargs)
+                if stored and stored["status"] != "delivered":
+                    deliver()
+            return original_read(**kwargs)
+
+        monkeypatch.setattr(
+            agent_product_operations,
+            "read_agent_product_operation",
+            read_after_delivery,
         )
 
     class UsageMeter:
@@ -618,6 +674,45 @@ def test_generate_evidence_recorded_before_terminal_write_goes_to_settlement_rev
     )
     assert stored["status"] == "reserved"
     assert stored["model_evidence"]["model_call_id"] == "turn-1:call-raced"
+
+
+@pytest.mark.parametrize(
+    "deliver_at", ["before_start", "before_read", "before_finish"]
+)
+@pytest.mark.parametrize("cancel", [True, False], ids=["cancel", "timeout"])
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_delivered_around_interruption_settles_as_delivered(
+    monkeypatch, tmp_path, kind, cancel, deliver_at
+):
+    """A draft delivered before the runner ends the operation is never refunded.
+
+    The delivery route writes ``delivered`` and only then confirms credit, so
+    a refund from the interrupted runner could reach billing first. Whether
+    the runner's read or its terminal write sees the delivery, the task
+    settles exactly as an uninterrupted delivery does.
+    """
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+
+    result, events, manager, operation_id = _run_generate_waiter_through_core(
+        monkeypatch,
+        tmp_path,
+        kind,
+        model_call_id="turn-1:call-1",
+        cancel=cancel,
+        deliver_at=deliver_at,
+    )
+
+    assert events == [("confirm", "settle")]
+    assert manager.failed == []
+    assert len(manager.completed) == 1
+    assert result["delivery_status"] == "delivered"
+    assert result["operation_id"] == operation_id
+    assert result["result_ref"]["id"] == "artifact-a"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["status"] == "delivered"
 
 
 @pytest.mark.parametrize("has_agent_work", [True, False])

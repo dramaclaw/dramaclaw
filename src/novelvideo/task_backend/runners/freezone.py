@@ -316,6 +316,12 @@ def run_freezone_agent_product(
                 status = str((operation or {}).get("status") or "")
             else:
                 raise
+        if status == "delivered":
+            # The product was delivered before this interruption ended the
+            # operation. Delivery confirms credit only after writing
+            # ``delivered``, so settle it as the uninterrupted waiter would
+            # rather than let the interruption refund it.
+            return asyncio.run(_run_freezone_agent_product_async(envelope, ctx))
         preserve_statuses = (
             PENDING_STATUSES
             if isinstance(exc, TaskTimedOut)
