@@ -212,7 +212,7 @@ GET、DELETE 返回 405，WebSocket 连接被关闭。每个请求都先通过�
 在撤销后的第一个请求即被拒绝。校验通过后，API 进程在内存中按 Key 和 scope 缓存换得的短期会话，
 会话距过期超过 60 秒时直接复用，否则重新换取；工具回调 API 时携带该会话。
 
-- 缺少 Bearer 或 Key 为空时返回 401（`Bearer key required`）。
+- 缺少 Bearer 或 Key 为空时返回 401，`code` 为 `agent_key_required`（`Bearer key required`）。
 - Key 无效、被撤销、已过期或所属用户被停用时返回 401，`code` 为 `agent_key_rejected`。
 - Key 有效但不允许用于请求的项目时返回 403，`code` 为 `agent_key_project_forbidden`。
 - Key 服务暂时不可用、校验无法完成时返回 503，`code` 为 `agent_key_check_unavailable`；

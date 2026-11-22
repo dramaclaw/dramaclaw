@@ -379,7 +379,9 @@ def test_missing_key_is_refused_before_exchange_even_with_local_trust(
                     f"/mcp/{mode}", json=call("whoami"), headers={**MCP_HEADERS, **headers},
                 )
                 assert response.status_code == 401
-                assert response.json() == {"error": "Bearer key required"}
+                assert response.json() == {
+                    "error": "Bearer key required", "code": "agent_key_required",
+                }
 
     asyncio.run(scenario())
     assert fake_api.port.checks == 0

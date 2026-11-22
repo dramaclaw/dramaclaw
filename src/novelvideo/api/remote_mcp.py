@@ -381,7 +381,9 @@ class RemoteMcpApp:
         scheme, _, key = headers.get(b"authorization", b"").decode("latin-1").partition(" ")
         key = key.strip()
         if scheme.lower() != "bearer" or not key:
-            return JSONResponse({"error": "Bearer key required"}, status_code=401)
+            return JSONResponse(
+                {"error": "Bearer key required", "code": "agent_key_required"}, status_code=401,
+            )
         # Resolved like the chat backend does for its own agents, so it is never empty.
         api_base = chat_service._load_api_url()
         key_digest = hashlib.sha256(key.encode("utf-8")).digest()
