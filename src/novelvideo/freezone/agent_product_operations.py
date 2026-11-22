@@ -542,7 +542,17 @@ def finish_agent_product_operation(
     result_ref: dict[str, Any] | None = None,
     server_recipe_compile: bool = False,
     server_recipe_direct_audio: bool = False,
+    keep_pending_if_model_executed: bool = False,
 ) -> dict[str, Any]:
+    """Write an operation outcome in one transaction.
+
+    With ``keep_pending_if_model_executed``, a cancelled/failed outcome is not
+    written when the operation already holds model execution evidence; the
+    operation stays pending and ``AgentProductSettlementPending`` is raised so
+    the caller keeps the reservation for reconciliation. The check runs inside
+    the write transaction, so evidence recorded after the caller's own read is
+    still seen.
+    """
     status = str(outcome or "").strip()
     if status not in PENDING_STATUSES | TERMINAL_STATUSES:
         raise ValueError("invalid agent product operation outcome")
@@ -580,6 +590,14 @@ def finish_agent_product_operation(
                 )
             return payload
         evidence = payload["model_evidence"]
+        if (
+            keep_pending_if_model_executed
+            and status in {"cancelled", "failed"}
+            and evidence.get("model_call_id")
+        ):
+            raise AgentProductSettlementPending(
+                operation_id=operation_id, status=payload["status"]
+            )
         if status == "delivered":
             if (
                 not recipe_delivery

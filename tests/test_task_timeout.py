@@ -305,8 +305,15 @@ def _run_generate_waiter_to_cancel(monkeypatch, tmp_path, kind, *, model_call_id
 
 
 def _run_generate_waiter_through_core(
-    monkeypatch, tmp_path, kind, *, model_call_id="", cancel=False
+    monkeypatch,
+    tmp_path,
+    kind,
+    *,
+    model_call_id="",
+    cancel=False,
+    evidence_before_finish=False,
 ):
+    from novelvideo.freezone import agent_product_operations
     from novelvideo.freezone.agent_product_operations import (
         bind_agent_product_model_execution,
         bind_agent_product_task,
@@ -345,6 +352,29 @@ def _run_generate_waiter_through_core(
         )
     task_type = operation["task_type"]
     events: list[tuple[str, str]] = []
+    if evidence_before_finish:
+        # The chat turn records its result tool call after the runner has read
+        # the operation but before the runner's terminal write begins.
+        original_finish = agent_product_operations.finish_agent_product_operation
+
+        def finish_after_late_evidence(**kwargs):
+            if kwargs.get("outcome") in {"cancelled", "failed"}:
+                bind_agent_product_model_execution(
+                    project_dir=tmp_path,
+                    operation_id=operation_id,
+                    model_call_id="turn-1:call-raced",
+                    executed_at=2.0,
+                    source="server_chat_turn",
+                    turn_id="turn-1",
+                    tool_call_id="call-raced",
+                )
+            return original_finish(**kwargs)
+
+        monkeypatch.setattr(
+            agent_product_operations,
+            "finish_agent_product_operation",
+            finish_after_late_evidence,
+        )
 
     class UsageMeter:
         async def resolve_feature_credit_reservation(self, _identity):
@@ -552,6 +582,42 @@ def test_generate_with_agent_work_cancel_goes_to_settlement_review(
     assert read_agent_product_operation(
         project_dir=tmp_path, operation_id=operation_id
     )["status"] == "reserved"
+
+
+@pytest.mark.parametrize("cancel", [True, False], ids=["cancel", "timeout"])
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_evidence_recorded_before_terminal_write_goes_to_settlement_review(
+    monkeypatch, tmp_path, kind, cancel
+):
+    """Agent work recorded after the runner's read is still not refunded.
+
+    The runner reads the operation without evidence, then the chat turn
+    records its result tool call before the runner ends the operation. The
+    terminal write must see that evidence and keep the reservation open.
+    """
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+
+    result, events, manager, operation_id = _run_generate_waiter_through_core(
+        monkeypatch, tmp_path, kind, cancel=cancel, evidence_before_finish=True
+    )
+
+    assert events == [("review", "reservation_1")]
+    assert manager.completed == []
+    assert [item["error"] for item in manager.failed] == ["产品结果仍在等待对账"]
+    assert result == {
+        "pending": True,
+        "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        "operation_id": operation_id,
+        "operation_status": "reserved",
+        "settlement_status": "awaiting_reconciliation",
+    }
+    stored = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )
+    assert stored["status"] == "reserved"
+    assert stored["model_evidence"]["model_call_id"] == "turn-1:call-raced"
 
 
 @pytest.mark.parametrize("has_agent_work", [True, False])

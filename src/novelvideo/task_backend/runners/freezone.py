@@ -289,16 +289,13 @@ def run_freezone_agent_product(
             and operation.get("product_kind") in AGENT_TURN_PRODUCT_KINDS
         ):
             # An Agent-turn product is charged when the Agent did the work,
-            # whether the task timed out or the user cancelled it.
-            if (operation.get("model_evidence") or {}).get("model_call_id"):
-                # A result tool call was observed: settle by reconciliation.
-                raise AgentProductSettlementPending(
-                    operation_id=operation_id, status=status
-                ) from exc
-            # No result tool call was observed, so the Agent did no work and
-            # the outcome is known: end the operation undelivered (late
-            # evidence or a late result is then rejected) and let the
-            # interruption reach the generic path, which refunds once.
+            # whether the task timed out or the user cancelled it. Without a
+            # recorded result tool call the Agent did no work: end the
+            # operation undelivered (late evidence or a late result is then
+            # rejected) and let the interruption reach the generic path, which
+            # refunds once. The evidence check runs inside the terminal write,
+            # so evidence recorded after the read above still keeps the
+            # reservation for reconciliation (AgentProductSettlementPending).
             try:
                 finish_agent_product_operation(
                     project_dir=project_dir,
@@ -307,7 +304,10 @@ def run_freezone_agent_product(
                         "cancelled" if isinstance(exc, TaskCancelled) else "failed"
                     ),
                     expected_task_id=str(operation.get("task_id") or ""),
+                    keep_pending_if_model_executed=True,
                 )
+            except AgentProductSettlementPending as pending:
+                raise pending from exc
             except ValueError:
                 # Settled concurrently; handle the stored outcome as before.
                 operation = read_agent_product_operation(
