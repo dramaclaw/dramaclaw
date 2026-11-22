@@ -52,6 +52,7 @@ class FakeAPI:
     business_location: str = ""
     echo_secrets: bool = False
     allow_anonymous: bool = False
+    business_bodies: dict[str, Any] = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock)
 
     @property
@@ -106,7 +107,9 @@ class FakeAPI:
                 if status == 401:
                     self.invalidated.add(token)
                 return status, self.error_body(request)
-            return 200, {"ok": True, "data": {"pong": True}}
+            return 200, self.business_bodies.get(
+                request["path"], {"ok": True, "data": {"pong": True}},
+            )
 
     def error_body(self, request: dict[str, Any]) -> dict[str, Any]:
         if not self.echo_secrets:
@@ -701,3 +704,136 @@ def test_key_mode_preserves_path_validation_errors(plugin, api, monkeypatch, pat
     assert type(key_error.value) is type(local_error.value)
     assert str(key_error.value) == str(local_error.value)
     assert api.requests == []
+
+
+@pytest.mark.parametrize("status,kind", [
+    (401, "rejected"), (403, "rejected"), (503, "unavailable"), (500, "unavailable"),
+])
+def test_exchange_failure_says_whether_key_was_rejected(plugin, api, monkeypatch, status, kind):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    api.exchange_status = status
+    result = request_result(plugin)
+    assert result.get("code") == "agent_key_exchange_failed"
+    assert result.get("status_code") == status
+    assert result.get("status") == kind
+    assert result.get("reason") == (
+        "agent_key_rejected" if kind == "rejected" else "agent_key_service_unavailable"
+    )
+    assert result.get("next_action") == ("tell_user" if kind == "rejected" else "retry")
+    assert result.get("retryable") is (kind == "unavailable")
+    message = result.get("message", "")
+    if kind == "rejected":
+        assert "rejected" in message and "new agent key" in message
+    else:
+        assert "temporarily unavailable" in message and "try again later" in message
+
+
+def test_exchange_network_failure_is_unavailable(plugin, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://127.0.0.1:9")
+    result = request_result(plugin)
+    assert result.get("code") == "agent_key_exchange_failed"
+    assert result.get("status") == "unavailable"
+    assert result.get("retryable") is True
+
+
+CONFIG_PATH = "/api/v1/config"
+CANVAS_LIST_PATH = "/api/v1/projects/project-a/freezone/canvases:agent-view"
+SERVER_EXECUTOR = {"ok": True, "data": {"agent_canvas_executor": "server"}}
+BROWSER_EXECUTOR = {"ok": True, "data": {"agent_canvas_executor": "browser"}}
+CANVAS_LIST = {"ok": True, "data": {
+    "canvases": [], "quota": {"status": "available", "used": 0, "limit": 25},
+}}
+CANVAS_MANAGEMENT_TOOLS = [
+    ("freezone_list_canvases", {"project_id": "project-a"}),
+    ("freezone_create_canvas", {"project_id": "project-a", "name": "Plan"}),
+]
+
+
+@pytest.fixture
+def canvas_tools(monkeypatch, api):
+    """The stdio launcher's tools mode: the Freezone canvas tools over MCP."""
+    for name in ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DRAMACLAW_API_URL", api.url)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setattr(dramaclaw_mcp, "_PLUGIN_CACHE", {})
+    monkeypatch.setattr(dramaclaw_mcp, "_PLUGIN_TOOL_CACHE", {})
+    monkeypatch.delitem(sys.modules, "tools.registry", raising=False)
+    monkeypatch.delitem(sys.modules, "tools", raising=False)
+    dramaclaw_mcp._install_hermes_registry_shim()
+    return api
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool,arguments", CANVAS_MANAGEMENT_TOOLS, ids=["list", "create"])
+@pytest.mark.parametrize("status,kind", [
+    (401, "rejected"), (403, "rejected"), (503, "unavailable"),
+])
+async def test_canvas_tools_report_key_session_failure_not_missing_executor(
+    canvas_tools, monkeypatch, tool, arguments, status, kind,
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    canvas_tools.exchange_status = status
+    result = await dramaclaw_mcp.call_tool(tool, arguments)
+    content = result.structuredContent
+    assert content.get("code") != "canvas_server_executor_required", content
+    assert content.get("code") == "agent_key_exchange_failed"
+    assert content.get("status") == kind
+    assert content.get("retryable") is (kind == "unavailable")
+    assert content.get("next_action") == ("tell_user" if kind == "rejected" else "retry")
+    assert content.get("message") and content.get("agent_instruction")
+    assert result.isError is True
+    assert canvas_tools.business == []
+
+
+@pytest.mark.asyncio
+async def test_canvas_executor_is_not_remembered_from_a_refused_key(canvas_tools, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    canvas_tools.business_bodies = {CONFIG_PATH: SERVER_EXECUTOR, CANVAS_LIST_PATH: CANVAS_LIST}
+    canvas_tools.exchange_status = 401
+    refused = await dramaclaw_mcp.call_tool(*CANVAS_MANAGEMENT_TOOLS[0])
+    assert refused.structuredContent.get("status") == "rejected"
+    # Once the key is accepted again, the server executor is used without a restart.
+    canvas_tools.exchange_status = 200
+    listed = await dramaclaw_mcp.call_tool(*CANVAS_MANAGEMENT_TOOLS[0])
+    assert listed.structuredContent.get("status") == "listed", listed.structuredContent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credential", ["agent_key", "local_trust"])
+@pytest.mark.parametrize("executor,expected", [
+    (SERVER_EXECUTOR, "listed"), (BROWSER_EXECUTOR, "canvas_server_executor_required"),
+])
+async def test_canvas_executor_selection_unchanged_for_working_credentials(
+    canvas_tools, monkeypatch, credential, executor, expected,
+):
+    if credential == "agent_key":
+        monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    else:
+        monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "1")
+        canvas_tools.allow_anonymous = True
+    canvas_tools.business_bodies = {CONFIG_PATH: executor, CANVAS_LIST_PATH: CANVAS_LIST}
+    result = await dramaclaw_mcp.call_tool(*CANVAS_MANAGEMENT_TOOLS[0])
+    content = result.structuredContent
+    assert expected in {content.get("status"), content.get("code")}, content
+    assert len(canvas_tools.exchanges) == (1 if credential == "agent_key" else 0)
+
+
+@pytest.mark.asyncio
+async def test_canvas_request_keeps_key_refusal_after_executor_was_chosen(canvas_tools, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    # Sessions this short are exchanged again on every call.
+    canvas_tools.expires_in = 30
+    canvas_tools.business_bodies = {CONFIG_PATH: SERVER_EXECUTOR, CANVAS_LIST_PATH: CANVAS_LIST}
+    listed = await dramaclaw_mcp.call_tool(*CANVAS_MANAGEMENT_TOOLS[0])
+    assert listed.structuredContent.get("status") == "listed", listed.structuredContent
+    canvas_tools.exchange_status = 403
+    refused = await dramaclaw_mcp.call_tool(*CANVAS_MANAGEMENT_TOOLS[0])
+    content = refused.structuredContent
+    assert content.get("code") == "agent_key_exchange_failed", content
+    assert content.get("status") == "rejected"
+    assert "new agent key" in content.get("message", "")

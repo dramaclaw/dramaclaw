@@ -185,12 +185,61 @@ def remember_session(
         _CACHE[_cache_key(api_base, key, _scope_for(project_id))] = (token, expires_at)
 
 
+# Codes of results this module returns instead of the server's answer: no request
+# reached the API with a session, so the result says nothing about the API itself.
+SESSION_FAILURE_CODES = frozenset({
+    "agent_key_unavailable", "agent_key_insecure_transport", "agent_key_request_failed",
+    "agent_key_exchange_failed", "agent_key_exchange_unsupported",
+    "agent_key_exchange_redirected", "agent_key_request_redirected",
+})
+
+
+def is_session_failure(result: Any) -> bool:
+    """Whether ``result`` is this module's refusal rather than an answer from the API."""
+    return (
+        isinstance(result, dict) and result.get("ok") is False
+        and result.get("code") in SESSION_FAILURE_CODES
+    )
+
+
+def _failure_guidance(status: int | None) -> dict[str, Any]:
+    """Say who can fix a failed exchange: 401/403 need a new key, anything else a retry."""
+    if status in {401, 403}:
+        return {
+            "status": "rejected", "reason": "agent_key_rejected",
+            "retryable": False, "next_action": "tell_user",
+            "message": (
+                f"The server rejected the agent key (HTTP {status}): it is invalid, revoked, "
+                "expired or not allowed for this project. Ask the key owner for a new agent key "
+                "and configure the agent with it."
+            ),
+            "agent_instruction": (
+                "Do not retry with the same key. Tell the user the agent key was rejected "
+                "and that a new agent key must be configured."
+            ),
+        }
+    received = f"HTTP {status}" if status is not None else "no response"
+    return {
+        "status": "unavailable", "reason": "agent_key_service_unavailable",
+        "retryable": True, "next_action": "retry",
+        "message": (
+            f"The agent key could not be checked because the server is temporarily "
+            f"unavailable ({received}); the key itself was not rejected. Please try again later."
+        ),
+        "agent_instruction": (
+            "Retry once later. If it still fails, tell the user the service is temporarily "
+            "unavailable; the agent key does not need to be replaced."
+        ),
+    }
+
+
 def _exchange_error(status: int, *, unsupported: bool = False) -> dict[str, Any]:
     return {
         "ok": False,
         "status_code": status,
         "code": "agent_key_exchange_unsupported" if unsupported else "agent_key_exchange_failed",
         "error": _UNSUPPORTED if unsupported else "Agent key session exchange failed",
+        **({} if unsupported else _failure_guidance(status)),
     }
 
 
@@ -224,7 +273,10 @@ def _exchange(
         return _exchange_error(exc.code, unsupported=exc.code in {404, 405})
     except (URLError, OSError) as exc:
         reason = exc.reason if isinstance(exc, URLError) else str(exc)
-        return {"ok": False, "code": "agent_key_exchange_failed", "error": f"network_error: {reason}"}
+        return {
+            "ok": False, "code": "agent_key_exchange_failed", "error": f"network_error: {reason}",
+            **_failure_guidance(None),
+        }
     try:
         response = json.loads(text)
     except ValueError:

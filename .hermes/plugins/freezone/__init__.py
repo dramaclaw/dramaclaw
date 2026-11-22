@@ -611,8 +611,12 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
     if not (
         bound_canvas and given_canvas and given_canvas != bound_canvas
         and (not given_project or given_project == bound_project)
-        and _agent_canvas_executor() == "server"
     ):
+        return mismatch
+    refusal = _agent_canvas_executor_refusal()
+    if refusal is not None:
+        return refusal
+    if _agent_canvas_executor() != "server":
         return mismatch
 
     def _canvas_not_usable_from_chat(*, lookup_failed: bool) -> dict[str, Any]:
@@ -6870,22 +6874,55 @@ def _default_link_type(source_type: str, target_type: str) -> str:
 _AGENT_CANVAS_EXECUTOR_CACHE: tuple[float, str] | None = None
 
 
-def _agent_canvas_executor() -> str:
+def _agent_key_session_failure(result: Any) -> dict[str, Any] | None:
+    """The agent key session's own refusal in ``result``, when no request reached the API."""
+    session = _SHARED_AGENT_KEY_SESSION
+    if session is not None and session.is_session_failure(result):
+        return result
+    return None
+
+
+def _select_agent_canvas_executor() -> tuple[str, dict[str, Any] | None]:
+    """The canvas executor, or the agent key session failure that kept it unknown.
+
+    A refused or unavailable agent key session never reaches the server, so it says
+    nothing about the executor: it is returned instead of being taken as the browser
+    executor, and it is not cached, so the next call uses a working key again.
+    """
     global _AGENT_CANVAS_EXECUTOR_CACHE
     now = time.monotonic()
     if _AGENT_CANVAS_EXECUTOR_CACHE is not None:
         cached_at, executor = _AGENT_CANVAS_EXECUTOR_CACHE
         if now - cached_at < 30:
-            return executor
+            return executor, None
     executor = "browser"
     try:
         response = _request("GET", "/api/v1/config")
+        failure = _agent_key_session_failure(response)
+        if failure is not None:
+            return executor, failure
         if response.get("ok") and response.get("data", {}).get("agent_canvas_executor") == "server":
             executor = "server"
     except Exception:
         pass
     _AGENT_CANVAS_EXECUTOR_CACHE = (now, executor)
-    return executor
+    return executor, None
+
+
+def _agent_canvas_executor() -> str:
+    return _select_agent_canvas_executor()[0]
+
+
+def _agent_canvas_executor_refusal() -> dict[str, Any] | None:
+    """Why the canvas executor cannot be chosen with the configured agent key, if it cannot.
+
+    Check this before ``_agent_canvas_executor()``: a key the server rejected, or a
+    session exchange the server could not answer, must reach the user as that failure,
+    not as a missing server canvas executor. Without an agent key nothing changes.
+    """
+    if _agent_token_configured() or not _agent_key_configured():
+        return None
+    return _select_agent_canvas_executor()[1]
 
 
 def _canvas_browser_required_error(project: str, canvas: str) -> dict[str, Any] | None:
@@ -7125,6 +7162,9 @@ def _emit_canvas_commands(
     if shape_error:
         return shape_error
     refusal = _canvas_write_refusal(project, canvas)
+    if refusal is not None:
+        return tool_result(refusal)
+    refusal = _agent_canvas_executor_refusal()
     if refusal is not None:
         return tool_result(refusal)
     executor = _agent_canvas_executor()
@@ -10006,6 +10046,9 @@ def _validate_dynamic_recipe_action_binding(
 def _canvas_management_preamble(project: str) -> dict[str, Any] | None:
     if _default_project_id() and project != _default_project_id():
         return _bound_scope_mismatch(project, None)
+    refusal = _agent_canvas_executor_refusal()
+    if refusal is not None:
+        return refusal
     if _agent_canvas_executor() != "server":
         return {
             "ok": False, "status": "unsupported", "code": "canvas_server_executor_required",
@@ -10021,6 +10064,10 @@ def _canvas_management_preamble(project: str) -> dict[str, Any] | None:
 
 
 def _canvas_management_failure(result: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    allowed = set(_RESULT_COMMON_PROPERTIES) | {"example", "errors"}
+    if _agent_key_session_failure(result) is not None:
+        # Its HTTP status is the session exchange's, not the canvas API's: keep its guidance.
+        return {key: value for key, value in result.items() if key in allowed}
     result = dict(result)
     status_code = result.pop("status_code", None)
     result.setdefault("status", "failed")
@@ -10050,7 +10097,6 @@ def _canvas_management_failure(result: dict[str, Any], args: dict[str, Any]) -> 
             )
     result["agent_instruction"] = instruction
     result["next_action"] = "retry" if result["retryable"] else "tell_user"
-    allowed = set(_RESULT_COMMON_PROPERTIES) | {"example", "errors"}
     return {key: value for key, value in result.items() if key in allowed}
 
 
@@ -10865,6 +10911,9 @@ def _request_canvas_context_from_frontend(
     mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
+    refusal = _agent_canvas_executor_refusal()
+    if refusal is not None:
+        return tool_result(refusal)
     if _agent_canvas_executor() == "server":
         project = project or _default_project_id()
         canvas = canvas or _default_canvas_id()
