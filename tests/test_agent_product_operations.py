@@ -983,45 +983,185 @@ async def test_recipe_waiter_does_not_hold_worker_slot_while_run_is_live(
     )["status"] == "reserved"
 
 
-def test_product_task_timeout_preserves_pending_operation(tmp_path, monkeypatch):
-    from novelvideo.task_backend.cancel import TaskTimedOut
+def _interrupt_product_task(monkeypatch, tmp_path, operation, exc):
+    """Run the product task entrypoint with its wait interrupted by ``exc``."""
     from novelvideo.task_backend.runners import freezone as freezone_runner
 
-    operation = _create(tmp_path, kind="recipe_result")
+    def interrupted(_envelope, coro, **_kwargs):
+        coro.close()
+        raise exc
+
+    monkeypatch.setattr(freezone_runner, "_run_cancellable", interrupted)
+    return freezone_runner.run_freezone_agent_product(
+        {
+            "task_type": operation["task_type"],
+            "__run_task_id": "task-a",
+            "payload": {
+                "operation_id": operation["operation_id"],
+                "product_kind": operation["product_kind"],
+            },
+        },
+        SimpleNamespace(state_dir=tmp_path),
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [
+        ("recipe_result", "submitted"),
+        ("recipe_result", "reserved"),
+        ("workflow_result", "reserved"),
+    ],
+)
+def test_product_task_timeout_preserves_pending_operation(
+    tmp_path, monkeypatch, kind, status
+):
+    # Result operations wait on an external provider: without model evidence
+    # they may still have incurred cost, so a timeout never refunds them.
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
     bind_agent_product_task(
         project_dir=tmp_path,
         operation_id=operation["operation_id"],
         task_id="task-a",
         root_task_id="task-a",
     )
-    finish_agent_product_operation(
-        project_dir=tmp_path,
-        operation_id=operation["operation_id"],
-        outcome="submitted",
-        expected_task_id="task-a",
-    )
-
-    def time_out(_envelope, coro, **_kwargs):
-        coro.close()
-        raise TaskTimedOut(timeout_seconds=1)
-
-    monkeypatch.setattr(freezone_runner, "_run_cancellable", time_out)
+    if status != "reserved":
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation["operation_id"],
+            outcome=status,
+            expected_task_id="task-a",
+        )
 
     with pytest.raises(AgentProductSettlementPending) as exc_info:
-        freezone_runner.run_freezone_agent_product(
-            {
-                "task_type": "freezone_agent_recipe_result",
-                "__run_task_id": "task-a",
-                "payload": {
-                    "operation_id": operation["operation_id"],
-                    "product_kind": "recipe_result",
-                },
-            },
-            SimpleNamespace(state_dir=tmp_path),
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
         )
 
     assert exc_info.value.operation_id == operation["operation_id"]
-    assert exc_info.value.status == "submitted"
+    assert exc_info.value.status == status
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == status
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_timeout_without_agent_work_fails_operation(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+
+    # The ordinary timeout reaches the generic failure path, which refunds once.
+    with pytest.raises(TaskTimedOut):
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
+        )
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )
+    assert stored["status"] == "failed"
+    assert stored["model_evidence"] == {}
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_timeout_with_agent_work_preserves_pending_operation(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="turn-a:call-a",
+        executed_at=1.0,
+        source="server_chat_turn",
+    )
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
+        )
+
+    assert exc_info.value.status == "reserved"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_cancel_without_agent_work_cancels_operation(
+    tmp_path, monkeypatch, kind
+):
+    # Same rule as the timeout branch: no Agent work means nothing is owed, so
+    # the operation ends cancelled and the generic cancel path refunds once.
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+
+    with pytest.raises(TaskCancelled):
+        _interrupt_product_task(monkeypatch, tmp_path, operation, TaskCancelled())
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )
+    assert stored["status"] == "cancelled"
+    assert stored["model_evidence"] == {}
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_cancel_with_agent_work_preserves_pending_operation(
+    tmp_path, monkeypatch, kind
+):
+    # Same rule as the timeout branch: observed Agent work means the outcome
+    # is not "no work done", so the reservation is kept for reconciliation.
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="turn-a:call-a",
+        executed_at=1.0,
+        source="server_chat_turn",
+    )
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        _interrupt_product_task(monkeypatch, tmp_path, operation, TaskCancelled())
+
+    assert exc_info.value.status == "reserved"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
 
 
 @pytest.mark.asyncio
@@ -1055,3 +1195,104 @@ async def test_non_voice_waiter_rejects_delivery_without_model_evidence(tmp_path
             },
             SimpleNamespace(state_dir=tmp_path),
         )
+
+
+_GENERATE_KINDS = ["workflow_generate", "recipe_generate"]
+
+
+def _generate_waiter_fixture(tmp_path, monkeypatch, kind, *, deliver_after, running_after=None):
+    """Drive a generate waiter with a fake sleep; returns (envelope, delays)."""
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    operation = _create(tmp_path, kind=kind)
+    operation_id = operation["operation_id"]
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation_id,
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    delays: list[float] = []
+
+    async def fake_sleep(seconds):
+        delays.append(seconds)
+        if running_after is not None and len(delays) == running_after:
+            finish_agent_product_operation(
+                project_dir=tmp_path,
+                operation_id=operation_id,
+                outcome="running",
+                expected_task_id="task-a",
+            )
+        if len(delays) == deliver_after:
+            bind_agent_product_model_execution(
+                project_dir=tmp_path,
+                operation_id=operation_id,
+                model_call_id="response-a",
+                executed_at=1.0,
+                source="server_observed_agent_turn",
+            )
+            finish_agent_product_operation(
+                project_dir=tmp_path,
+                operation_id=operation_id,
+                outcome="delivered",
+                expected_task_id="task-a",
+                result_ref={"kind": kind, "id": "result-a"},
+            )
+        if len(delays) > deliver_after + 5:
+            raise AssertionError("generate waiter did not observe the delivery")
+
+    monkeypatch.setattr(freezone_runner.asyncio, "sleep", fake_sleep)
+    envelope = {
+        "task_type": operation["task_type"],
+        "__run_task_id": "task-a",
+        "payload": {"operation_id": operation_id, "product_kind": kind},
+    }
+    return envelope, delays
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", _GENERATE_KINDS)
+async def test_generate_waiter_logs_observed_only_when_state_changes(
+    tmp_path, monkeypatch, caplog, kind
+):
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    caplog.set_level("INFO", logger=freezone_runner.logger.name)
+    envelope, delays = _generate_waiter_fixture(
+        tmp_path, monkeypatch, kind, running_after=3, deliver_after=8
+    )
+
+    result = await freezone_runner._run_freezone_agent_product_async(
+        envelope, SimpleNamespace(state_dir=tmp_path)
+    )
+
+    assert result["delivery_status"] == "delivered"
+    assert len(delays) == 8  # nine polls
+    observed = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("agent_product_waiter.observed")
+    ]
+    assert len(observed) == 3
+    assert "operation_status=reserved" in observed[0]
+    assert "operation_status=running" in observed[1]
+    assert "operation_status=delivered" in observed[2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", _GENERATE_KINDS)
+async def test_generate_waiter_backs_off_poll_interval_to_cap(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    envelope, delays = _generate_waiter_fixture(
+        tmp_path, monkeypatch, kind, deliver_after=7
+    )
+
+    result = await freezone_runner._run_freezone_agent_product_async(
+        envelope, SimpleNamespace(state_dir=tmp_path)
+    )
+
+    assert result["delivery_status"] == "delivered"
+    assert delays == pytest.approx([0.2, 0.4, 0.8, 1.6, 2.0, 2.0, 2.0])
