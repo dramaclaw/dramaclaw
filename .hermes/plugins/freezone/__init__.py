@@ -6882,6 +6882,32 @@ def _agent_key_session_failure(result: Any) -> dict[str, Any] | None:
     return None
 
 
+@contextmanager
+def _watch_agent_key_session_failures():
+    session = _SHARED_AGENT_KEY_SESSION
+    if session is None:
+        yield []
+        return
+    with session.watch_failures() as seen:
+        yield seen
+
+
+def _answer_with_agent_key_session_failure(result: Any, seen: list[dict[str, Any]]) -> Any:
+    """Answer a failed tool call with the agent key session failure behind it.
+
+    Tools turn a failed request into errors of their own (a revision check that
+    could not be read, a canvas context that failed); for a refused or unavailable
+    agent key those would hide whether the key must be replaced or the call retried.
+    """
+    session = _SHARED_AGENT_KEY_SESSION
+    if session is None or not seen:
+        return result
+    failure = session.failure_behind(_tool_result_payload(result), seen)
+    if failure is None:
+        return result
+    return dict(failure) if isinstance(result, dict) else tool_result(failure)
+
+
 def _select_agent_canvas_executor() -> tuple[str, dict[str, Any] | None]:
     """The canvas executor, or the agent key session failure that kept it unknown.
 
@@ -15326,7 +15352,9 @@ def _bind_structured_result_input(handler, tool_name=""):
             external and tool_name in _IMAGE_REFERENCE_TOOLS
         )
         try:
-            result = handler(args, *handler_args, **handler_kwargs)
+            with _watch_agent_key_session_failures() as seen:
+                result = handler(args, *handler_args, **handler_kwargs)
+            result = _answer_with_agent_key_session_failure(result, seen)
             completed = True
             return result
         finally:

@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
 import math
@@ -47,6 +49,10 @@ _CACHE: dict[tuple[str, str, str], tuple[str, float]] = _state.cache
 _LOCKS: dict[tuple[str, str, str], Any] = _state.locks
 _SECRETS: set[str] = _state.secrets
 _GLOBAL_LOCK = _state.lock
+if not hasattr(_state, "failures"):
+    _state.failures = ContextVar("dramaclaw_agent_key_session_failures", default=None)
+# The session failures of the current tool call, shared by every bundled copy.
+_FAILURES: ContextVar[list[dict[str, Any]] | None] = _state.failures
 # A session closer than this to its expiry is exchanged again before it is used.
 _RENEW_SECONDS = 60
 _UNSUPPORTED = (
@@ -133,13 +139,48 @@ def redact(value: Any) -> Any:
 
 
 def protect(call: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-    """Keep exceptions and results from carrying credentials out of key mode."""
+    """Keep exceptions and results from carrying credentials out of key mode.
+
+    A session failure is also recorded for an enclosing ``watch_failures`` block.
+    """
     try:
         result = call()
     except Exception:
         # Exceptions from preparation, openers or decoders may contain secrets.
         result = {"ok": False, "code": "agent_key_request_failed", "error": "Agent key request failed"}
-    return redact(result)
+    result = redact(result)
+    seen = _FAILURES.get()
+    if seen is not None and is_session_failure(result):
+        seen.append(result)
+    return result
+
+
+@contextmanager
+def watch_failures() -> Iterator[list[dict[str, Any]]]:
+    """Collect the session failures of the requests made inside this block.
+
+    A tool that turns a failed request into an error of its own loses the session
+    failure's guidance: whether the key was rejected or the server was unavailable,
+    and who can fix it. Watching the whole tool call lets ``failure_behind`` answer
+    with that guidance instead, wherever the tool shaped its error.
+    """
+    seen: list[dict[str, Any]] = []
+    token = _FAILURES.set(seen)
+    try:
+        yield seen
+    finally:
+        _FAILURES.reset(token)
+
+
+def failure_behind(result: Any, seen: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The session failure a failed tool ``result`` came from, if one was watched.
+
+    A tool that still succeeded, for example by tolerating an optional read, keeps
+    its result.
+    """
+    if not seen or not isinstance(result, dict) or result.get("ok") is not False:
+        return None
+    return seen[0]
 
 
 def transport_refusal(api_base: str) -> dict[str, Any] | None:

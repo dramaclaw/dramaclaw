@@ -837,3 +837,160 @@ async def test_canvas_request_keeps_key_refusal_after_executor_was_chosen(canvas
     assert content.get("code") == "agent_key_exchange_failed", content
     assert content.get("status") == "rejected"
     assert "new agent key" in content.get("message", "")
+
+
+def assert_session_failure(content: dict[str, Any], kind: str) -> None:
+    """The agent key session's own refusal, with its guidance, reached the agent."""
+    assert content.get("code") == "agent_key_exchange_failed", content
+    assert content.get("status") == kind, content
+    assert content.get("retryable") is (kind == "unavailable"), content
+    assert content.get("next_action") == ("tell_user" if kind == "rejected" else "retry"), content
+    assert content.get("message") and content.get("agent_instruction"), content
+    assert ("new agent key" in content["message"]) is (kind == "rejected"), content
+
+
+KEY_FAILURES = pytest.mark.parametrize("status,kind", [
+    (401, "rejected"), (403, "rejected"), (503, "unavailable"),
+])
+BOUND_CANVAS_WRITES = [
+    ("freezone_delete_nodes", {
+        "project_id": "project-a", "canvas_id": "canvas-a", "node_ids": ["node-a"],
+    }),
+    ("freezone_move_nodes", {
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "positions": {"node-a": {"x": 10, "y": 20}},
+    }),
+]
+
+
+@pytest.mark.asyncio
+@KEY_FAILURES
+@pytest.mark.parametrize("tool,arguments", BOUND_CANVAS_WRITES, ids=["delete", "move"])
+async def test_bound_canvas_write_reports_key_session_failure(
+    canvas_tools, monkeypatch, tool, arguments, status, kind,
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    canvas_tools.exchange_status = status
+    result = await dramaclaw_mcp.call_tool(tool, arguments)
+    assert result.structuredContent.get("code") != "canvas_revision_check_unavailable"
+    assert_session_failure(result.structuredContent, kind)
+    assert result.isError is True
+    assert canvas_tools.business == []
+
+
+@pytest.mark.asyncio
+async def test_bound_canvas_write_keeps_revision_check_failure_for_server_errors(
+    canvas_tools, monkeypatch,
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    canvas_tools.business_statuses = [503]
+    result = await dramaclaw_mcp.call_tool(*BOUND_CANVAS_WRITES[0])
+    content = result.structuredContent
+    assert content.get("code") == "canvas_revision_check_unavailable", content
+    assert content.get("retryable") is True
+
+
+@pytest.mark.asyncio
+@KEY_FAILURES
+async def test_canvas_context_reports_key_session_failure_with_executor_remembered(
+    canvas_tools, monkeypatch, status, kind,
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    # Sessions this short are exchanged again on every call.
+    canvas_tools.expires_in = 30
+    canvas_tools.business_bodies = {
+        CONFIG_PATH: SERVER_EXECUTOR,
+        "/api/v1/projects/project-a/freezone/canvases/canvas-a/agent-context": {
+            "ok": True, "data": {
+                "canvas_context_status": "resolved",
+                "responses": [{"type": "selection_detail", "data": {"nodes": []}}],
+            },
+        },
+    }
+    arguments = {"project_id": "project-a", "canvas_id": "canvas-a"}
+    selected = await dramaclaw_mcp.call_tool("freezone_get_selection", arguments)
+    assert selected.structuredContent.get("ok") is not False, selected.structuredContent
+    canvas_tools.exchange_status = status
+    result = await dramaclaw_mcp.call_tool("freezone_get_selection", arguments)
+    assert_session_failure(result.structuredContent, kind)
+
+
+@pytest.fixture
+def mainline_tools(monkeypatch, api):
+    """The stdio launcher's default mode: the DramaClaw production tools over MCP."""
+    for name in ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DRAMACLAW_API_URL", api.url)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setattr(dramaclaw_mcp, "_PLUGIN_CACHE", {})
+    monkeypatch.setattr(dramaclaw_mcp, "_PLUGIN_TOOL_CACHE", {})
+    monkeypatch.delitem(sys.modules, "tools.registry", raising=False)
+    monkeypatch.delitem(sys.modules, "tools", raising=False)
+    dramaclaw_mcp._install_hermes_registry_shim()
+    return api
+
+
+@pytest.mark.asyncio
+@KEY_FAILURES
+async def test_production_tool_reports_key_session_failure(
+    mainline_tools, monkeypatch, status, kind,
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    mainline_tools.exchange_status = status
+    result = await dramaclaw_mcp.call_tool(
+        "dramaclaw_generate_sketches", {"project_id": "project-a", "episode": 1},
+    )
+    assert_session_failure(result.structuredContent, kind)
+    assert mainline_tools.business == []
+
+
+@pytest.mark.asyncio
+@KEY_FAILURES
+async def test_workflow_catalog_reports_key_session_failure(
+    mainline_tools, monkeypatch, status, kind,
+):
+    from novelvideo.chat import workflow_mcp
+
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    mainline_tools.exchange_status = status
+    result = await workflow_mcp.call_tool(
+        "workflow_catalog_search", {"kind": "skills", "query": "storyboard"},
+    )
+    assert result.structuredContent.get("status") != "catalog_read_failed"
+    assert_session_failure(result.structuredContent, kind)
+    assert result.isError is True
+
+
+@pytest.mark.asyncio
+async def test_workflow_catalog_keeps_read_failure_for_server_errors(mainline_tools, monkeypatch):
+    from novelvideo.chat import workflow_mcp
+
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    mainline_tools.business_statuses = [503]
+    result = await workflow_mcp.call_tool(
+        "workflow_catalog_search", {"kind": "skills", "query": "storyboard"},
+    )
+    assert result.structuredContent == {
+        "ok": False, "status": "catalog_read_failed",
+        "error": "Workflow catalog is unavailable for this agent key",
+    }
+
+
+PLUGIN_FAILED_STAGE_TOOLS = {
+    # A failed preparation request becomes the tool's own failed stage or check.
+    "dramaclaw": ("dramaclaw_generate_sketches", {"project_id": "project-a", "episode": 1}),
+    "freezone": BOUND_CANVAS_WRITES[0],
+}
+
+
+@KEY_FAILURES
+def test_plugin_tool_result_carries_key_session_failure(plugin, api, monkeypatch, status, kind):
+    """What a host that reads the plugin's own result, not the MCP view, gets."""
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    api.exchange_status = status
+    name, arguments = PLUGIN_FAILED_STAGE_TOOLS[plugin.TOOLSET]
+    handler = next(handler for tool, _, handler in plugin.TOOLS if tool == name)
+    assert_session_failure(json.loads(handler(dict(arguments))), kind)
+    assert api.business == []

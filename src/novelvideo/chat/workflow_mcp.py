@@ -190,6 +190,12 @@ _WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+# The session failure fields the workflow tools' failure schema carries.
+_SESSION_FAILURE_FIELDS = (
+    "ok", "status", "code", "error", "message", "retryable", "next_action", "agent_instruction",
+)
+
+
 def _username() -> str:
     return str(request_context.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
 
@@ -566,12 +572,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             "error": payload["message"],
         })
     key_mode = _agent_key_mode()
-    snapshot = await asyncio.to_thread(_server_catalog) if key_mode else None
+    with agent_key_session.watch_failures() as session_failures:
+        snapshot = await asyncio.to_thread(_server_catalog) if key_mode else None
     if key_mode and snapshot is None:
-        return _result(name, {
+        refusal = {
             "ok": False,
             "status": "catalog_read_failed",
             "error": "Workflow catalog is unavailable for this agent key",
+        }
+        # A refused or unavailable key says whether to replace the key or retry.
+        failure = agent_key_session.failure_behind(refusal, session_failures)
+        return _result(name, refusal if failure is None else {
+            key: failure[key] for key in _SESSION_FAILURE_FIELDS if key in failure
         })
     with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
         return _call_catalog_tool(name, args, snapshot)

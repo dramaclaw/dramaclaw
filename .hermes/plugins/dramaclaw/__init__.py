@@ -3993,6 +3993,35 @@ TOOLS = (
 )
 
 
+def _answer_with_agent_key_session_failure(handler):
+    """Answer a failed tool call with the agent key session failure behind it.
+
+    Tools turn a failed request into errors of their own (a failed stage, a
+    rejected batch item); for a refused or unavailable agent key those would hide
+    whether the key must be replaced or the call retried.
+    """
+    def answered(args: dict[str, Any], **kwargs: Any) -> str:
+        session = _SHARED_AGENT_KEY_SESSION
+        if session is None:
+            return handler(args, **kwargs)
+        with session.watch_failures() as seen:
+            result = handler(args, **kwargs)
+        try:
+            payload = json.loads(result) if isinstance(result, str) else result
+        except json.JSONDecodeError:
+            return result
+        failure = session.failure_behind(payload, seen)
+        return result if failure is None else tool_result(failure)
+
+    return answered
+
+
+TOOLS = tuple(
+    (name, schema, _answer_with_agent_key_session_failure(handler))
+    for name, schema, handler in TOOLS
+)
+
+
 def register(ctx) -> None:
     for name, schema, handler in TOOLS:
         guarded_handler = _guard_freezone_mainline_write(name, handler)
