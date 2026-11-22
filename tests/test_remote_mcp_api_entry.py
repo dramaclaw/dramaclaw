@@ -16,14 +16,17 @@ from mcp import types
 import pytest
 from starlette.applications import Starlette
 
+from novelvideo.ports.auth_contract import AuthFailureReason
 from support.remote_mcp_api import (
     FAKE_TOKEN,
     KEY,
     LAUNCHER,
     ROOT,
     Exchange,
+    FakeKeyPort,
     clean_env,
     direct_tools,
+    register_key_port,
     serialized,
 )
 
@@ -80,14 +83,16 @@ def assert_secret_free(text):
 
 
 class FakeApi:
-    """Session exchange and project listing whose accepted keys can change mid-test."""
+    """The API tools call back into, with the key port that accepts the same keys.
+
+    Keys are checked and exchanged through ``port`` in process only: every POST this
+    API receives is recorded in ``posts`` and refused.
+    """
 
     def __init__(self, sessions):
         self.sessions = dict(sessions)
-        self.exchange_status = None
-        self.exchanges = []
-        # Set to hold the answer to an unknown key's exchange until the event is set.
-        self.reject_gate = None
+        self.port = FakeKeyPort(self.sessions)
+        self.posts = []
         # Set to answer every GET with this status and the caller's credential in the body.
         self.callback_status = None
         # The user the sessions belong to; without one the API does not say who is calling.
@@ -106,22 +111,8 @@ class FakeApi:
                 self.wfile.write(encoded)
 
             def do_POST(self):
-                key = self.headers.get("Authorization", "").removeprefix("Bearer ")
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
-                fake.exchanges.append(body.get("scope"))
-                token = fake.sessions.get(key)
-                if token is None and fake.reject_gate is not None:
-                    fake.reject_gate.wait(timeout=8)
-                if self.path != "/api/v1/agent/sessions":
-                    self.reply(404, {"ok": False})
-                elif fake.exchange_status is not None:
-                    self.reply(fake.exchange_status, {"ok": False})
-                elif token is None:
-                    self.reply(401, {"ok": False})
-                else:
-                    self.reply(200, {"ok": True, "data": {
-                        "token": token, "expires_at": time.time() + 3600,
-                    }})
+                fake.posts.append(self.path)
+                self.reply(404, {"ok": False})
 
             def do_GET(self):
                 token = self.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -169,18 +160,25 @@ def process_env(monkeypatch):
     monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
     from novelvideo.chat import agent_key_session, dramaclaw_mcp
 
-    for name, empty in (("_CACHE", {}), ("_LOCKS", {}), ("_SECRETS", set())):
-        monkeypatch.setattr(agent_key_session, name, empty)
+    # Shared with every bundled copy of the module, so emptied in place.
+    for state in (agent_key_session._CACHE, agent_key_session._LOCKS, agent_key_session._SECRETS):
+        state.clear()
     monkeypatch.setattr(dramaclaw_mcp, "_PLUGIN_CACHE", {})
     monkeypatch.setattr(dramaclaw_mcp, "_PLUGIN_TOOL_CACHE", {})
+    yield
+    for state in (agent_key_session._CACHE, agent_key_session._LOCKS, agent_key_session._SECRETS):
+        state.clear()
 
 
 @pytest.fixture
 def fake_api(monkeypatch):
     api = FakeApi({KEY_A: TOKEN_A, KEY_B: TOKEN_B})
+    register_key_port(monkeypatch, api.port)
     monkeypatch.setenv("DRAMACLAW_API_URL", api.url)
     yield api
     api.close()
+    # Neither the entry nor the tools it served exchanged a key over HTTP.
+    assert api.posts == []
 
 
 @pytest.fixture
@@ -190,6 +188,7 @@ def exchange_factory(monkeypatch):
     def start(**kwargs):
         exchange = Exchange(**kwargs)
         started.append(exchange)
+        register_key_port(monkeypatch, exchange.key_port)
         monkeypatch.setenv("DRAMACLAW_API_URL", f"http://127.0.0.1:{exchange.port}")
         return exchange
 
@@ -383,7 +382,8 @@ def test_missing_key_is_refused_before_exchange_even_with_local_trust(
                 assert response.json() == {"error": "Bearer key required"}
 
     asyncio.run(scenario())
-    assert fake_api.exchanges == []
+    assert fake_api.port.checks == 0
+    assert fake_api.port.exchanges == []
 
 
 def test_invalid_key_is_refused_before_tool_code(monkeypatch, fake_api):
@@ -402,102 +402,167 @@ def test_invalid_key_is_refused_before_tool_code(monkeypatch, fake_api):
                     headers=bearer("fake-entry-key-DO-NOT-USE-unknown"),
                 )
                 assert response.status_code == 401
-                assert response.json()["error"] == "Agent key rejected"
+                assert response.json() == {
+                    "error": "Agent key rejected", "code": "agent_key_rejected",
+                }
 
     asyncio.run(scenario())
-    assert fake_api.exchanges == [{"kind": "project", "id": "project-a"}] * 3
+    assert fake_api.port.checks == 3
+    assert fake_api.port.exchanges == []
 
 
-@pytest.mark.parametrize("exchange_status,status,error", [
-    (401, 401, "Agent key rejected"),
-    (403, 401, "Agent key rejected"),
-    (500, 503, "Agent key check unavailable"),
-    (404, 503, "Agent key check unavailable"),
+@pytest.mark.parametrize("reason", [
+    AuthFailureReason.REVOKED, AuthFailureReason.EXPIRED, AuthFailureReason.USER_SUSPENDED,
+    AuthFailureReason.INVALID,
 ])
-def test_revoked_or_expired_key_surfaces_the_exchange_reason(
-    monkeypatch, fake_api, exchange_status, status, error,
+def test_revoked_key_is_refused_on_its_first_request_after_revocation(
+    monkeypatch, fake_api, reason,
 ):
     identity_tools(monkeypatch)
 
     async def scenario():
         async with client_for(entry_app(monkeypatch)) as client:
-            path = "/mcp/tools/projects/project-a"
-            first = await client.post(path, json=call("whoami"), headers=bearer(KEY_A))
+            first = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_A))
             assert first.status_code == 200
-            # The cached session is dropped, as when it expires or the API refuses it.
-            from novelvideo.chat import agent_key_session
-
-            agent_key_session._CACHE.clear()
-            fake_api.exchange_status = exchange_status
-            refused = await client.post(path, json=call("whoami"), headers=bearer(KEY_A))
-            assert refused.status_code == status
-            body = refused.json()
-            assert body["error"] == error
-            assert body["status_code"] == exchange_status
-            assert body["code"].startswith("agent_key_exchange_")
-            assert_secret_free(refused.text)
+            # The session the key was exchanged for is still cached and unexpired.
+            fake_api.port.refusals[KEY_A] = reason
+            for payload in (call("whoami"), rpc("tools/list")):
+                refused = await client.post(PROJECT_PATH, json=payload, headers=bearer(KEY_A))
+                assert refused.status_code == 401
+                assert refused.json() == {
+                    "error": "Agent key rejected", "code": "agent_key_rejected",
+                }
+                assert_secret_free(refused.text)
+            # Other keys are unaffected.
+            other = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_B))
+            assert other.status_code == 200
 
     asyncio.run(scenario())
+    assert fake_api.port.checks == 4
 
 
-def test_unreachable_api_tells_the_operator_which_address_to_fix(monkeypatch):
-    monkeypatch.setenv("DRAMACLAW_API_URL", "http://127.0.0.1:1")
+def test_live_session_is_reused_without_another_exchange(monkeypatch, fake_api):
+    identity_tools(monkeypatch)
 
     async def scenario():
         async with client_for(entry_app(monkeypatch)) as client:
-            response = await client.post(
-                "/mcp/tools", json=rpc("tools/list"), headers=bearer(KEY_A),
-            )
-            assert response.status_code == 503
-            body = response.json()
-            assert body["error"] == "Agent key check unavailable"
-            assert body["code"] == "agent_key_exchange_failed"
-            assert "status_code" not in body
-            assert body["detail"] == (
-                "The remote MCP entry could not reach the API at http://127.0.0.1:1 to "
-                "check the key. This is a server-side problem, not a problem with the key "
-                "or the request: the server operator must make sure DRAMACLAW_API_URL for "
-                "the API process points to an address the API itself can reach."
-            )
-            assert_secret_free(response.text)
+            for payload in (rpc("initialize"), rpc("tools/list"), call("whoami")):
+                response = await client.post(PROJECT_PATH, json=payload, headers=bearer(KEY_A))
+                assert response.status_code == 200
+
+    asyncio.run(scenario())
+    # Every request checked the key; one exchange served them all.
+    assert fake_api.port.checks == 3
+    assert fake_api.port.exchanges == [{"kind": "project", "id": "project-a"}]
+
+
+def test_session_close_to_expiry_is_exchanged_again(monkeypatch, fake_api):
+    from novelvideo.chat import agent_key_session
+
+    identity_tools(monkeypatch)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            for _ in range(2):
+                response = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_A))
+                assert response.status_code == 200
+                # The cached session now has less than a minute left.
+                for cache_key, (token, _) in list(agent_key_session._CACHE.items()):
+                    agent_key_session._CACHE[cache_key] = (token, time.time() + 30)
+
+    asyncio.run(scenario())
+    assert fake_api.port.exchanges == [{"kind": "project", "id": "project-a"}] * 2
+
+
+def test_project_the_key_may_not_use_is_forbidden(monkeypatch, fake_api):
+    from novelvideo.chat import dramaclaw_mcp
+
+    def forbidden():
+        raise AssertionError("tool code ran for a project the key may not use")
+
+    monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", forbidden)
+    fake_api.port.forbidden.add((KEY_A, "project-x"))
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            for payload in (rpc("tools/list"), call("whoami")):
+                response = await client.post(
+                    "/mcp/tools/projects/project-x", json=payload, headers=bearer(KEY_A),
+                )
+                assert response.status_code == 403
+                body = response.json()
+                assert body["code"] == "agent_key_project_forbidden"
+                assert "project" in body["error"].lower()
+                assert_secret_free(response.text)
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("address,shown", [
-    (None, "http://127.0.0.1:8780"),
-    ("http://operator:fake-password-DO-NOT-USE@api.example.test:9000/", "http://api.example.test:9000"),
-])
-def test_unreachable_api_names_the_resolved_address_without_credentials(
-    monkeypatch, address, shown,
+@pytest.mark.parametrize("installed", ["no auth session port", "port without agent keys"])
+def test_installation_without_agent_key_service_refuses_every_key(
+    monkeypatch, fake_api, installed,
 ):
-    from novelvideo.api import remote_mcp
+    from novelvideo.ports import registry
+    from novelvideo.ports.local.auth import LocalAuthSession
 
-    if address is not None:
-        monkeypatch.setenv("DRAMACLAW_API_URL", address)
-    asked = []
-
-    def unreachable(api_base):
-        asked.append(api_base)
-        return {"ok": False, "code": "agent_key_exchange_failed", "error": "network_error: refused"}
-
-    monkeypatch.setattr(remote_mcp, "_check_key", unreachable)
+    identity_tools(monkeypatch)
+    if installed == "no auth session port":
+        monkeypatch.delitem(registry._PORTS, "auth_session")
+    else:
+        monkeypatch.setitem(registry._PORTS, "auth_session", LocalAuthSession())
 
     async def scenario():
         async with client_for(entry_app(monkeypatch)) as client:
-            response = await client.post(
-                "/mcp/tools", json=rpc("tools/list"), headers=bearer(KEY_A),
-            )
+            for mode in ("tools", "workflows"):
+                response = await client.post(
+                    f"/mcp/{mode}", json=call("whoami"), headers=bearer(KEY_A),
+                )
+                assert response.status_code == 503
+                body = response.json()
+                assert body["code"] == "agent_key_unsupported"
+                assert "no Agent Key service" in body["detail"]
+                assert "LOCAL_AGENT_TRUST" not in response.text
+                assert_secret_free(response.text)
+
+    asyncio.run(scenario())
+    assert fake_api.port.checks == 0
+
+
+@pytest.mark.parametrize("failing", ["check_agent_key", "exchange_agent_key"])
+def test_unavailable_key_service_is_not_a_rejection(monkeypatch, fake_api, caplog, failing):
+    caplog.set_level(logging.DEBUG)
+    identity_tools(monkeypatch)
+
+    async def down(*args, **kwargs):
+        raise ConnectionError(f"key service unreachable for {KEY_A}")
+
+    monkeypatch.setattr(fake_api.port, failing, down)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_A))
             assert response.status_code == 503
-            detail = response.json()["detail"]
-            assert f"the API at {shown} to" in detail
-            assert "DRAMACLAW_API_URL" in detail
-            assert "fake-password-DO-NOT-USE" not in response.text
-            assert "network_error" not in response.text
+            assert response.json() == {
+                "error": "Agent key check unavailable", "code": "agent_key_check_unavailable",
+            }
+
+    asyncio.run(scenario())
+    assert "ConnectionError" in caplog.text
+    assert_secret_free(caplog.text)
+
+
+def test_insecure_api_address_is_refused_before_the_key_check(monkeypatch, fake_api):
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://api.example.test:8780")
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post("/mcp/tools", json=rpc("tools/list"), headers=bearer(KEY_A))
+            assert response.status_code == 503
+            assert response.json()["code"] == "agent_key_insecure_transport"
             assert_secret_free(response.text)
 
     asyncio.run(scenario())
-    assert asked == [(address or shown).rstrip("/")]
+    assert fake_api.port.checks == 0
 
 
 @pytest.mark.parametrize("names", [
@@ -536,7 +601,7 @@ def test_api_address_is_resolved_like_the_chat_backend(monkeypatch, fake_api, na
 
     # The tool calls back to the address its key was checked at.
     assert asyncio.run(scenario()) == {"DRAMACLAW_API_URL": f"http://{host}:{port}"}
-    assert fake_api.exchanges
+    assert fake_api.port.exchanges
 
 
 @pytest.mark.parametrize("path", [
@@ -557,7 +622,7 @@ def test_unknown_paths_are_not_found_without_exchange(monkeypatch, fake_api, pat
                 assert response.json() == {"error": "Not found"}
 
     asyncio.run(scenario())
-    assert fake_api.exchanges == []
+    assert fake_api.port.checks == 0
 
 
 @pytest.mark.parametrize("method", ["GET", "DELETE"])
@@ -569,7 +634,7 @@ def test_only_post_is_served(monkeypatch, fake_api, method):
             assert response.headers["allow"] == "POST"
 
     asyncio.run(scenario())
-    assert fake_api.exchanges == []
+    assert fake_api.port.checks == 0
 
 
 def test_path_scope_reaches_the_tool_and_trailing_slash_is_accepted(monkeypatch, fake_api):
@@ -659,11 +724,10 @@ def test_logs_and_error_bodies_carry_no_key_material(monkeypatch, fake_api, capl
                     # The test tool answers with its own key on purpose; its log lines still count.
                     if response.status_code != 200 or payload != call("whoami"):
                         bodies.append(response.text)
-            fake_api.exchange_status = 500
-            from novelvideo.chat import agent_key_session
-
-            agent_key_session._CACHE.clear()
+            # The key service fails with the key in its message.
+            fake_api.port.failure = RuntimeError(f"key service down for {KEY_B}")
             response = await client.post("/mcp/tools", json=call("whoami"), headers=bearer(KEY_B))
+            assert response.status_code == 503
             bodies.append(response.text)
         return bodies
 
@@ -677,12 +741,9 @@ def test_logs_and_error_bodies_carry_no_key_material(monkeypatch, fake_api, capl
 
 def test_failing_tool_callbacks_carry_no_key_material(monkeypatch, fake_api, caplog):
     caplog.set_level(logging.DEBUG)
-    real_open = OpenerDirector.open
     quoted = []
 
     def failing_open(self, request, *args, **kwargs):
-        if request.full_url.endswith("/api/v1/agent/sessions"):
-            return real_open(self, request, *args, **kwargs)
         quoted.append(request.get_header("Authorization"))
         # Like a client library whose error quotes the request it could not send.
         raise RuntimeError(f"request failed: {request.full_url} {request.header_items()}")
@@ -728,7 +789,7 @@ def test_requests_over_the_process_limit_are_refused_at_once(monkeypatch, fake_a
                 asyncio.create_task(work(client, key, hold=True)) for key in (KEY_A, KEY_B)
             ]
             await until(lambda: state.running == 2)
-            exchanges = len(fake_api.exchanges)
+            checks = fake_api.port.checks
             for key in (KEY_A, UNKNOWN_KEY):
                 refused = await work(client, key)
                 assert refused.status_code == 429
@@ -740,7 +801,7 @@ def test_requests_over_the_process_limit_are_refused_at_once(monkeypatch, fake_a
                 assert_secret_free(refused.text)
                 assert UNKNOWN_KEY not in refused.text
             # A full process answers without calling back into the API.
-            assert len(fake_api.exchanges) == exchanges
+            assert fake_api.port.checks == checks
             state.release.set()
             assert [response.status_code for response in await asyncio.gather(*held)] == [200, 200]
             assert (await work(client, KEY_A)).status_code == 200
@@ -826,17 +887,17 @@ def test_a_cancelled_request_gives_its_place_back(monkeypatch, fake_api):
 def test_requests_without_a_valid_key_take_no_place(monkeypatch, fake_api):
     holding_tools(monkeypatch)
     limits(monkeypatch, total=1, per_key=1)
-    fake_api.reject_gate = Event()
+    fake_api.port.gate = asyncio.Event()
 
     async def scenario():
         async with client_for(entry_app(monkeypatch)) as client:
             unchecked = asyncio.create_task(work(client, UNKNOWN_KEY))
-            await until(lambda: len(fake_api.exchanges) == 1)
+            await until(lambda: fake_api.port.checks == 1)
             try:
                 # The only place stays free while the other key is still being checked.
                 assert (await work(client, KEY_A)).status_code == 200
             finally:
-                fake_api.reject_gate.set()
+                fake_api.port.gate.set()
             assert (await unchecked).status_code == 401
             assert (await client.post(
                 PROJECT_PATH, json=call("work"), headers=MCP_HEADERS,
@@ -929,7 +990,9 @@ def test_tool_calls_reach_the_api_as_the_calling_key(monkeypatch, exchange_facto
         {"private-alice"}, {"private-bob"},
     ]
     assert {request["owner"] for request in exchange.catalog_requests} == set(owners)
-    assert all(request["authorization_matches"] for request in exchange.requests)
+    # Keys were exchanged through the port only; tools reused the sessions it gave.
+    assert exchange.requests == []
+    assert exchange.key_port.exchanges
 
 
 @pytest.mark.parametrize("path,projects,scope", [
@@ -955,6 +1018,8 @@ def test_listed_tools_and_instructions_match_the_stdio_key_server(
 
     async def scenario():
         expected = await direct_tools(LAUNCHER, mode, env, ROOT, str(python))
+        # The stdio launcher exchanges its key over HTTP; the entry must not.
+        stdio_exchanges = len(exchange.requests)
         async with client_for(entry_app(monkeypatch)) as client:
             listed = await client.post(path, json=rpc("tools/list"), headers=bearer(KEY))
             initialized = await client.post(path, json=rpc("initialize", {
@@ -970,6 +1035,7 @@ def test_listed_tools_and_instructions_match_the_stdio_key_server(
         assert ("freezone_list_projects" in instructions) == (
             mode == "tools" and "DRAMACLAW_PROJECT_ID" not in scope
         )
+        assert len(exchange.requests) == stdio_exchanges
 
     asyncio.run(scenario())
 
@@ -1032,14 +1098,15 @@ def test_process_identity_never_reaches_a_request(monkeypatch, fake_api):
     assert set(seen.values()) == {""}
 
 
-@pytest.mark.parametrize("path,projects", [
-    (PROJECT_PATH, ["project-a", "project-b"]),
-    (PROJECT_PATH + "/canvases/canvas-a", ["project-a", "project-b"]),
-    # An unscoped path is bound to the key's only project first.
-    ("/mcp/tools", ["project-a"]),
+@pytest.mark.parametrize("path,projects,exchanges", [
+    (PROJECT_PATH, ["project-a", "project-b"], [{"kind": "project", "id": "project-a"}]),
+    (PROJECT_PATH + "/canvases/canvas-a", ["project-a", "project-b"],
+     [{"kind": "project", "id": "project-a"}]),
+    # An unscoped path is bound to the key's only project first, with a home session.
+    ("/mcp/tools", ["project-a"], [{"kind": "home"}, {"kind": "project", "id": "project-a"}]),
 ])
 def test_project_tools_request_writes_events_to_the_project_directory(
-    monkeypatch, fake_api, tmp_path, path, projects,
+    monkeypatch, fake_api, tmp_path, path, projects, exchanges,
 ):
     fake_api.username, fake_api.projects = "alice", projects
     asked = project_home(monkeypatch, tmp_path / "state")
@@ -1051,8 +1118,8 @@ def test_project_tools_request_writes_events_to_the_project_directory(
 
     assert asyncio.run(scenario()) == expected_bridge_dir("alice", tmp_path / "state")
     assert asked == [({"username": "alice"}, "project-a", "viewer")]
-    # Who is calling is asked with the session the key check already opened.
-    assert len(fake_api.exchanges) == 1
+    # Who is calling is asked with a session the key check already opened.
+    assert fake_api.port.exchanges == exchanges
 
 
 def test_process_event_directory_never_reaches_a_request(monkeypatch, fake_api, tmp_path):

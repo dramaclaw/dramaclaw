@@ -1,14 +1,17 @@
-"""Stand-in for the API endpoints the remote MCP entry calls back into.
+"""Stand-ins for what the remote MCP entry relies on.
 
-``Exchange`` answers the agent key exchange (``POST /api/v1/agent/sessions``), the
+``FakeKeyPort`` is the auth session port's Agent Key part, which the entry checks every
+key with in process. ``Exchange`` answers the API endpoints tools call back into: the
 project listing (``GET /api/v1/projects``) and the per-key agent catalogs
-(``GET /api/v1/freezone/agent-config/<kind>``), and records every request so a test can
-check which credential reached the API. ``direct_tools`` lists the tools of the stdio
-launcher, which the entry must serve unchanged.
+(``GET /api/v1/freezone/agent-config/<kind>``). It also answers the HTTP key exchange,
+but only for the stdio launcher, which still exchanges its key over HTTP; it records
+every exchange so a test can check the entry never made one. ``direct_tools`` lists the
+tools of the stdio launcher, which the entry must serve unchanged.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -21,10 +24,72 @@ import time
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from novelvideo.ports.auth_contract import AgentSessionToken, AuthError, AuthFailureReason
+
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / "agent-kit/scripts/launch_mcp.py"
 KEY = "fake-entry-key-DO-NOT-USE-7f3a9c"
 FAKE_TOKEN = "fake-exchange-token-DO-NOT-USE-91c2"
+
+
+class FakeKeyPort:
+    """Agent Key methods of the auth session port, for keys that can change mid-test.
+
+    ``sessions`` maps each valid key to the session token its exchanges return.
+    ``refusals`` maps a key to the reason its check fails with, as after a revocation;
+    ``forbidden`` holds the ``(key, project_id)`` pairs a key may not use; ``failure``
+    is raised by every call, as when the key service is down. ``gate``, when set, holds
+    the check of an unknown key until it is set.
+    """
+
+    def __init__(self, sessions, *, lifetime=3600):
+        self.sessions = dict(sessions)
+        self.lifetime = lifetime
+        self.refusals = {}
+        self.forbidden = set()
+        self.failure = None
+        self.gate = None
+        self.checks = 0
+        self.exchanges = []
+
+    def _verify(self, raw_key):
+        if self.failure is not None:
+            raise self.failure
+        if raw_key in self.refusals:
+            raise AuthError(self.refusals[raw_key], "refused")
+        if raw_key not in self.sessions:
+            raise AuthError(AuthFailureReason.INVALID, "unknown key")
+
+    async def check_agent_key(self, raw_key):
+        self.checks += 1
+        if raw_key not in self.sessions and self.gate is not None:
+            await asyncio.wait_for(self.gate.wait(), timeout=8)
+        self._verify(raw_key)
+
+    async def exchange_agent_key(
+        self, raw_key, *, ttl_seconds=None, worker_id=None, current_scope_kind="home",
+        current_project_id=None,
+    ):
+        scope = (
+            {"kind": "project", "id": current_project_id}
+            if current_scope_kind == "project" else {"kind": "home"}
+        )
+        self.exchanges.append(scope)
+        self._verify(raw_key)
+        if (raw_key, current_project_id) in self.forbidden:
+            raise AuthError(AuthFailureReason.FORBIDDEN, "project not allowed")
+        return AgentSessionToken(
+            value=self.sessions[raw_key], session_id=f"session-{len(self.exchanges)}",
+            user="alice", scopes=(), exp=int(time.time()) + self.lifetime, worker_id="",
+        )
+
+
+def register_key_port(monkeypatch, port):
+    """Make ``port`` the process's auth session port for the rest of the test."""
+    from novelvideo.ports import registry
+
+    monkeypatch.setitem(registry._PORTS, "auth_session", port)
+    return port
 
 
 def clean_env():
@@ -39,7 +104,8 @@ class Exchange:
     """API double: ``KEY`` and every key in ``catalogs`` exchange for a token.
 
     ``catalogs`` maps a key to ``(token, {kind: catalog})``; ``projects`` is the project
-    ID list ``FAKE_TOKEN`` sees, or an HTTP status the listing fails with.
+    ID list every key's token sees, or an HTTP status the listing fails with. ``key_port`` is
+    a ``FakeKeyPort`` that accepts the same keys for the same tokens.
     """
 
     def __init__(self, projects=None, catalogs=None):
@@ -48,6 +114,9 @@ class Exchange:
         self.catalog_requests = []
         catalogs = {} if catalogs is None else catalogs
         projects = [] if projects is None else projects
+        self.key_port = FakeKeyPort(
+            {KEY: FAKE_TOKEN} | {key: token for key, (token, _) in catalogs.items()},
+        )
         exchange = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -95,7 +164,9 @@ class Exchange:
                     else:
                         self._reply(200, {"ok": True, "data": catalogs[owner][1][kind]})
                     return
-                matches = self.headers.get("Authorization") == f"Bearer {FAKE_TOKEN}"
+                matches = self.headers.get("Authorization") in {
+                    f"Bearer {token}" for token in exchange.key_port.sessions.values()
+                }
                 exchange.project_requests.append({
                     "path": self.path, "authorization_matches": matches,
                     "accept": self.headers.get("Accept"),

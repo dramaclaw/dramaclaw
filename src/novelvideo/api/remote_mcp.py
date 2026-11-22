@@ -7,8 +7,14 @@ answer any request. Off unless ``DRAMACLAW_REMOTE_MCP_ENABLED`` is set.
 
 Paths are ``/mcp/{tools|workflows}[/projects/{project_id}[/canvases/{canvas_id}]]``;
 a path without a project binds the key's only visible project when it has exactly one.
-A request without a bearer key gets 401; a key the API rejects gets 401 and a key check
-that cannot complete gets 503, both with the exchange's own ``code``.
+
+Keys are checked in process through the auth session port's optional agent key methods,
+on every request, so a revoked key is refused from its next request on. The session a
+key is exchanged for is cached per key and scope and handed to the tools, which call the
+API with it; it is exchanged again only once it is missing or close to expiry. A request
+without a bearer key, or with a key the port rejects, gets 401; a key that may not be
+used on the requested project gets 403; an installation without an agent key service,
+or a check that cannot complete, gets 503.
 
 Requests that passed the key check are counted while they run, in total and per key.
 The count belongs to this process: with several API processes each one allows its own
@@ -25,7 +31,6 @@ import logging
 import os
 import re
 from typing import Any
-from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 import anyio
@@ -38,6 +43,9 @@ from novelvideo.chat import agent_key_session, request_context
 from novelvideo.chat import service as chat_service
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
 from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+from novelvideo.ports import get_auth_session_port
+from novelvideo.ports.auth_contract import AuthError, AuthFailureReason
+from novelvideo.ports.registry import PortNotRegistered
 from novelvideo.project_context import require_project_home_node, resolve_project_context
 
 logger = logging.getLogger("novelvideo.api.remote_mcp")
@@ -75,16 +83,10 @@ _TOOLS_HOST = {
     "DRAMACLAW_TOOL_MODE": "freezone_canvas",
     "DRAMACLAW_AGENT_PROFILE": "freezone:main",
 }
-# Exchange results whose fixed text tells the operator what to change.
-_CONFIGURATION_CODES = frozenset({
-    "agent_key_exchange_unsupported", "agent_key_exchange_redirected",
-    "agent_key_insecure_transport",
-})
-_API_UNREACHABLE = (
-    "The remote MCP entry could not reach the API at {address} to check the key. This "
-    "is a server-side problem, not a problem with the key or the request: the server "
-    "operator must make sure DRAMACLAW_API_URL for the API process points to an address "
-    "the API itself can reach."
+_NO_KEY_SERVICE = (
+    "This installation has no Agent Key service, so the remote MCP entry cannot accept "
+    "agent keys. This is a property of the server, not a problem with the key or the "
+    "request."
 )
 
 _open_direct = build_opener(ProxyHandler({})).open
@@ -149,24 +151,6 @@ def _request_values(
     return values
 
 
-class _NoResponseBody:
-    status = 204
-
-    def __enter__(self) -> _NoResponseBody:
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        return None
-
-    def read(self) -> bytes:
-        return b""
-
-
-def _session_only(request: Any, timeout: float) -> _NoResponseBody:
-    """Stand in for the follow-up request so that only the key exchange happens."""
-    return _NoResponseBody()
-
-
 def _session_request(api_base: str, api_path: str, opener: Any) -> dict[str, Any]:
     def decode(status: int, body: str) -> dict[str, Any]:
         parsed = json.loads(body) if body else {"ok": True}
@@ -180,9 +164,51 @@ def _session_request(api_base: str, api_path: str, opener: Any) -> dict[str, Any
     ))
 
 
-def _check_key(api_base: str) -> dict[str, Any]:
-    """Exchange the request's key for its scope, or reuse its live session."""
-    return _session_request(api_base, "/api/v1/agent/sessions", _session_only)
+def _key_service() -> Any | None:
+    """The auth session port when it implements agent keys, otherwise ``None``."""
+    try:
+        port = get_auth_session_port()
+    except PortNotRegistered:
+        return None
+    if not all(
+        callable(getattr(port, name, None))
+        for name in ("check_agent_key", "exchange_agent_key")
+    ):
+        return None
+    return port
+
+
+async def _open_session(port: Any, api_base: str, key: str, project_id: str | None) -> None:
+    """Make sure the tools find a live session of ``key`` for the scope in the cache."""
+    if agent_key_session.live_session(api_base, key, project_id) is not None:
+        return
+    token = await asyncio.wait_for(
+        port.exchange_agent_key(
+            key, current_scope_kind="project" if project_id else "home",
+            current_project_id=project_id,
+        ),
+        _CHECK_TIMEOUT_SECONDS,
+    )
+    agent_key_session.remember_session(api_base, key, project_id, token.value, token.exp)
+
+
+def _key_refusal(exc: Exception) -> JSONResponse:
+    """Turn a failed key check or exchange into 401, 403 or 503."""
+    if isinstance(exc, AuthError):
+        if exc.reason is AuthFailureReason.FORBIDDEN:
+            return JSONResponse({
+                "error": "Agent key is not allowed on this project",
+                "code": "agent_key_project_forbidden",
+            }, status_code=403)
+        return JSONResponse(
+            {"error": "Agent key rejected", "code": "agent_key_rejected"}, status_code=401,
+        )
+    # The message may quote the key, so only the type is logged.
+    logger.warning("Remote MCP key check could not complete error=%s", type(exc).__name__)
+    return JSONResponse(
+        {"error": "Agent key check unavailable", "code": "agent_key_check_unavailable"},
+        status_code=503,
+    )
 
 
 def _single_visible_project(api_base: str) -> tuple[str | None, str | None]:
@@ -241,40 +267,6 @@ async def _project_bridge_dir(api_base: str, project_id: str) -> tuple[str | Non
     except Exception as exc:
         return None, f"project workspace unavailable ({type(exc).__name__})"
     return str(canvas_bridge_dir_for_profile(home, "freezone")), None
-
-
-def _shown_address(api_base: str) -> str:
-    """The address without any user or password written into it."""
-    try:
-        parts = urlsplit(api_base)
-        host, port = parts.hostname, parts.port
-    except ValueError:
-        return "the configured address"
-    if not host:
-        return "the configured address"
-    host = f"[{host}]" if ":" in host else host
-    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
-
-
-def _refusal(result: dict[str, Any], api_base: str) -> JSONResponse:
-    """Turn a failed exchange into a 401 or 503 that carries the exchange's own reason."""
-    code = str(result.get("code") or "agent_key_exchange_failed")
-    status = result.get("status_code")
-    rejected = code == "agent_key_exchange_failed" and status in (401, 403)
-    body: dict[str, Any] = {
-        "error": "Agent key rejected" if rejected else "Agent key check unavailable",
-        "code": code,
-    }
-    if isinstance(status, int):
-        body["status_code"] = status
-    if code in _CONFIGURATION_CODES:
-        body["detail"] = str(result.get("error") or "")
-    elif code == "agent_key_exchange_failed" and not isinstance(status, int):
-        # The exchange ended without any HTTP answer: the API was not reached.
-        address = _shown_address(api_base)
-        body["detail"] = _API_UNREACHABLE.format(address=address)
-        logger.warning("Remote MCP entry could not reach the API at %s", address)
-    return JSONResponse(body, status_code=401 if rejected else 503)
 
 
 class _RequestServer:
@@ -394,18 +386,39 @@ class RemoteMcpApp:
         api_base = chat_service._load_api_url()
         key_digest = hashlib.sha256(key.encode("utf-8")).digest()
         bridge_dir = None
-        # A full process answers before the key check, which is a call back into the API.
+        # A full process answers before the key check.
         busy = self._busy(key_digest)
         if busy is not None:
             return busy
+        port = _key_service()
+        if port is None:
+            return JSONResponse({
+                "error": "Agent key check unavailable", "code": "agent_key_unsupported",
+                "detail": _NO_KEY_SERVICE,
+            }, status_code=503)
+        # Tools carry the session to this address, so it is refused before any exchange.
+        insecure = agent_key_session.transport_refusal(api_base)
+        if insecure is not None:
+            return JSONResponse({
+                "error": "Agent key check unavailable", "code": insecure["code"],
+                "detail": insecure["error"],
+            }, status_code=503)
+        try:
+            # Every request, even with a cached session, so a revocation applies at once.
+            await asyncio.wait_for(port.check_agent_key(key), _CHECK_TIMEOUT_SECONDS)
+            await _open_session(port, api_base, key, project_id)
+        except Exception as exc:
+            return _key_refusal(exc)
         with request_context.scope(_request_values(mode, key, api_base, project_id, canvas_id)):
-            checked = await asyncio.to_thread(_check_key, api_base)
-            if checked.get("ok") is not True:
-                return _refusal(checked, api_base)
             if project_id is None:
                 project_id, reason = await asyncio.to_thread(_single_visible_project, api_base)
                 if reason is not None:
                     logger.debug("Unscoped path kept home scope mode=%s: %s", mode, reason)
+                elif project_id:
+                    try:
+                        await _open_session(port, api_base, key, project_id)
+                    except Exception as exc:
+                        return _key_refusal(exc)
             if mode == "tools" and project_id:
                 bridge_dir, reason = await _project_bridge_dir(api_base, project_id)
                 if reason is not None:

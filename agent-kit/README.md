@@ -188,8 +188,9 @@ DRAMACLAW_REMOTE_MCP_ENABLED=true uv run novelvideo api --host 127.0.0.1 --port 
 ```
 
 开启后启动日志会输出一行 `Remote MCP entry enabled at /mcp/{tools|workflows}` 以及生效的并发上限。
-入口用 Agent Key 换取会话（`POST /api/v1/agent/sessions`），因此入口所用的 API 必须提供该接口；
-缺少该接口时每个请求都返回 503，`code` 为 `agent_key_exchange_unsupported`。
+入口在 API 进程内通过认证会话端口（auth session port）的 Agent Key 方法校验 Key、换取会话，
+不经 HTTP 调用 `POST /api/v1/agent/sessions`。未提供 Agent Key 服务的安装（如本地社区版）对每个请求
+返回 503，`code` 为 `agent_key_unsupported`，`detail` 说明这是服务端属性，与 Key 和请求无关。
 
 ### 接入
 
@@ -207,21 +208,22 @@ DRAMACLAW_REMOTE_MCP_ENABLED=true uv run novelvideo api --host 127.0.0.1 --port 
 路径包含项目时，Key 以该项目的 scope 校验；显式项目或画布路径不查询项目列表。
 
 入口无状态：每个 POST 独立完成，返回 JSON，不签发 `mcp-session-id`，不启动子进程；
-GET、DELETE 返回 405，WebSocket 连接被关闭。每个请求都要通过 Key 校验：API 进程在内存中按 Key 和 scope
-缓存交换得到的短期会话，会话距过期超过 60 秒时直接复用，否则重新调用交换接口。
+GET、DELETE 返回 405，WebSocket 连接被关闭。每个请求都先通过端口校验 Key，因此撤销、过期或停用的 Key
+在撤销后的第一个请求即被拒绝。校验通过后，API 进程在内存中按 Key 和 scope 缓存换得的短期会话，
+会话距过期超过 60 秒时直接复用，否则重新换取；工具回调 API 时携带该会话。
 
-- 缺少 Bearer 或 Key 为空时返回 401（`Bearer key required`）。Key 被 API 拒绝时返回 401
-  （`Agent key rejected`）；校验无法完成时返回 503（`Agent key check unavailable`）。
-  两者都附带 `code`，有 HTTP 状态时附带 Key 交换返回的 `status_code`。
+- 缺少 Bearer 或 Key 为空时返回 401（`Bearer key required`）。
+- Key 无效、被撤销、已过期或所属用户被停用时返回 401，`code` 为 `agent_key_rejected`。
+- Key 有效但不允许用于请求的项目时返回 403，`code` 为 `agent_key_project_forbidden`。
+- Key 服务暂时不可用、校验无法完成时返回 503，`code` 为 `agent_key_check_unavailable`；
+  这不是对 Key 的拒绝，稍后重试即可。
 - 每个请求都在执行任何工具代码前校验 Key；`DRAMACLAW_LOCAL_AGENT_TRUST` 以及 API 进程环境中的
   Key、Token、项目、画布、用户变量对该入口无效，项目和画布只取自请求路径或自动绑定。
-- 入口校验 Key 和工具回调 API 时使用的地址，与对话后端的解析顺序相同：`DRAMACLAW_API_URL` →
+- 工具回调 API 时使用的地址，与对话后端的解析顺序相同：`DRAMACLAW_API_URL` →
   `NOVELVIDEO_API_URL` → `NOVELVIDEO_API_HOST`/`NOVELVIDEO_API_PORT` → `SUPERTALE_API_URL` →
   `http://127.0.0.1:8780`，通常无需额外设置。API 不在默认地址时，为 API 进程设置 `DRAMACLAW_API_URL`，
   指向 API 进程自身可达的地址。该地址必须是 https 或回环地址 http，否则返回 503，
   `code` 为 `agent_key_insecure_transport`。
-- 入口连不上该地址时返回 503，`code` 为 `agent_key_exchange_failed`，`detail` 写明入口尝试连接的地址，
-  并说明这是服务端问题、需由运维检查 `DRAMACLAW_API_URL`；请求和 Key 本身无需修改。
 - 带项目的 `tools` 请求（路径中指定项目，或 Key 只能访问一个项目）把画布命令和卡片事件写入该项目自己的
   事件目录，即浏览器中该项目的会话所监听的目录；API 进程环境中的 `DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR`
   对该入口无效。该目录位于项目数据所在的节点上：多节点部署时，请求必须落在项目的归属节点，

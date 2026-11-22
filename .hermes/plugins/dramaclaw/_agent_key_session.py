@@ -10,8 +10,10 @@ import math
 import importlib.util
 from pathlib import Path
 import re
+import sys
 from threading import Lock
 import time
+from types import ModuleType
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
@@ -33,10 +35,20 @@ def _load_request_context():
 request_context = _load_request_context()
 
 
-_CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}
-_LOCKS: dict[tuple[str, str, str], Any] = {}
-_SECRETS: set[str] = set()
-_GLOBAL_LOCK = Lock()
+# Sessions are kept process-wide, so every bundled copy of this module reuses the
+# sessions any other copy, or a server that opened them for a request, already holds.
+_holder = ModuleType("_dramaclaw_agent_key_session_state")
+_holder.cache = {}
+_holder.locks = {}
+_holder.secrets = set()
+_holder.lock = Lock()
+_state = sys.modules.setdefault(_holder.__name__, _holder)
+_CACHE: dict[tuple[str, str, str], tuple[str, float]] = _state.cache
+_LOCKS: dict[tuple[str, str, str], Any] = _state.locks
+_SECRETS: set[str] = _state.secrets
+_GLOBAL_LOCK = _state.lock
+# A session closer than this to its expiry is exchanged again before it is used.
+_RENEW_SECONDS = 60
 _UNSUPPORTED = (
     "This server does not support agent keys via POST /api/v1/agent/sessions; "
     "for a local community API use DRAMACLAW_LOCAL_AGENT_TRUST=1 instead."
@@ -130,6 +142,49 @@ def protect(call: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     return redact(result)
 
 
+def transport_refusal(api_base: str) -> dict[str, Any] | None:
+    """The refusal for an API address a session token must not be sent to, if any."""
+    parsed = urlsplit(api_base)
+    if parsed.scheme == "https" or (
+        parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    ):
+        return None
+    return {
+        "ok": False, "code": "agent_key_insecure_transport",
+        "error": "Agent keys require https or a loopback http API URL",
+    }
+
+
+def _scope_for(project_id: str | None) -> dict[str, str]:
+    return {"kind": "project", "id": project_id} if project_id else {"kind": "home"}
+
+
+def _cache_key(api_base: str, key: str, scope: dict[str, str]) -> tuple[str, str, str]:
+    return (
+        api_base, hashlib.sha256(key.encode("utf-8")).hexdigest(),
+        json.dumps(scope, sort_keys=True),
+    )
+
+
+def live_session(api_base: str, key: str, project_id: str | None) -> str | None:
+    """The cached session token of ``key`` for the scope, unless it is close to expiry."""
+    with _GLOBAL_LOCK:
+        session = _CACHE.get(_cache_key(api_base, key, _scope_for(project_id)))
+    if session is None or session[1] - time.time() <= _RENEW_SECONDS:
+        return None
+    return session[0]
+
+
+def remember_session(
+    api_base: str, key: str, project_id: str | None, token: str, expires_at: float,
+) -> None:
+    """Cache a session ``key`` was exchanged for elsewhere, for the requests it makes."""
+    _remember(key)
+    _remember(token)
+    with _GLOBAL_LOCK:
+        _CACHE[_cache_key(api_base, key, _scope_for(project_id))] = (token, expires_at)
+
+
 def _exchange_error(status: int, *, unsupported: bool = False) -> dict[str, Any]:
     return {
         "ok": False,
@@ -207,29 +262,24 @@ def request(
     if not key:
         return {"ok": False, "code": "agent_key_unavailable", "error": "Agent key is unavailable"}
     _remember(key)
-    parsed = urlsplit(api_base)
-    if parsed.scheme != "https" and not (
-        parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
-    ):
-        return {
-            "ok": False, "code": "agent_key_insecure_transport",
-            "error": "Agent keys require https or a loopback http API URL",
-        }
+    refused = transport_refusal(api_base)
+    if refused is not None:
+        return refused
     project = re.search(r"/projects/([^/?#]+)", api_path)
     project_id = (
         unquote(project.group(1))
         if project
         else request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
     )
-    scope = {"kind": "project", "id": project_id} if project_id else {"kind": "home"}
-    cache_key = (api_base, hashlib.sha256(key.encode("utf-8")).hexdigest(), json.dumps(scope, sort_keys=True))
+    scope = _scope_for(project_id)
+    cache_key = _cache_key(api_base, key, scope)
     with _GLOBAL_LOCK:
         entry_lock = _LOCKS.setdefault(cache_key, Lock())
 
     for attempt in range(2):
         with entry_lock:
             session = _CACHE.get(cache_key)
-            if session is None or session[1] - time.time() <= 60:
+            if session is None or session[1] - time.time() <= _RENEW_SECONDS:
                 exchanged = _exchange(api_base, key, scope, headers, timeout)
                 if isinstance(exchanged, dict):
                     return exchanged
