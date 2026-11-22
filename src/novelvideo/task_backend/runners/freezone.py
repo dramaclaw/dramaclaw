@@ -74,6 +74,11 @@ AGENT_PRODUCT_TASK_TYPES = (
     "freezone_agent_recipe_generate",
 )
 
+# Generate waiters poll until delivery or the task deadline; back off so an
+# idle wait costs one read every two seconds rather than five per second.
+_AGENT_PRODUCT_POLL_INITIAL_SECONDS = 0.2
+_AGENT_PRODUCT_POLL_MAX_SECONDS = 2.0
+
 
 async def _run_freezone_agent_product_async(
     envelope: dict[str, Any],
@@ -104,6 +109,8 @@ async def _run_freezone_agent_product_async(
         operation_id,
         product_kind,
     )
+    last_observed: tuple[Any, ...] | None = None
+    poll_seconds = _AGENT_PRODUCT_POLL_INITIAL_SECONDS
     while True:
         operation = await asyncio.to_thread(
             read_agent_product_operation,
@@ -118,18 +125,25 @@ async def _run_freezone_agent_product_async(
         if bound_task_id and bound_task_id != run_task_id:
             raise RuntimeError("agent product operation is bound to another task")
         status = str(operation.get("status") or "")
-        logger.info(
-            "agent_product_waiter.observed task_id=%s operation_id=%s "
-            "product_kind=%s operation_status=%s bound_task_id=%s "
-            "has_model_evidence=%s has_result_ref=%s",
-            run_task_id,
-            operation_id,
-            product_kind,
+        observed = (
             status,
             bound_task_id or "none",
             bool((operation.get("model_evidence") or {}).get("model_call_id")),
             bool(operation.get("result_ref")),
         )
+        if observed != last_observed:
+            # Only state changes are worth a line; an abandoned generation
+            # otherwise logs every poll until the task deadline.
+            last_observed = observed
+            logger.info(
+                "agent_product_waiter.observed task_id=%s operation_id=%s "
+                "product_kind=%s operation_status=%s bound_task_id=%s "
+                "has_model_evidence=%s has_result_ref=%s",
+                run_task_id,
+                operation_id,
+                product_kind,
+                *observed,
+            )
         if status == "delivered":
             evidence = operation.get("model_evidence") or {}
             result_ref = operation.get("result_ref") or {}
@@ -232,7 +246,8 @@ async def _run_freezone_agent_product_async(
                 operation_id=operation_id,
                 status="awaiting_delivery",
             )
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(poll_seconds)
+        poll_seconds = min(poll_seconds * 2, _AGENT_PRODUCT_POLL_MAX_SECONDS)
 
 
 def run_freezone_agent_product(
@@ -246,13 +261,15 @@ def run_freezone_agent_product(
             task_type=str(envelope.get("task_type") or ""),
         )
     except (TaskTimedOut, TaskCancelled) as exc:
-        # A product result can arrive after the local worker deadline. Preserve
-        # the reservation for the authenticated result path to reconcile; an
-        # ordinary timeout must never turn an unknown provider outcome into a
-        # refund.
+        # A product result can arrive after the local worker deadline or a
+        # cancellation. Preserve the reservation for the authenticated result
+        # path to reconcile; an interruption must never turn an unknown
+        # provider outcome into a refund.
         from novelvideo.freezone.agent_product_operations import (
+            AGENT_TURN_PRODUCT_KINDS,
             AgentProductSettlementPending,
             PENDING_STATUSES,
+            finish_agent_product_operation,
             read_agent_product_operation,
         )
 
@@ -260,14 +277,51 @@ def run_freezone_agent_product(
             envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
         )
         operation_id = str(payload.get("operation_id") or "").strip()
+        project_dir = Path(ctx.state_dir)
         operation = (
-            read_agent_product_operation(
-                project_dir=Path(ctx.state_dir), operation_id=operation_id
-            )
+            read_agent_product_operation(project_dir=project_dir, operation_id=operation_id)
             if operation_id
             else None
         )
         status = str((operation or {}).get("status") or "")
+        if (
+            status in PENDING_STATUSES
+            and operation.get("product_kind") in AGENT_TURN_PRODUCT_KINDS
+        ):
+            # An Agent-turn product is charged when the Agent did the work,
+            # whether the task timed out or the user cancelled it. Without a
+            # recorded result tool call the Agent did no work: end the
+            # operation undelivered (late evidence or a late result is then
+            # rejected) and let the interruption reach the generic path, which
+            # refunds once. The evidence check runs inside the terminal write,
+            # so evidence recorded after the read above still keeps the
+            # reservation for reconciliation (AgentProductSettlementPending).
+            try:
+                finish_agent_product_operation(
+                    project_dir=project_dir,
+                    operation_id=operation_id,
+                    outcome=(
+                        "cancelled" if isinstance(exc, TaskCancelled) else "failed"
+                    ),
+                    expected_task_id=str(operation.get("task_id") or ""),
+                    keep_pending_if_model_executed=True,
+                )
+            except AgentProductSettlementPending as pending:
+                raise pending from exc
+            except ValueError:
+                # Settled concurrently; handle the stored outcome as before.
+                operation = read_agent_product_operation(
+                    project_dir=project_dir, operation_id=operation_id
+                )
+                status = str((operation or {}).get("status") or "")
+            else:
+                raise
+        if status == "delivered":
+            # The product was delivered before this interruption ended the
+            # operation. Delivery confirms credit only after writing
+            # ``delivered``, so settle it as the uninterrupted waiter would
+            # rather than let the interruption refund it.
+            return asyncio.run(_run_freezone_agent_product_async(envelope, ctx))
         preserve_statuses = (
             PENDING_STATUSES
             if isinstance(exc, TaskTimedOut)

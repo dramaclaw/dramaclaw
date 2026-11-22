@@ -52,6 +52,11 @@ AGENT_PRODUCT_PRICE_REFERENCE = tuple(
         ("recipe_generate", "Recipe 定义生成"),
     )
 )
+# Kinds whose product only an Agent turn produces: the server records their
+# model evidence when it observes the turn's result tool call, so no evidence
+# means the Agent did no work. Result kinds wait on an external provider and
+# may have incurred cost without such evidence.
+AGENT_TURN_PRODUCT_KINDS = frozenset({"workflow_generate", "recipe_generate"})
 PENDING_STATUSES = {"admitting", "reserved", "running", "accepted", "submitted"}
 TERMINAL_STATUSES = {"delivered", "failed", "cancelled"}
 OPERATION_ID_RE = re.compile(r"^agent_product_[a-zA-Z0-9_-]{1,96}$")
@@ -537,7 +542,17 @@ def finish_agent_product_operation(
     result_ref: dict[str, Any] | None = None,
     server_recipe_compile: bool = False,
     server_recipe_direct_audio: bool = False,
+    keep_pending_if_model_executed: bool = False,
 ) -> dict[str, Any]:
+    """Write an operation outcome in one transaction.
+
+    With ``keep_pending_if_model_executed``, a cancelled/failed outcome is not
+    written when the operation already holds model execution evidence; the
+    operation stays pending and ``AgentProductSettlementPending`` is raised so
+    the caller keeps the reservation for reconciliation. The check runs inside
+    the write transaction, so evidence recorded after the caller's own read is
+    still seen.
+    """
     status = str(outcome or "").strip()
     if status not in PENDING_STATUSES | TERMINAL_STATUSES:
         raise ValueError("invalid agent product operation outcome")
@@ -575,6 +590,14 @@ def finish_agent_product_operation(
                 )
             return payload
         evidence = payload["model_evidence"]
+        if (
+            keep_pending_if_model_executed
+            and status in {"cancelled", "failed"}
+            and evidence.get("model_call_id")
+        ):
+            raise AgentProductSettlementPending(
+                operation_id=operation_id, status=payload["status"]
+            )
         if status == "delivered":
             if (
                 not recipe_delivery
