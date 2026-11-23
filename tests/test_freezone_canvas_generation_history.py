@@ -16,9 +16,11 @@ import pytest
 
 from novelvideo.freezone.history import (
     append_generation_history,
+    build_node_history_record,
     delete_generation_history_record,
     generation_history_path,
     read_canvas_generation_history,
+    read_generation_history,
 )
 
 
@@ -197,12 +199,16 @@ def test_delete_history_record_hides_only_target_and_keeps_append_only_file(
     )
 
 
-def _shrink_history_limits(monkeypatch, *, compact_at: int, target: int, keep: int) -> None:
+def _shrink_history_limits(
+    monkeypatch, *, compact_at: int, keep: int, ignore_record_size: bool = False
+) -> None:
     import novelvideo.freezone.history as history
 
     monkeypatch.setattr(history, "HISTORY_COMPACT_AT_BYTES", compact_at)
-    monkeypatch.setattr(history, "HISTORY_COMPACT_TARGET_BYTES", target)
     monkeypatch.setattr(history, "HISTORY_RETENTION_RECORDS", keep)
+    if ignore_record_size:
+        # Compact on every append past compact_at, even when nothing would be dropped.
+        monkeypatch.setattr(history, "_average_line_bytes", lambda _path, _size: 0)
 
 
 def _ids_in_file(path: Path) -> list[str]:
@@ -212,7 +218,7 @@ def _ids_in_file(path: Path) -> list[str]:
 
 
 def test_large_history_compacts_to_newest_live_records(tmp_path: Path, monkeypatch) -> None:
-    _shrink_history_limits(monkeypatch, compact_at=4096, target=1 << 20, keep=5)
+    _shrink_history_limits(monkeypatch, compact_at=4096, keep=5)
     project_dir = tmp_path / "proj"
     path = generation_history_path(project_dir, "default", "node_a")
     for index in range(3):
@@ -235,24 +241,56 @@ def test_large_history_compacts_to_newest_live_records(tmp_path: Path, monkeypat
     assert ids == [f"video:job{n}" for n in range(index - 5, index)]
 
 
-def test_compaction_respects_byte_target(tmp_path: Path, monkeypatch) -> None:
-    _shrink_history_limits(monkeypatch, compact_at=4096, target=1024, keep=500)
+def _story_script_record(n: int) -> dict:
+    rows = [
+        {"shot": i, "description": "镜头描述" * 60, "dialogue": "台词" * 40} for i in range(20)
+    ]
+    return build_node_history_record(
+        task_type="freezone_story_script",
+        job_id=f"job{n}",
+        task_key=f"k{n}",
+        status="completed",
+        media_type="text",
+        result={"job_id": f"job{n}", "output_format": "json", "rows": rows},
+    )
+
+
+def test_default_page_of_large_records_survives_compaction(tmp_path: Path) -> None:
+    project_dir = tmp_path / "proj"
+    for n in range(120):
+        append_generation_history(
+            project_dir=project_dir,
+            canvas_id="default",
+            node_id="script_node",
+            record=_story_script_record(n),
+        )
+
+    records = read_generation_history(
+        project_dir=project_dir, canvas_id="default", node_id="script_node", limit=100
+    )
+    assert len(records) == 100
+
+
+def test_large_records_keep_the_full_retention_window(tmp_path: Path, monkeypatch) -> None:
+    _shrink_history_limits(monkeypatch, compact_at=4096, keep=10)
     project_dir = tmp_path / "proj"
     path = generation_history_path(project_dir, "default", "node_a")
-    index = 0
-    while True:
+    compactions = 0
+    for index in range(200):
         size_before = path.stat().st_size if path.exists() else 0
         _append(project_dir, "node_a", f"job{index}", "2026-06-11T00:00:00Z")
-        index += 1
         if path.stat().st_size < size_before:
-            break
+            compactions += 1
+            assert _ids_in_file(path) == [f"video:job{n}" for n in range(index - 9, index + 1)]
 
-    assert path.stat().st_size <= 1024
-    assert _ids_in_file(path)[-1] == f"video:job{index - 1}"
+    assert compactions >= 2
+    # The file grows to about twice the window between rewrites, not one record.
+    assert compactions <= 200 // 10
+    assert len(_ids_in_file(path)) <= 20
 
 
 def test_concurrent_appends_survive_compaction(tmp_path: Path, monkeypatch) -> None:
-    _shrink_history_limits(monkeypatch, compact_at=2048, target=1 << 20, keep=10_000)
+    _shrink_history_limits(monkeypatch, compact_at=2048, keep=10_000, ignore_record_size=True)
     project_dir = tmp_path / "proj"
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -287,7 +325,7 @@ def test_lease_lost_during_compaction_does_not_duplicate_the_record(tmp_path: Pa
 
     from novelvideo.ports.canvas_mutex import CanvasLeaseLost
 
-    _shrink_history_limits(monkeypatch, compact_at=1, target=1 << 20, keep=500)
+    _shrink_history_limits(monkeypatch, compact_at=1, keep=500, ignore_record_size=True)
 
     class LosingGuard:
         calls = 0

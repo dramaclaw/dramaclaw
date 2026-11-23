@@ -42,14 +42,16 @@ MAX_HISTORY_PROMPT_CHARS = 4000
 HISTORY_IDEMPOTENCY_LIMIT = 50
 HISTORY_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
 
-# Retention. Every write takes the node's history lock; once the file passes
-# HISTORY_COMPACT_AT_BYTES it is rewritten in place without deleted records and
-# their tombstones, keeping the newest HISTORY_RETENTION_RECORDS live records
-# (the most the per-node API returns) within HISTORY_COMPACT_TARGET_BYTES. The
-# gap between the two sizes keeps a busy node from rewriting on every append.
+# Retention. Every write takes the node's history lock. A file is rewritten in
+# place, without deleted records and their tombstones, keeping the newest
+# HISTORY_RETENTION_RECORDS live records (the most the per-node API returns).
+# The rewrite runs once the file passes HISTORY_COMPACT_AT_BYTES *and* twice the
+# estimated size of the records it keeps, so nodes with large records (story
+# scripts carry their rows) still keep a full page and do not rewrite on every
+# append.
 HISTORY_RETENTION_RECORDS = 500
 HISTORY_COMPACT_AT_BYTES = 1024 * 1024
-HISTORY_COMPACT_TARGET_BYTES = 512 * 1024
+_HISTORY_SIZE_SAMPLE_BYTES = 256 * 1024
 
 
 def build_node_history_record(
@@ -181,28 +183,31 @@ def _append_line(path: Path, value: dict[str, Any], *, fsync: bool = False) -> N
             os.fsync(stream.fileno())
 
 
+def _average_line_bytes(path: Path, size: int) -> int:
+    """Estimate one record's size from the file's tail, without reading it all."""
+    with path.open("rb") as stream:
+        stream.seek(max(0, size - _HISTORY_SIZE_SAMPLE_BYTES))
+        sample = stream.read()
+    return max(1, len(sample) // max(1, sample.count(b"\n")))
+
+
 def _compact_if_large(path: Path, *, fence) -> bool:
     """Rewrite an oversized history file down to its newest live records.
 
     Caller holds the node's history lock. Returns True when the file was rewritten.
     """
     try:
-        if path.stat().st_size <= HISTORY_COMPACT_AT_BYTES:
-            return False
+        size = path.stat().st_size
     except FileNotFoundError:
         return False
-    lines = [
+    if size <= HISTORY_COMPACT_AT_BYTES:
+        return False
+    if size <= 2 * HISTORY_RETENTION_RECORDS * _average_line_bytes(path, size):
+        return False
+    kept = [
         json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
         for record in _read_history_file(path)[-HISTORY_RETENTION_RECORDS:]
     ]
-    kept: list[str] = []
-    size = 0
-    for line in reversed(lines):
-        size += len(line.encode("utf-8"))
-        if kept and size > HISTORY_COMPACT_TARGET_BYTES:
-            break
-        kept.append(line)
-    kept.reverse()
     tmp = path.with_name(f".{path.name}.{os.getpid()}.compact.tmp")
     try:
         with tmp.open("w", encoding="utf-8") as stream:
@@ -370,7 +375,7 @@ def delete_generation_history_record(
     """Hide one history record by appending a tombstone that all readers apply.
 
     The tombstone and the record it hides are dropped at the next compaction
-    (see HISTORY_COMPACT_AT_BYTES). The generated media itself is deliberately
+    (see HISTORY_RETENTION_RECORDS). The generated media itself is deliberately
     retained: another canvas node may still reference the same output URL.
     """
 

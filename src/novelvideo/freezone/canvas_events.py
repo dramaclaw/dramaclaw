@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.canvas_lock import CanvasLockBusy
 from novelvideo.freezone.paths import CANVAS_ID_RE, freezone_root
+
+logger = logging.getLogger("novelvideo.freezone.canvas_events")
 
 CANVAS_EVENT_SCHEMA_VERSION = "canvas_event.v1"
 CANVAS_EVENT_SEGMENT_BYTES = 8 * 1024 * 1024
@@ -58,21 +62,30 @@ def _rotate_if_large(project_dir: Path, path: Path, file_id: str) -> None:
     from novelvideo.ports import get_canvas_write_mutex
 
     lock_id = "events_" + hashlib.sha256(file_id.encode()).hexdigest()[:40]
-    with get_canvas_write_mutex().write_mutex(project_dir, lock_id) as guard:
-        try:
-            if path.stat().st_size <= CANVAS_EVENT_SEGMENT_BYTES:
-                return  # another writer rotated it while we waited
-        except FileNotFoundError:
-            return
-        segments_dir = canvas_events_dir(project_dir) / "_segments" / file_id
-        segments_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        guard.reassert()
-        # A writer that opened the old file before this rename finishes its line
-        # in the segment, so nothing is lost.
-        path.replace(segments_dir / f"{stamp}.jsonl")
-        for stale in sorted(segments_dir.glob("*.jsonl"))[:-CANVAS_EVENT_SEGMENTS_KEPT]:
-            stale.unlink(missing_ok=True)
+    try:
+        with get_canvas_write_mutex().write_mutex(project_dir, lock_id) as guard:
+            _rotate_locked(project_dir, path, file_id, guard)
+    except CanvasLockBusy:
+        # The canvas change this event describes is already saved; never fail
+        # it over log rotation. The next append tries again.
+        logger.warning("canvas event rotation skipped for %s: lock busy", path)
+
+
+def _rotate_locked(project_dir: Path, path: Path, file_id: str, guard) -> None:
+    try:
+        if path.stat().st_size <= CANVAS_EVENT_SEGMENT_BYTES:
+            return  # another writer rotated it while we waited
+    except FileNotFoundError:
+        return
+    segments_dir = canvas_events_dir(project_dir) / "_segments" / file_id
+    segments_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    guard.reassert()
+    # A writer that opened the old file before this rename finishes its line
+    # in the segment, so nothing is lost.
+    path.replace(segments_dir / f"{stamp}.jsonl")
+    for stale in sorted(segments_dir.glob("*.jsonl"))[:-CANVAS_EVENT_SEGMENTS_KEPT]:
+        stale.unlink(missing_ok=True)
 
 
 def append_canvas_event(
