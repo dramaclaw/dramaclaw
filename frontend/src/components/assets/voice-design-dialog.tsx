@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useCompositionSafeText } from "@/hooks/use-composition-safe-text";
 import { formatAudioClock } from "@/components/ui/audio-preview-player";
 import {
   Select,
@@ -655,6 +656,22 @@ function useVoiceDesignSession({
     refreshTarget,
   };
 }
+function VoiceDraftField({
+  value, onCommit, multiline, ...props
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  multiline?: boolean;
+  id: string;
+  disabled?: boolean;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean;
+}) {
+  const field = useCompositionSafeText(value, onCommit);
+  const Control = multiline ? Textarea : Input;
+  return <Control {...props} {...field} />;
+}
+
 function VoiceDesignSession(props: Props) {
   const { t } = useTranslation();
   const { target, open, onOpenChange } = props;
@@ -774,10 +791,10 @@ function VoiceDesignSession(props: Props) {
                 {descriptionLength}/500
               </span>
             </div>
-            <Textarea
+            <VoiceDraftField multiline
               id={`${id}-description`}
               value={session.description}
-              onChange={(e) => patchInputs({ description: e.target.value })}
+              onCommit={(description) => patchInputs({ description })}
               aria-describedby={`${id}-description-help`}
               aria-invalid={descriptionLength === 0 || descriptionLength > 500}
             />
@@ -797,10 +814,10 @@ function VoiceDesignSession(props: Props) {
                 {previewLength}/60
               </span>
             </div>
-            <Textarea
+            <VoiceDraftField multiline
               id={`${id}-preview`}
               value={session.previewText}
-              onChange={(e) => patchInputs({ previewText: e.target.value })}
+              onCommit={(previewText) => patchInputs({ previewText })}
               aria-describedby={`${id}-preview-help`}
               aria-invalid={previewLength < 15 || previewLength > 60}
             />
@@ -814,12 +831,12 @@ function VoiceDesignSession(props: Props) {
           {target.kind === "account" && (
             <div className="space-y-2">
               <Label htmlFor={`${id}-name`}>{t("voiceDesign.name")}</Label>
-              <Input
+              <VoiceDraftField
                 id={`${id}-name`}
                 value={session.name}
                 disabled={saving}
-                onChange={(e) => {
-                  patchInputs({ name: e.target.value });
+                onCommit={(name) => {
+                  patchInputs({ name });
                   patch({ save: { kind: "idle" } });
                 }}
               />
