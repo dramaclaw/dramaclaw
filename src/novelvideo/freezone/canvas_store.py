@@ -868,12 +868,38 @@ def restore_canvas_version(
         )
 
 
+# Soft deletes keep this many archived snapshots per canvas id; older ones are
+# removed on the next delete. The canvas's _history is left alone.
+DELETED_ARCHIVES_KEPT = 3
+
+
 def canvas_deletion_count(project_dir: Path, canvas_id: str) -> int:
-    """How many times this canvas id was soft-deleted; each deletion keeps one snapshot."""
-    deleted_dir = canvas_deleted_dir_for_path(canvas_path(project_dir, canvas_id))
+    """How many times this canvas id was soft-deleted.
+
+    Only ever grows: pending agent confirmations compare it to detect a canvas
+    deleted (and maybe recreated) since they were recorded. The tombstone holds
+    the count, since old archives are pruned; tombstones written before the
+    count existed fall back to counting the archives, one per deletion.
+    """
+    path = canvas_path(project_dir, canvas_id)
+    try:
+        tombstone = load_canvas_json(path.with_name(f"{path.stem}.deleted.json"))
+    except CanvasStoreError:
+        tombstone = None
+    count = tombstone.get("deletion_count") if isinstance(tombstone, dict) else None
+    if isinstance(count, int) and not isinstance(count, bool):
+        return count
+    deleted_dir = canvas_deleted_dir_for_path(path)
     if not deleted_dir.is_dir():
         return 0
     return sum(1 for _ in deleted_dir.glob("*.json"))
+
+
+def _prune_deleted_archives(deleted_dir: Path, *, keep: int = DELETED_ARCHIVES_KEPT) -> None:
+    # Names start with the deletion time (CANVAS_HISTORY_TS_FORMAT), so they sort by age.
+    archives = sorted(deleted_dir.glob("*.json"), reverse=True)
+    for stale in archives[keep:]:
+        stale.unlink(missing_ok=True)
 
 
 def soft_delete_canvas(
@@ -887,6 +913,7 @@ def soft_delete_canvas(
         existing = load_canvas_json(path)
         if not path.exists():
             return CanvasDeleteResult(existing=existing, deleted_path=None)
+        deletion_count = canvas_deletion_count(project_dir, canvas_id) + 1
         deleted_dir = canvas_deleted_dir_for_path(path)
         deleted_dir.mkdir(parents=True, exist_ok=True)
         target = deleted_dir / canvas_deleted_filename(existing)
@@ -908,8 +935,10 @@ def soft_delete_canvas(
                 "deleted_by": deleted_by,
                 "revision": revision if isinstance(revision, int) else None,
                 "deleted_snapshot": relative_project_path(project_dir, target),
+                "deletion_count": deletion_count,
             },
         )
+        _prune_deleted_archives(deleted_dir)
         # Drop the idempotency cache for this canvas. Once the canvas is
         # tombstoned, any future save that reuses a stale client_save_id from
         # the cached entries would either replay a now-meaningless response or
