@@ -511,17 +511,6 @@ def create_app() -> FastAPI:
             ensure_bootstrap()
             await get_port("lifecycle").on_startup(register_as_worker=True)
 
-            from novelvideo.sqlite_pragmas import litestream_enabled
-
-            if litestream_enabled():
-                from novelvideo.backup.wal_migrator import migrate_state_tree
-                from novelvideo.config import STATE_DIR
-
-                try:
-                    await asyncio.to_thread(migrate_state_tree, Path(STATE_DIR))
-                except Exception:
-                    logger.exception("WAL migration sweep failed (non-fatal)")
-
             from novelvideo.official_media_catalog_remote import (
                 run_official_media_catalog_updater,
             )
