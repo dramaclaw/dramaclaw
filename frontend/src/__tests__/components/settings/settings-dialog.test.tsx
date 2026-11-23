@@ -852,6 +852,38 @@ describe("SettingsDialog pages", () => {
     expect(screen.getByRole("button", { name: "返回 Skills" })).toBeInTheDocument();
   });
 
+  it("hides the Agent Key page on CE servers, which do not provide agent keys", () => {
+    renderSettingsDialog({ avatarInitial: "L", displayName: "Local", passwordConfigured: true });
+
+    expect(
+      screen.queryByRole("button", { name: zhT("settings.pages.agentKeys") }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("falls back to model settings when a CE runtime is asked for the Agent Key page", () => {
+    renderSettingsDialog(undefined, vi.fn(), "agent-keys");
+
+    expect(
+      screen.queryByRole("button", { name: zhT("settings.pages.agentKeys") }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /模型配置/ })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("offers the Agent Key page between account pages and Skills on non-CE runtimes", () => {
+    runtimeState.isCeRuntime = false;
+    renderSettingsDialog({ avatarInitial: "A", displayName: "Admin", passwordConfigured: true, onPasswordChanged: vi.fn() });
+
+    const navigation = screen.getByRole("navigation", { name: "设置导航" });
+    const labels = within(navigation).getAllByRole("button").map((button) => button.getAttribute("aria-label"));
+    expect(labels).toEqual([
+      "更换头像",
+      "修改密码",
+      "选择语言",
+      zhT("settings.pages.agentKeys"),
+      "虾画 Skills",
+    ]);
+  });
+
   it("opens Recipes from the Skills advanced management entry", () => {
     renderSettingsDialog();
 

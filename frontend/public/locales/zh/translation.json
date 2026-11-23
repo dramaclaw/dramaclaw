@@ -7998,7 +7998,63 @@
       "models": "模型与渠道",
       "storage": "媒体存储",
       "freezoneSkills": "虾画 Skill",
-      "freezoneRecipes": "虾画 Recipes"
+      "freezoneRecipes": "虾画 Recipes",
+      "agentKeys": "Agent Key"
+    },
+    "agentKeys": {
+      "title": "Agent Key",
+      "intro": "Agent Key 让外部 AI 工具（MCP 客户端）以你的身份操作所选项目，并消耗你的积分。请勿分享给他人；如果丢失或泄露，请立即吊销。",
+      "create": {
+        "title": "创建 Key",
+        "label": "名称",
+        "labelPlaceholder": "例如：我的 MCP 客户端",
+        "scope": "项目范围",
+        "scopeSelected": "指定项目",
+        "scopeAll": "全部项目",
+        "allWarning": "此 Key 可以操作你现有的全部项目，以及之后新建的项目。",
+        "projectsLoading": "正在加载项目…",
+        "projectsError": "项目列表加载失败。",
+        "noProjects": "你还没有任何项目。",
+        "selectProject": "请至少选择一个项目。",
+        "submit": "创建 Key",
+        "created": "Agent Key 已创建"
+      },
+      "reveal": {
+        "title": "新的 Agent Key",
+        "keyLabel": "Agent Key",
+        "warning": "此 Key 只显示这一次。请立即复制并妥善保存，关闭后将无法再次查看。",
+        "usage": "在 MCP 客户端中填写端点 {{tools}} 或 {{workflows}}，并带上 HTTP 请求头 {{header}}。",
+        "copy": "复制",
+        "copied": "Agent Key 已复制",
+        "copyFailed": "复制失败，请手动复制",
+        "done": "完成"
+      },
+      "list": {
+        "title": "我的 Key",
+        "loading": "正在加载 Key…",
+        "empty": "你还没有 Agent Key。",
+        "retry": "重试",
+        "allProjects": "全部项目",
+        "projects": "项目：{{names}}",
+        "created": "创建于 {{time}}",
+        "lastUsed": "最近使用 {{time}}",
+        "neverUsed": "从未使用",
+        "expires": "过期时间 {{time}}"
+      },
+      "status": {
+        "active": "有效",
+        "revoked": "已吊销",
+        "expired": "已过期"
+      },
+      "revoke": {
+        "button": "吊销",
+        "aria": "吊销 {{label}}",
+        "confirmTitle": "吊销 Agent Key",
+        "confirmDescription": "确定吊销「{{label}}」吗？使用此 Key 的工具将立即失效，且无法恢复。",
+        "confirm": "吊销",
+        "cancel": "取消",
+        "done": "Agent Key 已吊销"
+      }
     },
     "freezoneCatalog": {
       "skills": {

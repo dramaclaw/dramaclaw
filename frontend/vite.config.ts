@@ -156,6 +156,10 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
+        "/mcp": {
+          target: apiTarget,
+          changeOrigin: true,
+        },
         "/api/v1": {
           target: apiTarget,
           changeOrigin: true,

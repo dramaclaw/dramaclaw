@@ -21,6 +21,7 @@ import {
   Maximize2,
   Minimize2,
   Pencil,
+  Plug,
   Plus,
   RotateCw,
   Trash2,
@@ -119,6 +120,7 @@ import { PasswordChangeForm } from "@/components/account/password-change-form";
 import { normalize, SUPPORTED, type Supported } from "@/i18n/languages";
 import { useAppStore } from "@/stores/app-store";
 import { FreezoneSkillRecipeSettings } from "./freezone-skill-recipe-settings";
+import { AgentKeySettings } from "./agent-key-settings";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -139,7 +141,8 @@ export type SettingsPage =
   | "freezone-recipes"
   | "avatar"
   | "password"
-  | "language";
+  | "language"
+  | "agent-keys";
 const LANGUAGE_LABEL_KEYS: Record<Supported, string> = {
   zh: "header.account.languageChinese",
   en: "header.account.languageEnglish",
@@ -180,7 +183,7 @@ export function SettingsDialog({ open, onOpenChange, initialPage, account }: Set
   }, [initialPage, open]);
 
   useEffect(() => {
-    if (ceRuntime && page === "avatar") {
+    if (ceRuntime && (page === "avatar" || page === "agent-keys")) {
       setPage("models");
     } else if (!ceRuntime && (page === "models" || page === "storage")) {
       setPage("freezone-skills");
@@ -202,6 +205,10 @@ export function SettingsDialog({ open, onOpenChange, initialPage, account }: Set
     ...(ceRuntime ? [
       { page: "models" as const, icon: Cpu, label: "settings.pages.models" },
       { page: "storage" as const, icon: HardDrive, label: "settings.pages.storage" },
+    ] : []),
+    // CE servers do not provide agent keys, so the page only exists elsewhere.
+    ...(!ceRuntime ? [
+      { page: "agent-keys" as const, icon: Plug, label: "settings.pages.agentKeys" },
     ] : []),
     { page: "freezone-skills" as const, icon: Package, label: "settings.pages.freezoneSkills" },
   ];
@@ -310,6 +317,12 @@ export function SettingsDialog({ open, onOpenChange, initialPage, account }: Set
               <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
                 <ModelConfigSection open={open && page === "models"} />
                 {SHOW_CODEX_BRIDGE && <CodexBridgeSection />}
+              </ScrollArea>
+            </div>
+          ) : !ceRuntime && page === "agent-keys" ? (
+            <div className="min-w-0 flex-1">
+              <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
+                <AgentKeySettings open={open} />
               </ScrollArea>
             </div>
           ) : page === "storage" ? (
