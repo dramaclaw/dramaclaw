@@ -31,7 +31,7 @@ SERVER = Server("dramaclaw_interactive_story", version="0.1.0")
 
 def _request(method: str, path: str, *, query=None, body=None) -> dict[str, Any]:
     """Use only this turn's API credential, reading its file at call time."""
-    base = os.environ.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
+    base = request_context.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
     parsed = urlparse(base)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("interactive-story API URL is not configured")
@@ -46,7 +46,7 @@ def _request(method: str, path: str, *, query=None, body=None) -> dict[str, Any]
     else:
         token = request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
     local_trust = (
-        os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower()
+        request_context.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower()
         in {"1", "true", "yes", "on"}
         and parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}
         and not token_file

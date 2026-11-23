@@ -63,16 +63,18 @@ _PATH_PATTERN = re.compile(
 )
 _CHECK_TIMEOUT_SECONDS = 10.0
 
-# Names a request must never inherit from the process: credentials, the scope they act
-# in, the user they act as, the host kind that selects tools, and the directory canvas
-# events are written to, which belongs to one project. The request's own key, scope and
-# host kind are set afresh in their place.
+# Names a request must never inherit from the process: credentials, the switches that
+# let a local caller act without one, the scope they act in, the user they act as, the
+# host kind that selects tools, and the directory canvas events are written to, which
+# belongs to one project. The request's own key, scope and host kind are set afresh in
+# their place.
 IDENTITY_PREFIXES = ("DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_TOKEN")
 IDENTITY_NAMES = frozenset({
     "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID", "DRAMACLAW_TURN_ID",
     "DRAMACLAW_EXTERNAL_MCP", "DRAMACLAW_CHAT_SURFACE", "SUPERTALE_CHAT_SURFACE",
     "DRAMACLAW_TOOL_MODE", "DRAMACLAW_TOOL_MODE_FILE", "DRAMACLAW_AGENT_PROFILE",
     "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "DRAMACLAW_LOCAL_AGENT_TRUST",
+    "DRAMACLAW_CE_OWNER", "DRAMACLAW_CE_OWNER_ALLOW_REMOTE",
     "DRAMACLAW_USERNAME", "DRAMACLAW_USER", "ST_LOCAL_USERNAME",
     "FREEZONE_USER", "SUPERTALE_USER", "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR",
 })

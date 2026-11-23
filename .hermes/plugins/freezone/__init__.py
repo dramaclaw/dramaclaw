@@ -471,13 +471,13 @@ def _skill_studio_agent_instruction(
 
 def _available() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_API_URL")
+        request_context.get("DRAMACLAW_API_URL")
         and (_agent_token_configured() or _agent_key_configured() or _local_agent_trust_enabled())
     )
 
 
 def _base_url() -> str:
-    value = os.environ.get("DRAMACLAW_API_URL", "").strip()
+    value = request_context.get("DRAMACLAW_API_URL", "").strip()
     if not value:
         raise ValueError("Freezone API URL is not configured")
     return value.rstrip("/")
@@ -491,14 +491,14 @@ def _token() -> str:
 
 
 def _local_agent_trust_enabled() -> bool:
-    if os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
+    if request_context.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
         "1",
         "true",
         "yes",
         "on",
     }:
         return False
-    parsed = urlparse(os.environ.get("DRAMACLAW_API_URL", "").strip())
+    parsed = urlparse(request_context.get("DRAMACLAW_API_URL", "").strip())
     return (parsed.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}
 
 

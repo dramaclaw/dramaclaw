@@ -353,7 +353,7 @@ def _guard_freezone_mainline_write(tool_name: str, handler):
 
 def _available() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_API_URL")
+        request_context.get("DRAMACLAW_API_URL")
         and (
             _agent_token_configured()
             or _agent_key_configured()
@@ -364,7 +364,7 @@ def _available() -> bool:
 
 
 def _base_url() -> str:
-    value = os.environ.get("DRAMACLAW_API_URL", "").strip()
+    value = request_context.get("DRAMACLAW_API_URL", "").strip()
     if not value:
         raise ValueError("DRAMACLAW_API_URL is not set")
     return value.rstrip("/")
@@ -378,19 +378,19 @@ def _token() -> str:
 
 
 def _ce_owner_mode() -> bool:
-    raw = os.environ.get("DRAMACLAW_CE_OWNER", "").strip().lower()
+    raw = request_context.get("DRAMACLAW_CE_OWNER", "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
 def _ce_owner_allow_remote() -> bool:
-    raw = os.environ.get("DRAMACLAW_CE_OWNER_ALLOW_REMOTE", "").strip().lower()
+    raw = request_context.get("DRAMACLAW_CE_OWNER_ALLOW_REMOTE", "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
 def _enforce_ce_owner_target(url: str | None = None) -> None:
     if _ce_owner_allow_remote():
         return
-    parsed = urlparse(url or os.environ.get("DRAMACLAW_API_URL", "").strip())
+    parsed = urlparse(url or request_context.get("DRAMACLAW_API_URL", "").strip())
     if (parsed.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}:
         return
     raise ValueError(
@@ -401,14 +401,14 @@ def _enforce_ce_owner_target(url: str | None = None) -> None:
 
 
 def _local_agent_trust_enabled() -> bool:
-    if os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
+    if request_context.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
         "1",
         "true",
         "yes",
         "on",
     }:
         return False
-    parsed = urlparse(os.environ.get("DRAMACLAW_API_URL", "").strip())
+    parsed = urlparse(request_context.get("DRAMACLAW_API_URL", "").strip())
     return (parsed.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}
 
 

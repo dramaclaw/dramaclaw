@@ -55,7 +55,8 @@ IDENTITY_NAMES = (
     "DRAMACLAW_TURN_ID", "DRAMACLAW_USERNAME", "DRAMACLAW_USER", "ST_LOCAL_USERNAME",
     "DRAMACLAW_EXTERNAL_MCP", "DRAMACLAW_CHAT_SURFACE", "SUPERTALE_CHAT_SURFACE",
     "DRAMACLAW_TOOL_MODE", "DRAMACLAW_TOOL_MODE_FILE", "DRAMACLAW_AGENT_PROFILE",
-    "DRAMACLAW_LOCAL_AGENT_TRUST", "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR",
+    "DRAMACLAW_LOCAL_AGENT_TRUST", "DRAMACLAW_CE_OWNER", "DRAMACLAW_CE_OWNER_ALLOW_REMOTE",
+    "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR",
     "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "DRAMACLAW_API_URL", FLAG,
     MAX_CONCURRENT, MAX_CONCURRENT_PER_KEY,
 )
@@ -606,6 +607,49 @@ def test_api_address_is_resolved_like_the_chat_backend(monkeypatch, fake_api, na
     assert fake_api.port.exchanges
 
 
+@pytest.mark.parametrize("name", ["NOVELVIDEO_API_PORT", "SUPERTALE_API_URL"])
+def test_plugin_tool_calls_the_address_resolved_for_its_request(monkeypatch, fake_api, name):
+    # The process names the API only the way the chat backend resolves it; the real
+    # plugin tool must use the address the entry put in its request, not the process's.
+    monkeypatch.delenv("DRAMACLAW_API_URL")
+    port = fake_api.url.rpartition(":")[2]
+    monkeypatch.setenv(name, port if name == "NOVELVIDEO_API_PORT" else fake_api.url)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post(
+                "/mcp/tools", json=call("freezone_list_projects"), headers=bearer(KEY_A),
+            )
+            assert response.status_code == 200
+            assert_secret_free(response.text)
+            return json.loads(response.json()["result"]["content"][0]["text"])
+
+    result = asyncio.run(scenario())
+    assert result["ok"] is True, result
+    assert [item["project_id"] for item in result["projects"]] == ["project-a", "project-b"]
+    assert "/api/v1/projects" in fake_api.gets
+
+
+def test_workflow_catalog_is_read_from_the_address_resolved_for_its_request(
+    monkeypatch, exchange_factory,
+):
+    exchange = exchange_factory(catalogs=private_catalogs())
+    monkeypatch.delenv("DRAMACLAW_API_URL")
+    monkeypatch.setenv("NOVELVIDEO_API_PORT", str(exchange.port))
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post("/mcp/workflows", json=call(
+                "workflow_catalog_search", {"kind": "recipes", "query": "private"},
+            ), headers=bearer(KEY_A))
+            assert response.status_code == 200
+            return json.loads(response.json()["result"]["content"][0]["text"])
+
+    # Only the key's own server catalog has this recipe; the bundled one does not.
+    assert {item["id"] for item in asyncio.run(scenario())["items"]} == {"private-alice"}
+    assert {request["owner"] for request in exchange.catalog_requests} == {KEY_A}
+
+
 @pytest.mark.parametrize("path", [
     "/mcp", "/mcp/", "/mcp/other", "/mcp/tools/extra", "/mcp/tools/projects",
     "/mcp/tools/projects/bad%20id", "/mcp/tools/projects/project-a/canvases",
@@ -1069,6 +1113,7 @@ def test_process_identity_never_reaches_a_request(monkeypatch, fake_api):
         "DRAMACLAW_CANVAS_ID": "process-canvas", "DRAMACLAW_PROJECT_ID": "process-project",
         "DRAMACLAW_USERNAME": "process-user", "DRAMACLAW_USER": "process-user",
         "DRAMACLAW_LOCAL_AGENT_TRUST": "1", "DRAMACLAW_TOOL_MODE": "process-mode",
+        "DRAMACLAW_CE_OWNER": "1", "DRAMACLAW_CE_OWNER_ALLOW_REMOTE": "1",
         "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR": "/process/results",
         BRIDGE_DIR: "/process/bridge",
     }

@@ -11,7 +11,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import time
 import urllib.request
 from pathlib import Path
@@ -205,7 +204,7 @@ def _agent_key_mode() -> bool:
 
 
 def _server_catalog() -> dict[str, list[dict[str, Any]]] | None:
-    api_base = os.environ.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
+    api_base = request_context.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
     if not api_base:
         return None
 
