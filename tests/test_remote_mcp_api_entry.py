@@ -930,24 +930,119 @@ def test_a_cancelled_request_gives_its_place_back(monkeypatch, fake_api):
     asyncio.run(scenario())
 
 
-def test_requests_without_a_valid_key_take_no_place(monkeypatch, fake_api):
+def held_key_calls(monkeypatch, port, method, keys=None):
+    """Hold ``method`` of the key port for ``keys`` (all when ``None``) until ``release``.
+
+    ``entered`` counts the held calls that began.
+    """
+    state = SimpleNamespace(release=asyncio.Event(), entered=0)
+    call_port = getattr(port, method)
+
+    async def held(raw_key, **kwargs):
+        if keys is None or raw_key in keys:
+            state.entered += 1
+            await asyncio.wait_for(state.release.wait(), timeout=8)
+        return await call_port(raw_key, **kwargs)
+
+    monkeypatch.setattr(port, method, held)
+    return state
+
+
+@pytest.mark.parametrize("phase", ["check", "exchange"])
+def test_one_key_is_limited_while_its_requests_are_still_being_checked(
+    monkeypatch, fake_api, phase,
+):
+    holding_tools(monkeypatch)
+    limits(monkeypatch, total=4, per_key=2)
+    state = held_key_calls(
+        monkeypatch, fake_api.port, f"{phase}_agent_key", keys={KEY_A},
+    )
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            pending = [asyncio.create_task(work(client, KEY_A)) for _ in range(5)]
+            try:
+                await until(lambda: sum(task.done() for task in pending) == 3)
+                # Only as many requests as the key may run reached the key service.
+                assert state.entered == 2
+                refused = [task.result() for task in pending if task.done()]
+                for response in refused:
+                    assert response.status_code == 429
+                    assert response.headers["retry-after"] == "1"
+                    assert response.json()["code"] == "remote_mcp_key_concurrency_limit"
+                    assert_secret_free(response.text)
+                # The admitted ones are still waiting on the key service.
+                assert not all(task.done() for task in pending)
+                assert (await work(client, KEY_B)).status_code == 200
+            finally:
+                state.release.set()
+            statuses = [response.status_code for response in await asyncio.gather(*pending)]
+            assert sorted(statuses) == [200, 200, 429, 429, 429]
+
+    asyncio.run(scenario())
+
+
+def test_requests_being_checked_count_against_the_process_limit(monkeypatch, fake_api):
     holding_tools(monkeypatch)
     limits(monkeypatch, total=1, per_key=1)
-    fake_api.port.gate = asyncio.Event()
+    state = held_key_calls(monkeypatch, fake_api.port, "check_agent_key")
 
     async def scenario():
         async with client_for(entry_app(monkeypatch)) as client:
             unchecked = asyncio.create_task(work(client, UNKNOWN_KEY))
-            await until(lambda: fake_api.port.checks == 1)
+            await until(lambda: state.entered == 1)
             try:
-                # The only place stays free while the other key is still being checked.
-                assert (await work(client, KEY_A)).status_code == 200
+                # The only place is held by the key still being checked.
+                refused = await work(client, KEY_A)
+                assert refused.status_code == 429
+                assert refused.headers["retry-after"] == "1"
+                assert refused.json()["code"] == "remote_mcp_concurrency_limit"
+                assert UNKNOWN_KEY not in refused.text
+                assert state.entered == 1
             finally:
-                fake_api.port.gate.set()
+                state.release.set()
+            # The rejected key gives its place back.
             assert (await unchecked).status_code == 401
+            assert (await work(client, KEY_A)).status_code == 200
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["rejected", "forbidden", "unavailable", "insecure"])
+def test_a_request_refused_before_it_runs_gives_its_place_back(
+    monkeypatch, fake_api, failure,
+):
+    holding_tools(monkeypatch)
+    limits(monkeypatch, total=1, per_key=1)
+    port = fake_api.port
+    expected = {"rejected": 401, "forbidden": 403, "unavailable": 503, "insecure": 503}[failure]
+
+    def refuse():
+        if failure == "rejected":
+            port.refusals[KEY_A] = AuthFailureReason.REVOKED
+        elif failure == "forbidden":
+            port.forbidden.add((KEY_A, "project-a"))
+        elif failure == "unavailable":
+            port.failure = RuntimeError("key service down")
+        else:
+            monkeypatch.setenv("DRAMACLAW_API_URL", "http://api.example.test:8780")
+
+    def accept():
+        port.refusals.clear()
+        port.forbidden.clear()
+        port.failure = None
+        monkeypatch.setenv("DRAMACLAW_API_URL", fake_api.url)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            refuse()
+            for _ in range(3):
+                assert (await work(client, KEY_A)).status_code == expected
+            # A request without a key is refused before it is counted at all.
             assert (await client.post(
                 PROJECT_PATH, json=call("work"), headers=MCP_HEADERS,
             )).status_code == 401
+            accept()
             assert (await work(client, KEY_A)).status_code == 200
 
     asyncio.run(scenario())

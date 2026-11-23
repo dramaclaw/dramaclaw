@@ -16,9 +16,12 @@ without a bearer key, or with a key the port rejects, gets 401; a key that may n
 used on the requested project gets 403; an installation without an agent key service,
 or a check that cannot complete, gets 503.
 
-Requests that passed the key check are counted while they run, in total and per key.
-The count belongs to this process: with several API processes each one allows its own
-limit, and nothing is shared between them.
+Requests that carry a bearer key are counted from the moment they are admitted, in
+total and per key (by the key's SHA-256 digest), until they end: their key check, key
+exchange and the callbacks that resolve their project count too, so a key cannot start
+more checks at once than it may run requests. A request over a limit is refused at once
+with 429 and is never queued. The count belongs to this process: with several API
+processes each one allows its own limit, and nothing is shared between them.
 """
 
 from __future__ import annotations
@@ -389,11 +392,27 @@ class RemoteMcpApp:
         # Resolved like the chat backend does for its own agents, so it is never empty.
         api_base = chat_service._load_api_url()
         key_digest = hashlib.sha256(key.encode("utf-8")).digest()
-        bridge_dir = None
-        # A full process answers before the key check.
+        # A full process answers before the key check. The place is taken at once, so
+        # checks and callbacks of admitted requests count too, and given back however
+        # the request ends.
         busy = self._busy(key_digest)
         if busy is not None:
             return busy
+        self._running[key_digest] += 1
+        try:
+            return await self._admitted(
+                mode, key, api_base, project_id, canvas_id, scope, receive, send,
+            )
+        finally:
+            self._running[key_digest] -= 1
+            if not self._running[key_digest]:
+                del self._running[key_digest]
+
+    async def _admitted(
+        self, mode: str, key: str, api_base: str, project_id: str | None,
+        canvas_id: str | None, scope: Scope, receive: Receive, send: Send,
+    ) -> JSONResponse | None:
+        bridge_dir = None
         port = _key_service()
         if port is None:
             return JSONResponse({
@@ -430,19 +449,8 @@ class RemoteMcpApp:
                     logger.warning(
                         "Project request kept the default event directory: %s", reason,
                     )
-        # Counted only from here, so a key that was not accepted never holds a place and
-        # a counted request never waits on the check of another one.
-        busy = self._busy(key_digest)
-        if busy is not None:
-            return busy
-        self._running[key_digest] += 1
-        try:
-            with request_context.scope(
-                _request_values(mode, key, api_base, project_id, canvas_id, bridge_dir)
-            ):
-                await _serve(_server(mode), mode, scope, receive, send)
-        finally:
-            self._running[key_digest] -= 1
-            if not self._running[key_digest]:
-                del self._running[key_digest]
+        with request_context.scope(
+            _request_values(mode, key, api_base, project_id, canvas_id, bridge_dir)
+        ):
+            await _serve(_server(mode), mode, scope, receive, send)
         return None
