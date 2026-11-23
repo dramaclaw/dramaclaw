@@ -2986,6 +2986,7 @@ frontend/src/hooks/use-asset-focus.ts,Elastic-2.0,2026 SuperTale contributors,RE
 frontend/src/hooks/use-assets-deep-link.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/hooks/use-beat-states.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/hooks/use-beats-workbench-param.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/hooks/use-composition-safe-text.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/hooks/use-debounced-value.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/hooks/use-desktop-release.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/hooks/use-episode-image-task-invalidation.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -5,13 +5,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type CSSProperties,
-  type CompositionEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useCompositionSafeText } from '@/hooks/use-composition-safe-text';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import { X } from 'lucide-react';
@@ -101,45 +100,6 @@ function TechTargetRingPreview() {
   );
 }
 
-/**
- * 组字期间不能把每一次拼音按键都写回画布 store：更新一条边会让 React Flow
- * 重新渲染边及其编辑器，进而打断输入法候选。草稿仅在组字完成后持久化。
- */
-function useCompositionSafeText(value: string, onCommit: (next: string) => void) {
-  const [draft, setDraft] = useState(value);
-  const isComposingRef = useRef(false);
-  const lastCommittedValueRef = useRef(value);
-
-  useEffect(() => {
-    lastCommittedValueRef.current = value;
-    if (!isComposingRef.current) setDraft(value);
-  }, [value]);
-
-  const commit = useCallback((next: string) => {
-    // 部分浏览器会在 compositionend 后补发 change；去重避免重复写历史记录。
-    if (next === lastCommittedValueRef.current) return;
-    lastCommittedValueRef.current = next;
-    onCommit(next);
-  }, [onCommit]);
-
-  return {
-    value: draft,
-    onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      const next = event.target.value;
-      setDraft(next);
-      if (!isComposingRef.current) commit(next);
-    },
-    onCompositionStart: () => {
-      isComposingRef.current = true;
-    },
-    onCompositionEnd: (event: CompositionEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      isComposingRef.current = false;
-      const next = event.currentTarget.value;
-      setDraft(next);
-      commit(next);
-    },
-  };
-}
 
 /** 选项编辑器:编辑某条 storyChoiceEdge 的文案 / 条件 / 效果。挂在边中点上方。 */
 export const StoryChoiceEditor = memo(function StoryChoiceEditor({
