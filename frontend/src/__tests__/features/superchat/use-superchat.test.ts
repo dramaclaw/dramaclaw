@@ -2742,6 +2742,37 @@ describe("Assistant clarification response", () => {
     expect(payload).toMatchObject({project_id: "project-a", canvas_id: "canvas-a", agent_id: "main"});
   });
 
+  it("keeps Skill Studio replies in the current project when tool metadata omits scope", () => {
+    const current = { projectId: "project-a", canvasId: "canvas-a", agentId: "main" };
+    const questions = { type: "skill_studio.questions" as const, bridge_key: "key", questions: [] };
+    const draft = { type: "skill_studio.draft" as const, bridge_key: "key", draft: { skill: {}, recipes: [] } };
+    const payloads = [
+      buildSkillStudioQuestionToolResultForTest(questions, {}, current),
+      buildSkillStudioDraftToolResultForTest(draft, draft.draft, current),
+      buildSkillStudioDraftCancelToolResultForTest(draft, current),
+      buildSkillStudioDraftRevisionToolResultForTest(draft, draft.draft, current),
+    ];
+    for (const payload of payloads) {
+      expect(payload).toMatchObject({ project_id: "project-a", canvas_id: "canvas-a", agent_id: "main" });
+    }
+  });
+
+  it("prefers the scope carried by the Skill Studio event over the current page", () => {
+    const payload = buildSkillStudioDraftToolResultForTest(
+      {
+        type: "skill_studio.draft",
+        bridge_key: "key",
+        project_id: "project-b",
+        canvas_id: "canvas-b",
+        agent_id: "agent-b",
+        draft: { skill: {}, recipes: [] },
+      },
+      { skill: {}, recipes: [] },
+      { projectId: "project-a", canvasId: "canvas-a", agentId: "main" },
+    );
+    expect(payload).toMatchObject({ project_id: "project-b", canvas_id: "canvas-b", agent_id: "agent-b" });
+  });
+
   it("returns cancellation to the agent without treating it as generation consent", () => {
     const payload = buildAssistantClarificationToolResultForTest(
       { type: "assistant.clarification.request", clarification_id: "c", bridge_key: "key", questions: [] },

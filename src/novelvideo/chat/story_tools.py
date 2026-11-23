@@ -8,9 +8,25 @@ the same entries through ``novelvideo.chat.interactive_story_mcp``.
 from __future__ import annotations
 
 import hashlib
-import os
+import importlib.util
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
+
+
+def _load_request_context():
+    path = Path(__file__).with_name("_request_context.py")
+    if not path.is_file():
+        path = path.with_name("request_context.py")
+    spec = importlib.util.spec_from_file_location("_dramaclaw_request_context", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load request context from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+request_context = _load_request_context()
 
 
 _ENTITY_ID_SCHEMA = {
@@ -800,7 +816,9 @@ def build_tools(
     def story_body(args: dict[str, Any], *keys: str) -> dict[str, Any]:
         body = {key: args[key] for key in keys if key in args}
         canvas_id = str(
-            args.get("canvas_id") or os.environ.get("DRAMACLAW_CANVAS_ID") or "default"
+            args.get("canvas_id")
+            or request_context.get("DRAMACLAW_CANVAS_ID")
+            or "default"
         ).strip()
         body["canvas_id"] = canvas_id or "default"
         return body
@@ -825,7 +843,7 @@ def build_tools(
         canvas_id = (
             str(
                 args.get("canvas_id")
-                or os.environ.get("DRAMACLAW_CANVAS_ID")
+                or request_context.get("DRAMACLAW_CANVAS_ID")
                 or "default"
             ).strip()
             or "default"
@@ -862,7 +880,7 @@ def build_tools(
             story_id = require_story_id(args)
             canvas_id = str(
                 args.get("canvas_id")
-                or os.environ.get("DRAMACLAW_CANVAS_ID")
+                or request_context.get("DRAMACLAW_CANVAS_ID")
                 or "default"
             ).strip()
             return tool_result(
@@ -939,7 +957,7 @@ def build_tools(
         try:
             canvas_id = str(
                 args.get("canvas_id")
-                or os.environ.get("DRAMACLAW_CANVAS_ID")
+                or request_context.get("DRAMACLAW_CANVAS_ID")
                 or "default"
             ).strip()
             return tool_result(
@@ -965,7 +983,7 @@ def build_tools(
             project = quote(project_from_args(args), safe="")
             canvas_id = str(
                 args.get("canvas_id")
-                or os.environ.get("DRAMACLAW_CANVAS_ID")
+                or request_context.get("DRAMACLAW_CANVAS_ID")
                 or "default"
             ).strip()
             return tool_result(
@@ -1457,8 +1475,8 @@ def output_schema(name: str) -> dict[str, Any]:
 
 def bound_story_args(args: dict[str, Any]) -> dict[str, Any]:
     """Require the current turn's project and canvas before any story API call."""
-    project = os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
-    canvas = os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
+    project = request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
+    canvas = request_context.get("DRAMACLAW_CANVAS_ID", "").strip()
     if not project or not canvas:
         raise ValueError("interactive stories require a bound project and canvas")
     given_project = str(

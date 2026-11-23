@@ -3129,6 +3129,64 @@ def test_workflow_confirmation_enqueues_non_monetary_durable_task(
     assert "quote_id" not in payload
 
 
+def test_stale_confirmation_is_recorded_until_latest_revision_is_confirmed(
+    workflow_run_client: TestClient,
+) -> None:
+    client = workflow_run_client
+    canvas = "/api/v1/projects/proj_demo/freezone/canvases/default"
+    base = f"{canvas}/workflow-drafts"
+    check = f"{canvas}/workflow-draft-revision-conflict"
+    body = {
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+        "compiled": _valid_draft_compiled(),
+    }
+    draft_id = client.post(base, json=body).json()["data"]["draft_id"]
+    patched = client.patch(f"{base}/{draft_id}", json={**body, "expected_revision": 1})
+    assert patched.json()["data"]["revision"] == 2
+    assert client.get(check).json() == {
+        "ok": True, "data": {"confirmation_required": False},
+    }
+
+    stale = client.post(f"{base}/{draft_id}/claim", json={"revision": 1})
+
+    assert stale.json() == {
+        "ok": False,
+        "status": "workflow_draft_revision_conflict",
+        "current_revision": 2,
+    }
+    assert client.enqueued_tasks == []
+    assert client.get(check).json() == {
+        "ok": True,
+        "data": {
+            "confirmation_required": True,
+            "draft_id": draft_id,
+            "current_revision": 2,
+        },
+    }
+    other_canvas = "/api/v1/projects/proj_demo/freezone/canvases/canvas-b"
+    assert client.get(f"{other_canvas}/workflow-draft-revision-conflict").json() == {
+        "ok": True, "data": {"confirmation_required": False},
+    }
+
+    confirmed = client.post(f"{base}/{draft_id}/claim", json={"revision": 2})
+
+    assert confirmed.json()["data"]["task_id"] == "workflow-task-1"
+    assert client.get(check).json() == {
+        "ok": True, "data": {"confirmation_required": False},
+    }
+
+
+def test_revision_conflict_check_rejects_invalid_canvas_id(
+    workflow_run_client: TestClient,
+) -> None:
+    response = workflow_run_client.get(
+        "/api/v1/projects/proj_demo/freezone/canvases/bad%20id/"
+        "workflow-draft-revision-conflict"
+    )
+
+    assert response.status_code == 400
+
+
 def test_workflow_confirmation_retry_uses_a_new_task_scope(
     workflow_run_client: TestClient,
 ) -> None:
@@ -6523,3 +6581,125 @@ def test_delivered_template_fee_is_never_refunded_by_the_refund_retry(
     assert fee.operation()["status"] == "delivered"
     assert fee.fee_task.status == "running"
     assert fee.refund_calls == []
+
+
+_OUTLINE_STAGE_DRAFT = {
+    "project_id": "proj_demo",
+    "canvas_id": "default",
+    "mode": "create",
+    "expected_recipe_count": 1,
+    "outline": {
+        "expected_recipe_count": 1,
+        "stages": [{"id": "recipe-a", "recipe_id": "recipe-a", "reuse": "new"}],
+    },
+    "skill": None,
+    "recipes": {},
+}
+_OUTLINE_SESSION = "/api/v1/projects/proj_demo/freezone/agent-generation-sessions/outline-a"
+
+
+def test_generation_session_accepts_outline_stage_draft(workflow_run_client):
+    response = workflow_run_client.put(
+        _OUTLINE_SESSION,
+        json={"canvas_id": "default", "manifest": {}, "draft": _OUTLINE_STAGE_DRAFT},
+    )
+
+    assert response.status_code == 200, response.text
+    saved = workflow_run_client.get(_OUTLINE_SESSION).json()["data"]
+    assert saved["manifest"] == {}
+    assert saved["draft"]["outline"] == _OUTLINE_STAGE_DRAFT["outline"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    [
+        ({"project_id": "another-project"}, "draft belongs to another project"),
+        ({"canvas_id": "another-canvas"}, "draft belongs to another canvas"),
+        ({"outline": None}, "outline must be an object"),
+        ({"operations": {"skill": {"operation_id": "op"}}}, "cannot carry operations"),
+        ({"operations": {"recipes": {"0": {"operation_id": "op"}}}}, "cannot carry operations"),
+        ({"skill": {"id": "skill-a"}}, "cannot change the generated Skill"),
+        ({"recipes": {"0": {"id": "recipe-a"}}}, "cannot change generated Recipes"),
+        ({"manifest": {"generation_session_id": "outline-a"}}, "identity mismatch"),
+    ],
+)
+def test_generation_session_outline_stage_admits_nothing_but_the_outline(
+    workflow_run_client, overrides, expected_error,
+):
+    response = workflow_run_client.put(
+        _OUTLINE_SESSION,
+        json={
+            "canvas_id": "default", "manifest": {},
+            "draft": {**_OUTLINE_STAGE_DRAFT, **overrides},
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert expected_error in response.json()["detail"]
+    assert workflow_run_client.get(_OUTLINE_SESSION).status_code == 404
+
+
+def test_generation_session_outline_stage_keeps_already_generated_results(
+    workflow_run_client,
+):
+    session_id = "outline-after-generation"
+    url = f"/api/v1/projects/proj_demo/freezone/agent-generation-sessions/{session_id}"
+    manifest, draft = _recipe_generation_session_payload(
+        workflow_run_client, session_id=session_id,
+    )
+    generated = {"0": {"id": f"generated-{session_id}"}}
+    saved = workflow_run_client.put(url, json={
+        "canvas_id": "default", "manifest": manifest,
+        "draft": {**draft, "recipes": generated},
+    })
+    assert saved.status_code == 200, saved.text
+
+    kept = workflow_run_client.put(url, json={
+        "canvas_id": "default", "manifest": {},
+        "draft": {**_OUTLINE_STAGE_DRAFT, "mode": "edit", "recipes": generated},
+    })
+    swapped = workflow_run_client.put(url, json={
+        "canvas_id": "default", "manifest": {},
+        "draft": {**_OUTLINE_STAGE_DRAFT, "recipes": {"0": {"id": "another-recipe"}}},
+    })
+
+    assert kept.status_code == 200, kept.text
+    assert swapped.status_code == 400
+    assert "cannot change generated Recipes" in swapped.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("drop_draft_manifest", "draft manifest does not match"),
+        ("another_project", "draft belongs to another project"),
+        ("another_canvas", "draft belongs to another canvas"),
+        ("drop_attempt", "generation_attempt_id is required"),
+    ],
+)
+def test_generation_session_with_a_manifest_is_still_fully_validated(
+    workflow_run_client, mutation, expected_error,
+):
+    session_id = f"complete-{mutation}"
+    manifest, draft = _recipe_generation_session_payload(
+        workflow_run_client, session_id=session_id,
+    )
+    draft = deepcopy(draft)
+    manifest = deepcopy(manifest)
+    if mutation == "drop_draft_manifest":
+        draft.pop("manifest")
+    elif mutation == "another_project":
+        draft["project_id"] = "another-project"
+    elif mutation == "another_canvas":
+        draft["canvas_id"] = "another-canvas"
+    else:
+        manifest.pop("generation_attempt_id")
+        draft["manifest"] = manifest
+
+    response = workflow_run_client.put(
+        f"/api/v1/projects/proj_demo/freezone/agent-generation-sessions/{session_id}",
+        json={"canvas_id": "default", "manifest": manifest, "draft": draft},
+    )
+
+    assert response.status_code == 400, response.text
+    assert expected_error in response.json()["detail"]

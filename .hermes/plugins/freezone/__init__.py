@@ -109,7 +109,7 @@ def _tool_input_hash(value: Any) -> str:
 
 
 def _record_structured_tool_result(tool_name: str, value: Any) -> None:
-    result_dir = os.environ.get("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "").strip()
+    result_dir = request_context.get("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", "").strip()
     if not result_dir or not tool_name:
         return
     try:
@@ -212,6 +212,20 @@ except Exception:
     workflow_plan_json_schema = None
 
 
+def _load_stdlib_tool_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load agent tool module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+request_context = _load_stdlib_tool_module(
+    "_freezone_request_context", _PLUGIN_DIR / "_request_context.py"
+)
+
+
 _CANVAS_COMMAND_BRIDGE_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.canvas_confirmations import confirmation_kinds
@@ -270,7 +284,10 @@ try:
 except ValueError:
     DEFAULT_TIMEOUT_SECONDS = 120
 
-_PENDING_SKILL_STUDIO_DRAFTS: dict[str, dict[str, Any]] = {}
+# Skill Studio drafts live on the server: each tool call may run in another
+# process. This holds them only when no API is configured, where one local
+# process owns the whole draft and there is no server to ask.
+_OFFLINE_SKILL_STUDIO_DRAFTS: dict[str, dict[str, Any]] = {}
 # A generation clarification and its following draft call are separate MCP tool
 # calls. Keep the submitted receipt scoped to the current turn so a planner that
 # accidentally omits ``generation_answers`` cannot replace the user's choices
@@ -284,11 +301,6 @@ _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS: dict[
     tuple[str, str], dict[str, Any]
 ] = {}
 _SERVER_VIDEO_MODEL_CLARIFICATION_LOCK = threading.RLock()
-# A revision conflict is a user-authorization boundary, not a retryable canvas
-# write error. Keep the canvas blocked until the user explicitly confirms the
-# current draft revision. This process-local guard covers the follow-up tool
-# calls that an agent may emit in the same turn after a stale confirmation.
-_REVISION_CONFLICT_CANVAS_BLOCKS: set[tuple[str, str]] = set()
 _SKILL_STUDIO_DEFAULT_SKILL_SCHEMA_VERSION = "dramaclaw.workflow-skill.v1"
 _SKILL_STUDIO_DEFAULT_SKILL_VERSION = "1.0.0"
 
@@ -300,7 +312,7 @@ def _generation_answer_scope(
 ) -> tuple[str, str, str] | None:
     project_id = str(project or "").strip()
     canvas_id = str(canvas or "").strip()
-    turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    turn_id = request_context.get("DRAMACLAW_TURN_ID", "").strip()
     if not project_id or not canvas_id or not turn_id:
         return None
     return project_id, canvas_id, turn_id
@@ -350,29 +362,56 @@ def _forget_generation_answers(project: str | None, canvas: str | None) -> None:
         _PENDING_GENERATION_ANSWERS.pop(scope, None)
 
 
-def _revision_conflict_scope(project: str | None, canvas: str | None) -> tuple[str, str] | None:
+def _revision_conflict_write_error(project: str | None, canvas: str | None) -> dict[str, Any] | None:
+    """Refuse a canvas write while a stale confirmation awaits the user.
+
+    A revision conflict is a user-authorization boundary, not a retryable write
+    error. The server records it with the draft, so the answer is the same for
+    every process and ends when the draft is confirmed, cancelled or expires.
+    Without an API there are no drafts to conflict with.
+    """
     project_id = str(project or "").strip()
     canvas_id = str(canvas or "").strip()
-    if not project_id or not canvas_id:
+    if not project_id or not canvas_id or not _available():
         return None
-    return project_id, canvas_id
-
-
-def _block_canvas_after_revision_conflict(project: str | None, canvas: str | None) -> None:
-    scope = _revision_conflict_scope(project, canvas)
-    if scope is not None:
-        _REVISION_CONFLICT_CANVAS_BLOCKS.add(scope)
-
-
-def _clear_canvas_revision_conflict(project: str | None, canvas: str | None) -> None:
-    scope = _revision_conflict_scope(project, canvas)
-    if scope is not None:
-        _REVISION_CONFLICT_CANVAS_BLOCKS.discard(scope)
-
-
-def _revision_conflict_write_error(project: str | None, canvas: str | None) -> dict[str, Any] | None:
-    scope = _revision_conflict_scope(project, canvas)
-    if scope not in _REVISION_CONFLICT_CANVAS_BLOCKS:
+    try:
+        response = _request(
+            "GET",
+            f"/projects/{quote(project_id, safe='')}/freezone/canvases/"
+            f"{quote(canvas_id, safe='')}/workflow-draft-revision-conflict",
+        )
+    except ValueError as exc:
+        response = {"ok": False, "error": str(exc)}
+    data = response.get("data") if response.get("ok") else None
+    if not isinstance(data, dict) or not isinstance(
+        data.get("confirmation_required"), bool
+    ):
+        # Unknown is not "no conflict": writing here could act on an approval the
+        # user gave to a revision that no longer exists.
+        return {
+            "ok": False,
+            "status": "canvas_revision_check_unavailable",
+            "code": "canvas_revision_check_unavailable",
+            "error": (
+                "could not read whether this canvas has a workflow draft revision "
+                f"awaiting confirmation: {response.get('error') or 'invalid response'}"
+            ),
+            "user_message": "暂时无法确认画布是否有待确认的工作流版本，本次未执行画布操作，请稍后重试。",
+            "retryable": True,
+            **(
+                {"status_code": response["status_code"]}
+                if isinstance(response.get("status_code"), int)
+                else {}
+            ),
+            "agent_instruction": (
+                "Nothing was written. The DramaClaw server could not be asked whether a "
+                "workflow draft on this canvas is waiting for the user's confirmation; "
+                "this is a server read failure, not a problem with your arguments. Retry "
+                "the same call once. If it fails again, tell the user the service is "
+                "temporarily unavailable; do not switch to another canvas write tool."
+            ),
+        }
+    if not data["confirmation_required"]:
         return None
     return {
         "ok": False,
@@ -391,28 +430,28 @@ def _revision_conflict_write_error(project: str | None, canvas: str | None) -> d
 
 def _agent_token_configured() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
-        or os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+        request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+        or request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     )
 
 
 def _agent_key_configured() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
-        or os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+        request_context.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+        or request_context.get("DRAMACLAW_AGENT_KEY", "").strip()
     )
 
 
 def _current_agent_token() -> str:
     """Read a turn token lazily without depending on the CE application venv."""
 
-    token_file = os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    token_file = request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     if token_file:
         try:
             return Path(token_file).read_text(encoding="utf-8").strip()
         except OSError:
             return ""
-    return os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+    return request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
 
 
 def _skill_studio_agent_instruction(
@@ -432,13 +471,13 @@ def _skill_studio_agent_instruction(
 
 def _available() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_API_URL")
+        request_context.get("DRAMACLAW_API_URL")
         and (_agent_token_configured() or _agent_key_configured() or _local_agent_trust_enabled())
     )
 
 
 def _base_url() -> str:
-    value = os.environ.get("DRAMACLAW_API_URL", "").strip()
+    value = request_context.get("DRAMACLAW_API_URL", "").strip()
     if not value:
         raise ValueError("Freezone API URL is not configured")
     return value.rstrip("/")
@@ -452,14 +491,14 @@ def _token() -> str:
 
 
 def _local_agent_trust_enabled() -> bool:
-    if os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
+    if request_context.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
         "1",
         "true",
         "yes",
         "on",
     }:
         return False
-    parsed = urlparse(os.environ.get("DRAMACLAW_API_URL", "").strip())
+    parsed = urlparse(request_context.get("DRAMACLAW_API_URL", "").strip())
     return (parsed.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}
 
 
@@ -479,12 +518,12 @@ def _request_headers(user_agent: str) -> dict[str, str]:
 
 
 def _default_project_id() -> str:
-    return os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
+    return request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
 
 
 def _external_unbound_agent_key() -> bool:
     return (
-        os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+        request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
         and _agent_key_configured()
         and not _agent_token_configured()
         and not _default_project_id()
@@ -505,7 +544,7 @@ def _project_id_required() -> str:
 
 
 def _default_canvas_id() -> str:
-    return os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
+    return request_context.get("DRAMACLAW_CANVAS_ID", "").strip()
 
 
 def _bound_scope_mismatch(project: str | None, canvas: str | None) -> dict[str, Any] | None:
@@ -572,8 +611,12 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
     if not (
         bound_canvas and given_canvas and given_canvas != bound_canvas
         and (not given_project or given_project == bound_project)
-        and _agent_canvas_executor() == "server"
     ):
+        return mismatch
+    refusal = _agent_canvas_executor_refusal()
+    if refusal is not None:
+        return refusal
+    if _agent_canvas_executor() != "server":
         return mismatch
 
     def _canvas_not_usable_from_chat(*, lookup_failed: bool) -> dict[str, Any]:
@@ -622,10 +665,23 @@ def _chat_canvas_scope_mismatch(project: str | None, canvas: str | None) -> dict
     return _canvas_not_usable_from_chat(lookup_failed=False)
 
 
+def _canvas_write_refusal(project: str | None, canvas: str | None) -> dict[str, Any] | None:
+    """Refuse a canvas write batch that is out of scope or blocked by a conflict.
+
+    Called once the batch has passed its argument and shape checks, and before
+    its generation preflight or any write. A batch refused for a reason that
+    needs no server read therefore keeps that reason and costs no request; the
+    revision conflict is read only for a batch that is otherwise well formed.
+    """
+    return _chat_canvas_scope_mismatch(project, canvas) or _revision_conflict_write_error(
+        project, canvas
+    )
+
+
 def _surface() -> str:
     return (
-        os.environ.get("DRAMACLAW_CHAT_SURFACE")
-        or os.environ.get("SUPERTALE_CHAT_SURFACE")
+        request_context.get("DRAMACLAW_CHAT_SURFACE")
+        or request_context.get("SUPERTALE_CHAT_SURFACE")
         or ""
     ).strip()
 
@@ -1007,6 +1063,8 @@ def _emit_skill_studio_event(
     mismatch = _bound_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
+    if not _clarification_listener_available():
+        return tool_result(_skill_studio_no_ui_result(project, canvas, event))
     key = skill_studio_bridge_key(project_id=project, canvas_id=canvas, event=event)
     put_pending_skill_studio_event(
         key=key,
@@ -1342,6 +1400,9 @@ def _remember_server_video_model_clarification(
         "compatible_video_model",
         "video_model_constraint_adjustment",
     }:
+        return
+    if _turnless_external_mcp_host():
+        # Only a clarification card reads this, and this host cannot show one.
         return
     with _SERVER_VIDEO_MODEL_CLARIFICATION_LOCK:
         _PENDING_SERVER_VIDEO_MODEL_CLARIFICATIONS[
@@ -2549,8 +2610,14 @@ def _handle_put_agent_catalog_draft_outline(args: dict[str, Any], **_: Any) -> s
                 ),
             }
         )
-    existing = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) if mode == "edit" else None
-    _PENDING_SKILL_STUDIO_DRAFTS[session_id] = {
+    existing = None
+    if mode == "edit":
+        existing, load_failure = _load_skill_studio_session(
+            str(project or ""), session_id
+        )
+        if load_failure is not None:
+            return tool_result(load_failure)
+    persisted_session = _persist_skill_studio_session(session_id, {
         "project_id": project or (existing or {}).get("project_id"),
         "canvas_id": canvas or (existing or {}).get("canvas_id"),
         "mode": mode,
@@ -2564,7 +2631,32 @@ def _handle_put_agent_catalog_draft_outline(args: dict[str, Any], **_: Any) -> s
         "outline": outline,
         "skill": (existing or {}).get("skill"),
         "recipes": dict((existing or {}).get("recipes") or {}),
-    }
+    })
+    if not persisted_session.get("ok"):
+        status_code = persisted_session.get("status_code")
+        rejected = isinstance(status_code, int) and 400 <= status_code < 500
+        failure = {
+            "ok": False,
+            "status": "skill_studio_session_write_failed",
+            "error": (
+                "could not save the Skill Studio outline to the server: "
+                f"{persisted_session.get('error') or persisted_session.get('status') or 'unexpected response'}"
+            ),
+            "retryable": not rejected,
+            "skill_studio_session_id": session_id,
+            "agent_instruction": (
+                "Nothing was saved, so freezone_begin_agent_catalog_draft cannot find this outline yet. "
+                + (
+                    "The server rejected this outline; correct what the error names and submit it again."
+                    if rejected
+                    else "Retry the same call once. If it fails again, tell the user the service is "
+                    "temporarily unavailable."
+                )
+            ),
+        }
+        if status_code is not None:
+            failure["status_code"] = status_code
+        return tool_result(failure)
     return _emit_skill_studio_progress_event(
         project,
         canvas,
@@ -2597,9 +2689,12 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
         expected_recipe_count = int(args.get("expected_recipe_count") or 0)
     except (TypeError, ValueError):
         expected_recipe_count = 0
-    existing = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) if mode == "edit" else None
+    stored, load_failure = _load_skill_studio_session(str(project or ""), session_id)
+    if load_failure is not None:
+        return tool_result(load_failure)
+    existing = stored if mode == "edit" else None
     if mode == "create":
-        existing_create = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id)
+        existing_create = stored
         outline = (
             existing_create.get("outline")
             if isinstance(existing_create, dict)
@@ -2805,7 +2900,7 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
             operations["skill"] = admitted
         else:
             operations["recipes"][recipe_index] = admitted
-    _PENDING_SKILL_STUDIO_DRAFTS[session_id] = {
+    persisted_session = _persist_skill_studio_session(session_id, {
         "project_id": project or (existing or {}).get("project_id"),
         "canvas_id": canvas or (existing or {}).get("canvas_id"),
         "mode": mode,
@@ -2821,10 +2916,7 @@ def _handle_begin_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
         "recipes": dict((existing or {}).get("recipes") or {}),
         "manifest": manifest,
         "operations": operations,
-    }
-    persisted_session = _persist_skill_studio_session(
-        _PENDING_SKILL_STUDIO_DRAFTS[session_id]
-    )
+    })
     if not persisted_session.get("ok"):
         return tool_result(persisted_session)
     return _emit_skill_studio_progress_event(
@@ -2861,9 +2953,9 @@ def _handle_put_agent_catalog_skill(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
-        str(project or ""), session_id
-    )
+    draft, load_failure = _load_skill_studio_session(str(project or ""), session_id)
+    if load_failure is not None:
+        return tool_result(load_failure)
     if draft is None:
         return tool_result(
             {
@@ -2917,7 +3009,7 @@ def _handle_put_agent_catalog_skill(args: dict[str, Any], **_: Any) -> str:
     draft["project_id"] = project or draft.get("project_id")
     draft["canvas_id"] = canvas or draft.get("canvas_id")
     draft["skill"] = _normalize_skill_studio_skill(skill, existing=draft.get("skill"))
-    persisted_session = _persist_skill_studio_session(draft)
+    persisted_session = _persist_skill_studio_session(session_id, draft)
     if not persisted_session.get("ok"):
         return tool_result(persisted_session)
     expected = int(draft.get("expected_recipe_count") or 0)
@@ -2981,9 +3073,9 @@ def _handle_put_agent_catalog_recipe(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
-        str(project or ""), session_id
-    )
+    draft, load_failure = _load_skill_studio_session(str(project or ""), session_id)
+    if load_failure is not None:
+        return tool_result(load_failure)
     if draft is None:
         return tool_result(
             {
@@ -3039,7 +3131,7 @@ def _handle_put_agent_catalog_recipe(args: dict[str, Any], **_: Any) -> str:
             }
         )
     recipes[index] = recipe
-    persisted_session = _persist_skill_studio_session(draft)
+    persisted_session = _persist_skill_studio_session(session_id, draft)
     if not persisted_session.get("ok"):
         return tool_result(persisted_session)
     expected = int(draft.get("expected_recipe_count") or 0)
@@ -3259,9 +3351,9 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
-        str(project or ""), session_id
-    )
+    draft, load_failure = _load_skill_studio_session(str(project or ""), session_id)
+    if load_failure is not None:
+        return tool_result(load_failure)
     if draft is None:
         return tool_result(
             {
@@ -3342,7 +3434,7 @@ def _handle_patch_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
                 "skill_studio_session_id": session_id,
             }
         )
-    persisted_session = _persist_skill_studio_session(draft)
+    persisted_session = _persist_skill_studio_session(session_id, draft)
     if not persisted_session.get("ok"):
         return tool_result(persisted_session)
     progress = _emit_skill_studio_progress_event(
@@ -3383,9 +3475,9 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     session_id = _skill_studio_session_id_from_args(args)
     if not session_id:
         return _skill_studio_missing_session_result()
-    draft = _PENDING_SKILL_STUDIO_DRAFTS.get(session_id) or _load_skill_studio_session(
-        str(project or ""), session_id
-    )
+    draft, load_failure = _load_skill_studio_session(str(project or ""), session_id)
+    if load_failure is not None:
+        return tool_result(load_failure)
     if draft is None:
         return tool_result(
             {
@@ -3473,7 +3565,7 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     draft["skill"] = skill
     draft["recipes"] = {index: recipe for index, recipe in enumerate(recipes)}
     draft["warnings"] = warnings
-    persisted_session = _persist_skill_studio_session(draft)
+    persisted_session = _persist_skill_studio_session(session_id, draft)
     if not persisted_session.get("ok"):
         return tool_result(persisted_session)
     result_payload = _tool_result_payload(result) or {}
@@ -3488,7 +3580,8 @@ def _handle_finish_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
     )
     explicit_failure = bool(
         result_payload
-        and str(result_payload.get("status") or "") != "skill_studio_frontend_timeout"
+        and str(result_payload.get("status") or "")
+        not in _SKILL_STUDIO_CARD_UNANSWERED_STATUSES
         and not delivered
     )
     if project_id and (delivered or explicit_failure):
@@ -4715,7 +4808,7 @@ def _validate_write_commands_shape(
 
 
 def _external_mcp_agent_enabled() -> bool:
-    return os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip().lower() in {
+    return request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -4729,9 +4822,10 @@ def _turnless_external_mcp_host() -> bool:
     The plugin opens no workflow_result operation; the server alone decides
     whether the session may deliver a draft without one.
     """
-    return _external_mcp_agent_enabled() and not os.environ.get(
-        "DRAMACLAW_TURN_ID", ""
-    ).strip()
+    return (
+        _external_mcp_agent_enabled()
+        and not request_context.get("DRAMACLAW_TURN_ID", "").strip()
+    )
 
 
 def _key_deferral_host() -> bool:
@@ -4802,7 +4896,7 @@ def _clarification_listener_available() -> bool:
     waits as before. An in-app Codex turn with an empty id fails safe without waiting.
     """
     return not _external_mcp_agent_enabled() or bool(
-        os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+        request_context.get("DRAMACLAW_TURN_ID", "").strip()
     )
 
 
@@ -4840,6 +4934,47 @@ def _clarification_no_ui_result(
             "freezone_confirm_canvas_action."
         ) + (_TURNLESS_NO_UI_CANVAS_GUIDANCE if _turnless_external_mcp_host() else "")
         + (_KEY_NO_UI_TIER_GUIDANCE if _key_deferral_host() else ""),
+    }
+
+
+# The draft card got no answer from the product interface: either nobody answered
+# in time or nothing could show it. The draft session and its product operations
+# stay open so the product chat can still finish them.
+_SKILL_STUDIO_CARD_UNANSWERED_STATUSES = frozenset(
+    {"skill_studio_frontend_timeout", "skill_studio_ui_unavailable"}
+)
+
+
+def _skill_studio_no_ui_result(
+    project: str | None, canvas: str | None, event: dict[str, Any]
+) -> dict[str, Any]:
+    message = (
+        "This session has no product chat turn, so no DramaClaw interface is reading "
+        "Skill Studio cards. The card was not shown and nothing was saved to the catalog. "
+        "Only the user can finish this; the Agent cannot confirm or save the draft here. "
+        "The draft session is kept. Saving a Skill or Recipe needs the user to confirm "
+        "it in the DramaClaw in-product chat on this canvas."
+    )
+    return {
+        "ok": False,
+        "status": "skill_studio_ui_unavailable",
+        "code": "skill_studio_ui_unavailable",
+        "tool_call_status": "completed",
+        "skill_studio_status": "not_shown",
+        "project_id": project,
+        "canvas_id": canvas,
+        "type": event.get("type"),
+        "skill_studio_session_id": event.get("skill_studio_session_id"),
+        "error": message,
+        "message": message,
+        "retryable": False,
+        "next_action": "ask_user_to_finish_in_product_chat",
+        "agent_instruction": (
+            "Do not repeat this Skill Studio call in this session and do "
+            "not tell the user the Skill or Recipe was saved. Tell the user the draft is "
+            "prepared but not saved, and that saving it needs their confirmation in the "
+            "DramaClaw in-product chat on this canvas."
+        ),
     }
 
 
@@ -6314,19 +6449,22 @@ def _create_canvas_confirmation(
 
 
 def _canvas_agent_identity() -> tuple[str, str | None]:
-    profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
+    profile = request_context.get("DRAMACLAW_AGENT_PROFILE", "").strip()
     agent_id = (
         profile.removeprefix("freezone:").strip()
         if profile.startswith("freezone:")
         else "main"
     )
-    return agent_id or "main", os.environ.get("DRAMACLAW_TURN_ID", "").strip() or None
+    return (
+        agent_id or "main",
+        request_context.get("DRAMACLAW_TURN_ID", "").strip() or None,
+    )
 
 
 def _canvas_command_envelope(
     project: str, canvas: str, commands: list[Any],
 ) -> dict[str, Any]:
-    external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
+    external_mcp = request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
     agent_id, turn_id = _canvas_agent_identity()
     envelope = {
         "schema_version": "canvas_chat_commands.v1",
@@ -6384,7 +6522,7 @@ def _dispatch_mcp_approved_frontend_commands(
         key = canvas_command_bridge_key(
             project_id=project, canvas_id=canvas, commands=commands
         )
-    bridge_root = os.environ.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
+    bridge_root = request_context.get("DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "").strip()
     # The worker launcher already gives each Hermes/Codex profile its
     # profile-scoped bridge directory (``.../freezone_freezone_main``). Do not
     # append another ``freezone_main`` here: that creates a nested directory
@@ -6736,22 +6874,81 @@ def _default_link_type(source_type: str, target_type: str) -> str:
 _AGENT_CANVAS_EXECUTOR_CACHE: tuple[float, str] | None = None
 
 
-def _agent_canvas_executor() -> str:
+def _agent_key_session_failure(result: Any) -> dict[str, Any] | None:
+    """The agent key session's own refusal in ``result``, when no request reached the API."""
+    session = _SHARED_AGENT_KEY_SESSION
+    if session is not None and session.is_session_failure(result):
+        return result
+    return None
+
+
+@contextmanager
+def _watch_agent_key_session_failures():
+    session = _SHARED_AGENT_KEY_SESSION
+    if session is None:
+        yield []
+        return
+    with session.watch_failures() as seen:
+        yield seen
+
+
+def _answer_with_agent_key_session_failure(result: Any, seen: list[dict[str, Any]]) -> Any:
+    """Answer a failed tool call with the agent key session failure behind it.
+
+    Tools turn a failed request into errors of their own (a revision check that
+    could not be read, a canvas context that failed); for a refused or unavailable
+    agent key those would hide whether the key must be replaced or the call retried.
+    """
+    session = _SHARED_AGENT_KEY_SESSION
+    if session is None or not seen:
+        return result
+    failure = session.failure_behind(_tool_result_payload(result), seen)
+    if failure is None:
+        return result
+    return dict(failure) if isinstance(result, dict) else tool_result(failure)
+
+
+def _select_agent_canvas_executor() -> tuple[str, dict[str, Any] | None]:
+    """The canvas executor, or the agent key session failure that kept it unknown.
+
+    A refused or unavailable agent key session never reaches the server, so it says
+    nothing about the executor: it is returned instead of being taken as the browser
+    executor, and it is not cached, so the next call uses a working key again.
+    """
     global _AGENT_CANVAS_EXECUTOR_CACHE
     now = time.monotonic()
     if _AGENT_CANVAS_EXECUTOR_CACHE is not None:
         cached_at, executor = _AGENT_CANVAS_EXECUTOR_CACHE
         if now - cached_at < 30:
-            return executor
+            return executor, None
     executor = "browser"
     try:
         response = _request("GET", "/api/v1/config")
+        failure = _agent_key_session_failure(response)
+        if failure is not None:
+            return executor, failure
         if response.get("ok") and response.get("data", {}).get("agent_canvas_executor") == "server":
             executor = "server"
     except Exception:
         pass
     _AGENT_CANVAS_EXECUTOR_CACHE = (now, executor)
-    return executor
+    return executor, None
+
+
+def _agent_canvas_executor() -> str:
+    return _select_agent_canvas_executor()[0]
+
+
+def _agent_canvas_executor_refusal() -> dict[str, Any] | None:
+    """Why the canvas executor cannot be chosen with the configured agent key, if it cannot.
+
+    Check this before ``_agent_canvas_executor()``: a key the server rejected, or a
+    session exchange the server could not answer, must reach the user as that failure,
+    not as a missing server canvas executor. Without an agent key nothing changes.
+    """
+    if _agent_token_configured() or not _agent_key_configured():
+        return None
+    return _select_agent_canvas_executor()[1]
 
 
 def _canvas_browser_required_error(project: str, canvas: str) -> dict[str, Any] | None:
@@ -6974,9 +7171,6 @@ def _emit_canvas_commands(
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
     if scope_error:
         return scope_error
-    blocked = _revision_conflict_write_error(project, canvas)
-    if blocked is not None:
-        return tool_result(blocked)
     if handwritten_batch and not _is_story_image_reference_batch(project, canvas, commands):
         return _emit_command_error(
             project, canvas, "wrong_tool_dynamic_workflow",
@@ -6993,6 +7187,12 @@ def _emit_canvas_commands(
     )
     if shape_error:
         return shape_error
+    refusal = _canvas_write_refusal(project, canvas)
+    if refusal is not None:
+        return tool_result(refusal)
+    refusal = _agent_canvas_executor_refusal()
+    if refusal is not None:
+        return tool_result(refusal)
     executor = _agent_canvas_executor()
     recommendation_error = _resolve_canvas_generation_recommendations(project, canvas, commands)
     if recommendation_error is not None:
@@ -7636,13 +7836,14 @@ def _agent_generation_session_api_path(project_id: str, session_id: str) -> str:
     )
 
 
-def _persist_skill_studio_session(draft: dict[str, Any]) -> dict[str, Any]:
-    project_id = str(draft.get("project_id") or "").strip()
-    session_id = str(
-        (draft.get("manifest") or {}).get("generation_session_id") or ""
-    ).strip()
+def _persist_skill_studio_session(
+    session_id: str, draft: dict[str, Any]
+) -> dict[str, Any]:
+    """Store the draft where the next tool call, in any process, will read it."""
     if not _available():
+        _OFFLINE_SKILL_STUDIO_DRAFTS[session_id] = draft
         return {"ok": True, "status": "local_unmetered_session"}
+    project_id = str(draft.get("project_id") or "").strip()
     if not project_id or not session_id:
         return {"ok": False, "status": "generation_session_scope_required"}
     return _request(
@@ -7656,23 +7857,64 @@ def _persist_skill_studio_session(draft: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _index_keyed(value: Any) -> Any:
+    """Restore the integer keys that a JSON round trip turned into strings."""
+    if not isinstance(value, dict):
+        return value
+    return {
+        int(key) if isinstance(key, str) and key.isdigit() else key: item
+        for key, item in value.items()
+    }
+
+
 def _load_skill_studio_session(
     project_id: str, session_id: str
-) -> dict[str, Any] | None:
-    if not project_id or not session_id or not _available():
-        return None
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Read the draft as ``(draft, failure)``.
+
+    ``(None, None)`` means no draft exists. A failure means the draft could not
+    be read, which says nothing about whether one exists.
+    """
+    if not _available():
+        return _OFFLINE_SKILL_STUDIO_DRAFTS.get(session_id), None
+    if not project_id:
+        return None, {
+            "ok": False,
+            "status": "skill_studio_project_scope_required",
+            "error": "project_id is required to read the Skill Studio draft",
+            "skill_studio_session_id": session_id,
+        }
     response = _request(
         "GET", _agent_generation_session_api_path(project_id, session_id)
     )
-    data = response.get("data") if isinstance(response.get("data"), dict) else None
-    draft = (
-        data.get("draft")
-        if isinstance(data, dict) and isinstance(data.get("draft"), dict)
-        else None
-    )
-    if draft is not None:
-        _PENDING_SKILL_STUDIO_DRAFTS[session_id] = draft
-    return draft
+    data = response.get("data")
+    draft = data.get("draft") if isinstance(data, dict) else None
+    if response.get("ok") is True and isinstance(draft, dict):
+        draft["recipes"] = _index_keyed(draft.get("recipes"))
+        operations = draft.get("operations")
+        if isinstance(operations, dict):
+            operations["recipes"] = _index_keyed(operations.get("recipes"))
+        return draft, None
+    if response.get("status_code") == 404:
+        return None, None
+    failure = {
+        "ok": False,
+        "status": "skill_studio_session_read_failed",
+        "error": (
+            "could not read the Skill Studio draft from the server: "
+            f"{response.get('error') or 'unexpected response'}"
+        ),
+        "retryable": True,
+        "skill_studio_session_id": session_id,
+        "agent_instruction": (
+            "The saved draft could not be read; it is not missing, and nothing was changed. "
+            "Retry the same call once. Do not resubmit the outline or begin the draft again. "
+            "If it fails again, tell the user the service is temporarily unavailable."
+        ),
+    }
+    if response.get("status_code") is not None:
+        failure["status_code"] = response["status_code"]
+    return None, failure
 
 
 def _handle_begin_agent_product_generation(args: dict[str, Any], **_: Any) -> str:
@@ -9415,10 +9657,65 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     if current_revision != revision:
-        # Rejected from the GET above only: nothing was claimed or dispatched.
         # The user confirmed an exact revision, and the current one may carry
         # changes they never reviewed, so it must not be confirmed silently.
-        _block_canvas_after_revision_conflict(project_id, canvas_id)
+        # Hand the stale confirmation to the server: revisions only grow, so it
+        # can claim nothing, and the server records the conflict with the draft
+        # so canvas writes from any process wait for a fresh confirmation.
+        try:
+            claim_response = _request(
+                "POST",
+                _workflow_draft_api_path(project_id, canvas_id, draft_id, "claim"),
+                body={"revision": revision},
+            )
+        except Exception as exc:
+            claim_response = {"ok": False, "error": f"request failed: {type(exc).__name__}"}
+        if not isinstance(claim_response, dict):
+            claim_response = {"ok": False}
+        claim_status = claim_response.get("status")
+        server_revision = claim_response.get("current_revision")
+        if claim_response.get("ok") is False and claim_status == "workflow_draft_unavailable":
+            # The draft expired or was removed since it was read above. Nothing is
+            # left to confirm, so no write waits on it: answer as that read would.
+            return tool_result(claim_response)
+        if not (
+            claim_response.get("ok") is False
+            and claim_status == "workflow_draft_revision_conflict"
+            and isinstance(server_revision, int)
+            and not isinstance(server_revision, bool)
+        ):
+            # Only the server's own refusal shows that it judged this revision.
+            # Anything else leaves the conflict unrecorded, and reporting it as
+            # recorded would let the next canvas write through unnoticed.
+            return tool_result(
+                {
+                    "ok": False,
+                    "status": "workflow_draft_revision_conflict_unrecorded",
+                    "code": "workflow_draft_revision_conflict_unrecorded",
+                    "error": (
+                        "the server did not acknowledge the stale workflow draft "
+                        "confirmation, so the revision conflict is not recorded: "
+                        f"{claim_response.get('error') or 'unexpected response'}"
+                    ),
+                    "user_message": "暂时无法登记工作流草稿的版本冲突，本次确认未创建任何节点，请稍后重试。",
+                    "retryable": True,
+                    **(
+                        {"status_code": claim_response["status_code"]}
+                        if isinstance(claim_response.get("status_code"), int)
+                        else {}
+                    ),
+                    "agent_instruction": (
+                        "Nothing was created. The user confirmed a revision the draft has "
+                        "moved past, and the DramaClaw server could not be reached to record "
+                        "that conflict, so canvas writes are not yet held for a fresh "
+                        "confirmation; this is a server or network failure, not a problem "
+                        "with your arguments. Retry the same call once with the same "
+                        "draft_id and revision before any canvas write. If it fails again, "
+                        "tell the user the service is temporarily unavailable; do not "
+                        "confirm another revision or switch to a canvas write tool."
+                    ),
+                }
+            )
         return tool_result(
             {
                 "ok": False,
@@ -9426,7 +9723,9 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "error": "workflow draft revision changed before confirmation",
                 "user_message": "工作流草稿在你确认后已被修改，本次确认未创建任何节点，请查看最新方案后重新确认。",
                 "retryable": False,
-                "current_revision": current_payload.get("revision"),
+                # The revision the server judged against; it can be newer than
+                # the one read above.
+                "current_revision": server_revision,
                 "agent_instruction": (
                     "Nothing was created. The draft changed after the user reviewed it. "
                     "Read the draft with freezone_get_workflow, show the current "
@@ -9501,9 +9800,8 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     # The user has explicitly confirmed the exact revision and the server has
-    # claimed its durable task. Release the stale-revision write fence before
-    # dispatching this authorized command.
-    _clear_canvas_revision_conflict(project_id, canvas_id)
+    # claimed its durable task, which also ended any stale-revision write fence
+    # it had recorded for this canvas.
     explicit_project = str(args.get("project_id") or "").strip()
     explicit_canvas = str(args.get("canvas_id") or "").strip()
     stored_project = str(payload.get("project_id") or "").strip()
@@ -9774,6 +10072,9 @@ def _validate_dynamic_recipe_action_binding(
 def _canvas_management_preamble(project: str) -> dict[str, Any] | None:
     if _default_project_id() and project != _default_project_id():
         return _bound_scope_mismatch(project, None)
+    refusal = _agent_canvas_executor_refusal()
+    if refusal is not None:
+        return refusal
     if _agent_canvas_executor() != "server":
         return {
             "ok": False, "status": "unsupported", "code": "canvas_server_executor_required",
@@ -9789,6 +10090,10 @@ def _canvas_management_preamble(project: str) -> dict[str, Any] | None:
 
 
 def _canvas_management_failure(result: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    allowed = set(_RESULT_COMMON_PROPERTIES) | {"example", "errors"}
+    if _agent_key_session_failure(result) is not None:
+        # Its HTTP status is the session exchange's, not the canvas API's: keep its guidance.
+        return {key: value for key, value in result.items() if key in allowed}
     result = dict(result)
     status_code = result.pop("status_code", None)
     result.setdefault("status", "failed")
@@ -9818,7 +10123,6 @@ def _canvas_management_failure(result: dict[str, Any], args: dict[str, Any]) -> 
             )
     result["agent_instruction"] = instruction
     result["next_action"] = "retry" if result["retryable"] else "tell_user"
-    allowed = set(_RESULT_COMMON_PROPERTIES) | {"example", "errors"}
     return {key: value for key, value in result.items() if key in allowed}
 
 
@@ -9885,7 +10189,7 @@ def _handle_create_canvas(args: dict[str, Any], **_: Any) -> str:
                 "characters. Keep the user's real values."
             ),
         })
-    turn = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    turn = request_context.get("DRAMACLAW_TURN_ID", "").strip()
     bound = _default_canvas_id()
     request_id = (
         hashlib.sha256(json.dumps(
@@ -10633,6 +10937,9 @@ def _request_canvas_context_from_frontend(
     mismatch = _chat_canvas_scope_mismatch(project, canvas)
     if mismatch is not None:
         return tool_result(mismatch)
+    refusal = _agent_canvas_executor_refusal()
+    if refusal is not None:
+        return tool_result(refusal)
     if _agent_canvas_executor() == "server":
         project = project or _default_project_id()
         canvas = canvas or _default_canvas_id()
@@ -11024,15 +11331,6 @@ def _result_field_schema(field: str) -> dict[str, Any]:
     if field in {"durable_receipt", "receipt"}:
         return {"type": ["object", "string", "null"]}
     return {"type": ["object", "array", "string", "number", "boolean", "null"]}
-
-
-def _load_stdlib_tool_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load agent tool module from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 try:
@@ -15054,7 +15352,9 @@ def _bind_structured_result_input(handler, tool_name=""):
             external and tool_name in _IMAGE_REFERENCE_TOOLS
         )
         try:
-            result = handler(args, *handler_args, **handler_kwargs)
+            with _watch_agent_key_session_failures() as seen:
+                result = handler(args, *handler_args, **handler_kwargs)
+            result = _answer_with_agent_key_session_failure(result, seen)
             completed = True
             return result
         finally:

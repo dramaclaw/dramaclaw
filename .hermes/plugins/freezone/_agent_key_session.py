@@ -3,25 +3,58 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
 import math
-import os
+import importlib.util
 from pathlib import Path
 import re
+import sys
 from threading import Lock
 import time
+from types import ModuleType
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
-_CACHE: dict[tuple[str, str, str], tuple[str, float]] = {}
-_LOCKS: dict[tuple[str, str, str], Any] = {}
-_SECRETS: set[str] = set()
-_GLOBAL_LOCK = Lock()
+def _load_request_context():
+    path = Path(__file__).with_name("_request_context.py")
+    if not path.is_file():
+        path = path.with_name("request_context.py")
+    spec = importlib.util.spec_from_file_location("_dramaclaw_request_context", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load request context from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+request_context = _load_request_context()
+
+
+# Sessions are kept process-wide, so every bundled copy of this module reuses the
+# sessions any other copy, or a server that opened them for a request, already holds.
+_holder = ModuleType("_dramaclaw_agent_key_session_state")
+_holder.cache = {}
+_holder.locks = {}
+_holder.secrets = set()
+_holder.lock = Lock()
+_state = sys.modules.setdefault(_holder.__name__, _holder)
+_CACHE: dict[tuple[str, str, str], tuple[str, float]] = _state.cache
+_LOCKS: dict[tuple[str, str, str], Any] = _state.locks
+_SECRETS: set[str] = _state.secrets
+_GLOBAL_LOCK = _state.lock
+if not hasattr(_state, "failures"):
+    _state.failures = ContextVar("dramaclaw_agent_key_session_failures", default=None)
+# The session failures of the current tool call, shared by every bundled copy.
+_FAILURES: ContextVar[list[dict[str, Any]] | None] = _state.failures
+# A session closer than this to its expiry is exchanged again before it is used.
+_RENEW_SECONDS = 60
 _UNSUPPORTED = (
     "This server does not support agent keys via POST /api/v1/agent/sessions; "
     "for a local community API use DRAMACLAW_LOCAL_AGENT_TRUST=1 instead."
@@ -72,10 +105,10 @@ def _session_request(
 def agent_key_mode() -> bool:
     """Whether an agent key is configured without a turn token override."""
     return any(
-        os.environ.get(name, "").strip()
+        request_context.get(name, "").strip()
         for name in ("DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_KEY")
     ) and not any(
-        os.environ.get(name, "").strip()
+        request_context.get(name, "").strip()
         for name in ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE")
     )
 
@@ -106,13 +139,139 @@ def redact(value: Any) -> Any:
 
 
 def protect(call: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-    """Keep exceptions and results from carrying credentials out of key mode."""
+    """Keep exceptions and results from carrying credentials out of key mode.
+
+    A session failure is also recorded for an enclosing ``watch_failures`` block.
+    """
     try:
         result = call()
     except Exception:
         # Exceptions from preparation, openers or decoders may contain secrets.
         result = {"ok": False, "code": "agent_key_request_failed", "error": "Agent key request failed"}
-    return redact(result)
+    result = redact(result)
+    seen = _FAILURES.get()
+    if seen is not None and is_session_failure(result):
+        seen.append(result)
+    return result
+
+
+@contextmanager
+def watch_failures() -> Iterator[list[dict[str, Any]]]:
+    """Collect the session failures of the requests made inside this block.
+
+    A tool that turns a failed request into an error of its own loses the session
+    failure's guidance: whether the key was rejected or the server was unavailable,
+    and who can fix it. Watching the whole tool call lets ``failure_behind`` answer
+    with that guidance instead, wherever the tool shaped its error.
+    """
+    seen: list[dict[str, Any]] = []
+    token = _FAILURES.set(seen)
+    try:
+        yield seen
+    finally:
+        _FAILURES.reset(token)
+
+
+def failure_behind(result: Any, seen: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The session failure a failed tool ``result`` came from, if one was watched.
+
+    A tool that still succeeded, for example by tolerating an optional read, keeps
+    its result.
+    """
+    if not seen or not isinstance(result, dict) or result.get("ok") is not False:
+        return None
+    return seen[0]
+
+
+def transport_refusal(api_base: str) -> dict[str, Any] | None:
+    """The refusal for an API address a session token must not be sent to, if any."""
+    parsed = urlsplit(api_base)
+    if parsed.scheme == "https" or (
+        parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    ):
+        return None
+    return {
+        "ok": False, "code": "agent_key_insecure_transport",
+        "error": "Agent keys require https or a loopback http API URL",
+    }
+
+
+def _scope_for(project_id: str | None) -> dict[str, str]:
+    return {"kind": "project", "id": project_id} if project_id else {"kind": "home"}
+
+
+def _cache_key(api_base: str, key: str, scope: dict[str, str]) -> tuple[str, str, str]:
+    return (
+        api_base, hashlib.sha256(key.encode("utf-8")).hexdigest(),
+        json.dumps(scope, sort_keys=True),
+    )
+
+
+def live_session(api_base: str, key: str, project_id: str | None) -> str | None:
+    """The cached session token of ``key`` for the scope, unless it is close to expiry."""
+    with _GLOBAL_LOCK:
+        session = _CACHE.get(_cache_key(api_base, key, _scope_for(project_id)))
+    if session is None or session[1] - time.time() <= _RENEW_SECONDS:
+        return None
+    return session[0]
+
+
+def remember_session(
+    api_base: str, key: str, project_id: str | None, token: str, expires_at: float,
+) -> None:
+    """Cache a session ``key`` was exchanged for elsewhere, for the requests it makes."""
+    _remember(key)
+    _remember(token)
+    with _GLOBAL_LOCK:
+        _CACHE[_cache_key(api_base, key, _scope_for(project_id))] = (token, expires_at)
+
+
+# Codes of results this module returns instead of the server's answer: no request
+# reached the API with a session, so the result says nothing about the API itself.
+SESSION_FAILURE_CODES = frozenset({
+    "agent_key_unavailable", "agent_key_insecure_transport", "agent_key_request_failed",
+    "agent_key_exchange_failed", "agent_key_exchange_unsupported",
+    "agent_key_exchange_redirected", "agent_key_request_redirected",
+})
+
+
+def is_session_failure(result: Any) -> bool:
+    """Whether ``result`` is this module's refusal rather than an answer from the API."""
+    return (
+        isinstance(result, dict) and result.get("ok") is False
+        and result.get("code") in SESSION_FAILURE_CODES
+    )
+
+
+def _failure_guidance(status: int | None) -> dict[str, Any]:
+    """Say who can fix a failed exchange: 401/403 need a new key, anything else a retry."""
+    if status in {401, 403}:
+        return {
+            "status": "rejected", "reason": "agent_key_rejected",
+            "retryable": False, "next_action": "tell_user",
+            "message": (
+                f"The server rejected the agent key (HTTP {status}): it is invalid, revoked, "
+                "expired or not allowed for this project. Ask the key owner for a new agent key "
+                "and configure the agent with it."
+            ),
+            "agent_instruction": (
+                "Do not retry with the same key. Tell the user the agent key was rejected "
+                "and that a new agent key must be configured."
+            ),
+        }
+    received = f"HTTP {status}" if status is not None else "no response"
+    return {
+        "status": "unavailable", "reason": "agent_key_service_unavailable",
+        "retryable": True, "next_action": "retry",
+        "message": (
+            f"The agent key could not be checked because the server is temporarily "
+            f"unavailable ({received}); the key itself was not rejected. Please try again later."
+        ),
+        "agent_instruction": (
+            "Retry once later. If it still fails, tell the user the service is temporarily "
+            "unavailable; the agent key does not need to be replaced."
+        ),
+    }
 
 
 def _exchange_error(status: int, *, unsupported: bool = False) -> dict[str, Any]:
@@ -121,6 +280,7 @@ def _exchange_error(status: int, *, unsupported: bool = False) -> dict[str, Any]
         "status_code": status,
         "code": "agent_key_exchange_unsupported" if unsupported else "agent_key_exchange_failed",
         "error": _UNSUPPORTED if unsupported else "Agent key session exchange failed",
+        **({} if unsupported else _failure_guidance(status)),
     }
 
 
@@ -154,7 +314,10 @@ def _exchange(
         return _exchange_error(exc.code, unsupported=exc.code in {404, 405})
     except (URLError, OSError) as exc:
         reason = exc.reason if isinstance(exc, URLError) else str(exc)
-        return {"ok": False, "code": "agent_key_exchange_failed", "error": f"network_error: {reason}"}
+        return {
+            "ok": False, "code": "agent_key_exchange_failed", "error": f"network_error: {reason}",
+            **_failure_guidance(None),
+        }
     try:
         response = json.loads(text)
     except ValueError:
@@ -181,36 +344,35 @@ def request(
     shape_http_error: Callable[[int, str, str], dict[str, Any]],
 ) -> dict[str, Any]:
     """Exchange a key lazily, then retry one business 401 with a fresh session."""
-    key_file = os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+    key_file = request_context.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
     try:
         key = (
             Path(key_file).read_text(encoding="utf-8").strip() if key_file
-            else os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+            else request_context.get("DRAMACLAW_AGENT_KEY", "").strip()
         )
     except (OSError, UnicodeError, ValueError):
         key = ""
     if not key:
         return {"ok": False, "code": "agent_key_unavailable", "error": "Agent key is unavailable"}
     _remember(key)
-    parsed = urlsplit(api_base)
-    if parsed.scheme != "https" and not (
-        parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
-    ):
-        return {
-            "ok": False, "code": "agent_key_insecure_transport",
-            "error": "Agent keys require https or a loopback http API URL",
-        }
+    refused = transport_refusal(api_base)
+    if refused is not None:
+        return refused
     project = re.search(r"/projects/([^/?#]+)", api_path)
-    project_id = unquote(project.group(1)) if project else os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
-    scope = {"kind": "project", "id": project_id} if project_id else {"kind": "home"}
-    cache_key = (api_base, hashlib.sha256(key.encode("utf-8")).hexdigest(), json.dumps(scope, sort_keys=True))
+    project_id = (
+        unquote(project.group(1))
+        if project
+        else request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
+    )
+    scope = _scope_for(project_id)
+    cache_key = _cache_key(api_base, key, scope)
     with _GLOBAL_LOCK:
         entry_lock = _LOCKS.setdefault(cache_key, Lock())
 
     for attempt in range(2):
         with entry_lock:
             session = _CACHE.get(cache_key)
-            if session is None or session[1] - time.time() <= 60:
+            if session is None or session[1] - time.time() <= _RENEW_SECONDS:
                 exchanged = _exchange(api_base, key, scope, headers, timeout)
                 if isinstance(exchanged, dict):
                     return exchanged

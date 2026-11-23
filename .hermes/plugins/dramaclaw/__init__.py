@@ -7,6 +7,7 @@ Python's stdlib HTTP client and the DramaClaw agent environment injected by
 
 from __future__ import annotations
 
+from contextvars import copy_context
 import importlib.util
 import json
 import os
@@ -97,6 +98,11 @@ def _load_stdlib_tool_module(name: str, path: Path):
     return module
 
 
+request_context = _load_stdlib_tool_module(
+    "_dramaclaw_request_context", Path(__file__).resolve().parent / "_request_context.py"
+)
+
+
 try:
     _SHARED_AGENT_KEY_SESSION = _load_stdlib_tool_module(
         "_dramaclaw_agent_key_session", Path(__file__).resolve().parent / "_agent_key_session.py"
@@ -107,28 +113,28 @@ except Exception:
 
 def _agent_token_configured() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
-        or os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+        request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+        or request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     )
 
 
 def _agent_key_configured() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
-        or os.environ.get("DRAMACLAW_AGENT_KEY", "").strip()
+        request_context.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+        or request_context.get("DRAMACLAW_AGENT_KEY", "").strip()
     )
 
 
 def _current_agent_token() -> str:
     """Read a turn token lazily without depending on the CE application venv."""
 
-    token_file = os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    token_file = request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     if token_file:
         try:
             return Path(token_file).read_text(encoding="utf-8").strip()
         except OSError:
             return ""
-    return os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+    return request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
 
 
 def _has_text_content_filter(value: Any) -> bool:
@@ -288,17 +294,17 @@ def _with_chat_error_hints(value: Any) -> Any:
 
 
 def _tool_mode_path() -> Path | None:
-    explicit = os.environ.get("DRAMACLAW_TOOL_MODE_FILE", "").strip()
+    explicit = request_context.get("DRAMACLAW_TOOL_MODE_FILE", "").strip()
     if explicit:
         return Path(explicit)
-    home = os.environ.get("HERMES_HOME", "").strip()
+    home = request_context.get("HERMES_HOME", "").strip()
     if home:
         return Path(home) / "tmp" / "dramaclaw_tool_mode.json"
     return None
 
 
 def _current_tool_mode() -> str:
-    env_mode = os.environ.get("DRAMACLAW_TOOL_MODE", "").strip()
+    env_mode = request_context.get("DRAMACLAW_TOOL_MODE", "").strip()
     if env_mode:
         return env_mode
     path = _tool_mode_path()
@@ -347,7 +353,7 @@ def _guard_freezone_mainline_write(tool_name: str, handler):
 
 def _available() -> bool:
     return bool(
-        os.environ.get("DRAMACLAW_API_URL")
+        request_context.get("DRAMACLAW_API_URL")
         and (
             _agent_token_configured()
             or _agent_key_configured()
@@ -358,7 +364,7 @@ def _available() -> bool:
 
 
 def _base_url() -> str:
-    value = os.environ.get("DRAMACLAW_API_URL", "").strip()
+    value = request_context.get("DRAMACLAW_API_URL", "").strip()
     if not value:
         raise ValueError("DRAMACLAW_API_URL is not set")
     return value.rstrip("/")
@@ -372,19 +378,19 @@ def _token() -> str:
 
 
 def _ce_owner_mode() -> bool:
-    raw = os.environ.get("DRAMACLAW_CE_OWNER", "").strip().lower()
+    raw = request_context.get("DRAMACLAW_CE_OWNER", "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
 def _ce_owner_allow_remote() -> bool:
-    raw = os.environ.get("DRAMACLAW_CE_OWNER_ALLOW_REMOTE", "").strip().lower()
+    raw = request_context.get("DRAMACLAW_CE_OWNER_ALLOW_REMOTE", "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
 def _enforce_ce_owner_target(url: str | None = None) -> None:
     if _ce_owner_allow_remote():
         return
-    parsed = urlparse(url or os.environ.get("DRAMACLAW_API_URL", "").strip())
+    parsed = urlparse(url or request_context.get("DRAMACLAW_API_URL", "").strip())
     if (parsed.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}:
         return
     raise ValueError(
@@ -395,14 +401,14 @@ def _enforce_ce_owner_target(url: str | None = None) -> None:
 
 
 def _local_agent_trust_enabled() -> bool:
-    if os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
+    if request_context.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower() not in {
         "1",
         "true",
         "yes",
         "on",
     }:
         return False
-    parsed = urlparse(os.environ.get("DRAMACLAW_API_URL", "").strip())
+    parsed = urlparse(request_context.get("DRAMACLAW_API_URL", "").strip())
     return (parsed.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}
 
 
@@ -424,13 +430,13 @@ def _request_headers(user_agent: str) -> dict[str, str]:
 
 
 def _default_project_id() -> str:
-    return os.environ.get("DRAMACLAW_PROJECT_ID", "").strip()
+    return request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
 
 
 def _project_output_dir() -> Path | None:
     value = (
-        os.environ.get("DRAMACLAW_PROJECT_OUTPUT_DIR")
-        or os.environ.get("SUPERTALE_PROJECT_OUTPUT_DIR")
+        request_context.get("DRAMACLAW_PROJECT_OUTPUT_DIR")
+        or request_context.get("SUPERTALE_PROJECT_OUTPUT_DIR")
         or ""
     ).strip()
     return Path(value) if value else None
@@ -668,8 +674,9 @@ def _launch_capacity_aware_batch_dispatcher(
             with _AGENT_BATCH_DISPATCHERS_LOCK:
                 _AGENT_BATCH_DISPATCHERS.pop(batch_id, None)
 
+    context = copy_context()
     thread = threading.Thread(
-        target=run,
+        target=lambda: context.run(run),
         name=f"dramaclaw-batch-{batch_id[-12:]}",
         daemon=True,
     )
@@ -1212,9 +1219,13 @@ def _handle_list_ingest_uploads(args: dict[str, Any], **_: Any) -> str:
         if current_project and project != current_project:
             raise ValueError("can only list uploads for the current Hermes project scope")
 
-        project_dir_raw = os.environ.get("DRAMACLAW_PROJECT_OUTPUT_DIR", "").strip()
+        project_dir_raw = request_context.get(
+            "DRAMACLAW_PROJECT_OUTPUT_DIR", ""
+        ).strip()
         if not project_dir_raw:
-            project_dir_raw = os.environ.get("SUPERTALE_PROJECT_OUTPUT_DIR", "").strip()
+            project_dir_raw = request_context.get(
+                "SUPERTALE_PROJECT_OUTPUT_DIR", ""
+            ).strip()
         if not project_dir_raw:
             return tool_result(
                 {
@@ -3979,6 +3990,35 @@ TOOLS = (
         ),
         _handle_start_video_batch,
     ),
+)
+
+
+def _answer_with_agent_key_session_failure(handler):
+    """Answer a failed tool call with the agent key session failure behind it.
+
+    Tools turn a failed request into errors of their own (a failed stage, a
+    rejected batch item); for a refused or unavailable agent key those would hide
+    whether the key must be replaced or the call retried.
+    """
+    def answered(args: dict[str, Any], **kwargs: Any) -> str:
+        session = _SHARED_AGENT_KEY_SESSION
+        if session is None:
+            return handler(args, **kwargs)
+        with session.watch_failures() as seen:
+            result = handler(args, **kwargs)
+        try:
+            payload = json.loads(result) if isinstance(result, str) else result
+        except json.JSONDecodeError:
+            return result
+        failure = session.failure_behind(payload, seen)
+        return result if failure is None else tool_result(failure)
+
+    return answered
+
+
+TOOLS = tuple(
+    (name, schema, _answer_with_agent_key_session_failure(handler))
+    for name, schema, handler in TOOLS
 )
 
 

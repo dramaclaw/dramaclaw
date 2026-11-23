@@ -256,6 +256,8 @@ from novelvideo.freezone.workflow_drafts import (
     patch_workflow_draft,
     prune_expired_workflow_drafts,
     read_workflow_draft,
+    record_workflow_draft_revision_conflict,
+    workflow_draft_revision_conflict_pending,
 )
 from novelvideo.freezone.agent_product_operations import (
     PRODUCT_TASK_TYPES,
@@ -5380,6 +5382,48 @@ def _workflow_draft_api_data(
     return result
 
 
+def _validate_agent_generation_outline_draft(
+    *,
+    state_dir: Path,
+    generation_session_id: str,
+    project_id: str,
+    canvas_id: str,
+    draft: dict[str, Any],
+) -> None:
+    """Validate a draft that only plans the work and admits nothing yet.
+
+    Without a manifest a draft may hold the outline, and may carry forward the
+    results this session already stored. It can neither introduce operations
+    nor introduce or alter generated results.
+    """
+
+    def reject(message: str) -> None:
+        raise ValueError(f"invalid generation outline: {message}")
+
+    if str(draft.get("project_id") or project_id).strip() != project_id:
+        reject("draft belongs to another project")
+    if str(draft.get("canvas_id") or canvas_id).strip() != canvas_id:
+        reject("draft belongs to another canvas")
+    if not isinstance(draft.get("outline"), dict):
+        reject("outline must be an object")
+    try:
+        int(draft.get("expected_recipe_count") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "invalid generation outline: expected_recipe_count is invalid"
+        ) from exc
+    if draft.get("operations") not in (None, {}, {"recipes": {}}):
+        reject("a draft without a manifest cannot carry operations")
+    stored = read_agent_generation_session(
+        project_dir=state_dir, generation_session_id=generation_session_id
+    )
+    stored_draft = stored["draft"] if stored is not None else {}
+    if draft.get("skill") and draft["skill"] != stored_draft.get("skill"):
+        reject("a draft without a manifest cannot change the generated Skill")
+    if draft.get("recipes") and draft["recipes"] != stored_draft.get("recipes"):
+        reject("a draft without a manifest cannot change generated Recipes")
+
+
 def _validate_agent_generation_session_payload(
     *,
     state_dir: Path,
@@ -5395,6 +5439,15 @@ def _validate_agent_generation_session_payload(
     def reject(message: str) -> None:
         raise ValueError(f"invalid generation manifest: {message}")
 
+    if not manifest and not draft.get("manifest"):
+        _validate_agent_generation_outline_draft(
+            state_dir=state_dir,
+            generation_session_id=generation_session_id,
+            project_id=project_id,
+            canvas_id=canvas_id,
+            draft=draft,
+        )
+        return
     if str(manifest.get("generation_session_id") or "").strip() != generation_session_id:
         reject("generation session identity mismatch")
     generation_attempt_id = str(manifest.get("generation_attempt_id") or "").strip()
@@ -16784,6 +16837,38 @@ async def get_canvas_workflow_draft(
     }
 
 
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-draft-revision-conflict",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_canvas_workflow_draft_revision_conflict(
+    project: str,
+    canvas_id: str,
+    user: dict = Depends(get_api_user),
+):
+    """Tell whether a stale confirmation left this canvas waiting on the user.
+
+    A confirmation that named an older draft revision is recorded with the draft.
+    Until the user confirms the latest revision, cancels the draft or it expires,
+    an agent must not write to the canvas on the strength of the old approval.
+    """
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    pending = await asyncio.to_thread(
+        workflow_draft_revision_conflict_pending,
+        project_dir=state_dir,
+        canvas_id=canvas_id,
+    )
+    return {
+        "ok": True,
+        "data": {"confirmation_required": pending is not None, **(pending or {})},
+    }
+
+
 @router.post(
     "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts/{draft_id}/cancel",
     tags=[TAG_FREEZONE_CANVAS],
@@ -17464,6 +17549,14 @@ async def claim_canvas_workflow_draft(
             "error": current_error or "workflow draft not found",
         }
     if current_draft["revision"] != revision:
+        # Canvas writes wait on this record until the latest revision is confirmed.
+        await asyncio.to_thread(
+            record_workflow_draft_revision_conflict,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            revision=revision,
+        )
         return {
             "ok": False,
             "status": "workflow_draft_revision_conflict",

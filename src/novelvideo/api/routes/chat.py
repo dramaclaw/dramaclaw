@@ -3594,6 +3594,7 @@ async def _watch_bridge_events(
                         ),
                         "scope": scope.to_dict(),
                         "turn_id": turn_id,
+                        "project_id": ui_event["project_id"],
                         "canvas_id": pending.get("canvas_id"),
                         "agent_id": scope.agent_id or "main",
                         "bridge_key": key,

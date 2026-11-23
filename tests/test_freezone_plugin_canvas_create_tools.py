@@ -971,6 +971,66 @@ def test_clarification_with_a_listener_still_waits_on_the_card(
     assert len(_pending_cards(agent, "default")) == 1
 
 
+# --- Skill Studio draft card when no interface can show it ------------------------
+
+SKILL_STUDIO_NO_UI = "skill_studio_ui_unavailable"
+DRAFT_CARD = {"type": "skill_studio.draft", "skill_studio_session_id": "studio-1"}
+
+
+def _pending_skill_studio_cards(h, canvas):
+    return canvas_command_bridge.list_pending_bridge_messages(
+        project_id="proj", canvas_id=canvas, kinds={"skill_studio_event"},
+        bridge_dir=h.tmp / "bridge",
+    )
+
+
+def test_external_skill_studio_draft_returns_at_once_without_leaving_a_card(
+    external, monkeypatch,
+):
+    monkeypatch.setenv("DRAMACLAW_SKILL_STUDIO_RESULT_TIMEOUT_SECONDS", "3")
+    started = time.monotonic()
+    payload = _payload(external.plugin._emit_skill_studio_event("proj", "default", DRAFT_CARD))
+    assert time.monotonic() - started < 2
+    assert payload["ok"] is False, payload
+    assert payload["status"] == payload["code"] == SKILL_STUDIO_NO_UI
+    assert payload["skill_studio_status"] == "not_shown"
+    assert payload["retryable"] is False
+    assert (payload["project_id"], payload["canvas_id"]) == ("proj", "default")
+    assert payload["skill_studio_session_id"] == "studio-1"
+    assert "bridge_key" not in payload
+    assert _pending_skill_studio_cards(external, "default") == []
+
+
+def test_external_skill_studio_draft_checks_scope_before_the_listener(seams, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.delenv("DRAMACLAW_TURN_ID")
+    assert _site_outcome(seams, "skill_studio_event", "other", "canvas_b") == "refused"
+    assert _site_outcome(seams, "skill_studio_event", "proj", "canvas_c") == "refused"
+    payload = _payload(STRICT_SITES["skill_studio_event"](seams.plugin, "proj", "default"))
+    assert payload["code"] == SKILL_STUDIO_NO_UI, payload
+
+
+@pytest.mark.parametrize(("external_mcp", "turn_id"), [
+    (None, "turn-1"),
+    (None, None),
+    ("1", "turn-1"),
+])
+def test_skill_studio_draft_with_a_listener_still_waits_on_the_card(
+    agent, monkeypatch, external_mcp, turn_id,
+):
+    for name, value in (("DRAMACLAW_EXTERNAL_MCP", external_mcp), ("DRAMACLAW_TURN_ID", turn_id)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("DRAMACLAW_SKILL_STUDIO_RESULT_TIMEOUT_SECONDS", "1")
+    payload = _payload(agent.plugin._emit_skill_studio_event("proj", "default", DRAFT_CARD))
+    assert payload["status"] == "skill_studio_frontend_timeout", payload
+    assert payload["skill_studio_status"] == "pending_user_input"
+    assert payload["bridge_key"]
+    assert len(_pending_skill_studio_cards(agent, "default")) == 1
+
+
 def test_external_agent_without_interface_builds_on_a_new_canvas(external):
     """List, create, ask (no interface), then write a text node on the new canvas."""
     default_before = _read(external.root, "default")

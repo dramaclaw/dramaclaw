@@ -26,6 +26,9 @@ class AuthFailureReason(str, Enum):
     REVOKED = "revoked"
     EXPIRED = "expired"
     USER_SUSPENDED = "suspended"
+    # The credential is valid but may not be used for what it was presented for,
+    # such as an agent key presented for a project it is not allowed on.
+    FORBIDDEN = "forbidden"
 
 
 class AuthError(Exception):

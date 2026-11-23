@@ -7,10 +7,10 @@ the same deterministic plans without duplicating the protected write boundary.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
-import os
 import time
 import urllib.request
 from pathlib import Path
@@ -23,7 +23,7 @@ from mcp.server.stdio import stdio_server
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 
-from novelvideo.chat import agent_key_session
+from novelvideo.chat import agent_key_session, request_context
 from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.workflow_tool_validation import workflow_argument_refusal
 from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
@@ -189,8 +189,14 @@ _WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+# The session failure fields the workflow tools' failure schema carries.
+_SESSION_FAILURE_FIELDS = (
+    "ok", "status", "code", "error", "message", "retryable", "next_action", "agent_instruction",
+)
+
+
 def _username() -> str:
-    return str(os.environ.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
+    return str(request_context.get("DRAMACLAW_USERNAME") or "local").strip() or "local"
 
 
 def _agent_key_mode() -> bool:
@@ -198,7 +204,7 @@ def _agent_key_mode() -> bool:
 
 
 def _server_catalog() -> dict[str, list[dict[str, Any]]] | None:
-    api_base = os.environ.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
+    api_base = request_context.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
     if not api_base:
         return None
 
@@ -395,7 +401,8 @@ async def read_resource(uri: Any) -> str:
     if parsed.scheme != "dramaclaw-workflow":
         raise ValueError(UNSUPPORTED_RESOURCE_MESSAGE)
     key_mode = _agent_key_mode()
-    snapshot = _server_catalog() if key_mode else None
+    # The catalog read blocks on HTTP; the loop may be the one that has to answer it.
+    snapshot = await asyncio.to_thread(_server_catalog) if key_mode else None
     if key_mode and snapshot is None:
         raise ValueError("workflow catalog unavailable")
     with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
@@ -564,12 +571,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             "error": payload["message"],
         })
     key_mode = _agent_key_mode()
-    snapshot = _server_catalog() if key_mode else None
+    with agent_key_session.watch_failures() as session_failures:
+        snapshot = await asyncio.to_thread(_server_catalog) if key_mode else None
     if key_mode and snapshot is None:
-        return _result(name, {
+        refusal = {
             "ok": False,
             "status": "catalog_read_failed",
             "error": "Workflow catalog is unavailable for this agent key",
+        }
+        # A refused or unavailable key says whether to replace the key or retry.
+        failure = agent_key_session.failure_behind(refusal, session_failures)
+        return _result(name, refusal if failure is None else {
+            key: failure[key] for key in _SESSION_FAILURE_FIELDS if key in failure
         })
     with workflow_catalog_items_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
         return _call_catalog_tool(name, args, snapshot)
@@ -699,8 +712,6 @@ async def _main() -> None:
 
 
 def main() -> None:
-    import asyncio
-
     asyncio.run(_main())
 
 

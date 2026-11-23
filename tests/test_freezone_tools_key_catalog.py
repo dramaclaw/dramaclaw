@@ -143,7 +143,13 @@ async def test_tools_key_catalog_fails_closed(tools_session, tools_catalog_api, 
         response = await session.call_tool('freezone_get_workflow_skill', {'skill_id': skill})
         result = _catalog_tool_payload(response)
     assert result['ok'] is False
-    assert result['status'] == 'catalog_read_failed'
+    if failure == 'catalog-500':
+        assert result['status'] == 'catalog_read_failed'
+    else:
+        # A rejected key is reported as such, so the agent asks for a new key.
+        assert result['status'] == 'rejected'
+        assert result['code'] == 'agent_key_exchange_failed'
+        assert result['next_action'] == 'tell_user'
     text = ''.join(c.text for c in response.content if hasattr(c, 'text'))
     assert 'private-relay-user' not in text
     assert all(secret not in text for secret in (key, 'session-alice', 'session-bob'))
