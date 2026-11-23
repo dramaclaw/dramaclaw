@@ -44,6 +44,11 @@ def _event_file_id(canvas_id: str | None) -> str:
     return event_canvas_id
 
 
+def canvas_event_log_path(project_dir: Path, canvas_id: str | None) -> Path:
+    """The active event log for a canvas (rotated segments live under _segments/)."""
+    return canvas_events_dir(project_dir) / f"{_event_file_id(canvas_id)}.jsonl"
+
+
 def _rotate_if_large(project_dir: Path, path: Path, file_id: str) -> None:
     try:
         if path.stat().st_size <= CANVAS_EVENT_SEGMENT_BYTES:
@@ -80,7 +85,7 @@ def append_canvas_event(
     payload: dict,
 ) -> None:
     file_id = _event_file_id(canvas_id)
-    path = canvas_events_dir(project_dir) / f"{file_id}.jsonl"
+    path = canvas_event_log_path(project_dir, canvas_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     _rotate_if_large(Path(project_dir), path, file_id)
     record = {
