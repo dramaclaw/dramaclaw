@@ -755,8 +755,6 @@ describe("video model selection when the catalog request fails", () => {
   it.each([
     ["seedance-2.0", "newapi_seedance-2.0"],
     ["newapi_seedance-2.0", "newapi_seedance-2.0"],
-    ["seedance-1.5-pro", "newapi_seedance-1.5-pro"],
-    ["seedance-1.0-pro-fast", "newapi_seedance-1.0-pro-fast"],
   ])("preserves %s in the fallback catalog", async (persisted, expected) => {
     requestScope.project = `fallback-${persisted}`;
     vi.mocked(fetchFreezoneVideoModels).mockRejectedValueOnce(new Error("catalog unavailable"));
@@ -769,6 +767,21 @@ describe("video model selection when the catalog request fails", () => {
     });
     expect(result.current.selectedVideoModelId).toBe(expected);
   });
+
+  it.each(["seedance-1.5-pro", "newapi_seedance-1.0-pro-fast", "seedance-1.0-pro", "huimeng_seedance-1.0-pro"])(
+    "requires choosing a replacement for retired %s instead of running the first fallback",
+    async (model) => {
+      requestScope.project = `fallback-retired-${model}`;
+      vi.mocked(fetchFreezoneVideoModels).mockRejectedValueOnce(new Error("catalog unavailable"));
+      useCanvasStore.getState().setCanvasData([videoNode({ model, genMode: "textToVideo" })], []);
+      const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+      await waitFor(() => expect(getFreezoneVideoModelsSnapshot(requestScope.project).error).not.toBeNull());
+      expect(result.current.selectedVideoModelId).toBe("");
+      expect(result.current.submitDisabled).toBe(true);
+      await result.current.submit();
+      for (const endpoint of ALL_ENDPOINTS) expect(endpoint).not.toHaveBeenCalled();
+    },
+  );
 
   it("submits the standard model instead of Fast after a catalog failure", async () => {
     requestScope.project = "fallback-standard-submit";

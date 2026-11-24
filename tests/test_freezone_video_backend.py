@@ -402,17 +402,12 @@ def test_video_model_options_and_resolution_work() -> None:
     api_models = {item["apiModel"] for item in options}
 
     assert names[0] == "newapi_seedance-2.0-fast"
-    assert {
-        "newapi_seedance-2.0-fast",
-        "newapi_seedance-1.0-pro-fast",
-        "newapi_seedance-1.5-pro",
-    }.issubset(names)
+    assert {"newapi_seedance-1.0-pro-fast", "newapi_seedance-1.5-pro"}.isdisjoint(names)
     assert "newapi_grok-video-channel" not in names
     assert ids == set(names)
     assert api_models == set(names)
     assert all(item["providerId"] == "newapi" for item in options)
-    assert "Seedance1.0 Pro Fast" in labels
-    assert "Seedance1.5 Pro" in labels
+    assert {"Seedance1.0 Pro Fast", "Seedance1.5 Pro"}.isdisjoint(labels)
     assert "Seedance2.0 Fast" in labels
     assert "HappyHorse 1.0" in labels
     assert "Grok Video Channel" not in labels
@@ -509,15 +504,19 @@ def test_grok_video_channel_is_not_exposed_even_if_configured(monkeypatch: pytes
 
 
 def test_resolve_freezone_video_backend_accepts_id_and_label() -> None:
-    assert (
-        resolve_freezone_video_backend("newapi_seedance-1.0-pro-fast")
-        == "newapi_seedance-1.0-pro-fast"
-    )
-    assert resolve_freezone_video_backend("Seedance1.5 Pro") == "newapi_seedance-1.5-pro"
+    assert resolve_freezone_video_backend("Seedance2.0 Fast") == "newapi_seedance-2.0-fast"
     assert resolve_freezone_video_backend("huimeng_seedance20_fast") == "newapi_seedance-2.0-fast"
-    assert resolve_freezone_video_backend("seedance_fast") == "newapi_seedance-1.0-pro-fast"
-    assert resolve_freezone_video_backend("Seedance 1.5 有声") == "newapi_seedance-1.5-pro"
     assert resolve_freezone_video_backend(None) == "newapi_seedance-2.0-fast"
+
+
+@pytest.mark.parametrize("model", [
+    "seedance-1.0-pro", "newapi_seedance-1.0-pro", "huimeng_seedance-1.0-pro",
+    "newapi_seedance-1.0-pro-fast", "newapi_seedance-1.5-pro", "Seedance1.5 Pro",
+    "seedance_fast", "huimeng_seedance15_pro", "Seedance 1.5 无声", "seedance-1.5-pro",
+])
+def test_video_node_cannot_submit_retired_model_or_legacy_alias(model: str) -> None:
+    with pytest.raises(ValueError, match="unknown video model"):
+        resolve_freezone_video_backend(model)
 
 
 def test_seedance2_backend_detection_accepts_newapi_and_legacy_values() -> None:

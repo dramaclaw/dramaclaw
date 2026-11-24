@@ -692,6 +692,8 @@ export interface AudioNodeData extends NodeDisplayData {
   speechMode?: 'preset' | 'clone';
   presetVoice?: string;
   presetModel?: string;
+  /** Project-scoped catalog ID for reference-audio speech, not the upstream model name. */
+  cloneModelId?: string;
   /** New/converted nodes use explicit voice selection; absent on historical canvas nodes. */
   voicePolicyConfirmed?: boolean;
   /** music 模式：生成长度(毫秒),范围 3000–600000,缺省按后端默认 30000。 */

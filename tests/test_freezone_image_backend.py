@@ -645,6 +645,46 @@ def _patch_video_catalog(monkeypatch: pytest.MonkeyPatch, entry: dict[str, objec
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enterprise", [False, True], ids=["cached-ce", "scoped-ee"])
+async def test_video_node_rejects_retired_model_from_an_existing_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, enterprise: bool
+) -> None:
+    from novelvideo.ports import registry
+
+    _patch_freezone_project(monkeypatch, tmp_path)
+    rows = [
+        {"id": "old-10-pro", "apiModel": "newapi_seedance-1.0-pro"},
+        {"id": "old-10", "apiModel": "newapi_seedance-1.0-pro-fast"},
+        {"id": "old-15", "apiModel": "newapi_seedance-1.5-pro"},
+        {"id": "keep", "apiModel": "newapi_happyhorse-1.0"},
+    ]
+
+    async def list_models(media_type, *, user_id=None):
+        assert media_type == "video"
+        assert user_id == ("owner_1" if enterprise else None)
+        return rows
+
+    def get_port(name):
+        assert name == "media_model_catalog"
+        if enterprise:
+            return SimpleNamespace(list_models_for_user=list_models)
+        raise registry.PortNotRegistered(name)
+
+    monkeypatch.setattr(registry, "get_port", get_port)
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", list_models)
+    args = {"project": "58", "user": {"username": "admin"}}
+    listing = await freezone_routes.freezone_video_models(**args)
+    assert [entry["id"] for entry in listing["data"]] == ["keep"]
+    for retired in ["old-10", "old-10-pro", "old-15", "newapi_seedance-1.5-pro"]:
+        with pytest.raises(HTTPException) as exc:
+            await freezone_routes.freezone_video_gen(
+                **args, body=freezone_routes.FreezoneVideoGenRequest(prompt="pan", model=retired)
+            )
+        assert exc.value.status_code == 400
+        assert "unknown video model" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_freezone_video_omni_gen_uses_catalog_audio_total_limit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -694,7 +734,7 @@ async def test_freezone_video_omni_gen_skips_duration_guard_for_unknown_model(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """边界未知的模型（这里是 seedance-1.5-pro，由目录打开 all_reference）不套 2.0 的数字。
+    """边界未知、由目录打开 all_reference 的模型不套 Seedance 2.0 的数字。
 
     1.8~15.2s 是从 2.0 的报文里实测出来的，别人家的模型凭空 400 比漏拦更糟；要卡就在
     目录里配 referenceAudioTotalMaxSeconds 显式声明。
@@ -705,7 +745,7 @@ async def test_freezone_video_omni_gen_skips_duration_guard_for_unknown_model(
         {
             "catalogId": "cat-other",
             "id": "cat-other",
-            "apiModel": "newapi_seedance-1.5-pro",
+            "apiModel": "newapi_custom-reference-video",
             "providerId": "newapi",
             "supportedModes": ["all_reference"],
         },
@@ -749,7 +789,7 @@ async def test_freezone_video_omni_gen_catalog_total_does_not_apply_per_clip_bou
         {
             "catalogId": "cat-long",
             "id": "cat-long",
-            "apiModel": "newapi_seedance-1.5-pro",
+            "apiModel": "newapi_custom-reference-video",
             "providerId": "newapi",
             "supportedModes": ["all_reference"],
             "referenceAudioTotalMaxSeconds": 60,
@@ -1237,11 +1277,14 @@ async def test_freezone_video_generation_validates_catalog_video_duration_before
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("selection,expected_model", [(None, "seed-audio-1.0"), ("my-index", "index-tts-2")])
 async def test_freezone_audio_generation_enqueues_two_feature_billings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    selection: str | None,
+    expected_model: str,
 ) -> None:
-    from novelvideo.config import INDEXTTS2_RECORD_MODEL
+    from novelvideo.audio import voice_design_service
     from novelvideo.project_config import set_narrator_reference_audio_in_state_dir
     from novelvideo.seedance2_i2v.voice_clone import file_sha256
 
@@ -1256,6 +1299,14 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
         sha256=file_sha256(narrator),
     )
     captured: list[dict] = []
+
+    async def catalog(**kwargs):
+        return [
+            {"catalogId": key, "gatewayModel": model, "request": {"endpoint": "audio/speech"}}
+            for key, model in [("my-index", "index-tts-2"), ("seed-audio-1.0", "seed-audio-1.0")]
+        ], False
+
+    monkeypatch.setattr(voice_design_service, "project_audio_catalog", catalog)
 
     async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
         captured.append(kwargs)
@@ -1273,7 +1324,7 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
 
     await freezone_routes.freezone_audio_speech(
         project="58",
-        body=freezone_routes.FreezoneAudioSpeechRequest(text="她终于回来了。"),
+        body=freezone_routes.FreezoneAudioSpeechRequest(text="她终于回来了。", clone_model_id=selection),
         user={"username": "admin"},
     )
     await freezone_routes.freezone_audio_eleven_music(
@@ -1293,14 +1344,13 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
         "billable_chars": 7,
         "pricing_quantity": 7,
         "pricing_kind": "audio",
-        "pricing_model": INDEXTTS2_RECORD_MODEL,
-        "pricing_params": {},
+        "pricing_model": expected_model,
+        "catalog_id": selection or "seed-audio-1.0",
         "pricing_metrics": {
             "call_count": 1,
             "item_count": 1,
             "billable_chars": 7,
         },
-        "items": 7,
     }
 
     music_billing = captured[1]["payload"]["billing"]
