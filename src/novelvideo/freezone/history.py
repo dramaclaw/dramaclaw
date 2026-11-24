@@ -42,6 +42,17 @@ MAX_HISTORY_PROMPT_CHARS = 4000
 HISTORY_IDEMPOTENCY_LIMIT = 50
 HISTORY_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
 
+# Retention. Every write takes the node's history lock. A file is rewritten in
+# place, without deleted records and their tombstones, keeping the newest
+# HISTORY_RETENTION_RECORDS live records (the most the per-node API returns).
+# The rewrite runs once the file passes HISTORY_COMPACT_AT_BYTES *and* twice the
+# estimated size of the records it keeps, so nodes with large records (story
+# scripts carry their rows) still keep a full page and do not rewrite on every
+# append.
+HISTORY_RETENTION_RECORDS = 500
+HISTORY_COMPACT_AT_BYTES = 1024 * 1024
+_HISTORY_SIZE_SAMPLE_BYTES = 256 * 1024
+
 
 def build_node_history_record(
     *,
@@ -122,23 +133,92 @@ def append_generation_history(
     }
     path = generation_history_path(project_dir, normalized["canvas_id"], node_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    project_dir = Path(project_dir)
     if idempotency_key is not None:
         key = str(idempotency_key).strip()
         if not key or len(key) > 512:
             raise ValueError("invalid generation history idempotency key")
         return _append_generation_history_once(
-            project_dir=Path(project_dir),
+            project_dir=project_dir,
             path=path,
             node_id=node_id,
             normalized=normalized,
             key=key,
         )
-    with path.open("a", encoding="utf-8") as f:
-        f.write(
-            json.dumps(normalized, ensure_ascii=False, separators=(",", ":")) + "\n"
-        )
+    from novelvideo.freezone.canvas_lock import CanvasLockBusy
+
+    appended = False
+    try:
+        with _history_write_lock(project_dir, path) as guard:
+            guard.reassert()
+            _append_line(path, normalized)
+            appended = True
+            _compact_if_large(path, fence=guard.reassert)
+    except CanvasLockBusy:
+        # The lock only guards compaction. A generation that already succeeded
+        # must not fail over its history line: append unlocked and leave the
+        # compaction to the next write. A wait this long means the holder is
+        # stuck, not mid-rewrite, so the unlocked append is not lost.
+        logger.warning("history lock busy for %s; appending without compaction", path)
+        if not appended:
+            _append_line(path, normalized)
     prewarm_history_thumbnail(project_dir, normalized)
     return normalized
+
+
+def _history_write_lock(project_dir: Path, path: Path):
+    """The per-file lock every history write holds, so compaction never drops an append."""
+    from novelvideo.ports import get_canvas_write_mutex
+
+    key = f"{path.parent.name}/{path.name}"
+    lock_id = "history_" + hashlib.sha256(key.encode()).hexdigest()[:40]
+    return get_canvas_write_mutex().write_mutex(project_dir, lock_id)
+
+
+def _append_line(path: Path, value: dict[str, Any], *, fsync: bool = False) -> None:
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
+        if fsync:
+            stream.flush()
+            os.fsync(stream.fileno())
+
+
+def _average_line_bytes(path: Path, size: int) -> int:
+    """Estimate one record's size from the file's tail, without reading it all."""
+    with path.open("rb") as stream:
+        stream.seek(max(0, size - _HISTORY_SIZE_SAMPLE_BYTES))
+        sample = stream.read()
+    return max(1, len(sample) // max(1, sample.count(b"\n")))
+
+
+def _compact_if_large(path: Path, *, fence) -> bool:
+    """Rewrite an oversized history file down to its newest live records.
+
+    Caller holds the node's history lock. Returns True when the file was rewritten.
+    """
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return False
+    if size <= HISTORY_COMPACT_AT_BYTES:
+        return False
+    if size <= 2 * HISTORY_RETENTION_RECORDS * _average_line_bytes(path, size):
+        return False
+    kept = [
+        json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        for record in _read_history_file(path)[-HISTORY_RETENTION_RECORDS:]
+    ]
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.compact.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as stream:
+            stream.writelines(kept)
+            stream.flush()
+            os.fsync(stream.fileno())
+        fence()
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return True
 
 
 def _history_idempotency_path(path: Path) -> Path:
@@ -194,12 +274,8 @@ def _append_generation_history_once(
     key: str,
 ) -> dict[str, Any]:
     from novelvideo.freezone.canvas_store import atomic_write_json
-    from novelvideo.ports import get_canvas_write_mutex
 
-    lock_id = "history_" + hashlib.sha256(
-        f"{normalized['canvas_id']}:{node_id}".encode()
-    ).hexdigest()[:40]
-    with get_canvas_write_mutex().write_mutex(project_dir, lock_id) as guard:
+    with _history_write_lock(project_dir, path) as guard:
         index_path = _history_idempotency_path(path)
         now = time.time()
         entries = _recent_history_idempotency_entries(index_path, now)
@@ -207,17 +283,8 @@ def _append_generation_history_once(
             return normalized
         if _last_history_record_id(path) != key:
             guard.reassert()
-            with path.open("a", encoding="utf-8") as stream:
-                stream.write(
-                    json.dumps(
-                        normalized,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    + "\n"
-                )
-                stream.flush()
-                os.fsync(stream.fileno())
+            _append_line(path, normalized, fsync=True)
+            _compact_if_large(path, fence=guard.reassert)
             prewarm_history_thumbnail(project_dir, normalized)
         entries = [entry for entry in entries if entry["key"] != key]
         entries.insert(0, {"key": key, "seen_at": now})
@@ -305,32 +372,25 @@ def delete_generation_history_record(
     node_id: str,
     record_id: str,
 ) -> bool:
-    """Hide one history record by appending an audit-friendly tombstone.
+    """Hide one history record by appending a tombstone that all readers apply.
 
-    History files are append-only. Rewriting a JSONL file while a generation job
-    appends to it can lose the new record, so deletion uses a tombstone that all
-    readers apply instead. The generated media itself is deliberately retained:
-    another canvas node may still reference the same output URL.
+    The tombstone and the record it hides are dropped at the next compaction
+    (see HISTORY_RETENTION_RECORDS). The generated media itself is deliberately
+    retained: another canvas node may still reference the same output URL.
     """
 
     normalized_record_id = str(record_id or "").strip()
     if not normalized_record_id:
         raise ValueError("record_id is required")
     path = generation_history_path(project_dir, canvas_id, node_id)
-    if not any(
-        record.get("id") == normalized_record_id
-        for record in _read_history_file(path)
-    ):
-        return False
-    with path.open("a", encoding="utf-8") as f:
-        f.write(
-            json.dumps(
-                {"_deleted_record_id": normalized_record_id},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            + "\n"
-        )
+    with _history_write_lock(Path(project_dir), path) as guard:
+        if not any(
+            record.get("id") == normalized_record_id
+            for record in _read_history_file(path)
+        ):
+            return False
+        guard.reassert()
+        _append_line(path, {"_deleted_record_id": normalized_record_id})
     return True
 
 

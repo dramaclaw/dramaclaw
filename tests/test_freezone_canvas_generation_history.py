@@ -16,9 +16,11 @@ import pytest
 
 from novelvideo.freezone.history import (
     append_generation_history,
+    build_node_history_record,
     delete_generation_history_record,
     generation_history_path,
     read_canvas_generation_history,
+    read_generation_history,
 )
 
 
@@ -195,3 +197,153 @@ def test_delete_history_record_hides_only_target_and_keeps_append_only_file(
         node_id="node_a",
         record_id="video:job_delete",
     )
+
+
+def _shrink_history_limits(
+    monkeypatch, *, compact_at: int, keep: int, ignore_record_size: bool = False
+) -> None:
+    import novelvideo.freezone.history as history
+
+    monkeypatch.setattr(history, "HISTORY_COMPACT_AT_BYTES", compact_at)
+    monkeypatch.setattr(history, "HISTORY_RETENTION_RECORDS", keep)
+    if ignore_record_size:
+        # Compact on every append past compact_at, even when nothing would be dropped.
+        monkeypatch.setattr(history, "_average_line_bytes", lambda _path, _size: 0)
+
+
+def _ids_in_file(path: Path) -> list[str]:
+    import json
+
+    return [json.loads(line).get("id") or "tombstone" for line in path.read_text().splitlines()]
+
+
+def test_large_history_compacts_to_newest_live_records(tmp_path: Path, monkeypatch) -> None:
+    _shrink_history_limits(monkeypatch, compact_at=4096, keep=5)
+    project_dir = tmp_path / "proj"
+    path = generation_history_path(project_dir, "default", "node_a")
+    for index in range(3):
+        _append(project_dir, "node_a", f"job{index}", f"2026-06-10T00:00:0{index}Z")
+    assert delete_generation_history_record(
+        project_dir=project_dir, canvas_id="default", node_id="node_a", record_id="video:job2"
+    )
+
+    index = 3
+    while path.stat().st_size <= 4096 or index < 6:
+        size_before = path.stat().st_size
+        _append(project_dir, "node_a", f"job{index}", "2026-06-11T00:00:00Z")
+        index += 1
+        if path.stat().st_size < size_before:
+            break
+
+    ids = _ids_in_file(path)
+    assert "tombstone" not in ids
+    assert "video:job2" not in ids
+    assert ids == [f"video:job{n}" for n in range(index - 5, index)]
+
+
+def _story_script_record(n: int) -> dict:
+    rows = [
+        {"shot": i, "description": "镜头描述" * 60, "dialogue": "台词" * 40} for i in range(20)
+    ]
+    return build_node_history_record(
+        task_type="freezone_story_script",
+        job_id=f"job{n}",
+        task_key=f"k{n}",
+        status="completed",
+        media_type="text",
+        result={"job_id": f"job{n}", "output_format": "json", "rows": rows},
+    )
+
+
+def test_default_page_of_large_records_survives_compaction(tmp_path: Path) -> None:
+    project_dir = tmp_path / "proj"
+    for n in range(120):
+        append_generation_history(
+            project_dir=project_dir,
+            canvas_id="default",
+            node_id="script_node",
+            record=_story_script_record(n),
+        )
+
+    records = read_generation_history(
+        project_dir=project_dir, canvas_id="default", node_id="script_node", limit=100
+    )
+    assert len(records) == 100
+
+
+def test_large_records_keep_the_full_retention_window(tmp_path: Path, monkeypatch) -> None:
+    _shrink_history_limits(monkeypatch, compact_at=4096, keep=10)
+    project_dir = tmp_path / "proj"
+    path = generation_history_path(project_dir, "default", "node_a")
+    compactions = 0
+    for index in range(200):
+        size_before = path.stat().st_size if path.exists() else 0
+        _append(project_dir, "node_a", f"job{index}", "2026-06-11T00:00:00Z")
+        if path.stat().st_size < size_before:
+            compactions += 1
+            assert _ids_in_file(path) == [f"video:job{n}" for n in range(index - 9, index + 1)]
+
+    assert compactions >= 2
+    # The file grows to about twice the window between rewrites, not one record.
+    assert compactions <= 200 // 10
+    assert len(_ids_in_file(path)) <= 20
+
+
+def test_concurrent_appends_survive_compaction(tmp_path: Path, monkeypatch) -> None:
+    _shrink_history_limits(monkeypatch, compact_at=2048, keep=10_000, ignore_record_size=True)
+    project_dir = tmp_path / "proj"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(
+            pool.map(
+                lambda n: _append(project_dir, "node_a", f"job{n}", "2026-06-11T00:00:00Z"),
+                range(60),
+            )
+        )
+
+    path = generation_history_path(project_dir, "default", "node_a")
+    assert sorted(_ids_in_file(path)) == sorted(f"video:job{n}" for n in range(60))
+
+
+def test_plain_append_survives_a_busy_history_lock(tmp_path: Path, monkeypatch) -> None:
+    from novelvideo.freezone.canvas_lock import CanvasLockBusy
+
+    class BusyMutex:
+        def write_mutex(self, *_args, **_kwargs):
+            raise CanvasLockBusy("history_x")
+
+    monkeypatch.setattr("novelvideo.ports.get_canvas_write_mutex", lambda: BusyMutex())
+    project_dir = tmp_path / "proj"
+    _append(project_dir, "node_a", "job1", "2026-06-11T00:00:00Z")
+
+    path = generation_history_path(project_dir, "default", "node_a")
+    assert _ids_in_file(path) == ["video:job1"]
+
+
+def test_lease_lost_during_compaction_does_not_duplicate_the_record(tmp_path: Path, monkeypatch) -> None:
+    from contextlib import contextmanager
+
+    from novelvideo.ports.canvas_mutex import CanvasLeaseLost
+
+    _shrink_history_limits(monkeypatch, compact_at=1, keep=500, ignore_record_size=True)
+
+    class LosingGuard:
+        calls = 0
+
+        def reassert(self):
+            LosingGuard.calls += 1
+            if LosingGuard.calls > 1:  # lost between the append and the rewrite
+                raise CanvasLeaseLost("history_x")
+
+    class Mutex:
+        @contextmanager
+        def write_mutex(self, *_args, **_kwargs):
+            yield LosingGuard()
+
+    monkeypatch.setattr("novelvideo.ports.get_canvas_write_mutex", lambda: Mutex())
+    project_dir = tmp_path / "proj"
+    _append(project_dir, "node_a", "job1", "2026-06-11T00:00:00Z")
+
+    path = generation_history_path(project_dir, "default", "node_a")
+    assert _ids_in_file(path) == ["video:job1"]
+    assert not list(path.parent.glob(".*.tmp"))
