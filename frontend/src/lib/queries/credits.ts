@@ -172,25 +172,41 @@ export interface CreditTransactionFilters {
   model?: string;
 }
 
+type CreditSummaryResponse = OkResponse<CreditSummary> & { requestedAt: number };
+
+function nextCreditExpiry(summary?: CreditSummaryResponse) {
+  const expiresAt = Date.parse(summary?.data.next_expiring?.expires_at ?? "");
+  // Ignore a deadline already checked by a request started at or after it,
+  // even if that response still carried the same deadline.
+  return summary && expiresAt > summary.requestedAt ? expiresAt : Infinity;
+}
+
 export function useCreditSummary(enabled = true) {
   return useQuery({
     queryKey: queryKeys.creditSummary(),
-    queryFn: ({ signal }) =>
-      api
+    queryFn: async ({ signal }): Promise<CreditSummaryResponse> => {
+      const requestedAt = Date.now();
+      const summary = await api
         .get("api/v1/credits/me/summary", { signal, retry: 0 })
-        .json<OkResponse<CreditSummary>>(),
+        .json<OkResponse<CreditSummary>>();
+      return { ...summary, requestedAt };
+    },
     enabled,
-    // Normal settlements invalidate this query. Recovery and expiration can
-    // happen without a browser event.
     staleTime: 60_000,
-    refetchInterval: (query) =>
-      query.state.error == null &&
-      ((query.state.data?.data.pending ?? 0) > 0 || query.state.data?.data.next_expiring)
-        ? 60_000
-        : false,
+    refetchInterval(query) {
+      if (query.state.error != null || query.state.fetchStatus !== "idle") return false;
+      const settlementDelay = (query.state.data?.data.pending ?? 0) > 0 ? 60_000 : Infinity;
+      const expiryDelay = Math.max(1_000, nextCreditExpiry(query.state.data) - Date.now());
+      const delay = Math.min(settlementDelay, expiryDelay);
+      // Browsers clamp timers beyond the signed 32-bit range to a short delay.
+      return Number.isFinite(delay) ? Math.min(delay, 2_147_483_647) : false;
+    },
     refetchIntervalInBackground: false,
     refetchOnMount: "always",
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: (query) =>
+      query.state.error == null && nextCreditExpiry(query.state.data) <= Date.now()
+        ? "always"
+        : false,
     retry: false,
   });
 }

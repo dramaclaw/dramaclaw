@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { setupServer } from "msw/node";
 import ky from "ky";
 import type { ReactNode } from "react";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
   uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
+import { server } from "@/__mocks__/msw/server";
 import { queryKeys } from "@/lib/query-keys";
 import {
   creditOrgOf,
@@ -20,13 +20,8 @@ import {
   dormantPersonalBalanceOf,
   useCreditSummary,
   useCreditTransactions,
+  type CreditScope,
 } from "@/lib/queries/credits";
-
-const server = setupServer();
-
-beforeAll(() => server.listen());
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
 
 function wrapper(queryClient: QueryClient) {
   return function QueryWrapper({ children }: { children: ReactNode }) {
@@ -35,7 +30,7 @@ function wrapper(queryClient: QueryClient) {
 }
 
 describe("credit summary query", () => {
-  it("only polls while reservations are pending", async () => {
+  it("keeps polling pending reservations and stops on error", async () => {
     server.use(
       http.get("http://localhost:3000/api/v1/credits/me/summary", () =>
         HttpResponse.json({
@@ -76,7 +71,7 @@ describe("credit summary query", () => {
       refetchInterval?: (query: CreditSummaryQueryState) => number | false;
       refetchIntervalInBackground?: unknown;
       refetchOnMount?: unknown;
-      refetchOnWindowFocus?: unknown;
+      refetchOnWindowFocus?: (query: CreditSummaryQueryState) => "always" | false;
       retry?: unknown;
       staleTime?: unknown;
     };
@@ -90,7 +85,7 @@ describe("credit summary query", () => {
     expect(options.refetchInterval?.(intervalQuery)).toBe(false);
     expect(options.refetchIntervalInBackground).toBe(false);
     expect(options.refetchOnMount).toBe("always");
-    expect(options.refetchOnWindowFocus).toBe(false);
+    expect(options.refetchOnWindowFocus?.(intervalQuery)).toBe(false);
     expect(options.retry).toBe(false);
     expect(options.staleTime).toBe(60_000);
   });
@@ -110,10 +105,7 @@ describe("credit summary query", () => {
     });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    // The test renderer mounts effects twice under React StrictMode. Each
-    // mount may issue one request, but neither Ky nor React Query may retry it
-    // (the previous configuration produced up to six requests here).
-    expect(requests).toBe(2);
+    expect(requests).toBe(1);
   });
 
   it("carries the org member scope, organization and dormant personal balance through", async () => {
@@ -180,6 +172,122 @@ describe("credit summary query", () => {
     expect(creditScopeOf(summary)).toBe("personal");
     expect(creditOrgOf(summary)).toBeNull();
     expect(dormantPersonalBalanceOf(summary)).toBeNull();
+  });
+});
+
+describe("credit balance at expiry", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    focusManager.setFocused(true);
+  });
+
+  afterEach(() => {
+    focusManager.setFocused(undefined);
+    vi.useRealTimers();
+  });
+
+  function stubExpiry(scope: CreditScope, keepOverdueDeadline = false, requestLatency = 0) {
+    let requests = 0;
+    const expiresAt = Date.now() + 5_000;
+    server.use(
+      http.get("http://localhost:3000/api/v1/credits/me/summary", async () => {
+        requests += 1;
+        const expired = Date.now() >= expiresAt;
+        if (requestLatency && requests === 1) {
+          await new Promise((resolve) => setTimeout(resolve, requestLatency));
+        }
+        return HttpResponse.json({
+          ok: true,
+          data: {
+            balance: expired ? 100 : 140,
+            earned: 140,
+            spent: 0,
+            refunded: 0,
+            pending: 0,
+            promotion_count: 0,
+            updated_at: null,
+            scope,
+            next_expiring: !expired || keepOverdueDeadline
+              ? { amount: 40, expires_at: new Date(expiresAt).toISOString() }
+              : null,
+          },
+        });
+      }),
+    );
+    return () => requests;
+  }
+
+  async function advance(ms: number) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  }
+
+  it.each(["personal", "org_member"] as const)("refreshes the shared %s balance at expiry", async (scope) => {
+    const requests = stubExpiry(scope);
+    const client = new QueryClient();
+    const { result, unmount } = renderHook(() => [useCreditSummary(), useCreditSummary()], {
+      wrapper: wrapper(client),
+    });
+
+    await advance(4_999);
+    expect(result.current.map((query) => query.data?.data.balance)).toEqual([140, 140]);
+    expect(requests()).toBe(1);
+
+    await advance(101);
+    expect(result.current.map((query) => query.data?.data.balance)).toEqual([100, 100]);
+    expect(requests()).toBe(2);
+
+    unmount();
+    client.clear();
+  });
+
+  it("rechecks a missed expiry on tab return without repeating a stale deadline", async () => {
+    const requests = stubExpiry("org_member", true);
+    const client = new QueryClient();
+    const { result, unmount } = renderHook(() => useCreditSummary(), {
+      wrapper: wrapper(client),
+    });
+
+    await advance(100);
+    focusManager.setFocused(false);
+    await advance(5_000);
+    expect(result.current.data?.data.balance).toBe(140);
+    expect(requests()).toBe(1);
+
+    await act(async () => {
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(result.current.data?.data.balance).toBe(100);
+    expect(requests()).toBe(2);
+
+    await act(async () => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(requests()).toBe(2);
+
+    unmount();
+    client.clear();
+  });
+
+  it("rechecks a pre-expiry snapshot that arrives after its deadline", async () => {
+    const requests = stubExpiry("personal", false, 5_500);
+    const client = new QueryClient();
+    const { result, unmount } = renderHook(() => useCreditSummary(), {
+      wrapper: wrapper(client),
+    });
+
+    await advance(5_600);
+    expect(result.current.data?.data.balance).toBe(140);
+    expect(requests()).toBe(1);
+
+    await advance(1_000);
+    expect(result.current.data?.data.balance).toBe(100);
+    expect(requests()).toBe(2);
+
+    unmount();
+    client.clear();
   });
 });
 
