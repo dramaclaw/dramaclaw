@@ -1736,6 +1736,7 @@ frontend/src/components/canvas/useChoicePointMachine.ts,Elastic-2.0,2026 SuperTa
 frontend/src/components/confirm-dialog-host.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/credit-cost-inline.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/credits/BillingOrdersTab.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/components/credits/CheckoutRefreshNotice.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/credits/CheckoutShell.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/credits/CreditCenterDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/credits/EnterprisePlanPanel.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

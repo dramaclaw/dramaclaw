@@ -46,6 +46,13 @@ export function paymentQuoteNeedsRefresh(error: unknown): boolean {
     ["PAYMENT_QUOTE_REQUIRED", "PAYMENT_QUOTE_CHANGED"].includes(paymentError.message.trim());
 }
 
+export function checkoutCreditPolicyChanged(error: unknown): boolean {
+  const paymentError = normalizePaymentError(error);
+  return paymentError instanceof BackendStatusError &&
+    paymentError.status === 409 &&
+    paymentError.message === "CREDIT_CHECKOUT_POLICY_CHANGED";
+}
+
 export function paymentErrorToastMessage(
   error: unknown,
   t: TFunction,

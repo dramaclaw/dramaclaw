@@ -6,7 +6,8 @@ import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { OkResponse } from "@/types/api";
 
-export type CreditTransactionCategory = "all" | "earned" | "spent" | "refunded";
+export type CreditTransactionCategory = "all" | "earned" | "spent" | "refunded" | "expired" | "adjusted";
+export type CreditType = "subscription" | "recharge" | "gift";
 
 // Which account the `credits/me/*` figures were read from. An organization
 // member's tasks are charged to their org member account, so the page must
@@ -19,6 +20,11 @@ export interface CreditOrgRef {
   name: string;
 }
 
+export interface CheckoutCreditPolicy {
+  version: number;
+  valid_days: number | null;
+}
+
 export interface CreditSummary {
   balance: number;
   earned: number;
@@ -27,6 +33,8 @@ export interface CreditSummary {
   pending: number;
   promotion_count: number;
   updated_at: string | null;
+  next_expiring?: { amount: number; expires_at: string } | null;
+  checkout_credit_policies?: Record<"recharge" | "subscription", CheckoutCreditPolicy>;
   // The three keys below are optional on purpose: a backend that predates the
   // scope contract simply omits them, and such a response must keep working
   // as a personal account rather than failing to parse.
@@ -121,6 +129,9 @@ export interface CreditTransaction {
   model: string;
   original_cost: number | null;
   charged_cost: number | null;
+  credit_type?: CreditType;
+  expires_at?: string | null;
+  expired_amount?: number;
   promotion: {
     id?: string;
     name?: string;
@@ -169,12 +180,12 @@ export function useCreditSummary(enabled = true) {
         .get("api/v1/credits/me/summary", { signal, retry: 0 })
         .json<OkResponse<CreditSummary>>(),
     enabled,
-    // Task events invalidate normal lifecycle changes. Only accounts with
-    // unsettled reservations poll: CronJob recovery has no browser event and
-    // may otherwise leave pending/refund totals stale indefinitely.
+    // Normal settlements invalidate this query. Recovery and expiration can
+    // happen without a browser event.
     staleTime: 60_000,
     refetchInterval: (query) =>
-      query.state.error == null && (query.state.data?.data.pending ?? 0) > 0
+      query.state.error == null &&
+      ((query.state.data?.data.pending ?? 0) > 0 || query.state.data?.data.next_expiring)
         ? 60_000
         : false,
     refetchIntervalInBackground: false,

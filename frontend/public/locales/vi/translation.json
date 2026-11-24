@@ -1657,7 +1657,16 @@
     }
   },
   "credits": {
+    "transactionExpiry": "Hết hạn vào {{time}}",
+    "refundExpiry": "{{amount}} credits đã hết hạn",
+    "creditTypes": {
+      "subscription": "Credits gói đăng ký",
+      "recharge": "Credits nạp thêm",
+      "gift": "Credits tặng"
+    },
     "transactionSource": {
+      "expired": "Credits đã hết hạn",
+      "expiration": "Credits hết hạn",
       "orgAllocate": "Tổ chức phân bổ điểm",
       "orgReduce": "Tổ chức thu hồi điểm",
       "orgDepartureSweep": "Thu hồi điểm khi rời tổ chức",
@@ -1829,7 +1838,7 @@
         "help": "Trợ giúp nạp điểm"
       },
       "descriptions": {
-        "packages": "Mua các gói điểm không có ngày hết hạn.",
+        "packages": "Mua gói điểm bằng một lần thanh toán.",
         "custom": "Chọn số điểm bạn cần.",
         "benefits": "Xem ưu đãi và quyền lợi dành cho tài khoản này.",
         "orders": "Xem các bản ghi nạp, cộng điểm, hoàn tiền và đơn bất thường.",
@@ -1839,7 +1848,7 @@
       },
       "firstPurchase": "Khách hàng mới",
       "mostPopular": "Phổ biến nhất",
-      "oneTimePurchase": "Mua một lần · Điểm không hết hạn",
+      "oneTimePurchase": "Mua một lần",
       "baseCredits": "Điểm cơ bản",
       "giftCredits": "Điểm tặng",
       "totalCredits": "Điểm nhận được",
@@ -9071,6 +9080,10 @@
     "unavailableTitle": "Tính năng không dùng được"
   },
   "checkout": {
+    "settingsRefreshing": "Đang cập nhật thông tin thanh toán…",
+    "settingsRefreshFailed": "Không thể cập nhật thông tin thanh toán. Vui lòng thử lại.",
+    "settingsUpdated": "Thông tin thanh toán đã được cập nhật. Vui lòng thử lại.",
+    "refreshSettings": "Cập nhật thông tin thanh toán",
     "account": "Tài khoản hiện tại",
     "loading": "Đang chuẩn bị thanh toán an toàn…",
     "invalidTitle": "Phiên thanh toán đã hết hạn",
@@ -9620,7 +9633,7 @@
     "monthlyEquivalent": "Equivalent to approximately {{price}} per month; the full period is charged at once.",
     "introCycles": "First {{cycles}} billing cycles at {{price}} each.",
     "title": "Subscription plans",
-    "intro": "Automatic renewal uses your payment account. Credits are granted under the plan rules and remain permanently valid.",
+    "intro": "Hệ thống dùng tài khoản thanh toán để tự động gia hạn. Điểm được cộng theo quy định của gói.",
     "refresh": "Refresh",
     "loadError": "Unable to load subscriptions.",
     "noPlans": "No subscription plans are currently available.",
@@ -9650,8 +9663,8 @@
     "grants": "Credit grants",
     "method": "Payment method",
     "renewPrice": "Renews every {{months}} month(s) at {{price}}.",
-    "monthlyCredits": "{{credits}} credits each month, permanently valid.",
-    "upfrontCredits": "{{credits}} credits granted after payment, permanently valid.",
+    "monthlyCredits": "{{credits}} điểm mỗi tháng.",
+    "upfrontCredits": "{{credits}} điểm được cộng sau khi thanh toán.",
     "taxNote": "Applicable taxes, if any, are displayed at checkout.",
     "consent": "I authorize automatic renewal and have read and accepted the",
     "terms": "subscription terms",
@@ -9703,7 +9716,7 @@
       "monthly": "Monthly",
       "upfront": "Upfront"
     },
-    "renewalNote": "Auto renewal · Credits never expire",
+    "renewalNote": "Tự động gia hạn",
     "purchaseBlocked": "Your account has a subscription or an unresolved application. View it below and use Check latest status to reconcile it.",
     "paymentUnavailable": "Some payment channels are unavailable. An administrator needs to check the payment service configuration. Please check again later.",
     "recheckPayment": "Recheck payment channels",
@@ -9791,8 +9804,8 @@
     "membership": "Paid membership period",
     "months": "{{months}} month(s)",
     "periodCredits": "Credits for this period",
-    "monthlyGrants": "{{credits}} credits per month, {{count}} grants this period. Granted credits remain permanently valid.",
-    "upfrontGrants": "{{credits}} credits granted after payment confirmation, permanently valid.",
+    "monthlyGrants": "{{credits}} điểm mỗi tháng, tổng cộng {{count}} đợt trong kỳ này.",
+    "upfrontGrants": "{{credits}} điểm được cộng sau khi xác nhận thanh toán.",
     "fullPeriod": "The full period is charged at once.",
     "account": "Account receiving subscription benefits",
     "cancelPolicy": "Cancel future automatic renewal in subscription management. Paid membership and scheduled grants for the paid period remain. Cancellation does not request a refund.",

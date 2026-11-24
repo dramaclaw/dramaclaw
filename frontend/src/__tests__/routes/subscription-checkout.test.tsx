@@ -21,6 +21,12 @@ import { PaymentReturnPage } from "@/routes/_app/payment-return";
 import { subscriptionResultState } from "@/lib/subscription-checkout";
 import { bindSubscriptionAttempt, subscriptionAttemptKey, type Subscription } from "@/lib/queries/subscriptions";
 
+const creditSummary = vi.hoisted(() => ({
+  policy: undefined as { version: number; valid_days: number | null } | undefined,
+  org: null as { org_id: string; name: string } | null,
+  refetch: vi.fn(),
+}));
+
 vi.mock("@/lib/api", () => ({
   api: ky.create({ prefix: "http://localhost:3000/" }),
 }));
@@ -28,16 +34,22 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: zhT, i18n: { language: "zh" } }),
 }));
 vi.mock("@/lib/queries/credits", () => ({
-  creditScopeOf: () => "personal",
+  creditScopeOf: () => creditSummary.org ? "org_member" : "personal",
   useCreditSummary: () => ({
     isPending: false,
-    data: { data: { scope: "personal" } },
+    data: { data: {
+      scope: creditSummary.org ? "org_member" : "personal",
+      organization: creditSummary.org,
+      checkout_credit_policies: creditSummary.policy ? { subscription: creditSummary.policy } : undefined,
+    } },
+    refetch: creditSummary.refetch,
   }),
-  creditOrgOf: () => null,
+  creditOrgOf: () => creditSummary.org,
 }));
 
 const plan = {
   plan_id: "plan-annual",
+  org_id: null as string | null,
   version: 1,
   name: "基础年付",
   description: "年度订阅",
@@ -98,6 +110,9 @@ beforeEach(() => {
     }),
   );
   useAuthStore.setState({ username: "test-user" });
+  creditSummary.policy = undefined;
+  creditSummary.org = null;
+  creditSummary.refetch.mockClear();
   currentPlan = structuredClone(plan);
   submitted = [];
   keys = [];
@@ -263,6 +278,41 @@ describe("subscription checkout", () => {
     expect(await screen.findByText("协议正文版本 2")).toBeInTheDocument();
     expect(action).toBeDisabled();
     expect(submitted).toHaveLength(0);
+  });
+
+  it.each([null, "org-a"])("refreshes checkout after a policy conflict for org %s without resetting consent", async (orgId) => {
+    if (orgId) {
+      creditSummary.org = { org_id: orgId, name: "Organization A" };
+      currentPlan.org_id = orgId;
+    }
+    creditSummary.policy = { version: 2, valid_days: 60 };
+    const policies: (string | null)[] = [];
+    server.use(http.post(endpoint + "subscriptions", async ({ request }) => {
+      policies.push(request.headers.get("x-credit-policy-version"));
+      keys.push(request.headers.get("Idempotency-Key")!);
+      return policies.length === 1
+        ? HttpResponse.json({ detail: "CREDIT_CHECKOUT_POLICY_CHANGED" }, { status: 409 })
+        : HttpResponse.json({ detail: "SUBSCRIPTION_GATEWAY_UNCONFIRMED" }, { status: 503 });
+    }));
+    mount();
+    const button = await screen.findByRole("button", { name: "确认订阅并前往支付" });
+    expect(screen.queryByText(/积分有效期|到账起 60 天/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(button);
+    await waitFor(() => expect(creditSummary.refetch).toHaveBeenCalledTimes(1));
+    expect(button).toBeDisabled();
+    expect(screen.getByRole("checkbox")).toBeChecked();
+    expect(screen.getByText(zhT("checkout.settingsRefreshFailed"))).toBeInTheDocument();
+
+    creditSummary.policy = { version: 3, valid_days: null };
+    view?.rerender(<QueryClientProvider client={client}><CheckoutPage /></QueryClientProvider>);
+    expect(screen.getByText(zhT("checkout.settingsUpdated"))).toBeInTheDocument();
+    expect(screen.queryByText(/积分有效期|积分永久有效/)).not.toBeInTheDocument();
+    expect(button).toBeEnabled();
+    expect(policies).toEqual(["2"]);
+    fireEvent.click(button);
+    await waitFor(() => expect(policies).toEqual(["2", "3"]));
+    expect(keys[1]).not.toBe(keys[0]);
   });
 
   it("does not allow a plan without published agreement metadata", async () => {

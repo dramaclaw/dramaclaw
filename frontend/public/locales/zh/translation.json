@@ -1678,7 +1678,16 @@
     }
   },
   "credits": {
+    "transactionExpiry": "{{time}} 到期",
+    "refundExpiry": "其中 {{amount}} 积分已过期",
+    "creditTypes": {
+      "subscription": "订阅积分",
+      "recharge": "充值积分",
+      "gift": "赠送积分"
+    },
     "transactionSource": {
+      "expired": "积分已过期",
+      "expiration": "到期积分清理",
       "initialGrant": "初始赠送",
       "accountInitialized": "账户初始化积分",
       "subscriptionGrant": "订阅积分发放",
@@ -1850,7 +1859,7 @@
         "help": "充值问题"
       },
       "descriptions": {
-        "packages": "一次性购买积分礼包，积分永久有效。",
+        "packages": "一次性购买积分礼包。",
         "subscriptions": "通过支付账户自动续费，按套餐规则发放积分。",
         "custom": "按需要选择积分数量并完成充值。",
         "benefits": "查看当前账户可享受的促销和专属权益。",
@@ -1860,7 +1869,7 @@
       },
       "firstPurchase": "新客专享",
       "mostPopular": "最受欢迎",
-      "oneTimePurchase": "单次购买 · 积分永久有效",
+      "oneTimePurchase": "单次购买",
       "baseCredits": "基础积分",
       "giftCredits": "赠送积分",
       "totalCredits": "到账积分",
@@ -1945,6 +1954,10 @@
     }
   },
   "checkout": {
+    "settingsRefreshing": "正在刷新支付信息…",
+    "settingsRefreshFailed": "无法刷新支付信息，请重试。",
+    "settingsUpdated": "支付信息已更新，请重试。",
+    "refreshSettings": "刷新支付信息",
     "account": "当前账户",
     "loading": "正在准备支付页面…",
     "invalidTitle": "支付会话已失效",
@@ -9371,7 +9384,7 @@
     "monthlyEquivalent": "续费价格约合每月 {{price}}，实际按整个周期一次收款。",
     "introCycles": "前 {{cycles}} 个扣款周期，每期按 {{price}} 付款。",
     "title": "订阅套餐",
-    "intro": "通过支付账户自动续费，按套餐规则发放积分，已发放积分永久有效。",
+    "intro": "通过支付账户自动续费，按套餐规则发放积分。",
     "refresh": "刷新",
     "loadError": "暂时无法读取订阅信息。",
     "createUnconfirmed": "请求结果尚未确认，你可以更换支付方式。系统会自动核对原申请。",
@@ -9408,8 +9421,8 @@
     "grants": "积分发放记录",
     "method": "支付方式",
     "renewPrice": "此后每 {{months}} 个月按 {{price}} 自动续费。",
-    "monthlyCredits": "每月发放 {{credits}} 积分，永久有效。",
-    "upfrontCredits": "付款后一次性发放 {{credits}} 积分，永久有效。",
+    "monthlyCredits": "每月发放 {{credits}} 积分。",
+    "upfrontCredits": "付款后一次性发放 {{credits}} 积分。",
     "taxNote": "如有适用税费，将在收银台展示。",
     "consent": "我授权自动续费，并已阅读及同意",
     "terms": "订阅服务协议",
@@ -9472,7 +9485,7 @@
       "monthly": "逐月发放",
       "upfront": "一次发放"
     },
-    "renewalNote": "自动续费 · 积分永久有效",
+    "renewalNote": "自动续费",
     "purchaseBlocked": "当前账号已有订阅或未结束的申请，请在下方查看；状态未确认时可点击「查询最新状态」。",
     "paymentUnavailable": "部分支付渠道暂不可用，需要管理员检查支付服务配置。请稍后重新检查。",
     "recheckPayment": "重新检查支付渠道",
@@ -9493,8 +9506,8 @@
     "membership": "本期会员期限",
     "months": "{{months}} 个月",
     "periodCredits": "本期积分总额",
-    "monthlyGrants": "每月发放 {{credits}} 积分，本期共 {{count}} 次；已发积分永久有效。",
-    "upfrontGrants": "付款确认后一次性发放 {{credits}} 积分，永久有效。",
+    "monthlyGrants": "每月发放 {{credits}} 积分，本期共 {{count}} 次。",
+    "upfrontGrants": "付款确认后一次性发放 {{credits}} 积分。",
     "fullPeriod": "实际按整期金额付款。",
     "account": "订阅权益所属账号",
     "cancelPolicy": "可在订阅管理中取消后续自动续费。取消后，已付款周期的会员期限和计划内积分发放继续保留；取消不等于退款。",

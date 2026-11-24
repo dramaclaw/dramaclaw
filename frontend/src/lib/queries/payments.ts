@@ -204,16 +204,21 @@ export function useCreateRechargeOrder() {
       packageId,
       paymentMethod,
       idempotencyKey,
+      creditPolicyVersion,
       quote,
     }: {
       packageId: string;
       paymentMethod: RechargePaymentMethod;
       idempotencyKey: string;
+      creditPolicyVersion?: number;
       quote?: PaymentQuote;
     }) =>
       api
         .post("api/v1/payments/orders", {
-          headers: { "Idempotency-Key": idempotencyKey },
+          headers: {
+            "Idempotency-Key": idempotencyKey,
+            ...(creditPolicyVersion === undefined ? {} : { "X-Credit-Policy-Version": String(creditPolicyVersion) }),
+          },
           json: { package_id: packageId, payment_method: paymentMethod, ...(quote ? { quote } : {}) },
           retry: 0,
         })
@@ -237,17 +242,22 @@ export function useCreateCustomRechargeOrder() {
       configVersion,
       paymentMethod,
       idempotencyKey,
+      creditPolicyVersion,
       quote,
     }: {
       credits: number;
       configVersion: number;
       paymentMethod: RechargePaymentMethod;
       idempotencyKey: string;
+      creditPolicyVersion?: number;
       quote?: PaymentQuote;
     }) =>
       api
         .post("api/v1/payments/custom-orders", {
-          headers: { "Idempotency-Key": idempotencyKey },
+          headers: {
+            "Idempotency-Key": idempotencyKey,
+            ...(creditPolicyVersion === undefined ? {} : { "X-Credit-Policy-Version": String(creditPolicyVersion) }),
+          },
           json: {
             credits,
             config_version: configVersion,
@@ -291,11 +301,13 @@ export function useCreateRechargeLinkOrder(token: string) {
       packageId,
       paymentMethod,
       idempotencyKey,
+      creditPolicyVersion,
       quote,
     }: {
       packageId: string;
       paymentMethod: RechargePaymentMethod;
       idempotencyKey: string;
+      creditPolicyVersion?: number;
       quote?: PaymentQuote;
     }) =>
       api
@@ -303,6 +315,7 @@ export function useCreateRechargeLinkOrder(token: string) {
           headers: {
             "X-Recharge-Token": token,
             "Idempotency-Key": idempotencyKey,
+            ...(creditPolicyVersion === undefined ? {} : { "X-Credit-Policy-Version": String(creditPolicyVersion) }),
           },
           json: { package_id: packageId, payment_method: paymentMethod, ...(quote ? { quote } : {}) },
           retry: 0,

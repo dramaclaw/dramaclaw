@@ -19,6 +19,7 @@ import { toast } from "sonner";
 
 import { CreditSparkIcon } from "@/components/credits/credit-visual";
 import { CheckoutShell } from "@/components/credits/CheckoutShell";
+import { CheckoutRefreshNotice, useCheckoutPolicyRefresh } from "@/components/credits/CheckoutRefreshNotice";
 import { SubscriptionCheckout } from "@/components/credits/SubscriptionCheckout";
 import { ProductSurfaceUnavailable } from "@/components/product-surface-unavailable";
 import type { SubscriptionDraft } from "@/lib/subscription-checkout";
@@ -54,6 +55,7 @@ import {
   safePaymentReturnPath,
 } from "@/lib/payment-navigation";
 import {
+  checkoutCreditPolicyChanged,
   paymentErrorToastMessage,
   paymentQuoteNeedsRefresh,
 } from "@/lib/payment-errors";
@@ -223,6 +225,10 @@ function RechargeCheckoutPage() {
           creditScopeOf(summary) === "org_member" &&
           org?.org_id === effectiveOrgId)),
   );
+  const creditPolicyVersion = !existingOrder && subjectMatches
+    ? summary?.checkout_credit_policies?.recharge?.version
+    : undefined;
+  const checkoutSettings = useCheckoutPolicyRefresh(creditPolicyVersion);
   const customRecharge = customRechargeQuery.data?.data;
   const configuredPaymentMethods =
     draft?.kind === "custom"
@@ -305,8 +311,9 @@ function RechargeCheckoutPage() {
   };
 
   const continuePayment = async () => {
-    if (!draft || !ready || !quoteReady || !selectedPaymentMethod || creating)
+    if (!draft || !ready || !quoteReady || !selectedPaymentMethod || creating || checkoutSettings.status === "stale")
       return;
+    checkoutSettings.clear();
     try {
       const fingerprint = JSON.stringify({
         draft,
@@ -327,12 +334,14 @@ function RechargeCheckoutPage() {
               configVersion: customRecharge!.version,
               paymentMethod: selectedPaymentMethod,
               idempotencyKey,
+              ...(creditPolicyVersion === undefined ? {} : { creditPolicyVersion }),
               quote: selectedPaymentMethod === "dodo" ? quote : undefined,
             })
           : await createOrder.mutateAsync({
               packageId: draft.packageId,
               paymentMethod: selectedPaymentMethod,
               idempotencyKey,
+              ...(creditPolicyVersion === undefined ? {} : { creditPolicyVersion }),
               quote: selectedPaymentMethod === "dodo" ? quote : undefined,
             });
       rememberPaymentOrder(response.data.order);
@@ -342,6 +351,12 @@ function RechargeCheckoutPage() {
       }
       submitPaymentCheckout(response.data.checkout);
     } catch (error) {
+      if (checkoutCreditPolicyChanged(error)) {
+        clearPaymentAttempt();
+        checkoutSettings.reject();
+        void summaryQuery.refetch();
+        return;
+      }
       if (selectedPaymentMethod === "dodo" && paymentQuoteNeedsRefresh(error))
         void quoteQuery.refetch();
       toast.error(
@@ -601,9 +616,16 @@ function RechargeCheckoutPage() {
         ) : null}
       </div>
 
+      {!existingOrder && (
+        <CheckoutRefreshNotice
+          status={checkoutSettings.status}
+          refreshing={summaryQuery.isFetching}
+          onRefresh={() => void summaryQuery.refetch()}
+        />
+      )}
       <button
         type="button"
-        disabled={creating || !quoteReady}
+        disabled={creating || !quoteReady || (!existingOrder && checkoutSettings.status === "stale")}
         onClick={handlePrimaryAction}
         className="mt-8 inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-wait disabled:opacity-55"
       >

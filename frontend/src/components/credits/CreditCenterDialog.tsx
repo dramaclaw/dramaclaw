@@ -72,6 +72,7 @@ const TRANSACTION_SOURCE_COPY = new Map<string, [string, string]>([
   ["org_credit_departure_sweep", ["orgDepartureSweep", "orgTransfer"]],
   ["org_credit_refund_sweep", ["orgRefundSweep", "orgTransfer"]],
   ["admin_recharge", ["adminRecharge", "adminRechargeReceived"]],
+  ["credit_expired", ["expired", "expiration"]],
 ]);
 
 export type CreditCenterTab =
@@ -969,40 +970,53 @@ function UsageTab({ summary, language }: { summary: CreditSummary | undefined; l
                 <tr><td colSpan={6}><LoadingState /></td></tr>
               ) : visibleTransactions.length === 0 ? (
                 <tr><td colSpan={6}><EmptyState text={t("credits.centerModal.usage.noRecords")} /></td></tr>
-              ) : visibleTransactions.map((item) => (
-                <tr key={item.id} className="border-t border-white/8">
-                  <td className="px-4 py-3 text-xs tabular-nums text-white/45">
-                    {item.occurred_at ? formatDateTime(item.occurred_at, language) : "--"}
-                  </td>
-                  <td className="max-w-64 px-4 py-3">
-                    <div className="truncate font-medium">{
-                      TRANSACTION_SOURCE_COPY.has(item.reason ?? "")
-                        ? t(`credits.transactionSource.${TRANSACTION_SOURCE_COPY.get(item.reason ?? "")![0]}`)
-                        : item.feature_label || "--"
-                    }</div>
-                    <div className="mt-1 truncate text-xs text-white/38">{
-                      TRANSACTION_SOURCE_COPY.has(item.reason ?? "")
-                        ? t(`credits.transactionSource.${TRANSACTION_SOURCE_COPY.get(item.reason ?? "")![1]}`)
-                        : item.model || "--"
-                    }</div>
-                  </td>
-                  <td className="max-w-48 truncate px-4 py-3 text-white/58">{item.project_name || "--"}</td>
-                  <td className="px-4 py-3">
-                    <span className={cn(
-                      "inline-flex rounded-full bg-white/[0.07] px-2.5 py-1 text-[11px] font-medium",
-                      (item.status === "confirmed" || item.status === "completed") && "text-emerald-400",
-                      item.status === "pending" && "text-amber-300",
-                      item.status === "refunded" && "text-white/45",
-                    )}>
-                      {t(`credits.status.${item.status}`)}
-                    </span>
-                  </td>
-                  <td className={cn("px-4 py-3 text-right font-medium tabular-nums", item.delta < 0 ? "text-red-400" : "text-emerald-400")}>
-                    {item.delta > 0 ? "+" : ""}{formatNumber(item.delta, language)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-white/58">{item.balance_after == null ? "--" : formatNumber(item.balance_after, language)}</td>
-                </tr>
-              ))}
+              ) : visibleTransactions.map((item) => {
+                const source = TRANSACTION_SOURCE_COPY.get(item.reason ?? "");
+                const batchLabel = item.credit_type && t(`credits.creditTypes.${item.credit_type}`);
+                const expiryLabel = item.expires_at && item.category === "earned"
+                  ? t("credits.transactionExpiry", { time: formatDateTime(item.expires_at, language) })
+                  : null;
+                const sourceDetail = source ? t(`credits.transactionSource.${source[1]}`) : item.model || "--";
+                const detail = batchLabel
+                  ? [batchLabel, expiryLabel].filter(Boolean).join(" · ")
+                  : sourceDetail;
+                const expiredAmount = item.expired_amount ?? 0;
+                return (
+                  <tr key={item.id} className="border-t border-white/8">
+                    <td className="px-4 py-3 text-xs tabular-nums text-white/45">
+                      {item.occurred_at ? formatDateTime(item.occurred_at, language) : "--"}
+                    </td>
+                    <td className="max-w-64 px-4 py-3">
+                      <div className="truncate font-medium">
+                        {source ? t(`credits.transactionSource.${source[0]}`) : item.feature_label || "--"}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-white/38" title={detail}>
+                        {detail}
+                      </div>
+                    </td>
+                    <td className="max-w-48 truncate px-4 py-3 text-white/58">{item.project_name || "--"}</td>
+                    <td className="px-4 py-3">
+                      <span className={cn(
+                        "inline-flex rounded-full bg-white/[0.07] px-2.5 py-1 text-[11px] font-medium",
+                        (item.status === "confirmed" || item.status === "completed") && "text-emerald-400",
+                        item.status === "pending" && "text-amber-300",
+                        item.status === "refunded" && "text-white/45",
+                      )}>
+                        {t(`credits.status.${item.status}`)}
+                      </span>
+                      {expiredAmount > 0 && (
+                        <div className="mt-1 text-xs text-white/50">
+                          {t("credits.refundExpiry", { amount: formatNumber(expiredAmount, language) })}
+                        </div>
+                      )}
+                    </td>
+                    <td className={cn("px-4 py-3 text-right font-medium tabular-nums", item.delta < 0 ? "text-red-400" : "text-emerald-400")}>
+                      {item.delta > 0 ? "+" : ""}{formatNumber(item.delta, language)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white/58">{item.balance_after == null ? "--" : formatNumber(item.balance_after, language)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

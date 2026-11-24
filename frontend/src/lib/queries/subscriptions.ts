@@ -366,11 +366,17 @@ export function useCreateSubscription() {
       method: SubscriptionMethod;
       key: string;
       termsAccepted: true;
+      creditPolicyVersion?: number;
     }) =>
       api
         .post("api/v1/payments/subscriptions", {
           retry: 0,
-          headers: { "Idempotency-Key": input.key },
+          headers: {
+            "Idempotency-Key": input.key,
+            ...(input.creditPolicyVersion === undefined
+              ? {}
+              : { "X-Credit-Policy-Version": String(input.creditPolicyVersion) }),
+          },
           json: {
             plan_id: input.plan.plan_id,
             plan_version: input.plan.version,
