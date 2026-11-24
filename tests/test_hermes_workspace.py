@@ -416,6 +416,29 @@ def test_freezone_profile_materializes_native_workflow_skills(
     assert manual_skill.exists()
 
 
+@pytest.mark.parametrize("profile", ["director", "freezone"])
+def test_unparseable_config_is_set_aside_and_rebuilt_once(
+    isolated_workspace, repo_skills, repo_plugins, caplog, profile
+):
+    home = hw.ensure_user_hermes_workspace("admin", profile=profile)
+    config_file = home / "config.yaml"
+    broken = "agent:\n  max_turns: [unterminated\n"
+    config_file.write_text(broken, encoding="utf-8")
+
+    with caplog.at_level("WARNING", logger=hw._log.name):
+        hw.ensure_user_hermes_workspace("admin", profile=profile)
+
+    rebuilt = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+    assert isinstance(rebuilt, dict) and rebuilt["enabled_toolsets"]
+    assert (home / "config.yaml.invalid").read_text(encoding="utf-8") == broken
+    assert len(caplog.records) == 1
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=hw._log.name):
+        hw.ensure_user_hermes_workspace("admin", profile=profile)
+    assert caplog.records == []
+
+
 def test_freezone_profile_preserves_tool_search_disable(
     isolated_workspace,
     repo_skills,
