@@ -2156,6 +2156,12 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                 "type": "assistant.clarification.request",
                 "status": "questions_required",
                 "error": "questions must contain at least one question",
+                "agent_instruction": (
+                    "No card was shown. For a creative choice send questions with a stable "
+                    "id, a user-facing title and options containing id and label. Omit "
+                    "workflow_draft_id, workflow_expected_revision and generation fields. "
+                    "If the corrected call fails, ask the question directly in chat."
+                ),
                 "clarification_id": clarification_id,
             }
         )
@@ -13948,7 +13954,7 @@ TOOLS = (
         "freezone_request_user_clarification",
         _schema(
             "freezone_request_user_clarification",
-            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. Generation mode is exclusive: never include questions in the same call; if questions are accidentally supplied, the server ignores them instead of failing the parameter card. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
+            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. Generation mode is exclusive: never include questions in the same call; if questions are accidentally supplied, the server ignores them instead of failing the parameter card. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For a new creative clarification, supply nonempty questions with id, title and selectable options (id and label); omit workflow and generation fields. This tool never creates or runs canvas nodes.",
             {
                 "clarification_id": {
                     "type": "string",

@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from mcp import types
@@ -149,6 +149,44 @@ def _tools() -> mcp_runtime.ToolIndex:
         return handle
 
     return {name: (schema, scoped(handler)) for name, schema, handler in entries}
+
+
+def _story_documents() -> dict[str, Path]:
+    root = Path(__file__).resolve().parents[1] / "agent_skills" / "interactive-story"
+    return {
+        path.relative_to(root).as_posix(): path
+        for path in (root / "SKILL.md", *sorted((root / "references").glob("*.md")))
+    }
+
+
+@SERVER.list_resources()
+async def list_resources() -> list[types.Resource]:
+    return [
+        types.Resource(
+            name=name, uri=f"dramaclaw-story://skills/interactive-story/{name}",
+            mimeType="text/markdown",
+        )
+        for name in _story_documents()
+    ]
+
+
+@SERVER.read_resource()
+async def read_resource(uri: Any) -> str:
+    parsed = urlparse(str(uri))
+    path = unquote(parsed.path)
+    if parsed.scheme == "dramaclaw-story" and parsed.netloc == "skills":
+        name = path.removeprefix("/interactive-story/")
+    elif parsed.scheme == "file" and not parsed.netloc:
+        # Existing conversations can carry the skill URI advertised by the canvas server.
+        _, marker, name = path.rpartition("/.agents/skills/interactive-story/")
+        if not marker:
+            raise ValueError("Unknown interactive story resource")
+    else:
+        raise ValueError("Unknown interactive story resource")
+    document = _story_documents().get(name)
+    if document is None:
+        raise ValueError("Unknown interactive story resource")
+    return document.read_text(encoding="utf-8")
 
 
 @SERVER.list_tools()

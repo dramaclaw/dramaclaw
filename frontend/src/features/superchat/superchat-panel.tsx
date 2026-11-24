@@ -7122,7 +7122,8 @@ function AssistantClarificationSummaryCard({ event }: { event: AssistantClarific
   const cancelled = event.cancelled === true
     || event.action === "cancel"
     || event.clarification_status === "cancelled";
-  const skipped = event.skipped === true || event.action === "skip";
+  const skipped = event.skipped === true || event.action === "skip"
+    || event.clarification_status === "skip" || event.clarification_status === "skipped";
   const statusLabel = cancelled
     ? t("freezone.chat.clarification.cancelled")
     : skipped

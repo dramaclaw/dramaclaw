@@ -1185,7 +1185,7 @@ def build_tools(
             "dramaclaw_get_interactive_story_outline",
             schema(
                 "dramaclaw_get_interactive_story_outline",
-                "Read the canvas-level pending story outline and its confirmation status before creating the formal story.",
+                "Read the pending outline and current canvas revision before saving an outline. An empty canvas returns outline=null and revision=0 for the first save. Check confirmation before creating the formal story.",
                 {
                     "project_id": {
                         "type": "string",
@@ -1506,7 +1506,7 @@ def get_bound_canvas(
                 "ok": False,
                 "status": "canvas_not_created",
                 "code": "canvas_not_created",
-                "error": "当前画布尚未创建，无法读取有效的 revision；请先保存大纲或创建画布后再重试。",
+                "error": "当前画布尚未创建。首次保存大纲请调用 dramaclaw_get_interactive_story_outline，使用它返回的 revision 作为 base_revision。",
             }
         data.setdefault("canvas_id", scope["canvas_id"])
     return result

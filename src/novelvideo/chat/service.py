@@ -485,7 +485,11 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "interaction intensity, single-playthrough duration, and thematic focus together through "
     "freezone_request_user_clarification and wait for answers (one missing preference may use "
     "a natural follow-up). Local edits do not restart intake; interactive ads follow their own "
-    "discovery rules. Reuse known preferences; explicit "
+    "discovery rules. For ad intake pass nonempty questions (id, title, options with id and label); "
+    "omit workflow_draft_id, workflow_expected_revision and generation fields. After a skip, "
+    "keep unselected preferences open. Before saving a proposal read dramaclaw_get_interactive_story_outline "
+    "and use its revision as base_revision, including 0 for a new outline on an empty canvas. "
+    "Reuse known preferences; explicit "
     "delegation allows stated recommendations. A request to create an outline alone is not "
     "delegation. Carry these preferences into the saved outline as the Skill specifies. "
     "After explicit user approval of the current outline in chat, read the saved outline "
@@ -789,8 +793,8 @@ Canvas write contract:
   and state recommendations; "create an outline" alone does not. Cancellation, empty answers,
   or a timeout do not accept defaults. Follow the Skill to persist these preferences in the outline.
   Local edits do not restart this intake; interactive ads follow their own discovery rules.
-  Read dramaclaw_get_freezone_canvas for the persisted
-  revision and save the outline with dramaclaw_save_interactive_story_outline. Explicit chat
+  Read dramaclaw_get_interactive_story_outline for the current canvas revision, including 0
+  on a new canvas, and save the outline with dramaclaw_save_interactive_story_outline. Explicit chat
   approval of that exact outline can be recorded with dramaclaw_confirm_interactive_story_outline
   after reading its ID and revision; a plan-card click is optional. If the user requested the
   script too, confirm then create and validate without another approval question. Retain both

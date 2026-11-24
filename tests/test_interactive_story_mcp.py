@@ -644,3 +644,16 @@ async def test_canvas_revision_refresh_survives_browser_receipt_to_mcp_result(
     rendered = json.loads(result.content[0].text)
     assert rendered["requires_canvas_refresh"] is True
     assert rendered["agent_instruction"] == structured["agent_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_story_resources_support_discovery_and_canvas_skill_uris():
+    resources = await interactive_story_mcp.list_resources()
+    contract = next(item for item in resources if item.name == "references/story-contract.md")
+    content = await interactive_story_mcp.read_resource(contract.uri)
+    assert "dramaclaw_create_interactive_story" in content
+    assert await interactive_story_mcp.read_resource(
+        "file:///agent/.agents/skills/interactive-story/references/story-contract.md"
+    ) == content
+    with pytest.raises(ValueError):
+        await interactive_story_mcp.read_resource("file:///agent/.env")
