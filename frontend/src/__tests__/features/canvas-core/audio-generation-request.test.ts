@@ -172,6 +172,15 @@ describe('audio request capture', () => {
   });
 });
 describe('pure audio boundaries', () => {
+  it('sends the chosen catalog ID only for reference speech', () => {
+    for (const kind of ['clone', 'preset', 'music']) {
+      const ctx = fixture(kind, { cloneModelId: 'catalog-id', ...(kind === 'music'
+        ? { audioKind: 'music' } : { speechMode: kind }) });
+      const result = buildAudioGenerationRequest({ ...ctx, prompt: 'Hello', compileMode: null, recipeIds: [] });
+      if (!result.ok) throw new Error(result.message);
+      expect(result.requests[0].body.clone_model_id).toBe(kind === 'clone' ? 'catalog-id' : undefined);
+    }
+  });
   it('wrong node type', () => {
     const ctx = { ...fixtures[0], nodes: [source('audio-1', 'Text')] };
     expect(audioPromptCompileInput(ctx)).toMatchObject({ kind: 'refuse', code: 'not_audio_node' });

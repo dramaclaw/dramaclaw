@@ -19,6 +19,7 @@ import { useMemo } from 'react';
 import i18n from 'i18next';
 
 import type { MediaModelRequestSchema } from '@/features/canvas/domain/modelCatalogPayload';
+import type { ModelGuideData } from '@/lib/media-model-catalog-types';
 import type { ImageModelDefinition } from '@/features/canvas/models';
 import { normalizeImageModelId } from '@/features/canvas/models';
 import {
@@ -38,7 +39,7 @@ import {
  * 用结构类型而不是直接引 `FreezoneImageModelInfo`，是因为兜底列表 `ModelOption`
  * 的 providerId 比目录的 `FreezoneProvider` 更宽（含视频供应商），两者都要能进来。
  */
-export interface CatalogImageModelEntry {
+export interface CatalogImageModelEntry extends ModelGuideData {
   id: string;
   providerId: string;
   apiModel: string;
@@ -55,6 +56,7 @@ const PREFERRED_DEFAULT_RESOLUTION = '2k';
 /** 把一条目录条目适配成节点用的 `ImageModelDefinition`。 */
 export function toImageModelDefinition(
   info: CatalogImageModelEntry,
+  includeGuide = true,
 ): ImageModelDefinition {
   const resolutions = resolveModelSizeOptions(info).map((value) => ({
     value,
@@ -73,6 +75,7 @@ export function toImageModelDefinition(
     id: info.id,
     mediaType: 'image',
     displayName: info.label,
+    ...(includeGuide ? { guideData: info } : {}),
     providerId: info.providerId,
     description: '',
     eta: '',
@@ -142,7 +145,7 @@ export function useCatalogImageModels(): CatalogImageModels {
       isFallback,
     });
     const source = isEmpty ? [] : catalog.length > 0 ? catalog : SHARED_MODELS;
-    const models = source.map(toImageModelDefinition);
+    const models = source.map(info => toImageModelDefinition(info, !isFallback));
     const byId = new Map(models.map((model) => [model.id, model]));
     const byApiModel = new Map(
       source.map((info, index) => [info.apiModel, models[index]]),

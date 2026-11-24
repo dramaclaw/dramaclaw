@@ -6584,6 +6584,7 @@
     }
   },
   "modelPicker": {
+    "details": "Details for {{model}}",
     "provider": "Provider",
     "model": "Model",
     "empty": "No models available"
@@ -7270,6 +7271,10 @@
       "voiceMissing": "No usable custom voice is selected",
       "translate": "Translate (Chinese ⇄ English)",
       "voiceSettings": "Voice settings",
+      "cloneModel": "Speech model",
+      "noCloneModel": "Select an available speech model",
+      "cloneModelsLoadFailed": "Could not load speech models",
+      "cloneVoiceIdRequired": "This model needs a provider voice ID and cannot clone directly from a reference clip.",
       "advancedSettings": "Advanced settings",
       "generate": "Generate",
       "generateWithoutVoice": "Generate (skip when no custom voice is selected)",
@@ -8573,7 +8578,13 @@
       },
       "mediaModels": {
         "title": "Image / Video / Audio Generation Models",
-        "description": "Models come from the current custom local configuration. Add image or video models and configure the capabilities shown in XiaHua.",
+        "description": "Manage local image, video, audio and blockout models and their capabilities.",
+        "audioPurpose": "Audio purpose",
+        "speech": "Speech synthesis",
+        "promptedSpeech": "Voice design via prompted speech",
+        "voiceDesign": "Voice design with a target model",
+        "audioTarget": "Target speech model",
+        "audioTargetRequired": "Select a compatible speech model first. Enable the target if the design model is enabled.",
         "addModel": "Add model",
         "addModelTitle": "Add media model",
         "editModelTitle": "Edit media model",

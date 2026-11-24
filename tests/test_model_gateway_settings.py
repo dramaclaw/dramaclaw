@@ -403,6 +403,67 @@ async def test_custom_catalog_disabled_mapping_removes_official_model(
     assert all(item.get("id") != "LingShan-G2" for item in catalog)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_type,common_id", [("image", "LingShan-G2"), ("video", "seedance-2.0")])
+async def test_ce_canvas_picker_modes_do_not_mix_catalogs(monkeypatch, tmp_path, media_type, common_id):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    set_model_gateway_mode(MODE_CUSTOM)
+    picker = (
+        freezone_routes._freezone_image_models_data
+        if media_type == "image" else freezone_routes._freezone_video_models_data
+    )
+    assert await picker("local") == []
+
+    local = {"provider": "comfyui", "mediaType": media_type}
+    guide = {"zh": {"tags": ["本地"]}}
+    save_newapi_media_model_mappings({
+        common_id: {**local, "upstreamModel": "my-upstream", "label": "Local override"},
+        "local-only": {**local, "config": {"pickerGuide": guide}},
+        "local-disabled": {**local, "enabled": False},
+    })
+    entries = {item["id"]: item for item in await picker("local")}
+    assert set(entries) == {common_id, "local-only"}
+    assert entries[common_id]["gatewayModel"] == "my-upstream"
+    assert "pickerGuide" not in entries[common_id]
+    assert entries["local-only"]["pickerGuide"] == guide
+
+    set_model_gateway_mode(MODE_OFFICIAL)
+    official = await picker("local")
+    official_entry = next(item for item in official if item["id"] == common_id)
+    assert official_entry["pickerGuide"] and official_entry["gatewayModel"] != "my-upstream"
+    assert not any(item["id"] == "local-only" for item in official)
+    set_model_gateway_mode(MODE_HYBRID)
+    assert await picker("local") == official
+
+
+@pytest.mark.asyncio
+async def test_custom_catalog_resolves_legacy_requests_without_importing_official_rows(monkeypatch, tmp_path):
+    from fastapi import HTTPException
+
+    _isolate_settings_db(monkeypatch, tmp_path)
+    set_model_gateway_mode(MODE_CUSTOM)
+    video = {"provider": "volcengine", "mediaType": "video"}
+    save_newapi_media_model_mappings({
+        "LingShan-G2": {"provider": "openrouter", "mediaType": "image"},
+        "seedance-2.0": video,
+        "seedance-2.0-fast": {**video, "config": {"supportedModes": [], "humanReview": False}},
+    })
+    videos = {item["id"]: item for item in get_ce_media_model_catalog("video")}
+    assert set(videos) == {"seedance-2.0", "seedance-2.0-fast"}
+    assert {"all_reference", "text_to_video"} <= set(videos["seedance-2.0"]["supportedModes"])
+    assert videos["seedance-2.0-fast"]["supportedModes"] == []
+    assert videos["seedance-2.0-fast"]["humanReview"] is False
+    _, _, entry = await freezone_routes._resolve_catalog_request("image", "newapi_gpt_image2", {})
+    assert entry["catalogId"] == "LingShan-G2"
+    assert "pickerGuide" not in entry
+    save_newapi_media_model_mappings({
+        "LingShan-G2": {"provider": "openrouter", "mediaType": "image", "enabled": False},
+    })
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes._resolve_catalog_request("image", "newapi_gpt_image2", {})
+    assert exc.value.status_code == 409
+
+
 def test_provider_channel_partial_save_preserves_unmentioned_channels(
     monkeypatch, tmp_path
 ):
@@ -3532,7 +3593,23 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     videos = get_official_media_model_catalog("video")
 
     assert len(images) == 8
-    assert len(videos) == 11
+    assert len(videos) == 9
+    assert {"seedance-1.0-pro-fast", "seedance-1.5-pro"}.isdisjoint(
+        entry["id"] for entry in videos
+    )
+    curated = {"LingShan-G2", "seedream-5.0-pro", "wan3.0-video-prime", "seedance-2.0", "seedance-2.5"}
+    entries = {entry["id"]: entry for entry in [*images, *videos]}
+    assert curated <= entries.keys()
+    for model_id, entry in entries.items():
+        guide = entry.get("pickerGuide", {})
+        if model_id in curated:
+            assert set(guide) == {"zh", "en", "pt", "vi"}
+        for localized in guide.values():
+            if model_id in curated:
+                assert localized["summary"] and localized["detail"]
+            else:
+                assert not (localized.get("summary") or localized.get("detail"))
+            assert len(localized.get("tags", [])) <= 2
     assert [entry["id"] for entry in videos[:2]] == [
         "wan3.0-video-prime",
         "wan3.0-video",
@@ -4294,6 +4371,34 @@ def test_ee_media_relay_ignores_ce_database_config(monkeypatch, tmp_path):
     assert status["endpoint"] == "ee.endpoint"
     assert status["bucket"] == "ee-bucket"
     assert status["configured"] is True
+
+
+def test_custom_audio_editor_configs_persist_and_resolve(monkeypatch, tmp_path):
+    from novelvideo.audio.voice_design_service import list_voice_design_catalog
+
+    _isolate_settings_db(monkeypatch, tmp_path)
+    configs = {
+        "speech": {},
+        "seed-audio-1.0": {
+            "request": {"endpoint": "audio/speech", "parameters": []},
+            "voiceDesignMode": "prompted_speech",
+        },
+        "design": {
+            "request": {"endpoint": "audio/voice-designs", "parameters": []},
+            "targetModel": "speech",
+        },
+    }
+    _, mappings = model_gateway._build_media_model_channel_specs({
+        key: model_gateway.MediaModelConfigBody(provider="doubao_audio", mediaType="audio", config=config)
+        for key, config in configs.items()
+    })
+    save_newapi_media_model_mappings(mappings)
+    catalog = get_ce_media_model_catalog("audio")
+    assert {entry["id"] for entry in catalog} == set(configs)
+    designs = {item.model_id: item for item in list_voice_design_catalog(catalog)}
+    assert set(designs) == {"seed-audio-1.0", "design"}
+    assert designs["seed-audio-1.0"].mode == "prompted_speech"
+    assert designs["design"].target_model_id == "speech"
 
 
 def test_audio_voice_design_catalog_round_trip(monkeypatch):

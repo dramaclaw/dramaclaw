@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { renderWithAudioCatalog as render } from '@/__tests__/helpers/render-with-audio-catalog';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -41,9 +42,8 @@ vi.mock('react-i18next', async () => {
   return { useTranslation: () => ({ t: zhT }) };
 });
 
-vi.mock('@/lib/queries/generation-credit-cost', () => ({
-  useGenerationCreditCost: () => ({ data: undefined }),
-}));
+const quote = vi.hoisted(() => vi.fn(() => ({ data: undefined })));
+vi.mock('@/lib/queries/generation-credit-cost', () => ({ useGenerationCreditCost: quote }));
 
 // 提交要求 URL 里有 project（否则 useAudioGeneration.generate 直接早退）。
 vi.mock('@/lib/url-params', async (importOriginal) => ({
@@ -258,8 +258,21 @@ describe('AssetBoard 音频进主从详情', () => {
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
     await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalledTimes(1));
     expect(vi.mocked(sendGenerationWireRequest).mock.calls[0][0].body).toMatchObject({
-      speech_mode: 'clone', voice_ref: { scope: 'project_narrator' }, text: '欢迎回来。',
+      speech_mode: 'clone', clone_model_id: 'seed', voice_ref: { scope: 'project_narrator' }, text: '欢迎回来。',
     });
+  });
+
+  it('quotes the selected clone model and the same billable characters used for generation', async () => {
+    seed([audioNode({ displayName: '旁白', audioKind: 'speech', text: '早 🦐', cloneModelId: 'my-index' })]);
+    render(<AssetBoardView visible onLocateNode={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '旁白' }));
+    expect(quote).toHaveBeenCalledWith('feature', 'freezone.audio_speech', {
+      surface: 'canvas', quantity: 2, params: { operation: 'speech', pricing_kind: 'audio',
+        pricing_model: 'index-tts-2', catalog_id: 'my-index', billable_chars: 2, pricing_quantity: 2 },
+    });
+    fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(sendGenerationWireRequest).mock.calls[0][0].body.clone_model_id).toBe('my-index');
   });
 
   it('新建语音节点仍须先选音色，保存重载后也不会回退为旧节点', async () => {

@@ -121,11 +121,10 @@ FREEZONE_NEWAPI_VIDEO_BACKENDS = {
     "newapi_seedance-2.0-fast",
     "newapi_seedance-2.0-value",
     "newapi_seedance-2.0-fast-value",
-    "newapi_seedance-1.0-pro-fast",
-    "newapi_seedance-1.5-pro",
     "newapi_happyhorse-1.0",
 }
 FREEZONE_DISABLED_VIDEO_BACKENDS = {"newapi_grok-video-channel"}
+_RETIRED_VIDEO_NODE_MODELS = {"seedance-1.0-pro", "seedance-1.0-pro-fast", "seedance-1.5-pro"}
 
 
 def get_video_camera_templates() -> list[dict[str, str]]:
@@ -203,6 +202,17 @@ def _freezone_video_model_from_backend(backend: str | None) -> str:
         if text.startswith(prefix):
             return text[len(prefix) :].strip()
     return text
+
+
+def is_retired_video_node_model(model: str | None) -> bool:
+    """Match the execution model, including IDs saved by older canvases."""
+    token = str(model or "").strip().casefold()
+    canonical = (
+        LEGACY_FREEZONE_VIDEO_BACKEND_ALIASES.get(token)
+        or LEGACY_FREEZONE_VIDEO_LABEL_ALIASES.get(token)
+        or token
+    )
+    return _freezone_video_model_from_backend(canonical) in _RETIRED_VIDEO_NODE_MODELS
 
 
 def freezone_video_resolution_options(backend: str | None) -> tuple[str, ...]:
@@ -349,7 +359,7 @@ def resolve_freezone_video_backend(model: str | None) -> str:
         )
     if text in options:
         return text
-    if text in FREEZONE_DISABLED_VIDEO_BACKENDS:
+    if text in FREEZONE_DISABLED_VIDEO_BACKENDS or is_retired_video_node_model(text):
         raise ValueError(f"unknown video model: {text}")
 
     folded = text.casefold()
@@ -366,10 +376,8 @@ def resolve_freezone_video_backend(model: str | None) -> str:
 
     from novelvideo.generators.video_generator import parse_newapi_video_backend
 
-    if (
-        parse_newapi_video_backend(text)
-        and text not in FREEZONE_DISABLED_VIDEO_BACKENDS
-    ):
+    parsed = parse_newapi_video_backend(text)
+    if parsed and not is_retired_video_node_model(parsed):
         return text
     raise ValueError(f"unknown video model: {text}")
 

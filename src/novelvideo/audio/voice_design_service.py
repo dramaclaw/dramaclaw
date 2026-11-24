@@ -236,9 +236,10 @@ def resolve_voice_design_catalog(
     raise VoiceDesignError("voice_design_unavailable")
 
 
-async def list_voice_design_configs(
+async def project_audio_catalog(
     *, user_id: str, project_id: str
-) -> list[VoiceDesignConfig]:
+) -> tuple[list[dict], bool]:
+    """Return visible entries and whether the local gateway routes by mapping ID."""
     if not user_id or not project_id:
         raise VoiceDesignError("voice_design_forbidden")
     try:
@@ -254,11 +255,11 @@ async def list_voice_design_configs(
         if not uses_local_ce_runtime():
             raise VoiceDesignError("voice_design_unavailable") from None
         config = get_effective_newapi_config()
-        entries = (
+        return (
             get_ce_media_model_catalog("audio")
             if config.mode == "custom"
             else get_official_media_model_catalog("audio")
-        )
+        ), config.mode == "custom"
     else:
         try:
             entries = await catalog.list_models_for_project(
@@ -271,6 +272,13 @@ async def list_voice_design_configs(
                 else "voice_design_unavailable"
             )
             raise VoiceDesignError(code) from None
+    return entries, False
+
+
+async def list_voice_design_configs(
+    *, user_id: str, project_id: str
+) -> list[VoiceDesignConfig]:
+    entries, _ = await project_audio_catalog(user_id=user_id, project_id=project_id)
     return list_voice_design_catalog(entries)
 
 

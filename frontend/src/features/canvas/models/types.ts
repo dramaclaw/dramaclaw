@@ -42,6 +42,7 @@ export interface ExtraParamDefinition {
 }
 
 export interface ImageModelDefinition {
+  guideData?: import('@/lib/media-model-catalog-types').ModelGuideData;
   id: string;
   mediaType: 'image';
   displayName: string;

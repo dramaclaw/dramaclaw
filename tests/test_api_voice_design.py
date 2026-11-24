@@ -1658,19 +1658,10 @@ def test_selected_model_is_persisted_and_replay_survives_catalog_removal(
 
 
 @pytest.mark.parametrize("production_api", ["real_service"], indirect=True)
-@pytest.mark.parametrize(
-    "model, target",
-    [
-        ("voice-enrollment", "cosyvoice-v3.5-flash"),
-        ("qwen-voice-design", "qwen3-tts-vd-2026-01-26"),
-        ("seed-audio-1.0", None),
-    ],
-)
-def test_ce_official_voice_design_catalog_can_submit(
-    production_api, monkeypatch, tmp_path, model, target
-):
+def test_ce_official_voice_design_only_presets_seed(production_api, monkeypatch, tmp_path):
     from novelvideo import config
     from novelvideo.audio import voice_design_service as service
+    from novelvideo.model_gateway_settings import get_official_media_model_catalog
     from novelvideo.ports.registry import PortNotRegistered
 
     def missing_catalog(name):
@@ -1684,12 +1675,12 @@ def test_ce_official_voice_design_catalog_can_submit(
     s = production_api
     listing = s.client.get(s.url.removesuffix("/candidates") + "/models")
     assert listing.status_code == 200
-    selected = next(
-        item for item in listing.json()["data"]["models"] if item["model"] == model
-    )
-    assert selected["target_model"] == (
-        {"catalog_id": target, "model": target} if target else None
-    )
+    model = "seed-audio-1.0"
+    assert [entry["id"] for entry in get_official_media_model_catalog("audio")] == [model]
+    (selected,) = listing.json()["data"]["models"]
+    assert selected["model"] == model
+    assert selected["mode"] == "prompted_speech"
+    assert selected["target_model"] is None
 
     candidate = s.client.post(
         s.url,
@@ -1703,7 +1694,7 @@ def test_ce_official_voice_design_catalog_can_submit(
     assert candidate.json()["data"]["model"] == selected
     billing_config = s.calls[0]["payload"]["billing"]["voice_design_config"]
     assert billing_config["model"] == model
-    assert billing_config.get("target_model") == target
+    assert billing_config.get("target_model") is None
     assert billing_config["config_digest"] == selected["config_digest"]
 
 

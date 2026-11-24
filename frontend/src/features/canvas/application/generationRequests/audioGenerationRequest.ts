@@ -175,6 +175,7 @@ export function buildAudioGenerationRequest(ctx: AudioGenerationRequestContext &
     const preset = legacy && data.speechMode === 'preset';
     const voice = data.voiceRef ?? (legacy ? { scope: 'project_narrator' as const } : undefined);
     body = { ...context, text: prompt, speech_mode: preset ? 'preset' : 'clone',
+      ...(!preset && data.cloneModelId ? { clone_model_id: data.cloneModelId } : {}),
       preset_model: (preset ? data.presetModel : undefined) ?? 'edge-tts',
       preset_voice: (preset ? data.presetVoice : undefined) ?? 'Serena',
       emotion_prompt: (data.emotionPrompt ?? '').trim() || '',

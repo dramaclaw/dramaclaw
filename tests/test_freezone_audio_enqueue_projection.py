@@ -85,6 +85,7 @@ def speech_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         project_name="demo",
         owner_username="alice",
         requester_username="bob",
+        requester_user_id="user-bob",
         output_dir=str(project_dir),
     )
 
@@ -100,6 +101,19 @@ def speech_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     async def fake_store_for_context(_ctx):
         return store
 
+    async def catalog(*, user_id, project_id):
+        assert (user_id, project_id) == ("user-bob", "proj")
+        return [
+            {"id": key, "gatewayModel": model, "request": {"endpoint": endpoint}}
+            for key, model, endpoint in (
+                ("index-tts-2", "upstream-tts", "audio/speech"),
+                ("seed-audio-1.0", "seed-audio-1.0", "audio/speech"),
+                ("cosyvoice-v3.5-flash", "cosyvoice-v3.5-flash", "audio/speech"),
+                ("voice-enrollment", "voice-enrollment", "audio/voice_design"),
+            )
+        ], True
+
+    monkeypatch.setattr("novelvideo.audio.voice_design_service.project_audio_catalog", catalog)
     monkeypatch.setattr(freezone, "_resolve_freezone_project", fake_resolve)
     monkeypatch.setattr(
         freezone,
@@ -202,6 +216,7 @@ async def test_speech_payload_is_unchanged_when_no_projector_is_installed(
         "text",
         "emotion_prompt",
         "voice_ref",
+        "clone_model",
         "account_voice_username",
         "target_episode",
         "target_beat",
@@ -210,6 +225,43 @@ async def test_speech_payload_is_unchanged_when_no_projector_is_installed(
     # Even without a projector, the enqueue-side prerequisite check resolves
     # the selected voice once before allocating the job.
     assert speech_harness.store.list_characters_calls == 1
+    assert payload["clone_model"] == payload["billing"]["pricing_model"] == "seed-audio-1.0"
+
+
+@pytest.mark.asyncio
+async def test_ee_clone_choice_keeps_visible_catalog_id_separate_from_gateway_model(monkeypatch):
+    from unittest.mock import AsyncMock
+    from novelvideo.api.routes.freezone import _audio_clone_choices
+
+    catalog = AsyncMock(return_value=([
+        {"catalogId": "catalog-other", "id": "index-tts-2", "gatewayModel": "tts-route",
+         "request": {"endpoint": "audio/speech"}},
+        {"catalogId": "catalog-seed", "id": "doubao-seed", "gatewayModel": "seed-audio-1.0",
+         "request": {"endpoint": "audio/speech"}},
+    ], False))
+    monkeypatch.setattr("novelvideo.audio.voice_design_service.project_audio_catalog", catalog)
+    choices = await _audio_clone_choices(SimpleNamespace(requester_user_id="user", project_id="p"))
+    catalog.assert_awaited_once_with(user_id="user", project_id="p")
+    assert [(c["id"], c["model"]) for c in choices] == [
+        ("catalog-seed", "seed-audio-1.0"), ("catalog-other", "tts-route"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_explicit_clone_model_uses_local_gateway_alias(speech_harness, projector_absent):
+    payload = await _enqueue_speech(speech_harness, clone_model_id="index-tts-2")
+    assert payload["clone_model"] == payload["billing"]["pricing_model"] == "index-tts-2"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["deleted-model", "voice-enrollment", "cosyvoice-v3.5-flash"])
+async def test_incompatible_clone_model_never_enqueued(speech_harness, key):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as error:
+        await _enqueue_speech(speech_harness, clone_model_id=key)
+    assert error.value.status_code == 409
+    assert speech_harness.payloads == []
 
 
 @pytest.mark.asyncio

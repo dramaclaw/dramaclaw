@@ -1748,6 +1748,7 @@ class FreezoneAudioVoiceRef(BaseModel):
 class FreezoneAudioSpeechRequest(FreezoneWorkflowMediaLink):
     """Freezone 音频节点：文本生成语音请求。"""
 
+    clone_model_id: str | None = Field(default=None, min_length=1, max_length=256)
     speech_mode: Literal["preset", "clone"] = Field(
         default="clone",
         description=(
