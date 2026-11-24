@@ -48,6 +48,7 @@ import {
   CanvasCommandApprovalCardForTest,
   buildAssistantClarificationResponseForTest,
   activeAssistantClarificationIsSkillStudioRevisionForTest,
+  AssistantClarificationSummaryCard,
   buildAssistantClarificationToolResultForTest,
   buildAssistantInteractionFlowItemsForTest,
   collapseRepeatedCanvasStatusFlowItemsForTest,
@@ -2696,6 +2697,18 @@ describe("Assistant clarification response", () => {
     );
 
     expect(text).toContain("视频时长是多久？\n6 秒");
+  });
+
+  it.each(["skip", "skipped"])("shows a skipped clarification for a status-only %s event", (status) => {
+    const view = render(createElement(AssistantClarificationSummaryCard, {
+      event: { type: "assistant.clarification.request", submitted: true, clarification_status: status },
+    }));
+    try {
+      expect(view.container.textContent).toMatch(/skipped|已跳过/i);
+      expect(view.container.textContent).not.toMatch(/submitted|已提交/i);
+    } finally {
+      view.unmount();
+    }
   });
 
   it("builds a reusable clarification summary from selected answers", () => {

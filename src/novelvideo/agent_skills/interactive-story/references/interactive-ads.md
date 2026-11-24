@@ -6,7 +6,7 @@
 
 从上下文提取产品、受众、核心卖点、目标动作和目标时长；只集中询问会改变方案的缺失项。未经用户确认的性能、效果和视觉暗示都标为待核实，不编造转化承诺。
 
-创意选项卡调用 `freezone_request_user_clarification`。例如，仅缺受众时可用 `{"questions":[{"id":"audience","title":"最想吸引哪类顾客？","options":[{"id":"campers","label":"露营爱好者"},{"id":"families","label":"家庭用户"}],"allow_custom":true}]}`。只问实际缺失项，省略工作流草稿版本和媒体生成参数。用户跳过后保留未选项，方案中注明假设。
+创意选项卡调用 `freezone_request_user_clarification`。使用上下文标识 `interactive_ad_intake:产品名`。例如，仅缺受众时可用 `{"context_key":"interactive_ad_intake:烧烤架","questions":[{"id":"audience","title":"最想吸引哪类顾客？","options":[{"id":"campers","label":"露营爱好者"},{"id":"families","label":"家庭用户"}],"allow_custom":true}]}`。只问实际缺失项，省略工作流草稿版本和媒体生成参数。用户跳过后保留未选项，方案中注明假设。
 
 用户同意保存文字方案后，先用 `dramaclaw_get_interactive_story_outline` 读取大纲和版本。新画布返回空大纲和版本 0 时，以该版本首次保存待确认广告大纲。技能文档通过列出资源时返回的服务和 URI 读取。
 

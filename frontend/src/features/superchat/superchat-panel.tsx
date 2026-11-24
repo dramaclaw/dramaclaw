@@ -7109,7 +7109,7 @@ function SkillStudioQuestionsCard({
   );
 }
 
-function AssistantClarificationSummaryCard({ event }: { event: AssistantClarificationUiEvent }) {
+export function AssistantClarificationSummaryCard({ event }: { event: AssistantClarificationUiEvent }) {
   const { t } = useTranslation();
   const questions = Array.isArray(event.questions) ? event.questions : [];
   const answers = event.answers && typeof event.answers === "object" ? event.answers : {};

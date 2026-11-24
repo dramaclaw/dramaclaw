@@ -485,7 +485,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "interaction intensity, single-playthrough duration, and thematic focus together through "
     "freezone_request_user_clarification and wait for answers (one missing preference may use "
     "a natural follow-up). Local edits do not restart intake; interactive ads follow their own "
-    "discovery rules. For ad intake pass nonempty questions (id, title, options with id and label); "
+    "discovery rules. For ad intake set context_key=interactive_ad_intake:<product> and pass nonempty questions (id, title, options with id and label); "
     "omit workflow_draft_id, workflow_expected_revision and generation fields. After a skip, "
     "keep unselected preferences open. Before saving a proposal read dramaclaw_get_interactive_story_outline "
     "and use its revision as base_revision, including 0 for a new outline on an empty canvas. "
@@ -3838,6 +3838,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_AGENT_TOKEN_FILE",
                 "DRAMACLAW_PROJECT_ID",
                 "DRAMACLAW_CANVAS_ID",
+                "DRAMACLAW_SKILLS_DIR",
                 "PYTHONPATH",
             ],
         }

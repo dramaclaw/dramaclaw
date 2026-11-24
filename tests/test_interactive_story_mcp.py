@@ -657,3 +657,23 @@ async def test_story_resources_support_discovery_and_canvas_skill_uris():
     ) == content
     with pytest.raises(ValueError):
         await interactive_story_mcp.read_resource("file:///agent/.env")
+
+
+@pytest.mark.asyncio
+async def test_story_resources_use_custom_workspace_documents(monkeypatch, tmp_path):
+    monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(tmp_path))
+    root = tmp_path / "interactive-story" / "references"
+    root.mkdir(parents=True)
+    doc = root / "story-contract.md"
+    doc.write_text("workspace-specific contract")
+    outside = tmp_path / "private.md"
+    outside.write_text("unrelated")
+    (root / "outside.md").symlink_to(outside)
+    assert await interactive_story_mcp.list_resource_templates() == []
+    resources = await interactive_story_mcp.list_resources()
+    resource, = resources
+    for uri in (resource.uri, doc.as_uri(),
+                "file:///previous/.agents/skills/interactive-story/references/story-contract.md"):
+        assert await interactive_story_mcp.read_resource(uri) == doc.read_text()
+    with pytest.raises(ValueError):
+        await interactive_story_mcp.read_resource((root / "outside.md").as_uri())

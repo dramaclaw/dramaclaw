@@ -1507,7 +1507,7 @@ def get_bound_canvas(
                 "ok": False,
                 "status": "canvas_not_created",
                 "code": "canvas_not_created",
-                "error": "当前画布尚未创建。首次保存大纲请调用 dramaclaw_get_interactive_story_outline，使用它返回的 revision 作为 base_revision。",
+                "error": "当前画布尚未创建。请读取 dramaclaw_get_interactive_story_outline 获取当前大纲与 revision。首次保存使用返回的版本；创建正式故事前须先保存并确认大纲。",
             }
         data.setdefault("canvas_id", scope["canvas_id"])
     return result
