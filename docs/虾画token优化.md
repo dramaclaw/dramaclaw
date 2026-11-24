@@ -166,7 +166,9 @@ freezone/
 3. 在 session 创建前按路由过滤工具注册；
 4. 若 Hermes 原生 Tool Search 能稳定支持插件工具，再评估启用按需工具搜索。
 
-当前 Freezone profile 明确关闭了 Tool Search，因此仅修改 Skill 文案不能减少工具 Schema。需要调整工具注册或 session 构建方式。
+上面是 Hermes 运行时的情况：Freezone profile 明确关闭了 Tool Search，因此仅修改 Skill 文案不能减少工具 Schema，需要调整工具注册或 session 构建方式。
+
+Codex 运行时已默认开启原生 MCP Tool Search（`deploy/codex/dramaclaw-model-catalog.json` 中内置模型的 `supports_search_tool` 为 `true`）：MCP 工具 Schema 不再随每个请求发送，模型按需搜索后调用。用户自行配置的第三方 Agent 模型除外，仍直接发送工具 Schema。
 
 ### 收益与风险
 

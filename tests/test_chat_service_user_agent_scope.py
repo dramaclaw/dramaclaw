@@ -4977,7 +4977,7 @@ def test_one_bundled_codex_catalog_serves_every_turn(monkeypatch):
     assert configured_path == catalog_dir / "dramaclaw-model-catalog.json"
 
 
-def test_third_party_agent_model_catalog_entry_enables_tool_search(
+def test_third_party_agent_model_catalog_entry_keeps_tool_search_off(
     monkeypatch, tmp_path
 ):
     from novelvideo import config as app_config
@@ -5004,7 +5004,16 @@ def test_third_party_agent_model_catalog_entry_enables_tool_search(
         Path(json.loads(catalog_override.split("=", 1)[1])).read_text(encoding="utf-8")
     )
     entry = next(item for item in catalog["models"] if item["slug"] == "vendor-model")
-    assert entry["supports_search_tool"] is True
+    # The request goes straight to a relay the user configured. A relay that
+    # does not implement Responses tool_search rejects every turn, so the
+    # generated entry sends concrete MCP tools, which any relay accepts.
+    assert entry["supports_search_tool"] is False
+    bundled = {
+        item["slug"]: item["supports_search_tool"]
+        for item in catalog["models"]
+        if item["slug"] != "vendor-model"
+    }
+    assert bundled == {"DC-codex-agent-LLM": True, "brainclaw": True}
 
 
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):

@@ -4005,7 +4005,9 @@ def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
                         "slug": configured_model,
                         "display_name": configured_model,
                         "description": "User-configured third-party Agent model.",
-                        "supports_search_tool": True,
+                        # The relay is the user's own; one without
+                        # Responses tool_search rejects every turn.
+                        "supports_search_tool": False,
                     }
                 )
                 catalog = {**catalog, "models": [*models, entry]}
