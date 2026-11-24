@@ -108,9 +108,9 @@ After initialization, start with **Recommended**. One profile configures:
 
 Enter each provider key separately, then click **Save & Apply All**. Keys are stored separately and never written into profile JSON. Leave an already saved key blank; entering a new value replaces it.
 
-The recommended template maps `seed-audio-1.0` to the same upstream ID on DoubaoAudio. Audio cloning nodes prefer this model when available. Use the picker at the bottom of the node to switch to another configured speech model without changing your voice selection. Reference recordings are sent inline as Base64; no public URL is required. CosyVoice requires a provider-issued voice ID and cannot use the recording directly in this node.
+The recommended profile uses OpenRouter (`openai/gpt-6-luna`) for both text and vision, `qwen/qwen3-embedding-8b` for embeddings, and VolcEngine for Seedance video. For audio, it maps `seed-audio-1.0` to the same upstream ID on DoubaoAudio. Audio cloning nodes prefer this model when available. Use the picker at the bottom of the node to switch to another configured speech model without changing your voice selection. Reference recordings are sent inline as Base64; no public URL is required. CosyVoice requires a provider-issued voice ID and cannot use the recording directly in this node.
 
-The built-in recommended profile is read-only. Switch to **My Config** to edit and persist your own JSON. The main shape is:
+The built-in recommended profile is read-only. Switch to **My Config** to edit and persist your own JSON. The example below shows the Seed Audio mapping alongside text, vision, and embedding. It is a minimal example, not the full recommended profile; keep any other channels and mappings you still need.
 
 ```json
 {
@@ -123,28 +123,39 @@ The built-in recommended profile is read-only. Switch to **My Config** to edit a
       "baseUrl": "",
       "priority": 0,
       "settings": {}
+    },
+    {
+      "id": "doubao_audio",
+      "provider": "doubao_audio",
+      "type": 62,
+      "baseUrl": "",
+      "priority": 0,
+      "settings": {}
     }
   ],
   "featureModels": {
-    "text": {"channel": "openrouter", "model": "upstream-text-model"},
-    "vision": {"channel": "openrouter", "model": "upstream-vision-model"},
+    "text": {"channel": "openrouter", "model": "openai/gpt-6-luna"},
+    "vision": {"channel": "openrouter", "model": "openai/gpt-6-luna"},
     "overrides": {}
   },
   "embedding": {
     "channel": "openrouter",
-    "model": "upstream-embedding-model",
+    "model": "qwen/qwen3-embedding-8b",
     "dimension": 1024,
     "batchSize": 10
   },
   "mediaModels": {
-    "my-video-model": {
-      "channel": "openrouter",
-      "model": "upstream-video-model",
-      "mediaType": "video",
-      "label": "My Video Model",
+    "seed-audio-1.0": {
+      "channel": "doubao_audio",
+      "model": "seed-audio-1.0",
+      "mediaType": "audio",
+      "label": "Seed Audio",
       "enabled": true,
       "sortOrder": 100,
-      "config": {}
+      "config": {
+        "request": {"endpoint": "audio/speech", "parameters": []},
+        "voiceDesignMode": "prompted_speech"
+      }
     }
   }
 }
@@ -213,6 +224,20 @@ Media model configuration controls:
 Custom mode lists only locally configured, enabled image and video models. An empty configuration produces an empty list; matching IDs do not inherit official descriptions or tags. Official and Hybrid modes show only the official catalog.
 
 The **Model ID** is DramaClaw’s stable identifier. **Upstream Model** is the actual model used by the NewAPI channel; the two may differ.
+
+##### Add an audio model in Custom mode
+
+1. Under **Advanced Settings → Provider channels**, configure a channel that supports the intended audio operation and save its upstream key. For Seed Audio, use **DoubaoAudio** (`doubao_audio`), not the VolcEngine video channel.
+2. Under **Image / Video / Audio Generation Models → Add model**, select **Audio**. Enter the model ID, select the configured channel, set the upstream model name, and turn on **Enable in XiaHua**.
+3. Select **Audio purpose** using the table below. Click **Apply to config** to update the draft, then **Save Image / Video / Audio Config** below the list to write the mapping. Applying the draft alone does not activate it.
+
+| Audio purpose | When to select it | What to check |
+|---|---|---|
+| **Speech synthesis** | A model reads text aloud (`audio/speech`). | A speech-only entry does not appear under **Design a voice**. For cloning, the upstream must accept a reference recording. |
+| **Voice design via prompted speech** | One model creates a voice preview from a description and audition text. Use this for `seed-audio-1.0`. | Uses `audio/speech` with `voiceDesignMode: "prompted_speech"`. No target model or provider-issued voice ID is required. |
+| **Voice design with a target model** | The provider has a separate design model that issues a voice ID for a synthesis model. | Add the synthesis model first (e.g. `cosyvoice-v3.5-flash`, **Speech synthesis**). Then add the design model (e.g. `voice-enrollment`, `audio/voice-designs`) and select the synthesis entry as its target. Both must be enabled and the provider must support the pair. |
+
+To verify without starting a paid job, reopen the voice design dialog. With Seed Audio configured as above, its label appears under **Design model**. With the two-model setup, select the **design** entry there; its details should show the synthesis target. In profile JSON, `config.targetModel` is the target’s **local model ID**, not its display name or necessarily its upstream name.
 
 ### 5. ComfyUI Configuration
 

@@ -108,9 +108,9 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 
 按渠道填写 API Key，然后点击 **保存并应用全部配置**。Key 独立保存，不会写入配置 JSON；已经保存的 Key 可以留空，重新输入会替换旧值。
 
-推荐模板为 DoubaoAudio 渠道设置了同名的 `seed-audio-1.0` 映射。虾画的音频克隆节点会优先选择这个模型；也可以在节点底部切换到项目中已配置的其他语音模型。切换模型不会更换已选的参考音色。样音以 Base64 随请求发送，不需要公网链接。需要供应商音色 ID 的 CosyVoice 不能直接使用该节点的参考录音。
+推荐模板的文本和视觉模型都通过 OpenRouter 调用 `openai/gpt-6-luna`，Embedding 使用 `qwen/qwen3-embedding-8b`，Seedance 视频使用 VolcEngine 渠道。音频方面，DoubaoAudio 渠道使用同名的 `seed-audio-1.0` 映射。虾画的音频克隆节点会优先选择这个模型；也可以在节点底部切换到项目中已配置的其他语音模型。切换模型不会更换已选的参考音色。样音以 Base64 随请求发送，不需要公网链接。需要供应商音色 ID 的 CosyVoice 不能直接使用该节点的参考录音。
 
-内置推荐配置是只读模板。切换到 **我的配置** 后可以编辑 JSON，保存后的个人配置会在下次打开时恢复。JSON 的主要结构如下：
+内置推荐配置是只读模板。切换到 **我的配置** 后可以编辑 JSON，保存后的个人配置会在下次打开时恢复。下面用一份最小示例展示 Seed Audio 如何与文本、视觉和 Embedding 一起配置。它不是完整推荐模板；编辑已有配置时，请保留仍在使用的其他渠道和映射。
 
 ```json
 {
@@ -123,28 +123,39 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
       "baseUrl": "",
       "priority": 0,
       "settings": {}
+    },
+    {
+      "id": "doubao_audio",
+      "provider": "doubao_audio",
+      "type": 62,
+      "baseUrl": "",
+      "priority": 0,
+      "settings": {}
     }
   ],
   "featureModels": {
-    "text": {"channel": "openrouter", "model": "upstream-text-model"},
-    "vision": {"channel": "openrouter", "model": "upstream-vision-model"},
+    "text": {"channel": "openrouter", "model": "openai/gpt-6-luna"},
+    "vision": {"channel": "openrouter", "model": "openai/gpt-6-luna"},
     "overrides": {}
   },
   "embedding": {
     "channel": "openrouter",
-    "model": "upstream-embedding-model",
+    "model": "qwen/qwen3-embedding-8b",
     "dimension": 1024,
     "batchSize": 10
   },
   "mediaModels": {
-    "my-video-model": {
-      "channel": "openrouter",
-      "model": "upstream-video-model",
-      "mediaType": "video",
-      "label": "My Video Model",
+    "seed-audio-1.0": {
+      "channel": "doubao_audio",
+      "model": "seed-audio-1.0",
+      "mediaType": "audio",
+      "label": "Seed Audio",
       "enabled": true,
       "sortOrder": 100,
-      "config": {}
+      "config": {
+        "request": {"endpoint": "audio/speech", "parameters": []},
+        "voiceDesignMode": "prompted_speech"
+      }
     }
   }
 }
@@ -213,6 +224,20 @@ Embedding 模型和维度在项目创建时绑定。修改配置只自动影响�
 纯自定义模式只列出本地已配置且启用的图片和视频模型；没有配置时列表为空。同名模型也不会继承官方简介和标签。官方和混合模式只展示官方目录。
 
 模型 ID 是 DramaClaw 使用的稳定名称，**上游模型名**是 NewAPI 渠道实际调用的名称，两者可以不同。
+
+##### 在自定义模式新增音频模型
+
+1. 在 **高级配置 → 供应商渠道** 添加支持所需音频能力的渠道，保存上游 Key。Seed Audio 使用 **DoubaoAudio**（`doubao_audio`），不是生成 Seedance 视频的 VolcEngine 渠道。
+2. 在 **图片 / 视频 / 音频生成模型 → 新增模型** 中，把媒体类型选为 **音频**。填写模型 ID，选择已配置的渠道和上游模型名，勾选 **在虾画中启用**。
+3. 按下表选择 **音频用途**。先点 **应用到配置** 更新草稿，再点列表下方的 **保存图片 / 视频 / 音频配置** 写入映射。只点第一步不会生效。
+
+| 音频用途 | 什么时候选 | 如何确认 |
+|---|---|---|
+| **语音合成** | 模型负责把文本读出来（`audio/speech`）。 | 仅配置此用途不会出现在「按描述生成声线」中。要在节点中克隆音色，上游还必须支持参考录音。 |
+| **按描述生成音色（提示词语音）** | 同一个模型根据音色描述和试听文本直接生成样音。配置 `seed-audio-1.0` 时选这项。 | 使用 `audio/speech`，并设置 `voiceDesignMode: "prompted_speech"`。不需要绑定目标模型，也不需要供应商音色 ID。 |
+| **音色设计（绑定合成模型）** | 供应商用一个模型生成音色 ID，再交给另一个模型合成语音。 | 先添加合成模型（如 `cosyvoice-v3.5-flash`，用途选「语音合成」）；再添加设计模型（如 `voice-enrollment`，端点为 `audio/voice-designs`），并把前者选为目标。两条记录都要启用，且渠道须支持这组搭配。 |
+
+不用发起付费任务即可检查：重新打开 **按描述生成声线**，按上述方式配置的 Seed Audio 应出现在 **生成模型** 中。若使用双模型方案，在这里选的是**设计模型**，其详情中应显示绑定的合成模型。手工编辑 JSON 时，`config.targetModel` 填目标模型的**本地模型 ID**，不是显示名称，也不一定等于上游模型名。
 
 ### 5. ComfyUI 配置
 
