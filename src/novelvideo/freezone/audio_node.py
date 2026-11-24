@@ -664,6 +664,7 @@ async def generate_freezone_audio_speech(
     emotion_prompt: str = "",
     voice_ref: dict | None = None,
     speech_mode: str = "clone",
+    clone_model: str | None = None,
     preset_model: str = DEFAULT_PRESET_TTS_MODEL,
     preset_voice: str = "Serena",
     projection: Any = None,
@@ -734,7 +735,13 @@ async def generate_freezone_audio_speech(
         projection=projection,
     )
 
-    if egress_context is None:
+    # A validated catalog choice always routes through the configured gateway.
+    # Old queued jobs without a snapshot retain their original IndexTTS2 path.
+    if clone_model:
+        generator = IndexTTS2FalClient(
+            provider="newapi", model=clone_model, egress_context=egress_context
+        )
+    elif egress_context is None:
         generator = IndexTTS2FalClient()
     else:
         generator = IndexTTS2FalClient(
@@ -750,7 +757,7 @@ async def generate_freezone_audio_speech(
     )
     if not result.success:
         raise with_upstream_status(
-            RuntimeError(result.error or "IndexTTS2 generation failed"),
+            RuntimeError(result.error or "Reference speech generation failed"),
             result,
         )
 
@@ -761,7 +768,7 @@ async def generate_freezone_audio_speech(
         audio_path=output_path,
         duration_ms=duration_ms,
         mime_type="audio/mpeg",
-        model=INDEXTTS2_RECORD_MODEL,
+        model=clone_model or INDEXTTS2_RECORD_MODEL,
         voice_source=selected_voice.source,
         voice_sha256=selected_voice.sha256,
     )

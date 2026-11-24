@@ -6584,6 +6584,7 @@
     }
   },
   "modelPicker": {
+    "details": "查看 {{model}} 的介绍",
     "provider": "供应商",
     "model": "模型",
     "empty": "暂无可用模型"
@@ -7270,6 +7271,10 @@
       "voiceMissing": "尚未选中可用的自定义声线",
       "translate": "翻译（中英文互译）",
       "voiceSettings": "音色设置",
+      "cloneModel": "配音模型",
+      "noCloneModel": "请选择可用的配音模型",
+      "cloneModelsLoadFailed": "配音模型加载失败",
+      "cloneVoiceIdRequired": "此模型需要供应商音色 ID，不能直接用参考音频克隆。",
       "advancedSettings": "高级设置",
       "generate": "生成",
       "generateWithoutVoice": "生成（未选择自定义声线时跳过）",
@@ -8573,7 +8578,13 @@
       },
       "mediaModels": {
         "title": "图片 / 视频 / 音频生成模型",
-        "description": "模型列表来自当前自定义本地配置。可新增图片、视频模型并配置其在虾画中显示的能力。",
+        "description": "管理本地图片、视频、音频及白模模型，配置渠道和模型能力。",
+        "audioPurpose": "音频用途",
+        "speech": "语音合成",
+        "promptedSpeech": "按描述生成音色（提示词语音）",
+        "voiceDesign": "音色设计（绑定合成模型）",
+        "audioTarget": "目标语音合成模型",
+        "audioTargetRequired": "请先选择可用的语音合成模型；启用音色设计模型时，目标模型也须启用。",
         "addModel": "新增模型",
         "addModelTitle": "新增媒体模型",
         "editModelTitle": "编辑媒体模型",

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "catalogVersion": "2026.11.19.1",
+  "catalogVersion": "2026.11.23.1",
   "name": "DramaClaw CE official media models",
   "mediaModels": {
     "LingShan-G2": {
@@ -12,6 +12,12 @@
       "sortOrder": 10,
       "aliases": ["gpt-image-2", "huimeng_gpt_image2", "newapi_gpt_image2"],
       "config": {
+        "pickerGuide": {
+          "zh": {"summary":"按需要调画质，从草图做到定稿。","detail":"低、中、高三档画质可单独设置，不必为了提高画质而更换画幅。"},
+          "en": {"summary":"Adjust quality as you move from sketch to final.","detail":"Quality and aspect ratio are independent: select low, medium or high without reframing."},
+          "pt": {"summary":"Ajuste a qualidade do esboço à arte final.","detail":"A qualidade é independente da proporção: escolha baixa, média ou alta sem mudar o enquadramento."},
+          "vi": {"summary":"Điều chỉnh chất lượng từ bản phác thảo đến ảnh cuối.","detail":"Chọn chất lượng thấp, trung bình hoặc cao mà không cần đổi tỷ lệ khung."}
+        },
         "request": {"endpoint": "images/generations", "parameters": []},
         "ratioOptions": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "4:5", "5:4", "21:9"],
         "qualityOptions": ["low", "medium", "high"],
@@ -86,6 +92,12 @@
       "sortOrder": 79,
       "aliases": ["newapi_seedream-5.0", "seedream-5.0"],
       "config": {
+        "pickerGuide": {
+          "zh": {"summary":"适合设计文字密集的海报和信息图。","detail":"在提示词里写明标题、正文和布局，再指定各段文字的位置。"},
+          "en": {"summary":"Design posters and infographics with dense text.","detail":"Specify the headline, body copy and layout, including where each block of text should appear."},
+          "pt": {"summary":"Crie cartazes e infográficos com bastante texto.","detail":"Indique o título, os textos e a posição de cada bloco na composição."},
+          "vi": {"summary":"Thiết kế áp phích và đồ họa thông tin có nhiều chữ.","detail":"Nêu tiêu đề, nội dung và vị trí của từng khối chữ trong bố cục."}
+        },
         "request": {
           "endpoint": "images/generations",
           "parameters": [{"key": "watermark", "label": "生成水印", "control": "select", "options": [0], "requestPath": "metadata.watermark"}]
@@ -133,6 +145,12 @@
       "sortOrder": 5,
       "aliases": [],
       "config": {
+        "pickerGuide": {
+          "zh": {"summary":"用优速版试镜头，可结合画面和声音参考。","detail":"有参考视频时，输入视频总时长与输出时长之和不能超过 30 秒。"},
+          "en": {"summary":"Iterate on shots with the speed-optimized model using visual and audio references.","detail":"When using reference clips, their combined duration plus the output must not exceed 30 seconds."},
+          "pt": {"summary":"Teste planos com a versão rápida usando referências visuais e sonoras.","detail":"Com vídeos de referência, a duração total desses vídeos somada à do resultado não pode passar de 30 segundos."},
+          "vi": {"summary":"Thử các cảnh quay với phiên bản tối ưu tốc độ, dùng tư liệu hình ảnh và âm thanh.","detail":"Khi dùng video tham chiếu, tổng thời lượng các video đầu vào và video đầu ra không được vượt quá 30 giây."}
+        },
         "request": {
           "endpoint": "video/generations",
           "parameters": [
@@ -207,6 +225,12 @@
       "sortOrder": 100,
       "aliases": ["newapi_seedance-2.5"],
       "config": {
+        "pickerGuide": {
+          "zh": {"summary":"用多种参考素材编排最长 30 秒的多镜头短片。","detail":"可以用图片指定主体、用视频参考运镜，再描述各个镜头如何衔接。"},
+          "en": {"summary":"Build a multi-shot sequence of up to 30 seconds from mixed references.","detail":"Use images to establish the subject and video to guide camera movement, then describe how the shots connect."},
+          "pt": {"summary":"Crie uma sequência de até 30 segundos com vários planos e referências.","detail":"Use imagens para definir o tema e vídeos para orientar a câmera. Descreva como os planos se conectam."},
+          "vi": {"summary":"Dựng phim ngắn nhiều cảnh dài tối đa 30 giây từ nhiều loại tư liệu.","detail":"Dùng ảnh để xác định chủ thể, video để tham chiếu chuyển động máy rồi mô tả cách nối các cảnh."}
+        },
         "request": {
           "endpoint": "video/generations",
           "parameters": [
@@ -265,6 +289,12 @@
       "sortOrder": 20,
       "aliases": ["newapi_seedance-2.0"],
       "config": {
+        "pickerGuide": {
+          "zh": {"summary":"指定首尾画面，输出高分辨率镜头。","detail":"用首尾帧约束转场，也可以仅用文字描述镜头。","tags":["4K"]},
+          "en": {"summary":"Set both end frames for a high-resolution shot.","detail":"Provide both endpoints to guide a transition, or start with text alone.","tags":["4K"]},
+          "pt": {"summary":"Defina os quadros inicial e final para uma cena em alta resolução.","detail":"Use os dois quadros para guiar a transição ou comece apenas com texto.","tags":["4K"]},
+          "vi": {"summary":"Chọn khung đầu và cuối cho cảnh có độ phân giải cao.","detail":"Dùng hai khung để định hướng chuyển cảnh hoặc chỉ nhập mô tả.","tags":["4K"]}
+        },
         "request": {"endpoint": "video/generations", "parameters": []},
         "humanReview": true,
         "minDuration": 4,
@@ -278,40 +308,6 @@
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
         "resolutionOptions": ["480p", "720p", "1080p", "4K"]
-      }
-    },
-    "seedance-1.5-pro": {
-      "provider": "newapi",
-      "upstreamModel": "seedance-1.5-pro",
-      "mediaType": "video",
-      "label": "Seedance1.5 Pro",
-      "enabled": true,
-      "sortOrder": 50,
-      "aliases": ["newapi_seedance-1.5-pro"],
-      "config": {
-        "request": {"endpoint": "video/generations", "parameters": []},
-        "minDuration": 4,
-        "maxDuration": 12,
-        "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
-        "supportedModes": ["text_to_video", "first_frame", "image_to_video", "image_reference"],
-        "resolutionOptions": ["480p", "720p", "1080p"]
-      }
-    },
-    "seedance-1.0-pro-fast": {
-      "provider": "newapi",
-      "upstreamModel": "seedance-1.0-pro-fast",
-      "mediaType": "video",
-      "label": "Seedance1.0 Pro Fast",
-      "enabled": true,
-      "sortOrder": 60,
-      "aliases": ["newapi_seedance-1.0-pro-fast"],
-      "config": {
-        "request": {"endpoint": "video/generations", "parameters": []},
-        "minDuration": 2,
-        "maxDuration": 12,
-        "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
-        "supportedModes": ["text_to_video", "first_frame"],
-        "resolutionOptions": ["480p", "720p", "1080p"]
       }
     },
     "happyhorse-1.0": {
@@ -388,6 +384,12 @@
       "sortOrder": 110,
       "aliases": [],
       "config": {
+        "pickerGuide": {
+          "zh": {"tags":["2K"]},
+          "en": {"tags":["2K"]},
+          "pt": {"tags":["2K"]},
+          "vi": {"tags":["2K"]}
+        },
         "request": {"endpoint": "video/generations", "parameters": []},
         "minDuration": 4,
         "maxDuration": 15,
@@ -409,52 +411,6 @@
       "aliases": [],
       "config": {
         "request": {"endpoint": "chat/completions", "parameters": []}
-      }
-    },
-    "voice-enrollment": {
-      "provider": "newapi",
-      "upstreamModel": "voice-enrollment",
-      "mediaType": "audio",
-      "label": "CosyVoice",
-      "enabled": true,
-      "sortOrder": 10,
-      "config": {
-        "request": {"endpoint": "audio/voice-designs", "parameters": []},
-        "targetModel": "cosyvoice-v3.5-flash"
-      }
-    },
-    "cosyvoice-v3.5-flash": {
-      "provider": "newapi",
-      "upstreamModel": "cosyvoice-v3.5-flash",
-      "mediaType": "audio",
-      "label": "CosyVoice 3.5 Flash",
-      "enabled": true,
-      "sortOrder": 11,
-      "config": {
-        "request": {"endpoint": "audio/speech", "parameters": []}
-      }
-    },
-    "qwen-voice-design": {
-      "provider": "newapi",
-      "upstreamModel": "qwen-voice-design",
-      "mediaType": "audio",
-      "label": "Qwen Voice Design",
-      "enabled": true,
-      "sortOrder": 12,
-      "config": {
-        "request": {"endpoint": "audio/voice-designs", "parameters": []},
-        "targetModel": "qwen3-tts-vd-2026-01-26"
-      }
-    },
-    "qwen3-tts-vd-2026-01-26": {
-      "provider": "newapi",
-      "upstreamModel": "qwen3-tts-vd-2026-01-26",
-      "mediaType": "audio",
-      "label": "Qwen TTS Voice Design",
-      "enabled": true,
-      "sortOrder": 13,
-      "config": {
-        "request": {"endpoint": "audio/speech", "parameters": []}
       }
     },
     "seed-audio-1.0": {

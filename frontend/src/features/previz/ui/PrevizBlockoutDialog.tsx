@@ -390,6 +390,7 @@ function BlockoutPanel({
                     {t("previz.blockout.model")}
                   </span>
                   <ProviderModelPicker
+                    showGuide={false}
                     selectedModelId={chosenModel?.id ?? ""}
                     onChange={setModelId}
                     models={modelOptions}

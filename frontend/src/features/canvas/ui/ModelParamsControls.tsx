@@ -11,6 +11,8 @@ import {
   type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { ModelGuideOption } from './ModelGuideOption';
+import { useModelMenuAnchor, useModelMenuPreview } from './useModelMenuPreview';
 import { SlidersHorizontal, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -55,11 +57,8 @@ interface ModelParamsControlsProps {
   modelPanelClassName?: string;
   paramsPanelClassName?: string;
   providerOptionClassName?: string;
-  modelOptionClassName?: string;
   activeProviderOptionClassName?: string;
   inactiveProviderOptionClassName?: string;
-  activeModelOptionClassName?: string;
-  inactiveModelOptionClassName?: string;
   optionGroupClassName?: string;
   activeParamOptionClassName?: string;
   inactiveParamOptionClassName?: string;
@@ -82,16 +81,10 @@ const OTHER_PARAMS_PANEL_CLASS_NAME = 'w-[280px] p-3';
 const DEFAULT_MODEL_PANEL_CLASS_NAME = 'inline-block min-w-[320px] max-w-[calc(100vw-32px)] p-2';
 const DEFAULT_PROVIDER_OPTION_CLASS_NAME =
   'min-w-[92px] px-3 text-center';
-const DEFAULT_MODEL_OPTION_CLASS_NAME =
-  'min-h-9 min-w-[128px] max-w-full justify-center px-3 py-2 text-center';
 const DEFAULT_ACTIVE_PROVIDER_OPTION_CLASS_NAME =
   'border-accent/50 bg-accent/15 text-text-dark';
 const DEFAULT_INACTIVE_PROVIDER_OPTION_CLASS_NAME =
   'border-[rgba(255,255,255,0.12)] bg-bg-dark/65 text-text-muted hover:border-[rgba(255,255,255,0.2)]';
-const DEFAULT_ACTIVE_MODEL_OPTION_CLASS_NAME =
-  'border-accent/50 bg-accent/15 text-text-dark shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]';
-const DEFAULT_INACTIVE_MODEL_OPTION_CLASS_NAME =
-  'border-[rgba(255,255,255,0.12)] bg-bg-dark/65 text-text-muted hover:border-[rgba(255,255,255,0.2)] hover:bg-[rgba(255,255,255,0.05)]';
 const DEFAULT_OPTION_GROUP_CLASS_NAME =
   'rounded-xl border border-[rgba(255,255,255,0.1)] bg-bg-dark/65 p-1';
 const DEFAULT_ACTIVE_PARAM_OPTION_CLASS_NAME = 'bg-surface-dark text-text-dark';
@@ -202,11 +195,8 @@ export const ModelParamsControls = memo(({
   modelPanelClassName = DEFAULT_MODEL_PANEL_CLASS_NAME,
   paramsPanelClassName = 'w-[420px] p-3',
   providerOptionClassName = DEFAULT_PROVIDER_OPTION_CLASS_NAME,
-  modelOptionClassName = DEFAULT_MODEL_OPTION_CLASS_NAME,
   activeProviderOptionClassName = DEFAULT_ACTIVE_PROVIDER_OPTION_CLASS_NAME,
   inactiveProviderOptionClassName = DEFAULT_INACTIVE_PROVIDER_OPTION_CLASS_NAME,
-  activeModelOptionClassName = DEFAULT_ACTIVE_MODEL_OPTION_CLASS_NAME,
-  inactiveModelOptionClassName = DEFAULT_INACTIVE_MODEL_OPTION_CLASS_NAME,
   optionGroupClassName = DEFAULT_OPTION_GROUP_CLASS_NAME,
   activeParamOptionClassName = DEFAULT_ACTIVE_PARAM_OPTION_CLASS_NAME,
   inactiveParamOptionClassName = DEFAULT_INACTIVE_PARAM_OPTION_CLASS_NAME,
@@ -230,13 +220,18 @@ export const ModelParamsControls = memo(({
   const [openPanel, setOpenPanel] = useState<'model' | 'params' | 'otherParams' | null>(null);
   const [renderPanel, setRenderPanel] = useState<'model' | 'params' | 'otherParams' | null>(null);
   const [isPanelVisible, setIsPanelVisible] = useState(false);
-  const [modelPanelAnchor, setModelPanelAnchor] = useState<PanelAnchor | null>(null);
   const [paramsPanelAnchor, setParamsPanelAnchor] = useState<PanelAnchor | null>(null);
   const [otherParamsPanelAnchor, setOtherParamsPanelAnchor] = useState<PanelAnchor | null>(null);
-  const [modelAnchorBaseWidth, setModelAnchorBaseWidth] = useState<number | null>(null);
   const [paramsAnchorBaseWidth, setParamsAnchorBaseWidth] = useState<number | null>(null);
   const [otherParamsAnchorBaseWidth, setOtherParamsAnchorBaseWidth] = useState<number | null>(null);
   const [panelProviderId, setPanelProviderId] = useState(selectedModel.providerId);
+  const modelScrollRef = useRef<HTMLDivElement>(null);
+  const modelBounds = useModelMenuAnchor(modelTriggerRef, openPanel === 'model' || renderPanel === 'model');
+  const modelPanelAnchor = modelBounds && {
+    left: modelBounds.left + (modelPanelAlign === 'center' ? modelBounds.width / 2 : 0),
+    top: modelBounds.top - 8,
+  };
+  const { previewId, preview } = useModelMenuPreview(modelPanelRef, renderPanel === 'model' ? modelBounds : null, true, modelScrollRef);
 
   const selectedProvider = useMemo(
     () => getModelProvider(selectedModel.providerId),
@@ -383,11 +378,12 @@ export const ModelParamsControls = memo(({
       setOpenPanel(null);
     };
 
-    document.addEventListener('mousedown', handleOutside, true);
+    const eventType = openPanel === 'model' ? 'click' : 'mousedown';
+    document.addEventListener(eventType, handleOutside, true);
     return () => {
-      document.removeEventListener('mousedown', handleOutside, true);
+      document.removeEventListener(eventType, handleOutside, true);
     };
-  }, []);
+  }, [openPanel]);
 
   const getPanelAnchor = (
     triggerElement: HTMLDivElement | null,
@@ -458,12 +454,7 @@ export const ModelParamsControls = memo(({
               return;
             }
             setPanelProviderId(selectedModel.providerId);
-            const triggerWidth = modelTriggerRef.current?.getBoundingClientRect().width ?? null;
-            const nextBaseWidth = modelAnchorBaseWidth ?? triggerWidth;
-            if (modelAnchorBaseWidth == null && triggerWidth) {
-              setModelAnchorBaseWidth(triggerWidth);
-            }
-            setModelPanelAnchor(getPanelAnchor(modelTriggerRef.current, modelPanelAlign, nextBaseWidth));
+            preview(null);
             setOpenPanel('model');
           }}
         >
@@ -534,7 +525,10 @@ export const ModelParamsControls = memo(({
         modelPanelAlign,
         (
           <UiPanel className={modelPanelClassName}>
-            <div className="ui-scrollbar max-h-[340px] space-y-4 overflow-y-auto p-1">
+            <div ref={modelScrollRef} className="ui-scrollbar nodrag nowheel space-y-4 overflow-y-auto overscroll-contain [overflow-anchor:none] p-1"
+              style={{ maxHeight: 'min(340px, var(--preview-room, 340px))' }}
+              onMouseLeave={() => preview(null)}
+              onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) preview(null); }}>
               <section>
                 <div className="mb-2 text-xs font-medium text-text-muted">
                   {t('modelParams.provider')}
@@ -552,6 +546,7 @@ export const ModelParamsControls = memo(({
                         onClick={(event) => {
                           event.stopPropagation();
                           if (provider.id !== panelProviderId) {
+                            preview(null);
                             const firstModel = imageModels.find((model) => model.providerId === provider.id);
                             if (firstModel) {
                               onModelChange(firstModel.id);
@@ -571,7 +566,7 @@ export const ModelParamsControls = memo(({
                 <div className="mb-2 text-xs font-medium text-text-muted">
                   {t('modelParams.model')}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-col gap-1">
                   {/* 后台一个模型都没配时列表是空的——说清楚，别只留一片空白让用户
                       以为是没加载出来。提交侧由各节点的 imageModelsEmpty 拦死。 */}
                   {modelGroups.length === 0 && (
@@ -584,20 +579,16 @@ export const ModelParamsControls = memo(({
                     const targetModel = group.models.find((model) => model.id === selectedModel.id)
                       ?? group.models[0];
                     return (
-                      <button
+                      <ModelGuideOption
                         key={group.name}
-                        className={`inline-flex max-w-full items-center rounded-lg border text-xs leading-4 transition-colors ${modelOptionClassName} ${active
-                          ? activeModelOptionClassName
-                          : inactiveModelOptionClassName
-                          }`}
-                        onClick={(event) => {
-                          event.stopPropagation();
+                        label={group.name} data={targetModel.guideData} selected={active}
+                        preview={previewId === targetModel.id}
+                        onPreview={(open, element) => preview(open ? targetModel.id : null, element)}
+                        onSelect={() => {
                           onModelChange(targetModel.id);
                           setOpenPanel(null);
                         }}
-                      >
-                        <span className="max-w-full break-words text-inherit">{group.name}</span>
-                      </button>
+                      />
                     );
                   })}
                 </div>

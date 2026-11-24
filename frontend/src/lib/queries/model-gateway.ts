@@ -356,6 +356,10 @@ const officialMediaCatalogQueryKey = [
   ...queryKeys.modelGateway(),
   "official-media-catalog",
 ] as const;
+function notifyCanvasCatalogChanged() {
+  window.dispatchEvent(new Event("media-model-catalog-updated"));
+}
+
 const officialMediaCatalogStatusPollMs = 60_000;
 
 function fetchOfficialMediaCatalogStatus(signal?: AbortSignal) {
@@ -392,7 +396,7 @@ export function useOfficialMediaCatalogWatcher(enabled = true) {
     const previous = previousSha256.current;
     previousSha256.current = sha256;
     if (previous && previous !== sha256 && typeof window !== "undefined") {
-      window.dispatchEvent(new Event("media-model-catalog-updated"));
+      notifyCanvasCatalogChanged();
     }
   }, [sha256]);
 
@@ -461,7 +465,8 @@ export function useSaveOfficialConfig() {
       api
         .post("api/v1/model-gateway/official/config", { json: input })
         .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      if (response.ok) notifyCanvasCatalogChanged();
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
     },
   });
@@ -490,7 +495,8 @@ export function useEnableOfficial() {
       api
         .post("api/v1/model-gateway/official/enable")
         .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      if (response.ok) notifyCanvasCatalogChanged();
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
     },
   });
@@ -503,7 +509,8 @@ export function useEnableCustom() {
       api
         .post("api/v1/model-gateway/custom/enable", { throwHttpErrors: false })
         .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      if (response.ok) notifyCanvasCatalogChanged();
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
     },
   });
@@ -529,7 +536,8 @@ export function useEnableHybrid() {
       api
         .post("api/v1/model-gateway/hybrid/enable", { throwHttpErrors: false })
         .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      if (response.ok) notifyCanvasCatalogChanged();
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
     },
   });
@@ -575,6 +583,7 @@ export function useInitCustomNewApi() {
         .json<OkResponse<InitCustomNewApiResult> | ErrorResponse | FastApiErrorResponse>(),
     onSuccess: (data) => {
       if (data.ok === true) {
+        notifyCanvasCatalogChanged();
         qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
       }
     },
@@ -604,6 +613,7 @@ export function useSaveProviderChannels() {
         >(),
     onSuccess: async (response) => {
       if (response.ok === true) {
+        notifyCanvasCatalogChanged();
         await qc.resetQueries({ queryKey: CHANNEL_MODELS_QUERY_KEY });
         await qc.cancelQueries({ queryKey: queryKeys.modelGateway() });
         qc.setQueryData<OkResponse<ModelGatewayConfig>>(
@@ -649,7 +659,7 @@ export function useClearComfyUIConfig() {
     onSuccess: (response) => {
       if (response.ok !== true) return;
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
-      window.dispatchEvent(new Event("media-model-catalog-updated"));
+      notifyCanvasCatalogChanged();
     },
   });
 }
@@ -728,7 +738,8 @@ export function useSaveMediaModels() {
           timeout: 120_000,
         })
         .json<OkResponse<SaveMediaModelsResult> | ErrorResponse>(),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      if (response.ok) notifyCanvasCatalogChanged();
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
     },
   });

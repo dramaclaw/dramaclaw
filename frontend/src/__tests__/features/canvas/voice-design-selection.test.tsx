@@ -105,6 +105,9 @@ beforeEach(() => {
     }),
   );
   server.use(
+    http.get(`${base}/freezone/audio/models`, () => HttpResponse.json({ ok: true, data: [
+      { id: 'seed-audio-1.0', label: 'Seed Audio', model: 'seed-audio-1.0', requiresVoiceId: false },
+    ] })),
     http.get(`${base}/voice-design/candidates`, () => HttpResponse.json({ ok: true, data: { candidates: [], next_cursor: null, retention_seconds: 604800 } })),
     http.get(`${base}/freezone/jobs/:kind/:id/result`, () =>
       HttpResponse.json({ ok: true, data: { url: '/fixture-speech.mp3' } }),

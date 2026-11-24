@@ -1,19 +1,36 @@
 /**
  * 媒体模型目录的类型及其请求形状。镜像后端 `media_model_request_schema.py`：
- * 图片 / 视频 / 白模三种类型共用一套目录，音频只做名称映射，不进目录。
+ * 图片、视频、音频和白模均可在本地目录中管理。
  */
-export const MEDIA_MODEL_CATALOG_TYPES = ["image", "video", "blockout"] as const;
+export const MEDIA_MODEL_CATALOG_TYPES = ["image", "video", "audio", "blockout"] as const;
 
 export type MediaModelCatalogType = (typeof MEDIA_MODEL_CATALOG_TYPES)[number];
 
-/** 设置页媒体模型映射可声明的类型：目录类型加上只做映射的音频。 */
-export type MediaModelType = MediaModelCatalogType | "audio";
+export type ModelPickerGuide = Partial<Record<"zh" | "en" | "pt" | "vi", {
+  summary?: string;
+  detail?: string;
+  tags?: string[];
+}>>;
+
+export interface ModelGuideData {
+  pickerGuide?: ModelPickerGuide;
+  resolutionOptions?: readonly string[] | null;
+  ratioOptions?: readonly string[] | null;
+  minDuration?: number | null;
+  maxDuration?: number | null;
+  referenceImageMax?: number | null;
+  referenceVideoMax?: number | null;
+  supportsGenerateAudio?: boolean;
+}
+
+export type MediaModelType = MediaModelCatalogType;
 
 export const MEDIA_MODEL_REQUEST_ENDPOINTS: Readonly<
   Record<MediaModelCatalogType, string>
 > = {
   image: "images/generations",
   video: "video/generations",
+  audio: "audio/speech",
   blockout: "chat/completions",
 };
 

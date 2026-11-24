@@ -8,14 +8,15 @@ import {
 } from "./media-model-catalog-types";
 
 describe("media model catalog types", () => {
-  it("lists the three catalog types the backend validates", () => {
-    expect([...MEDIA_MODEL_CATALOG_TYPES]).toEqual(["image", "video", "blockout"]);
+  it("lists the catalog types the backend validates", () => {
+    expect([...MEDIA_MODEL_CATALOG_TYPES]).toEqual(["image", "video", "audio", "blockout"]);
     expect(isMediaModelCatalogType("blockout")).toBe(true);
-    expect(isMediaModelCatalogType("audio")).toBe(false);
+    expect(isMediaModelCatalogType("audio")).toBe(true);
     expect(isMediaModelCatalogType(undefined)).toBe(false);
   });
 
   it("gives each type the request endpoint the backend expects", () => {
+    expect(defaultMediaModelRequest("audio")).toEqual({ endpoint: "audio/speech", parameters: [] });
     expect(defaultMediaModelRequest("image")).toEqual({
       endpoint: "images/generations",
       parameters: [],

@@ -1329,6 +1329,17 @@ export async function fetchFreezoneImageModels(project: string): Promise<Freezon
   return coerceModelList(await apiCall<unknown>(`projects/${encodeURIComponent(project)}/freezone/image/models`));
 }
 
+export interface AudioCloneModelOption {
+  id: string;
+  label: string;
+  model: string;
+  requiresVoiceId: boolean;
+}
+
+export function fetchAudioCloneModels(project: string) {
+  return apiCall<AudioCloneModelOption[]>(`projects/${encodeURIComponent(project)}/freezone/audio/models`);
+}
+
 export async function fetchFreezoneVideoModels(project: string): Promise<FreezoneVideoModelInfo[]> {
   return coerceVideoModelList(await apiCall<unknown>(`projects/${encodeURIComponent(project)}/freezone/video/models`));
 }

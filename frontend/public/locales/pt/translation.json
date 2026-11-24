@@ -6584,6 +6584,7 @@
     }
   },
   "modelPicker": {
+    "details": "Detalhes de {{model}}",
     "provider": "Fornecedor",
     "model": "Modelo",
     "empty": "Nenhum modelo disponível"
@@ -7411,6 +7412,10 @@
       "voiceMissing": "Não está selecionada nenhuma voz personalizada utilizável",
       "translate": "Traduzir (chinês ⇄ inglês)",
       "voiceSettings": "Definições de voz",
+      "cloneModel": "Modelo de voz",
+      "noCloneModel": "Selecione um modelo de voz disponível",
+      "cloneModelsLoadFailed": "Falha ao carregar os modelos de voz",
+      "cloneVoiceIdRequired": "Este modelo exige um ID de voz do fornecedor e não aceita diretamente um áudio de referência.",
       "advancedSettings": "Definições avançadas",
       "generate": "Gerar",
       "generateWithoutVoice": "Gerar (ignorar quando não estiver selecionada uma voz personalizada)",
@@ -8697,7 +8702,13 @@
       },
       "mediaModels": {
         "title": "Modelos de geração de imagem/vídeo/áudio",
-        "description": "Os modelos provêm da configuração local personalizada atual. Adicione modelos de imagem ou vídeo e configure as capacidades apresentadas no XiaHua.",
+        "description": "Gira modelos locais de imagem, vídeo, áudio e blockout e as suas capacidades.",
+        "audioPurpose": "Finalidade do áudio",
+        "speech": "Síntese de voz",
+        "promptedSpeech": "Criar voz por descrição",
+        "voiceDesign": "Criar voz com modelo de destino",
+        "audioTarget": "Modelo de síntese de destino",
+        "audioTargetRequired": "Selecione um modelo de síntese compatível. Ative-o se o modelo de criação de voz estiver ativo.",
         "addModel": "Adicionar modelo",
         "addModelTitle": "Adicionar modelo multimédia",
         "editModelTitle": "Editar modelo multimédia",

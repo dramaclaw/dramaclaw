@@ -632,6 +632,30 @@ async def test_freezone_audio_speech_drama_first_person_uses_project_narrator(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["seed-audio-1.0", "index-tts-2"])
+async def test_clone_worker_sends_selected_model_and_inline_reference(tmp_path, monkeypatch, model):
+    from unittest.mock import AsyncMock, Mock
+    import base64
+
+    sample = tmp_path / "voice.wav"
+    sample.write_bytes(b"reference recording")
+    monkeypatch.setattr(audio_node, "resolve_speech_voice", AsyncMock(return_value=(
+        "third_person", audio_node.FreezoneVoiceRefResolution(sample, "sha", "user_custom")
+    )))
+    client = Mock(return_value=FakeTTSGenerator())
+    monkeypatch.setattr(audio_node, "IndexTTS2FalClient", client)
+    result = await audio_node.generate_freezone_audio_speech(
+        store=None, username="alice", project="demo", project_dir=tmp_path, job_id="clone",
+        text="Test.", clone_model=model,
+    )
+    client.assert_called_once_with(provider="newapi", model=model, egress_context=None)
+    assert result.model == model
+    header, encoded = FakeTTSGenerator.calls[-1]["audio_url"].split(",", 1)
+    assert header.startswith("data:audio/") and header.endswith(";base64")
+    assert base64.b64decode(encoded, validate=True) == sample.read_bytes()
+
+
+@pytest.mark.asyncio
 async def test_freezone_audio_preset_speech_does_not_require_reference_voice(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

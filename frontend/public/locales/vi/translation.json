@@ -6458,6 +6458,7 @@
     }
   },
   "modelPicker": {
+    "details": "Chi tiết về {{model}}",
     "provider": "Nhà cung cấp",
     "model": "Model",
     "empty": "Không có model khả dụng"
@@ -7144,6 +7145,10 @@
       "voiceMissing": "Cấu hình hoặc chọn một giọng trước đã",
       "translate": "Dịch (Trung ⇄ Anh)",
       "voiceSettings": "Thiết lập giọng",
+      "cloneModel": "Mô hình giọng nói",
+      "noCloneModel": "Chọn mô hình giọng nói khả dụng",
+      "cloneModelsLoadFailed": "Không tải được mô hình giọng nói",
+      "cloneVoiceIdRequired": "Mô hình này cần ID giọng của nhà cung cấp, không thể sao chép trực tiếp từ âm thanh tham chiếu.",
       "advancedSettings": "Thiết lập nâng cao",
       "generate": "Tạo",
       "help": "Trợ giúp",
@@ -8202,7 +8207,13 @@
       },
       "mediaModels": {
         "title": "Model tạo ảnh / video / âm thanh",
-        "description": "Danh sách model lấy từ cấu hình cục bộ tuỳ chỉnh hiện tại. Hãy thêm model ảnh hoặc video và cấu hình các năng lực hiển thị trong XiaHua.",
+        "description": "Quản lý mô hình ảnh, video, âm thanh và blockout cục bộ cùng các khả năng của chúng.",
+        "audioPurpose": "Công dụng âm thanh",
+        "speech": "Tổng hợp giọng nói",
+        "promptedSpeech": "Tạo giọng theo mô tả",
+        "voiceDesign": "Thiết kế giọng với mô hình đích",
+        "audioTarget": "Mô hình tổng hợp giọng đích",
+        "audioTargetRequired": "Hãy chọn mô hình tổng hợp giọng tương thích. Nếu bật mô hình thiết kế giọng, bạn cũng cần bật mô hình đích.",
         "addModel": "Thêm model",
         "addModelTitle": "Thêm model media",
         "editModelTitle": "Sửa model media",

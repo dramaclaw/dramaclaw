@@ -2309,6 +2309,7 @@ async def _run_freezone_audio_speech_async(
             emotion_prompt=str(payload.get("emotion_prompt") or ""),
             voice_ref=payload.get("voice_ref"),
             speech_mode=str(payload.get("speech_mode") or "clone"),
+            **({"clone_model": payload["clone_model"]} if payload.get("clone_model") else {}),
             preset_model=str(payload.get("preset_model") or "edge-tts"),
             preset_voice=str(payload.get("preset_voice") or "Serena"),
             projection=projection,

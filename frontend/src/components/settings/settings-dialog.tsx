@@ -1678,13 +1678,11 @@ const MEDIA_MODEL_ROWS: readonly {
 }[] = [
   { model: "LingShan-G2", kind: "image" },
   { model: "LingShan-NB-2", kind: "image" },
-  { model: "seedance-1.0-pro-fast", kind: "video" },
-  { model: "seedance-1.0-pro", kind: "video" },
-  { model: "seedance-1.5-pro", kind: "video" },
   { model: "seedance-2.0", kind: "video" },
   { model: "seedance-2.0-fast", kind: "video" },
   { model: "seedance-2.0-mini", kind: "video" },
   { model: "happyhorse-1.0", kind: "video" },
+  { model: "seed-audio-1.0", kind: "audio" },
   { model: "index-tts-2", kind: "audio" },
   { model: "LingShan-MU-11", kind: "audio" },
 ];
@@ -1959,7 +1957,17 @@ export function providersSupportingCapability(
   return supported;
 }
 
+const seedanceModes = ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_to_video", "image_reference"];
+const videoProfileConfig = (supportedModes: string[]) => ({ request: defaultMediaModelRequest("video"), supportedModes });
+
 const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
+  "seed-audio-1.0": {
+    channel: "doubao_audio",
+    model: "seed-audio-1.0",
+    label: "Seed Audio",
+    mediaType: "audio",
+    config: { request: { endpoint: "audio/speech", parameters: [] }, voiceDesignMode: "prompted_speech" },
+  },
   "LingShan-G2": {
     channel: "openrouter",
     model: "openai/gpt-image-2",
@@ -1970,57 +1978,49 @@ const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
     model: "google/gemini-3.1-flash-image",
     mediaType: "image",
   },
-  "seedance-1.0-pro-fast": {
-    channel: "volcengine",
-    model: "seedance-1.0-pro-fast",
-    mediaType: "video",
-  },
-  "seedance-1.0-pro": {
-    channel: "volcengine",
-    model: "doubao-seedance-1-0-pro-250528",
-    mediaType: "video",
-  },
-  "seedance-1.5-pro": {
-    channel: "volcengine",
-    model: "doubao-seedance-1-5-pro-251215",
-    mediaType: "video",
-  },
   "seedance-2.0": {
     channel: "volcengine",
     model: "doubao-seedance-2-0-260128",
     mediaType: "video",
+    config: videoProfileConfig(seedanceModes),
   },
   "seedance-2.0-fast": {
     channel: "volcengine",
     model: "doubao-seedance-2-0-fast-260128",
     mediaType: "video",
+    config: videoProfileConfig(seedanceModes),
   },
   "seedance-2.0-mini": {
     channel: "volcengine",
     model: "doubao-seedance-2-0-mini-260615",
     mediaType: "video",
+    config: videoProfileConfig([...seedanceModes, "video_edit"]),
   },
   "happyhorse-1.0": {
     channel: "openrouter",
     model: "alibaba/happyhorse-1.0",
     mediaType: "video",
+    config: videoProfileConfig(["text_to_video", "first_frame", "image_to_video", "image_reference", "video_edit"]),
   },
   "index-tts-2": {
     channel: "openrouter",
     model: "openai/gpt-audio",
     mediaType: "audio",
+    config: {}, // Keep the existing quick profile; the gateway defaults to speech.
   },
   "LingShan-MU-11": {
     channel: "openrouter",
     model: "openai/gpt-audio",
     mediaType: "audio",
+    config: {},
   },
 };
 
 const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
   version: 2,
-  name: "OpenRouter+ VolCengine",
+  name: "OpenRouter + VolcEngine + Doubao Audio",
   channels: [
+    { id: "doubao_audio", provider: "doubao_audio", type: 62, baseUrl: "", priority: 0, settings: {} },
     {
       id: "openrouter",
       provider: "openrouter",
@@ -2037,8 +2037,8 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
     },
   ],
   featureModels: {
-    text: { channel: "openrouter", model: "openai/gpt-5.6-luna" },
-    vision: { channel: "openrouter", model: "openai/gpt-5.6-luna" },
+    text: { channel: "openrouter", model: "openai/gpt-6-luna" },
+    vision: { channel: "openrouter", model: "openai/gpt-6-luna" },
     overrides: {},
   },
   embedding: {
@@ -2052,7 +2052,7 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
       model,
       {
         ...mapping,
-        label: model,
+        label: mapping.label ?? model,
         enabled: true,
         sortOrder: 100,
         config:
@@ -2094,17 +2094,15 @@ function loadStoredQuickProfiles(): StoredQuickProfiles {
       localStorage.getItem(QUICK_PROFILES_STORAGE_KEY) ?? "null",
     ) as Partial<StoredQuickProfiles> | null;
     if (!stored || stored.version !== 1) return fallback;
+    // Older versions persisted JSON.stringify(null) when reconciliation failed.
+    const applied = typeof stored.appliedProfileJson === "string" &&
+      stored.appliedProfileJson.trim() !== "null" ? stored.appliedProfileJson : "";
+    const draft = typeof stored.customProfileJson === "string" ? stored.customProfileJson : "";
     return {
       version: 1,
       selected: stored.selected === "custom" ? "custom" : "recommended",
-      customProfileJson:
-        typeof stored.customProfileJson === "string"
-          ? stored.customProfileJson
-          : "",
-      appliedProfileJson:
-        typeof stored.appliedProfileJson === "string"
-          ? stored.appliedProfileJson
-          : "",
+      customProfileJson: draft.trim() === "null" ? applied : draft,
+      appliedProfileJson: applied,
     };
   } catch {
     return fallback;
@@ -2317,7 +2315,7 @@ export function syncQuickProfileFromAdvancedSettings(
   }
 }
 
-function QuickLocalNewApiSetup({
+export function QuickLocalNewApiSetup({
   config,
   loading,
   newApiBaseUrl,
@@ -2342,7 +2340,20 @@ function QuickLocalNewApiSetup({
   const updateFeatureModel = useSettingsStore((s) => s.updateFeatureModel);
   const setEmbeddingModel = useSettingsStore((s) => s.setEmbeddingModel);
   const setMediaModels = useSettingsStore((s) => s.setMediaModels);
-  const advancedSettings = useSettingsStore((s) => s.featureModelConfig);
+  const localSettings = useSettingsStore((s) => s.featureModelConfig);
+  // These three sections are persisted on the server. The advanced panels can
+  // display them without copying them back to the browser's settings store.
+  const saved = config?.provisioner;
+  const advancedSettings = useMemo<FeatureModelSettings>(() => saved ? {
+    ...localSettings,
+    providerChannels: saved.providerChannels ? Object.fromEntries(
+      saved.providerChannels.map(({ provider, baseUrl, priority, settings }) => [
+        provider, { provider, baseUrl, priority: priority ?? 0, settings: settings ?? {}, upstreamKey: "" },
+      ]),
+    ) : localSettings.providerChannels,
+    embeddingModel: saved.embeddingModel,
+    mediaModels: saved.mediaModels ?? localSettings.mediaModels,
+  } : localSettings, [saved, localSettings]);
   const [upstreamKeys, setUpstreamKeys] = useState<Record<string, string>>({});
   const [recentlySavedChannels, setRecentlySavedChannels] = useState<
     SavedProviderChannelConfig[]
@@ -2350,9 +2361,7 @@ function QuickLocalNewApiSetup({
   const [storedProfiles] = useState(loadStoredQuickProfiles);
   const [selectedProfileKind, setSelectedProfileKind] =
     useState<QuickProfileKind>(
-      storedProfiles.selected === "custom" && storedProfiles.customProfileJson
-        ? "custom"
-        : "recommended",
+      storedProfiles.selected,
     );
   const [customProfileJson, setCustomProfileJson] = useState(
     storedProfiles.customProfileJson,
@@ -2379,55 +2388,39 @@ function QuickLocalNewApiSetup({
     }
   }, [profileJson]);
   const advancedSettingsKey = JSON.stringify(advancedSettings);
-  const previousAdvancedSettingsKey = useRef("");
+  const previousAdvancedSettingsKey = useRef<string | null>("");
   useEffect(() => {
+    if (loading || !config || applyingStep) return;
     if (previousAdvancedSettingsKey.current === advancedSettingsKey) return;
+    const justApplied = previousAdvancedSettingsKey.current === null;
     previousAdvancedSettingsKey.current = advancedSettingsKey;
-    if (!appliedProfileJson) {
-      const hasExistingAdvancedSettings =
-        Object.keys(advancedSettings.providerChannels).length > 0 ||
-        Object.keys(advancedSettings.featureModels).length > 0 ||
-        Object.keys(advancedSettings.mediaModels).length > 0 ||
-        Boolean(advancedSettings.embeddingModel);
-      if (!hasExistingAdvancedSettings) return;
-      const recoveredJson = JSON.stringify(
-        syncQuickProfileFromAdvancedSettings(
-          RECOMMENDED_LOCAL_NEWAPI_PROFILE,
-          advancedSettings,
-        ),
-        null,
-        2,
-      );
-      setSelectedProfileKind("custom");
-      setCustomProfileJson(recoveredJson);
-      setAppliedProfileJson(recoveredJson);
-      saveStoredQuickProfiles({
-        selected: "custom",
-        customProfileJson: recoveredJson,
-        appliedProfileJson: recoveredJson,
-      });
-      return;
-    }
-    let appliedProfile: QuickModelProfile;
+    if (justApplied) return;
+    let base = RECOMMENDED_LOCAL_NEWAPI_PROFILE;
     try {
-      appliedProfile = parseQuickModelProfile(appliedProfileJson);
+      if (appliedProfileJson) base = parseQuickModelProfile(appliedProfileJson);
     } catch {
       return;
     }
-    const syncedJson = JSON.stringify(
-      syncQuickProfileFromAdvancedSettings(appliedProfile, advancedSettings),
-      null,
-      2,
-    );
+    const synced = syncQuickProfileFromAdvancedSettings(base, advancedSettings);
+    if (!synced) return;
+    const syncedJson = JSON.stringify(synced, null, 2);
     if (syncedJson === appliedProfileJson) return;
-    setCustomProfileJson(syncedJson);
+    const draft = customProfileJson && customProfileJson !== appliedProfileJson
+      ? customProfileJson : syncedJson;
+    const selected = appliedProfileJson ? selectedProfileKind : "custom";
+    setSelectedProfileKind(selected);
+    setCustomProfileJson(draft);
     setAppliedProfileJson(syncedJson);
     saveStoredQuickProfiles({
-      selected: selectedProfileKind,
-      customProfileJson: syncedJson,
+      selected,
+      customProfileJson: draft,
       appliedProfileJson: syncedJson,
     });
   }, [
+    loading,
+    config,
+    applyingStep,
+    customProfileJson,
     advancedSettings,
     advancedSettingsKey,
     appliedProfileJson,
@@ -2652,11 +2645,8 @@ function QuickLocalNewApiSetup({
         batchSize: profile.embedding.batchSize,
       });
       setMediaModels(mediaModels);
-      // Applying a profile updates the advanced store by design. Mark that
-      // snapshot as synchronized so it is not mistaken for a manual edit.
-      previousAdvancedSettingsKey.current = JSON.stringify(
-        useSettingsStore.getState().featureModelConfig,
-      );
+      // The first rendered snapshot after a successful apply is already synced.
+      previousAdvancedSettingsKey.current = null;
       const nextCustomProfileJson =
         selectedProfileKind === "custom" ? profileJson : customProfileJson;
       setAppliedProfileJson(profileJson);
@@ -3717,6 +3707,18 @@ function isBareComfyWorkflowMediaModel(entry: MediaModelEntry): boolean {
   );
 }
 
+function audioRequestEndpoint(config?: Record<string, unknown>) {
+  const request = config?.request;
+  return request && typeof request === "object" && "endpoint" in request
+    ? request.endpoint : "audio/speech";
+}
+
+function validSpeechTarget(id: string, item: MediaModelEntry | undefined, enabled: boolean) {
+  return !!item?.provider && (!enabled || item.enabled !== false) &&
+    (item.mediaType ?? MEDIA_MODEL_ROWS.find((row) => row.model === id)?.kind) === "audio" &&
+    audioRequestEndpoint(item.config) === "audio/speech";
+}
+
 function MediaModelsBlock({
   configuredProviders,
   newApiBaseUrl,
@@ -3885,6 +3887,16 @@ function MediaModelsBlock({
     if (Object.keys(next).length === 0) {
       toast.error(t("settings.modelConfig.mediaModels.noMappings"));
       return;
+    }
+    for (const [id, item] of Object.entries(next)) {
+      if (item.mediaType !== "audio" || audioRequestEndpoint(item.config) !== "audio/voice-designs") continue;
+      const target = item.config?.targetModel;
+      if (typeof target !== "string" || id === target || !validSpeechTarget(target, next[target], item.enabled !== false)) {
+        const message = id + ": " + t("settings.modelConfig.mediaModels.audioTargetRequired");
+        setSaveError(message);
+        toast.error(message);
+        return;
+      }
     }
     const missingProviders = Array.from(
       new Set(
@@ -4123,7 +4135,7 @@ function MediaModelsBlock({
                 />
               )}
               <div className="flex items-center justify-end gap-1">
-                {!row.mainline ? (
+                {!row.mainline || row.kind === "audio" ? (
                   <Button
                     type="button"
                     size="icon-sm"
@@ -4154,7 +4166,7 @@ function MediaModelsBlock({
                     <Trash2 className="size-3.5" />
                   </Button>
                 ) : null}
-                {row.mainline ? (
+                {row.mainline && row.kind !== "audio" ? (
                   <span className="px-2 text-xs text-muted-foreground">-</span>
                 ) : null}
               </div>
@@ -4189,6 +4201,7 @@ function MediaModelsBlock({
               newApiBaseUrl={newApiBaseUrl}
               database={database}
               entry={editingModel ? mediaModels[editingModel] : undefined}
+              models={mediaModels}
               configuredProviders={configuredProviders}
               comfyOnly={comfyOnly}
               onCancel={() => {
@@ -4248,11 +4261,12 @@ function MediaModelsBlock({
   );
 }
 
-function LocalMediaModelEditor({
+export function LocalMediaModelEditor({
   newApiBaseUrl,
   database,
   originalModel,
   entry,
+  models,
   configuredProviders,
   comfyOnly,
   onCancel,
@@ -4262,6 +4276,7 @@ function LocalMediaModelEditor({
   database: NewApiDatabaseConfigInput | undefined;
   originalModel: string | null;
   entry?: MediaModelEntry;
+  models: Record<string, MediaModelEntry>;
   configuredProviders: readonly FeatureModelProvider[];
   comfyOnly: boolean;
   onCancel: () => void;
@@ -4272,12 +4287,13 @@ function LocalMediaModelEditor({
     entry?.mediaType,
   )
     ? entry.mediaType
-    : "video";
+    : MEDIA_MODEL_ROWS.find((row) => row.model === originalModel)?.kind ?? "video";
+  const fixedModel = !!originalModel && MAINLINE_MEDIA_MODEL_IDS.has(originalModel);
   const [model, setModel] = useState(originalModel ?? "");
   const [label, setLabel] = useState(entry?.label ?? originalModel ?? "");
   const [mediaType, setMediaType] = useState<MediaModelCatalogType>(initialType);
   const [provider, setProvider] = useState<FeatureModelProvider>(
-    entry?.provider ?? configuredProviders[0] ?? "comfyui",
+    entry?.provider ?? configuredProviders[0] ?? (comfyOnly ? "comfyui" : ""),
   );
   const [upstreamModel, setUpstreamModel] = useState(
     entry?.upstreamModel ?? originalModel ?? "",
@@ -4314,9 +4330,29 @@ function LocalMediaModelEditor({
     Array.isArray(parsedConfig?.[key])
       ? (parsedConfig[key] as unknown[]).map(String)
       : [];
+  const endpoint = audioRequestEndpoint(parsedConfig ?? undefined);
+  const audioPurpose = parsedConfig?.voiceDesignMode === "prompted_speech" && endpoint === "audio/speech"
+    ? "prompted_speech" : typeof endpoint === "string" ? endpoint : "";
+  const speechTargets = Object.entries(models).filter(([id, item]) =>
+    id !== model.trim() && id !== originalModel && validSpeechTarget(id, item, enabled),
+  );
+  const changeAudioPurpose = (purpose: string | null) => {
+    if (!purpose || !parsedConfig) return;
+    const next = { ...parsedConfig };
+    delete next.targetModel;
+    delete next.voiceDesignMode;
+    if (purpose === "prompted_speech") next.voiceDesignMode = purpose;
+    next.request = { endpoint: purpose === "prompted_speech" ? "audio/speech" : purpose, parameters: [] };
+    setConfigJson(JSON.stringify(next, null, 2));
+  };
 
   const handleMediaTypeChange = (nextType: MediaModelCatalogType) => {
+    if (nextType === mediaType) return;
     setMediaType(nextType);
+    if (nextType === "audio" || mediaType === "audio") {
+      setConfigJson(JSON.stringify({ request: defaultMediaModelRequest(nextType) }, null, 2));
+      return;
+    }
     try {
       const current = JSON.parse(configJson) as Record<string, unknown>;
       const request =
@@ -4365,6 +4401,11 @@ function LocalMediaModelEditor({
       );
       return;
     }
+    if (mediaType === "audio" && endpoint === "audio/voice-designs" &&
+        !speechTargets.some(([id]) => id === config.targetModel)) {
+      toast.error(t("settings.modelConfig.mediaModels.audioTargetRequired"));
+      return;
+    }
     onSave(cleanModel, {
       provider,
       upstreamModel: upstreamModel.trim() || cleanModel,
@@ -4396,14 +4437,15 @@ function LocalMediaModelEditor({
         <FieldRow
           label={t("settings.modelConfig.mediaModels.modelId")}
           value={model}
+          readOnly={fixedModel}
           onChange={setModel}
-          placeholder="seedance-2.0-mini"
+          placeholder={mediaType === "audio" ? "seed-audio-1.0" : "seedance-2.0-mini"}
         />
         <FieldRow
           label={t("settings.modelConfig.mediaModels.displayName")}
           value={label}
           onChange={setLabel}
-          placeholder="Seedance 2.0 Mini"
+          placeholder={mediaType === "audio" ? "Seed Audio" : "Seedance 2.0 Mini"}
         />
         <div className="grid grid-cols-[120px_1fr] items-center gap-3">
           <Label className="justify-start text-[11px] font-normal text-muted-foreground">
@@ -4411,11 +4453,12 @@ function LocalMediaModelEditor({
           </Label>
           <Select
             value={mediaType}
+            disabled={comfyOnly || fixedModel}
             onValueChange={(value) =>
               handleMediaTypeChange(value as MediaModelCatalogType)
             }
           >
-            <SelectTrigger size="sm">
+            <SelectTrigger size="sm" aria-label={t("settings.modelConfig.mediaModels.mediaType")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
@@ -4425,6 +4468,9 @@ function LocalMediaModelEditor({
               <SelectItem value="video">
                 {t("settings.modelConfig.mediaModels.types.video")}
               </SelectItem>
+              {!comfyOnly && <SelectItem value="audio">
+                {t("settings.modelConfig.mediaModels.types.audio")}
+              </SelectItem>}
               <SelectItem value="blockout">
                 {t("settings.modelConfig.mediaModels.types.blockout")}
               </SelectItem>
@@ -4490,8 +4536,37 @@ function LocalMediaModelEditor({
           {t("settings.modelConfig.mediaModels.enabled")}
         </label>
       </div>
-      {/* 白模模型是对话模型，图片 / 视频的能力字段对它无意义，后端也会拒绝。 */}
-      {mediaType !== "blockout" && (
+      {mediaType === "audio" && (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div>
+            <Label>{t("settings.modelConfig.mediaModels.audioPurpose")}</Label>
+            <Select value={audioPurpose} onValueChange={changeAudioPurpose} disabled={!parsedConfig}>
+              <SelectTrigger aria-label={t("settings.modelConfig.mediaModels.audioPurpose")}>
+                <SelectValue>{t(`settings.modelConfig.mediaModels.${
+                  audioPurpose === "prompted_speech" ? "promptedSpeech" :
+                  audioPurpose === "audio/voice-designs" ? "voiceDesign" : "speech"
+                }`)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="audio/speech">{t("settings.modelConfig.mediaModels.speech")}</SelectItem>
+                <SelectItem value="prompted_speech">{t("settings.modelConfig.mediaModels.promptedSpeech")}</SelectItem>
+                <SelectItem value="audio/voice-designs">{t("settings.modelConfig.mediaModels.voiceDesign")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {audioPurpose === "audio/voice-designs" && <div>
+            <Label>{t("settings.modelConfig.mediaModels.audioTarget")}</Label>
+            <Select value={String(parsedConfig?.targetModel ?? "")} onValueChange={(id) => setCapability("targetModel", id)}>
+              <SelectTrigger aria-label={t("settings.modelConfig.mediaModels.audioTarget")}><SelectValue /></SelectTrigger>
+              <SelectContent>{speechTargets.map(([id, item]) => (
+                <SelectItem key={id} value={id}>{item.label || id}</SelectItem>
+              ))}</SelectContent>
+            </Select>
+            {!speechTargets.length && <p className="mt-1 text-xs text-muted-foreground">{t("settings.modelConfig.mediaModels.audioTargetRequired")}</p>}
+          </div>}
+        </div>
+      )}
+      {(mediaType === "image" || mediaType === "video") && (
         <div className="mt-3">
           <p className="text-[11px] font-medium text-foreground">
             {t("settings.modelConfig.mediaModels.commonCapabilities")}
@@ -6499,6 +6574,7 @@ function FieldRow({
   name,
   autoComplete,
   savedPreview,
+  readOnly,
 }: {
   label: string;
   value: string;
@@ -6508,6 +6584,7 @@ function FieldRow({
   name?: string;
   autoComplete?: string;
   savedPreview?: string;
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const inputId = useId();
@@ -6524,6 +6601,7 @@ function FieldRow({
       <div className="relative">
         <Input
           id={inputId}
+          readOnly={readOnly}
           name={name}
           autoComplete={autoComplete ?? (secret ? "new-password" : undefined)}
           type={secret && !revealed ? "password" : "text"}

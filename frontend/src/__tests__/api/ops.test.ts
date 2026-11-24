@@ -7,6 +7,8 @@ import {
   submitFreezoneVideoCompose,
   compileFreezoneRecipePrompt,
   sendGenerationWireRequest,
+  fetchFreezoneImageModels,
+  fetchFreezoneVideoModels,
   listFreezoneStyleTemplates,
   submitFreezoneGen,
   submitFreezoneVideoGen,
@@ -20,6 +22,18 @@ vi.mock("@/api/client", () => ({
   apiCall: vi.fn(),
   apiClient: vi.fn(),
 }));
+
+it.each([fetchFreezoneImageModels, fetchFreezoneVideoModels])("retains localized model guides and accepts legacy catalog rows", async (load) => {
+  const guide = { zh: { summary: "草图", detail: "先确定构图", tags: ["推荐"] } };
+  vi.mocked(apiCall).mockResolvedValueOnce([
+    { id: "guided", apiModel: "guided", pickerGuide: guide },
+    { id: "legacy", apiModel: "legacy" },
+  ]);
+  const [guided, legacy] = await load("project-1");
+  expect(guided.pickerGuide).toEqual(guide);
+  expect(legacy.id).toBe("legacy");
+  expect(legacy.pickerGuide).toBeUndefined();
+});
 
 it("forces text-to-video human review off even for stale enabled node data", async () => {
   vi.mocked(apiCall).mockResolvedValueOnce({ task_key: "video-1", job_id: "video-1" });
