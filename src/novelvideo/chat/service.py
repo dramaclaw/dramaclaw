@@ -3921,11 +3921,7 @@ def _codex_gateway_provider_overrides(
     )
 
 
-def _codex_gateway_config_overrides(
-    base_url: str,
-    *,
-    native_tool_search: bool = False,
-) -> tuple[str, ...]:
+def _codex_gateway_config_overrides(base_url: str) -> tuple[str, ...]:
     """Node-safe Codex config containing no usable Gateway credential."""
     overrides = [
         *_codex_gateway_provider_overrides(
@@ -3949,34 +3945,19 @@ def _codex_gateway_config_overrides(
         "memories.generate_memories=false",
         "memories.use_memories=false",
     ]
-    # Most turns use concrete MCP namespaces. Exact existing-node actions use
-    # the separately pinned native-search catalog because the deployed model
-    # reliably selects a discovered MCP function, while it may end a turn
-    # after merely describing a call to an eager namespace.
-    catalog_name = (
-        "dramaclaw-model-catalog-tool-search.json"
-        if native_tool_search
-        else "dramaclaw-model-catalog.json"
-    )
+    # Every turn shares one catalog, so the node-level App Server
+    # configuration never differs between turns. The catalog enables native
+    # MCP Tool Search: tool descriptions stay out of each request and the
+    # model calls the functions it discovers.
     bundled_catalog = (
         Path(__file__).resolve().parents[3]
         / "deploy"
         / "codex"
-        / catalog_name
+        / "dramaclaw-model-catalog.json"
     )
     configured_catalog = str(
         os.environ.get("DRAMACLAW_CODEX_MODEL_CATALOG_FILE") or ""
     ).strip()
-    if native_tool_search and configured_catalog:
-        configured_path = Path(configured_catalog).expanduser()
-        managed_search_catalog = configured_path.with_name(
-            "dramaclaw-model-catalog-tool-search.json"
-        )
-        if (
-            configured_path.name == "dramaclaw-model-catalog.json"
-            and managed_search_catalog.is_file()
-        ):
-            configured_catalog = str(managed_search_catalog)
     catalog_file = configured_catalog or str(bundled_catalog)
     path = Path(catalog_file).expanduser()
     if not path.is_file() or not path.is_absolute():
@@ -4024,7 +4005,7 @@ def _codex_gateway_config_overrides(
                         "slug": configured_model,
                         "display_name": configured_model,
                         "description": "User-configured third-party Agent model.",
-                        "supports_search_tool": False,
+                        "supports_search_tool": True,
                     }
                 )
                 catalog = {**catalog, "models": [*models, entry]}
@@ -4149,18 +4130,7 @@ def _build_codex_thread(
             bridge_dir=env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"],
         )
     gateway_api_key, gateway_base_url = _codex_turn_gateway_credentials(authorization)
-    exact_node_action = not exact_audio_action_plan and str(
-        tool_mode or ""
-    ).strip() == "freezone_canvas" and _freezone_exact_node_action_requested(
-        request_prompt
-    )
-    if exact_node_action:
-        node_config_overrides = _codex_gateway_config_overrides(
-            gateway_base_url,
-            native_tool_search=True,
-        )
-    else:
-        node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
+    node_config_overrides = _codex_gateway_config_overrides(gateway_base_url)
     mcp_servers = (
         {}
         if exact_audio_action_plan
