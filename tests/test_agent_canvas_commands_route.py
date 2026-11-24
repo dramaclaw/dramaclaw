@@ -15,6 +15,7 @@ import pytest
 from novelvideo.api.routes import freezone as routes
 from novelvideo.api.schemas import CanvasPayload
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.canvas_events import canvas_event_log_path
 from novelvideo.freezone.workflow_drafts import (
     bind_workflow_draft_task,
     claim_workflow_draft_confirmation,
@@ -152,7 +153,7 @@ async def test_applied_save_and_metrics(setup, caplog):
     assert saved["viewport"] == {"x": 1, "y": 2, "zoom": 1}
     assert events[0]["event_type"] == "canvas.saved"
     assert events[0]["payload"]["save_source"] == "agent_patch"
-    record = json.loads(routes._canvas_event_log_path(root, "default").read_text())
+    record = json.loads(canvas_event_log_path(root, "default").read_text())
     assert record["event_type"] == "canvas.saved"
     assert record["payload"]["save_source"] == "agent_patch"
     assert record["payload"]["revision"] == 2

@@ -222,6 +222,7 @@ from novelvideo.freezone.audio_node import (
     resolve_speech_voice,
     resolve_user_audio_voice,
 )
+from novelvideo.freezone.canvas_events import append_canvas_event, canvas_event_actor
 from novelvideo.freezone.canvas_inline_media import inline_media_fields
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
 from novelvideo.freezone.canvas_media_scope import (
@@ -3376,7 +3377,6 @@ TAG_FREEZONE_JOBS = "freezone-jobs"
 TAG_FREEZONE_SKILLS = "freezone-skills"
 TAG_FREEZONE_AGENT_CONFIG = "freezone-agent-config"
 
-CANVAS_EVENT_SCHEMA_VERSION = "canvas_event.v1"
 MAINLINE_SKETCH_IMAGE_SIZE = "1K"
 MAINLINE_SKETCH_IMAGE_QUALITY = "low"
 MAINLINE_FRAME_IMAGE_SIZE = "1K"
@@ -3403,49 +3403,9 @@ def _cap_mainline_scene_360_image_size(requested: str | None) -> str:
     return value
 
 
-def _canvas_events_dir(project_dir: Path) -> Path:
-    return freezone_root(project_dir) / "_canvas_events"
-
-
-def _canvas_event_log_path(project_dir: Path, canvas_id: str | None) -> Path:
-    event_canvas_id = (canvas_id or "").strip() or "_project"
-    if not CANVAS_ID_RE.match(event_canvas_id):
-        digest = hashlib.sha256(event_canvas_id.encode("utf-8")).hexdigest()[:16]
-        event_canvas_id = f"canvas_{digest}"
-    return _canvas_events_dir(project_dir) / f"{event_canvas_id}.jsonl"
-
-
-def _canvas_event_actor(user: dict) -> dict:
-    return {
-        "kind": "user",
-        "id": str(user.get("id") or user.get("username") or "unknown"),
-        "username": str(user.get("username") or ""),
-    }
-
-
-def _append_canvas_event(
-    *,
-    project_dir: Path,
-    project_id: str,
-    canvas_id: str | None,
-    event_type: str,
-    actor: dict,
-    payload: dict,
-) -> None:
-    path = _canvas_event_log_path(project_dir, canvas_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    record = {
-        "schema_version": CANVAS_EVENT_SCHEMA_VERSION,
-        "event_id": uuid.uuid4().hex,
-        "project_id": project_id,
-        "canvas_id": (canvas_id or "").strip() or "_project",
-        "event_type": event_type,
-        "actor": actor,
-        "created_at": canvas_store.utc_now_iso(),
-        "payload": payload,
-    }
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+# Kept as module names so tests can monkeypatch the route's event writer.
+_append_canvas_event = append_canvas_event
+_canvas_event_actor = canvas_event_actor
 
 
 def _skill_runs_dir(project_dir: Path) -> Path:
