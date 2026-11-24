@@ -11,7 +11,6 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, BinaryContent
-from pydantic_ai.output import NativeOutput
 from PIL import Image as PILImage
 
 from novelvideo.brainclaw_contract import BrainClawProfile
@@ -172,7 +171,7 @@ def create_global_video_reviewer_agent(language: str = "en") -> Agent:
     return Agent(
         model,
         system_prompt=GLOBAL_VIDEO_REVIEWER_INSTRUCTIONS_EN,
-        output_type=NativeOutput(ReviewResult),
+        output_type=ReviewResult,
         model_settings=get_newapi_structured_output_model_settings(),
         name="Video Prompt Reviewer",
     )
@@ -758,7 +757,7 @@ def _create_identity_detector_agent() -> Agent:
         ),
         system_prompt=AI_IDENTITY_DETECTOR_INSTRUCTIONS,
         model_settings=get_newapi_structured_output_model_settings(),
-        output_type=NativeOutput(list[BeatIdentity]),
+        output_type=list[BeatIdentity],
         name="角色颜色识别",
     )
 

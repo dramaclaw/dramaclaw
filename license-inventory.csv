@@ -4491,6 +4491,7 @@ tests/test_freezone_workflow_runs.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_frontend_i18n_scanner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_generation_upstream_status.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_global_prop_marker_colors.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_global_video_structured_output.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_graph_build_progress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_graph_preview.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_dramaclaw_plugin.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
