@@ -1514,6 +1514,14 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     ).strip()
     # A new version is explicit; merely reopening a card must retain its identity.
     new_request = args.get("new_request") is True
+    if (
+        type(args.get("workflow_expected_revision")) is int
+        and args["workflow_expected_revision"] == 0
+        and not args.get("workflow_draft_id")
+    ):
+        # Fresh creative intake has no draft revision or revision-scoped bridge key.
+        args = dict(args)
+        args.pop("workflow_expected_revision")
     request_scope = _clarification_request_scope(args)
     # The bridge directory is shared per user/profile and may hold cards from
     # other projects; never look one up outside this session's bound scope.
@@ -1567,6 +1575,29 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     questions = _safe_list(args.get("questions"))
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
+    if (
+        not questions and not clarification_id and not new_request and resumed is None
+        and generation_media_types is None and generation_required_choices is None
+        and not args.get("workflow_draft_id")
+        and (
+            str(args.get("context_key") or "").partition(":")[0] == "interactive_ad_intake"
+            or re.search(
+                r"互动广告|\b(?:interactive (?:ads?|advertis(?:ement|ing))|"
+                r"anúncio interativo|publicidade interativa|quảng cáo tương tác)\b",
+                str(args.get("title") or ""), re.IGNORECASE,
+            )
+        )
+    ):
+        questions = [{
+            "id": "ad_direction",
+            "copy_template": "interactive_ad_direction",
+            "title": "这版互动广告的创意方向，你希望怎样确定？",
+            "options": [
+                {"id": "describe", "label": "我来补充方向"},
+                {"id": "recommend", "label": "请根据已有卖点推荐一版"},
+            ],
+            "allow_custom": True,
+        }]
     has_model_constraint_adjustment_question = any(
         isinstance(question, dict)
         and question.get("id") == "video_model_constraint_adjustment"
@@ -2156,6 +2187,12 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                 "type": "assistant.clarification.request",
                 "status": "questions_required",
                 "error": "questions must contain at least one question",
+                "agent_instruction": (
+                    "No card was shown. For a creative choice send questions with a stable "
+                    "id, a user-facing title and options containing id and label. Omit "
+                    "workflow_draft_id, workflow_expected_revision and generation fields. "
+                    "If the corrected call fails, ask the question directly in chat."
+                ),
                 "clarification_id": clarification_id,
             }
         )
@@ -13948,7 +13985,7 @@ TOOLS = (
         "freezone_request_user_clarification",
         _schema(
             "freezone_request_user_clarification",
-            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. Generation mode is exclusive: never include questions in the same call; if questions are accidentally supplied, the server ignores them instead of failing the parameter card. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
+            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. Generation mode is exclusive: never include questions in the same call; if questions are accidentally supplied, the server ignores them instead of failing the parameter card. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. For a new creative clarification, supply nonempty questions with id, title and selectable options (id and label); omit workflow and generation fields. This tool never creates or runs canvas nodes.",
             {
                 "clarification_id": {
                     "type": "string",
@@ -13956,7 +13993,7 @@ TOOLS = (
                 },
                 "context_key": {
                     "type": "string",
-                    "description": "Stable creative step and subject, e.g. character-reference:阿叶+环保背包. Retain it across recovery calls; use a different key for a different step or subject.",
+                    "description": "Stable creative step and subject, e.g. interactive_ad_intake:product-name or character-reference:阿叶+环保背包. Retain it across recovery calls; use a different key for a different step or subject.",
                 },
                 "target_node_ids": {
                     "type": "array",
@@ -14045,8 +14082,8 @@ TOOLS = (
                 },
                 "workflow_expected_revision": {
                     "type": "integer",
-                    "minimum": 1,
-                    "description": "Exact draft revision shown before clarification; required with workflow_draft_id.",
+                    "minimum": 0,
+                    "description": "With workflow_draft_id, supply its exact positive revision. Omit for creative intake; an unbound zero is ignored.",
                 },
                 "answers": {
                     "type": "object",

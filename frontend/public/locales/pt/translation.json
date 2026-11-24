@@ -1069,6 +1069,11 @@
         "audioOff": "Sem som"
       },
       "clarification": {
+        "adDirection": {
+          "question": "Como você prefere definir a direção criativa deste anúncio interativo?",
+          "describe": "Quero descrever a direção",
+          "recommend": "Sugira uma direção com base nos diferenciais do produto"
+        },
         "cancelled": "Cancelado",
         "skipped": "Ignorado",
         "submitted": "Enviado",

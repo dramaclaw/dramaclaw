@@ -3726,7 +3726,7 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
         "args": ["-m", "novelvideo.chat.interactive_story_mcp"],
         "env_vars": [
             "DRAMACLAW_API_URL", "DRAMACLAW_AGENT_TOKEN_FILE",
-            "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID", "PYTHONPATH",
+            "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID", "DRAMACLAW_SKILLS_DIR", "PYTHONPATH",
         ],
     }
     assert freezone_servers["dramaclaw_workflows"] == {

@@ -1048,6 +1048,11 @@
         "audioOff": "Tắt tiếng"
       },
       "clarification": {
+        "adDirection": {
+          "question": "Bạn muốn xác định hướng sáng tạo cho quảng cáo tương tác này như thế nào?",
+          "describe": "Tôi sẽ mô tả ý tưởng",
+          "recommend": "Hãy đề xuất dựa trên các điểm nổi bật của sản phẩm"
+        },
         "submitFailed": "Không thể gửi thông tin bổ sung. Vui lòng thử lại.",
         "cancelled": "Đã hủy",
         "skipped": "Đã bỏ qua",

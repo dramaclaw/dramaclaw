@@ -4656,6 +4656,43 @@ def test_clarification_without_questions_and_without_card_is_still_rejected(monk
     })
     assert result["ok"] is False
     assert result["status"] == "questions_required"
+    assert "No card was shown" in result["agent_instruction"]
+
+
+@pytest.mark.parametrize("selector", [
+    {"context_key": "interactive_ad_intake:grill"},
+    {"title": "先定下互动广告方向"},
+    {"title": "Interactive ad direction"},
+    {"title": "Direção do anúncio interativo"},
+    {"title": "Quảng cáo tương tác"},
+])
+def test_interactive_ad_clarification_creates_answerable_card(clarification_inbox, selector):
+    plugin, bridge = clarification_inbox
+    args = {"project_id": "project-a", "canvas_id": "canvas-a", **selector}
+    name = "freezone_request_user_clarification"
+    schema = next(schema for tool, schema, _ in plugin.TOOLS if tool == name)
+    call = {**args, "workflow_expected_revision": 0, "questions": []}
+    Draft202012Validator(schema["parameters"]).validate(call)
+    result = _clarification_handler(plugin)(call)
+    pending = bridge.list_pending_bridge_messages(project_id="project-a", canvas_id="canvas-a")
+    assert len(pending) == 1
+    assert pending[0]["key"] == result["bridge_key"]
+    question, = pending[0]["event"]["questions"]
+    assert question["id"] == "ad_direction"
+    assert question["copy_template"] == "interactive_ad_direction"
+    assert question["options"] and question["allow_custom"]
+    assert _clarification_handler(plugin)(args)["bridge_key"] == result["bridge_key"]
+
+
+def test_bound_generation_clarification_still_rejects_zero_revision(clarification_inbox):
+    plugin, bridge = clarification_inbox
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "workflow_draft_id": "draft-a", "workflow_expected_revision": 0,
+        "generation_media_types": ["image"],
+    })
+    assert result["status"] == "workflow_draft_revision_required"
+    assert not bridge.list_pending_bridge_messages(project_id="project-a", canvas_id="canvas-a")
 
 
 def test_clarification_resume_outside_bound_scope_never_touches_the_bridge(monkeypatch):

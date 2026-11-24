@@ -48,6 +48,7 @@ import {
   CanvasCommandApprovalCardForTest,
   buildAssistantClarificationResponseForTest,
   activeAssistantClarificationIsSkillStudioRevisionForTest,
+  AssistantClarificationSummaryCard,
   buildAssistantClarificationToolResultForTest,
   buildAssistantInteractionFlowItemsForTest,
   collapseRepeatedCanvasStatusFlowItemsForTest,
@@ -2696,6 +2697,18 @@ describe("Assistant clarification response", () => {
     );
 
     expect(text).toContain("视频时长是多久？\n6 秒");
+  });
+
+  it.each(["skip", "skipped"])("shows a skipped clarification for a status-only %s event", (status) => {
+    const view = render(createElement(AssistantClarificationSummaryCard, {
+      event: { type: "assistant.clarification.request", submitted: true, clarification_status: status },
+    }));
+    try {
+      expect(view.container.textContent).toMatch(/skipped|已跳过/i);
+      expect(view.container.textContent).not.toMatch(/submitted|已提交/i);
+    } finally {
+      view.unmount();
+    }
   });
 
   it("builds a reusable clarification summary from selected answers", () => {
@@ -7733,6 +7746,27 @@ describe("pruneOldMessageCaches", () => {
     );
     pruneOldMessageCaches(now);
     expect(localStorage.getItem(`${MESSAGE_CACHE_PREFIX}future`)).toBeNull();
+  });
+});
+
+describe("interactive ad clarification translations", () => {
+  it.each(["zh", "en", "vi", "pt"])("localizes only server fallback questions in %s", async (language) => {
+    const { readFileSync } = await import("node:fs");
+    const { createInstance } = await import("i18next");
+    const translation = JSON.parse(readFileSync(`public/locales/${language}/translation.json`, "utf8"));
+    const i18n = createInstance();
+    await i18n.init({ lng: language, resources: { [language]: { translation } } });
+    const question = {
+      id: "ad_direction", title: "Custom question",
+      options: [{ id: "describe", label: "A" }, { id: "recommend", label: "B" }],
+    };
+    const [fallback, custom] = clarificationQuestionsWithLiveModelCatalogsForTest(
+      [{ ...question, copy_template: "interactive_ad_direction" }, question], [], [], {}, i18n.t,
+    );
+    const copy = translation.freezone.chat.clarification.adDirection;
+    expect(fallback.title).toBe(copy.question);
+    expect(fallback.options?.map(option => option.label)).toEqual([copy.describe, copy.recommend]);
+    expect(custom).toEqual(question);
   });
 });
 

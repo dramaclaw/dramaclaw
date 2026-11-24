@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from mcp import types
@@ -149,6 +149,60 @@ def _tools() -> mcp_runtime.ToolIndex:
         return handle
 
     return {name: (schema, scoped(handler)) for name, schema, handler in entries}
+
+
+def _story_documents() -> dict[str, Path]:
+    configured = os.environ.get("DRAMACLAW_SKILLS_DIR", "").strip()
+    skills = Path(configured).expanduser() if configured else Path.cwd() / ".agents" / "skills"
+    root = (skills / "interactive-story").resolve()
+    if not root.is_dir():
+        root = Path(__file__).resolve().parents[1] / "agent_skills" / "interactive-story"
+    return {
+        path.relative_to(root).as_posix(): path
+        for path in (root / "SKILL.md", *sorted((root / "references").glob("*.md")))
+        if path.is_file() and path.resolve().is_relative_to(root)
+    }
+
+
+@SERVER.list_resources()
+async def list_resources() -> list[types.Resource]:
+    return [
+        types.Resource(
+            name=name, uri=f"dramaclaw-story://skills/interactive-story/{name}",
+            mimeType="text/markdown",
+        )
+        for name in _story_documents()
+    ]
+
+
+@SERVER.list_resource_templates()
+async def list_resource_templates() -> list[types.ResourceTemplate]:
+    return []
+
+
+@SERVER.read_resource()
+async def read_resource(uri: Any) -> str:
+    parsed = urlparse(str(uri))
+    path = unquote(parsed.path)
+    documents = _story_documents()
+    if parsed.scheme == "dramaclaw-story" and parsed.netloc == "skills":
+        name = path.removeprefix("/interactive-story/")
+    elif parsed.scheme == "file" and not parsed.netloc:
+        # Accept the active workspace URI, including custom skill directories.
+        for document in documents.values():
+            if path == str(document):
+                return document.read_text(encoding="utf-8")
+        # Old conversations can reference a previous workspace. Map just the
+        # advertised skill-relative name to the active copy.
+        _, marker, name = path.rpartition("/.agents/skills/interactive-story/")
+        if not marker:
+            raise ValueError("Unknown interactive story resource")
+    else:
+        raise ValueError("Unknown interactive story resource")
+    document = documents.get(name)
+    if document is None:
+        raise ValueError("Unknown interactive story resource")
+    return document.read_text(encoding="utf-8")
 
 
 @SERVER.list_tools()

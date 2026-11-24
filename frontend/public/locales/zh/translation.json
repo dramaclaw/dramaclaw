@@ -1069,6 +1069,11 @@
         "audioOff": "静音"
       },
       "clarification": {
+        "adDirection": {
+          "question": "这版互动广告的创意方向，你希望怎样确定？",
+          "describe": "我来补充方向",
+          "recommend": "请根据已有卖点推荐一版"
+        },
         "submitFailed": "提交补充信息失败，请重试",
         "cancelled": "已取消",
         "skipped": "已跳过",
