@@ -1069,6 +1069,11 @@
         "audioOff": "Muted"
       },
       "clarification": {
+        "adDirection": {
+          "question": "How would you like to shape this interactive ad?",
+          "describe": "I’ll describe the direction",
+          "recommend": "Suggest a direction based on the selling points"
+        },
         "submitFailed": "Failed to submit additional information. Please try again.",
         "cancelled": "Cancelled",
         "skipped": "Skipped",

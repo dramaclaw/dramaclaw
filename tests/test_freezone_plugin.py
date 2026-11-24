@@ -4662,6 +4662,9 @@ def test_clarification_without_questions_and_without_card_is_still_rejected(monk
 @pytest.mark.parametrize("selector", [
     {"context_key": "interactive_ad_intake:grill"},
     {"title": "先定下互动广告方向"},
+    {"title": "Interactive ad direction"},
+    {"title": "Direção do anúncio interativo"},
+    {"title": "Quảng cáo tương tác"},
 ])
 def test_interactive_ad_clarification_creates_answerable_card(clarification_inbox, selector):
     plugin, bridge = clarification_inbox
@@ -4676,6 +4679,7 @@ def test_interactive_ad_clarification_creates_answerable_card(clarification_inbo
     assert pending[0]["key"] == result["bridge_key"]
     question, = pending[0]["event"]["questions"]
     assert question["id"] == "ad_direction"
+    assert question["copy_template"] == "interactive_ad_direction"
     assert question["options"] and question["allow_custom"]
     assert _clarification_handler(plugin)(args)["bridge_key"] == result["bridge_key"]
 

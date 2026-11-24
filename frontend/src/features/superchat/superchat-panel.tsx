@@ -4448,6 +4448,7 @@ type SkillStudioQuestionSelection = {
 type SkillStudioQuestionSelections = Record<string, string | string[] | SkillStudioQuestionSelection>;
 
 type AssistantClarificationQuestion = SkillStudioQuestion & {
+  copy_template?: string;
   mode?: "single" | "multiple";
   options_source?: ClarificationOptionsSource;
   /** Server-verified catalog modes required by the target video nodes. */
@@ -4706,6 +4707,23 @@ function clarificationCapabilityOptions(
   return values.length > 0 ? values : fallback;
 }
 
+function localizeAdDirection(question: AssistantClarificationQuestion, t: TFunction) {
+  if (question.copy_template !== "interactive_ad_direction") return question;
+  return {
+    ...question,
+    title: t("freezone.chat.clarification.adDirection.question"),
+    options: question.options?.map((option) => {
+      if (option.id === "describe") {
+        return { ...option, label: t("freezone.chat.clarification.adDirection.describe") };
+      }
+      if (option.id === "recommend") {
+        return { ...option, label: t("freezone.chat.clarification.adDirection.recommend") };
+      }
+      return option;
+    }),
+  };
+}
+
 function clarificationQuestionsWithLiveModelCatalogs(
   questions: AssistantClarificationQuestion[],
   imageModels: readonly ClarificationCatalogModel[],
@@ -4835,7 +4853,7 @@ function clarificationQuestionsWithLiveModelCatalogs(
         count: Number(value),
       }) ?? `${value} videos`);
     }
-    if (values === null) return question;
+    if (values === null) return t ? localizeAdDirection(question, t) : question;
     return {
       ...question,
       options_source: source,
@@ -7111,7 +7129,8 @@ function SkillStudioQuestionsCard({
 
 export function AssistantClarificationSummaryCard({ event }: { event: AssistantClarificationUiEvent }) {
   const { t } = useTranslation();
-  const questions = Array.isArray(event.questions) ? event.questions : [];
+  const questions = (Array.isArray(event.questions) ? event.questions : [])
+    .map((question) => localizeAdDirection(question, t));
   const answers = event.answers && typeof event.answers === "object" ? event.answers : {};
   const timelineItems = visibleAssistantClarificationTimelineItems(
     questions,

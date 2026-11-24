@@ -7749,6 +7749,27 @@ describe("pruneOldMessageCaches", () => {
   });
 });
 
+describe("interactive ad clarification translations", () => {
+  it.each(["zh", "en", "vi", "pt"])("localizes only server fallback questions in %s", async (language) => {
+    const { readFileSync } = await import("node:fs");
+    const { createInstance } = await import("i18next");
+    const translation = JSON.parse(readFileSync(`public/locales/${language}/translation.json`, "utf8"));
+    const i18n = createInstance();
+    await i18n.init({ lng: language, resources: { [language]: { translation } } });
+    const question = {
+      id: "ad_direction", title: "Custom question",
+      options: [{ id: "describe", label: "A" }, { id: "recommend", label: "B" }],
+    };
+    const [fallback, custom] = clarificationQuestionsWithLiveModelCatalogsForTest(
+      [{ ...question, copy_template: "interactive_ad_direction" }, question], [], [], {}, i18n.t,
+    );
+    const copy = translation.freezone.chat.clarification.adDirection;
+    expect(fallback.title).toBe(copy.question);
+    expect(fallback.options?.map(option => option.label)).toEqual([copy.describe, copy.recommend]);
+    expect(custom).toEqual(question);
+  });
+});
+
 describe("story approval continuity translations", () => {
   it.each(["zh", "en", "vi"])("renders continuity labels from the %s locale", async (language) => {
     const { readFileSync } = await import("node:fs");

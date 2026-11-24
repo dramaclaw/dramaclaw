@@ -1581,11 +1581,16 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         and not args.get("workflow_draft_id")
         and (
             str(args.get("context_key") or "").partition(":")[0] == "interactive_ad_intake"
-            or "互动广告" in str(args.get("title") or "")
+            or re.search(
+                r"互动广告|\b(?:interactive (?:ads?|advertis(?:ement|ing))|"
+                r"anúncio interativo|publicidade interativa|quảng cáo tương tác)\b",
+                str(args.get("title") or ""), re.IGNORECASE,
+            )
         )
     ):
         questions = [{
             "id": "ad_direction",
+            "copy_template": "interactive_ad_direction",
             "title": "这版互动广告的创意方向，你希望怎样确定？",
             "options": [
                 {"id": "describe", "label": "我来补充方向"},
