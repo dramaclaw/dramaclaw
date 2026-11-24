@@ -69,6 +69,9 @@ class TurnOperationFinalizer:
             operation_id=self._operation_id,
             transition_token=self._transition_token,
             expected_version=self._version,
+            # The claim is ``HandleKind.NONE``: a chat turn has no upstream job
+            # id. The port requires the argument, so ``None`` is stated.
+            provider_job_id=None,
         )
         self._advance(snapshot)
 
@@ -93,6 +96,8 @@ class TurnOperationFinalizer:
                 operation_id=self._operation_id,
                 transition_token=self._transition_token,
                 expected_version=self._version,
+                # Same reason: nothing to point at for a ``HandleKind.NONE`` turn.
+                result_ref=None,
             )
             return
         # Submitted, and the outcome is not a proven success. Whether the

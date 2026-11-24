@@ -1071,9 +1071,9 @@ async def test_service_codex_no_output_retry_settles_operation_once(
     frames, _, finalized, _ = await _service_no_output_retry(monkeypatch, tmp_path)
     assert calls == [
         ("accepted", {"operation_id": "operation-1", "transition_token": "token-1",
-                      "expected_version": 1}),
+                      "expected_version": 1, "provider_job_id": None}),
         ("completed", {"operation_id": "operation-1", "transition_token": "token-1",
-                       "expected_version": 2}),
+                       "expected_version": 2, "result_ref": None}),
     ]
     assert finalized == [("t2", "completed")]
     _assert_service_retry_frames(frames)
