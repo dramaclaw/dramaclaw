@@ -48,6 +48,20 @@ def reference_image_canvas() -> dict:
     ]}
 
 
+def test_ad_reference_prompt_reaches_the_canvas_verbatim(reference_image_example):
+    plan = reference_image_example
+    node = next(node for node in plan["nodes"] if node["id"] == "cockpit_ref")
+    prompt = "暖色夕阳下，近景展示 TrailFire X2 的折叠支脚，保留侧板上的 ‘Ready to grill’ 字样。"
+    node["data"]["prompt"] = prompt
+    validated = validate_agent_workflow_plan(plan)
+    assert validated["ok"], validated
+    graph = build_workflow_graph_commands({"plan": validated["plan"], "run_after_create": False})
+    image = next(cmd for cmd in graph["commands"] if cmd.get("data", {}).get(
+        "workflowPlanNodeId"
+    ) == node["id"])
+    assert image["data"]["prompt"] == prompt
+
+
 def test_documented_character_images_compile_without_planning_or_video(
     reference_image_example, reference_image_canvas,
 ) -> None:

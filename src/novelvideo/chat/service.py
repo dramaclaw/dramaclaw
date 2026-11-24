@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 import portalocker
 
 from novelvideo.chat import display_fallback, media_presentation, message_repository, presentation, presentation_mapping, runtime_event_mapper, session_registry
+from novelvideo.freezone.canvas_ui_locale import valid_ui_locale
 from novelvideo.freezone.canvas_command_bridge import (
     CANVAS_COMMAND_TIMEOUT_MARGIN_SECONDS,
     canvas_command_result_timeout_seconds,
@@ -474,6 +475,16 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "or other external tools."
 )
 
+_INTERACTIVE_AD_IMAGE_PROMPT_INSTRUCTIONS = (
+    "For interactive ads, author each imageGenNode data.prompt (product, character, scene "
+    "reference or storyboard frame) in the selected UI language (ui_locale for this turn), "
+    "even when the brief uses another language. Honor an explicitly requested image prompt "
+    "language first. If ui_locale is unavailable, use the conversation language. Use the "
+    "same prompt text in the preview and the saved node. "
+    "Preserve brand names, model numbers and exact on-image copy in their original spelling."
+)
+
+
 _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "For interactive stories (互动短剧、互动影游、剧情画布), load the project Agent Skill "
     "interactive-story through the existing dramaclaw MCP resources. Call list_mcp_resources "
@@ -489,6 +500,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "omit workflow_draft_id, workflow_expected_revision and generation fields. After a skip, "
     "keep unselected preferences open. Before saving a proposal read dramaclaw_get_interactive_story_outline "
     "and use its revision as base_revision, including 0 for a new outline on an empty canvas. "
+    f"{_INTERACTIVE_AD_IMAGE_PROMPT_INSTRUCTIONS} "
     "Reuse known preferences; explicit "
     "delegation allows stated recommendations. A request to create an outline alone is not "
     "delegation. Carry these preferences into the saved outline as the Skill specifies. "
@@ -759,7 +771,7 @@ def _json_render_error_log_path() -> Path:
     return _repo_root() / "jr_error.log"
 
 
-_FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS = """[FREEZONE_CANVAS_ASSISTANT]
+_FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS = f"""[FREEZONE_CANVAS_ASSISTANT]
 This chat turn is running inside the Xia画 (Freezone) canvas.
 
 Scope:
@@ -793,6 +805,7 @@ Canvas write contract:
   and state recommendations; "create an outline" alone does not. Cancellation, empty answers,
   or a timeout do not accept defaults. Follow the Skill to persist these preferences in the outline.
   Local edits do not restart this intake; interactive ads follow their own discovery rules.
+  {_INTERACTIVE_AD_IMAGE_PROMPT_INSTRUCTIONS}
   Read dramaclaw_get_interactive_story_outline for the current canvas revision, including 0
   on a new canvas, and save the outline with dramaclaw_save_interactive_story_outline. Explicit chat
   approval of that exact outline can be recorded with dramaclaw_confirm_interactive_story_outline
@@ -843,7 +856,7 @@ Canvas write contract:
   with freezone_create_node (at most displayName), read it with freezone_get_node_detail, then
   write parameters.sceneEdit with freezone_update_node_data as its description specifies.
   Before writing a sceneEdit with several objects or a timeline, dry-run the same
-  {type: update_node_data, node_id, data} command once with freezone_validate_canvas_commands and
+  {{type: update_node_data, node_id, data}} command once with freezone_validate_canvas_commands and
   fix every reported issue, so the single write succeeds.
 - For any workflow, several connected nodes, grouped stages, storyboard, or media pipeline, load
   and follow the dramaclaw-workflows Agent Skill. For an exact user-specified topology, read its
@@ -1967,10 +1980,12 @@ def _user_context_parts(
             "on that node through the normal canvas confirmation flow. Do not stop at "
             "the creation receipt. If the user asks only to set up the node, stop after setup.\n"
         )
+    ui_locale = valid_ui_locale((surface_context or {}).get("ui_locale"))
     canvas_context = (
         "\n\n[FREEZONE_CANVAS_CONTEXT]\n"
         f"canvas_id: {canvas_id}\n"
-        "Use this canvas_id for Freezone canvas tools unless the user explicitly names another canvas.\n"
+        + (f"ui_locale: {ui_locale}\n" if ui_locale else "")
+        + "Use this canvas_id for Freezone canvas tools unless the user explicitly names another canvas.\n"
         "[/FREEZONE_CANVAS_CONTEXT]\n"
         f"{compose_context}\n"
         "[FREEZONE_CANVAS_EXECUTION_MODE]\n"
