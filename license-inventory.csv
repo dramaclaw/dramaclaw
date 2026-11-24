@@ -156,8 +156,6 @@ assets/readme/xia-director.jpg,Elastic-2.0,2026 SuperTale contributors,REUSE.tom
 assets/xiahua-canvas.jpg,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 ce-allowlist.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/codex/0.149.0-redact-turn-metadata.patch,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-deploy/codex/dramaclaw-model-catalog-chat-compat.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-deploy/codex/dramaclaw-model-catalog-tool-search.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/codex/dramaclaw-model-catalog.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/codex/verify_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/patch_hermes_acp_toolsets.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

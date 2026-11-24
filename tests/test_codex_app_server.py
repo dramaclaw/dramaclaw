@@ -1063,10 +1063,10 @@ async def test_app_server_native_tool_search_preserves_gateway_event_chain(
 
 
 @pytest.mark.asyncio
-async def test_app_server_default_catalog_exposes_freezone_execution_tools(
+async def test_app_server_default_catalog_defers_freezone_execution_tools(
     monkeypatch, tmp_path
 ):
-    """Freezone write turns can call their execution entry without a search round."""
+    """Freezone write turns discover their execution entry through Tool Search."""
     default_catalog = (
         Path(service.__file__).resolve().parents[3]
         / "deploy"
@@ -1138,34 +1138,11 @@ async def test_app_server_default_catalog_exposes_freezone_execution_tools(
 
     assert len(requests) == 1
     tools = requests[0]["body"]["tools"]
-    assert not any(tool.get("type") == "tool_search" for tool in tools)
-    namespace_names = {
-        str(member.get("name") or "")
-        for tool in tools
-        if tool.get("type") == "namespace"
-        for member in tool.get("tools") or []
-    }
-    expected_execution_tools = {
-        "freezone_cancel_canvas_action",
-        "freezone_cancel_workflow_run",
-        "freezone_confirm_canvas_action",
-        "freezone_confirm_workflow_draft",
-        "freezone_get_canvas_ontology",
-        "freezone_get_node_action_catalog",
-        "freezone_get_node_detail",
-        "freezone_get_workflow",
-        "freezone_observe_workflow_run",
-        "freezone_request_user_clarification",
-        "freezone_run_node_action",
-        "freezone_run_workflow",
-        "freezone_update_node_data",
-    }
-    assert namespace_names == expected_execution_tools
-    assert not any(
-        tool.get("name") == "mcp__dramaclaw_workflows"
-        for tool in tools
-        if tool.get("type") == "namespace"
-    )
+    assert any(tool.get("type") == "tool_search" for tool in tools)
+    # Deferred MCP tools are not described in the request; the model receives
+    # them only as a tool_search_output.
+    assert not any(tool.get("type") == "namespace" for tool in tools)
+    assert "freezone_run_node_action" not in json.dumps(tools)
     assert any(
         event.type == "complete" and event.text == "兼容模式正常。" for event in events
     )
@@ -1247,9 +1224,7 @@ async def test_app_server_exact_node_action_searches_only_batch_write_tool(
             developer_instructions=service._codex_developer_instructions(
                 "freezone_canvas"
             ),
-            config_overrides=service._codex_gateway_config_overrides(
-                gateway_url, native_tool_search=True
-            ),
+            config_overrides=service._codex_gateway_config_overrides(gateway_url),
             thread_config_overrides=service._codex_mcp_config_overrides(mcp_servers),
             turn_metadata={"dramaclaw_gateway_api_key": "per-turn-contract-key"},
         )

@@ -1868,7 +1868,7 @@ def test_codex_freezone_thread_advertises_exact_agent_skill_locator(
     }
 
 
-def test_codex_exact_node_action_thread_enables_native_tool_search(
+def test_codex_exact_node_action_thread_uses_the_shared_gateway_config(
     monkeypatch,
     tmp_path,
 ):
@@ -1933,7 +1933,9 @@ def test_codex_exact_node_action_thread_enables_native_tool_search(
     )
 
     assert thread == "new-thread"
-    assert gateway_options == [{"native_tool_search": True}]
+    # One node-level configuration serves every turn; exact node actions no
+    # longer switch the shared App Server to a different model catalog.
+    assert gateway_options == [{}]
     assert captured["thread_config_overrides"] == ()
 
 
@@ -4841,7 +4843,7 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret(
         Path(chat_service.__file__).resolve().parents[3]
         / "deploy"
         / "codex"
-        / "dramaclaw-model-catalog-chat-compat.json"
+        / "dramaclaw-model-catalog.json"
     )
     monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
     overrides = chat_service._codex_gateway_config_overrides(
@@ -4876,7 +4878,7 @@ def test_codex_gateway_overrides_use_responses_without_embedding_secret(
     model = next(
         item for item in catalog["models"] if item["slug"] == "DC-codex-agent-LLM"
     )
-    assert model["supports_search_tool"] is False
+    assert model["supports_search_tool"] is True
     assert model["base_instructions"]
     assert model["truncation_policy"] == {"mode": "tokens", "limit": 10000}
     assert "secret-value" not in rendered
@@ -4903,7 +4905,7 @@ def test_codex_gateway_fails_closed_for_incomplete_model_catalog(monkeypatch, tm
         chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
 
 
-def test_codex_gateway_accepts_disabled_tool_search_for_chat_compat(
+def test_codex_gateway_accepts_operator_catalog_with_tool_search_disabled(
     monkeypatch, tmp_path
 ):
     bundled = (
@@ -4928,7 +4930,7 @@ def test_codex_gateway_accepts_disabled_tool_search_for_chat_compat(
     assert Path(json.loads(catalog_override.split("=", 1)[1])) == catalog_path
 
 
-def test_default_codex_gateway_uses_concrete_mcp_tools(monkeypatch):
+def test_default_codex_gateway_enables_native_tool_search(monkeypatch):
     bundled = (
         Path(chat_service.__file__).resolve().parents[3]
         / "deploy"
@@ -4951,33 +4953,67 @@ def test_default_codex_gateway_uses_concrete_mcp_tools(monkeypatch):
     assert {
         model["slug"]: model["supports_search_tool"]
         for model in configured_catalog["models"]
-    } == {"DC-codex-agent-LLM": False, "brainclaw": False}
+    } == {"DC-codex-agent-LLM": True, "brainclaw": True}
 
 
-def test_exact_node_action_gateway_enables_native_tool_search(monkeypatch):
-    bundled = (
-        Path(chat_service.__file__).resolve().parents[3]
-        / "deploy"
-        / "codex"
-        / "dramaclaw-model-catalog.json"
-    )
-    monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(bundled))
+def test_one_bundled_codex_catalog_serves_every_turn(monkeypatch):
+    catalog_dir = Path(chat_service.__file__).resolve().parents[3] / "deploy" / "codex"
+    monkeypatch.delenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", raising=False)
 
     overrides = chat_service._codex_gateway_config_overrides(
-        "https://gateway.example/v1", native_tool_search=True
+        "https://gateway.example/v1"
     )
 
     catalog_override = next(
         item for item in overrides if item.startswith("model_catalog_json=")
     )
     configured_path = Path(json.loads(catalog_override.split("=", 1)[1]))
-    configured_catalog = json.loads(configured_path.read_text(encoding="utf-8"))
 
-    assert configured_path.name == "dramaclaw-model-catalog-tool-search.json"
-    assert {
-        model["slug"]: model["supports_search_tool"]
-        for model in configured_catalog["models"]
-    } == {"DC-codex-agent-LLM": True, "brainclaw": True}
+    # A second catalog would let turns disagree about the node-level App
+    # Server configuration, which the shared runtime rejects.
+    assert sorted(path.name for path in catalog_dir.glob("*catalog*.json")) == [
+        "dramaclaw-model-catalog.json"
+    ]
+    assert configured_path == catalog_dir / "dramaclaw-model-catalog.json"
+
+
+def test_third_party_agent_model_catalog_entry_keeps_tool_search_off(
+    monkeypatch, tmp_path
+):
+    from novelvideo import config as app_config
+    from novelvideo.model_gateway_settings import AGENT_LLM_MODE_THIRD_PARTY
+
+    monkeypatch.delenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", raising=False)
+    monkeypatch.setattr("novelvideo.shared.runtime_env.is_ce_effective", lambda: True)
+    monkeypatch.setattr(
+        "novelvideo.model_gateway_settings.get_effective_agent_llm_config",
+        lambda: SimpleNamespace(
+            mode=AGENT_LLM_MODE_THIRD_PARTY, model="vendor-model", is_brainclaw=False
+        ),
+    )
+    monkeypatch.setattr(app_config, "STATE_DIR", str(tmp_path))
+
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1"
+    )
+
+    catalog_override = next(
+        item for item in overrides if item.startswith("model_catalog_json=")
+    )
+    catalog = json.loads(
+        Path(json.loads(catalog_override.split("=", 1)[1])).read_text(encoding="utf-8")
+    )
+    entry = next(item for item in catalog["models"] if item["slug"] == "vendor-model")
+    # The request goes straight to a relay the user configured. A relay that
+    # does not implement Responses tool_search rejects every turn, so the
+    # generated entry sends concrete MCP tools, which any relay accepts.
+    assert entry["supports_search_tool"] is False
+    bundled = {
+        item["slug"]: item["supports_search_tool"]
+        for item in catalog["models"]
+        if item["slug"] != "vendor-model"
+    }
+    assert bundled == {"DC-codex-agent-LLM": True, "brainclaw": True}
 
 
 def test_codex_gateway_reasoning_effort_is_configurable(monkeypatch):
@@ -5209,19 +5245,15 @@ def test_ce_codex_model_keeps_dc_alias_in_sqlite_advanced_mode(monkeypatch):
     assert chat_service._codex_model() == "DC-codex-agent-LLM"
 
 
-@pytest.mark.parametrize(
-    "catalog_name",
-    ["dramaclaw-model-catalog.json", "dramaclaw-model-catalog-chat-compat.json"],
-)
 @pytest.mark.parametrize("model", ["DC-codex-agent-LLM", "brainclaw"])
-def test_bundled_catalogs_cover_every_ce_codex_model(monkeypatch, catalog_name, model):
+def test_bundled_catalog_covers_every_ce_codex_model(monkeypatch, model):
     """Every model _codex_model() can return must have a complete catalog entry,
     otherwise Codex refuses to start (the Official-mode failure behind #517)."""
     catalog_path = (
         Path(chat_service.__file__).resolve().parents[3]
         / "deploy"
         / "codex"
-        / catalog_name
+        / "dramaclaw-model-catalog.json"
     )
     monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
     monkeypatch.setattr(chat_service, "_codex_model", lambda: model)
