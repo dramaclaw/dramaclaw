@@ -6584,6 +6584,7 @@
     }
   },
   "modelPicker": {
+    "details": "Details for {{model}}",
     "provider": "Provider",
     "model": "Model",
     "empty": "No models available"
@@ -7270,6 +7271,10 @@
       "voiceMissing": "No usable custom voice is selected",
       "translate": "Translate (Chinese ⇄ English)",
       "voiceSettings": "Voice settings",
+      "cloneModel": "Speech model",
+      "noCloneModel": "Select an available speech model",
+      "cloneModelsLoadFailed": "Could not load speech models",
+      "cloneVoiceIdRequired": "This model needs a provider voice ID and cannot clone directly from a reference clip.",
       "advancedSettings": "Advanced settings",
       "generate": "Generate",
       "generateWithoutVoice": "Generate (skip when no custom voice is selected)",
@@ -7998,7 +8003,63 @@
       "models": "Models & Channels",
       "storage": "Media Storage",
       "freezoneSkills": "Xiahua Skill",
-      "freezoneRecipes": "Freezone Recipes"
+      "freezoneRecipes": "Freezone Recipes",
+      "agentKeys": "Agent Key"
+    },
+    "agentKeys": {
+      "title": "Agent Key",
+      "intro": "An agent key lets external AI tools (MCP clients) act as you on the selected projects and spend your credits. Do not share it. If a key is lost or leaked, revoke it right away.",
+      "create": {
+        "title": "Create a key",
+        "label": "Name",
+        "labelPlaceholder": "e.g. My MCP client",
+        "scope": "Project access",
+        "scopeSelected": "Selected projects",
+        "scopeAll": "All projects",
+        "allWarning": "This key can act on every project you have now and any project you create later.",
+        "projectsLoading": "Loading projects…",
+        "projectsError": "Could not load your projects.",
+        "noProjects": "You don't have any projects yet.",
+        "selectProject": "Select at least one project.",
+        "submit": "Create key",
+        "created": "Agent key created"
+      },
+      "reveal": {
+        "title": "Your new agent key",
+        "keyLabel": "Agent key",
+        "warning": "This key is shown only once. Copy it now and store it somewhere safe; you won't be able to see it again.",
+        "usage": "In your MCP client, use the endpoint {{tools}} or {{workflows}} and send the HTTP header {{header}}.",
+        "copy": "Copy",
+        "copied": "Agent key copied",
+        "copyFailed": "Copy failed. Please copy the key manually.",
+        "done": "Done"
+      },
+      "list": {
+        "title": "Your keys",
+        "loading": "Loading keys…",
+        "empty": "You have no agent keys yet.",
+        "retry": "Retry",
+        "allProjects": "All projects",
+        "projects": "Projects: {{names}}",
+        "created": "Created {{time}}",
+        "lastUsed": "Last used {{time}}",
+        "neverUsed": "Never used",
+        "expires": "Expires {{time}}"
+      },
+      "status": {
+        "active": "Active",
+        "revoked": "Revoked",
+        "expired": "Expired"
+      },
+      "revoke": {
+        "button": "Revoke",
+        "aria": "Revoke {{label}}",
+        "confirmTitle": "Revoke agent key",
+        "confirmDescription": "Revoke “{{label}}”? Tools using this key will stop working immediately. This cannot be undone.",
+        "confirm": "Revoke",
+        "cancel": "Cancel",
+        "done": "Agent key revoked"
+      }
     },
     "freezoneCatalog": {
       "skills": {
@@ -8517,7 +8578,13 @@
       },
       "mediaModels": {
         "title": "Image / Video / Audio Generation Models",
-        "description": "Models come from the current custom local configuration. Add image or video models and configure the capabilities shown in XiaHua.",
+        "description": "Manage local image, video, audio and blockout models and their capabilities.",
+        "audioPurpose": "Audio purpose",
+        "speech": "Speech synthesis",
+        "promptedSpeech": "Voice design via prompted speech",
+        "voiceDesign": "Voice design with a target model",
+        "audioTarget": "Target speech model",
+        "audioTargetRequired": "Select a compatible speech model first. Enable the target if the design model is enabled.",
         "addModel": "Add model",
         "addModelTitle": "Add media model",
         "editModelTitle": "Edit media model",

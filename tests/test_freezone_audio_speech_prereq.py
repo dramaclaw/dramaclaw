@@ -111,6 +111,9 @@ async def test_valid_voice_is_resolved_before_job_allocation_and_enqueue(
         AsyncMock(return_value=store),
     )
     monkeypatch.setattr(freezone, "resolve_speech_voice", resolve_voice, raising=False)
+    monkeypatch.setattr(freezone, "_audio_clone_choices", AsyncMock(return_value=[
+        {"id": "catalog-uuid", "model": "seed-audio-1.0", "requiresVoiceId": False}
+    ]))
     monkeypatch.setattr(freezone, "_new_job_id", allocate_job)
     monkeypatch.setattr(freezone, "_enqueue_freezone_background_job", enqueue)
 
@@ -124,6 +127,8 @@ async def test_valid_voice_is_resolved_before_job_allocation_and_enqueue(
     )
 
     assert events == ["resolve", "allocate", "enqueue"]
+    assert result["payload"]["clone_model"] == "seed-audio-1.0"
+    assert result["payload"]["billing"]["catalog_id"] == "catalog-uuid"
     assert result["payload"]["voice_ref"] == {
         "scope": "user_custom",
         "character_name": "",

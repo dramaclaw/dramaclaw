@@ -421,7 +421,7 @@ def _build_media_model_channel_specs(
                 "seedream-"
             ):
                 media_type = "image"
-            elif model in {"index-tts-2", "LingShan-MU-11"}:
+            elif model in {"seed-audio-1.0", "index-tts-2", "LingShan-MU-11"}:
                 media_type = "audio"
             else:
                 media_type = "video"

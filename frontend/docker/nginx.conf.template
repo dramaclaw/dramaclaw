@@ -136,6 +136,31 @@ server {
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     }
 
+    # Remote MCP entry (Streamable HTTP). The API mounts it at /mcp, outside /api/,
+    # and MCP clients are given this web address. Bearer-key auth only, no cookies.
+    location /mcp/ {
+        proxy_pass http://supertale_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Tool calls can run long; pass responses through as they come.
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_request_buffering off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+
+        add_header Strict-Transport-Security $hsts_value always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
     location /static/ {
         proxy_pass http://supertale_backend;
         proxy_http_version 1.1;

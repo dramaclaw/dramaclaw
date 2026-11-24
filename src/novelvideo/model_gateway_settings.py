@@ -950,8 +950,35 @@ def get_ce_media_model_catalog(
     include_disabled: bool = False,
 ) -> list[dict[str, Any]]:
     """Expose CE-local media settings using the EE catalog response contract."""
+    mappings = get_newapi_media_model_mappings()
+    if media_type in {"image", "video"} and mappings:
+        # Older quick profiles stored only routing. Fill execution capabilities
+        # by exact local catalog ID, never by upstream alias or display name.
+        bundled = _read_official_media_catalog(_official_media_catalog_bundle_path())["mediaModels"]
+        local_ids = {
+            identifier for name, mapping in mappings.items()
+            if mapping.get("mediaType") == media_type
+            for identifier in (name, mapping.get("upstreamModel"))
+        }
+        for name, item in mappings.items():
+            base = bundled.get(name)
+            if not base or base["mediaType"] != media_type or item.get("mediaType") != media_type:
+                continue
+            capabilities = {
+                key: value for key, value in base["config"].items()
+                if key in {
+                    "minDuration", "maxDuration", "supportedModes", "minPixels",
+                    "resolutionOptions", "ratioOptions", "qualityOptions", "humanReview",
+                    "supportsGenerateAudio", "sceneOptimizeOptions", "defaultSceneOptimize",
+                } or key.startswith("reference")
+            }
+            mappings[name] = {
+                **item,
+                "aliases": [alias for alias in base.get("aliases", []) if alias not in local_ids],
+                "config": {**capabilities, **item.get("config", {})},
+            }
     return _media_model_catalog(
-        get_newapi_media_model_mappings(),
+        mappings,
         media_type,
         provider=provider,
         include_disabled=include_disabled,

@@ -11,6 +11,19 @@ import { requiresCustomVoiceSelection } from "@/features/canvas/nodes/audioVoice
 import { createInFlightRequestCache } from "@/features/canvas/nodes/inFlightRequestCache";
 import { useCanvasStore } from "@/stores/canvasStore";
 
+vi.mock("@/lib/url-params", async (original) => ({
+  ...(await original<typeof import("@/lib/url-params")>()),
+  readUrl: () => ({ project: "demo", canvas: "default" }),
+}));
+vi.mock("@/api/ops", async (original) => ({
+  ...(await original<typeof import("@/api/ops")>()),
+  fetchAudioCloneModels: async () => [
+    { id: "seed-audio-1.0", label: "Seed Audio", model: "seed-audio-1.0", requiresVoiceId: false },
+    { id: "index-tts-2", label: "Index", model: "index-tts-2", requiresVoiceId: false },
+    { id: "cosyvoice", label: "CosyVoice", model: "cosyvoice", requiresVoiceId: true },
+  ],
+}));
+
 vi.mock("@/lib/queries/generation-credit-cost", () => ({
   useGenerationCreditCost: () => ({
     data: { ok: true, data: { display: "1", cost: 1 } },
@@ -85,10 +98,34 @@ describe("AudioOperationsPanel voice prerequisite", () => {
       voiceAvailable: false,
     });
 
+    await screen.findByRole("button", { name: "Seed Audio" });
     fireEvent.click(screen.getByTitle("生成（未选择自定义声线时跳过）"));
     await waitFor(() => expect(
       useCanvasStore.getState().nodes.find((node) => node.id === "audio-1")?.data.generationError,
     ).toBe("未选择自定义声线，已跳过生成"));
+  });
+
+  it("prefers Seed and stores the chosen model on the audio node", async () => {
+    renderPanel({ audioKind: "speech" });
+    const trigger = await screen.findByRole("button", { name: "Seed Audio" });
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Seed Audio", pressed: true })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Index" }));
+    expect(useCanvasStore.getState().nodes[0].data.cloneModelId).toBe("index-tts-2");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps a removed model unselected and keeps the voice-ID warning outside the toolbar", async () => {
+    const panel = renderPanel({ audioKind: "speech", cloneModelId: "removed" });
+    const trigger = await screen.findByRole("button", { name: "请选择可用的配音模型" });
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("button", { pressed: true })).toBeNull();
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    panel.unmount();
+    renderPanel({ audioKind: "speech", cloneModelId: "cosyvoice" });
+    expect((await screen.findByRole("status")).textContent).toContain("音色 ID");
   });
 
   it("requires a real voice id for a user custom selection", () => {

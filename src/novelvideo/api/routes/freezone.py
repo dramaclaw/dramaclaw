@@ -470,6 +470,7 @@ from novelvideo.freezone.video_node import (
     get_video_camera_templates,
     is_freezone_happyhorse_backend,
     is_freezone_seedance2_backend,
+    is_retired_video_node_model,
     library_folder_keys,
     load_video_character_folders,
     load_video_character_library,
@@ -8693,6 +8694,7 @@ def _start_freezone_audio_separate_task(
 def _start_freezone_audio_speech_task(
     *,
     username: str,
+    clone_model: str | None = None,
     project: str,
     account_voice_username: str | None,
     project_id: str,
@@ -8757,6 +8759,7 @@ def _start_freezone_audio_speech_task(
                 job_id=job_id,
                 text=body.text,
                 emotion_prompt=body.emotion_prompt,
+                clone_model=clone_model,
                 voice_ref=voice_ref_payload,
                 speech_mode=body.speech_mode,
                 preset_model=body.preset_model,
@@ -9628,6 +9631,12 @@ async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | Non
 
         if is_ce_effective():
             mode = get_effective_newapi_config().mode
+            if media_type in {"image", "video"}:
+                # Canvas choices and picker guides belong to a single catalog.
+                # Hybrid may route an official video ID locally, not add new choices.
+                if mode == MODE_CUSTOM:
+                    return get_ce_media_model_catalog(media_type)
+                return get_official_media_model_catalog(media_type)
             if mode == MODE_CUSTOM:
                 return _merge_media_model_catalog_defaults(
                     _static_media_model_catalog(media_type),
@@ -9669,24 +9678,33 @@ async def _scoped_media_model_catalog(
     try:
         catalog = cast(MediaModelCatalogPort, get_port("media_model_catalog"))
     except PortNotRegistered:
-        return await _ee_media_model_catalog(media_type)
+        entries = await _ee_media_model_catalog(media_type)
+    else:
+        clean_user_id = str(requester_user_id or "").strip()
+        if not clean_user_id:
+            raise HTTPException(401, "无法确认当前用户身份")
+        try:
+            entries = await catalog.list_models_for_user(media_type, user_id=clean_user_id)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - cross-edition port boundary
+            code = str(getattr(exc, "code", "") or "")
+            if code == "MEDIA_MODEL_SCOPE_DENIED":
+                raise HTTPException(403, "当前账号无权使用媒体模型") from None
+            logger.exception("failed to resolve scoped media model catalog")
+            raise HTTPException(503, "媒体模型目录暂不可用，请稍后重试") from None
 
-    clean_user_id = str(requester_user_id or "").strip()
-    if not clean_user_id:
-        raise HTTPException(401, "无法确认当前用户身份")
-    try:
-        return await catalog.list_models_for_user(
-            media_type,
-            user_id=clean_user_id,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 - cross-edition port boundary
-        code = str(getattr(exc, "code", "") or "")
-        if code == "MEDIA_MODEL_SCOPE_DENIED":
-            raise HTTPException(403, "当前账号无权使用媒体模型") from None
-        logger.exception("failed to resolve scoped media model catalog")
-        raise HTTPException(503, "媒体模型目录暂不可用，请稍后重试") from None
+    if media_type == "video" and entries is not None:
+        # Stored CE/EE catalogs can predate retirement. Filter by the execution
+        # identity (never the display label); listing and submission share this read.
+        return [
+            item for item in entries
+            if not is_retired_video_node_model(
+                item.get("apiModel") or item.get("api_model")
+                or item.get("gatewayModel") or item.get("gateway_model") or item.get("id")
+            )
+        ]
+    return entries
 
 
 _MEDIA_TYPE_LABELS = {"image": "图片", "video": "视频", "blockout": "白模"}
@@ -12414,6 +12432,46 @@ async def freezone_audio_separate(
     )
 
 
+async def _audio_clone_choices(ctx: ProjectContext) -> list[dict]:
+    from novelvideo.audio.voice_design_service import VoiceDesignError, project_audio_catalog
+
+    try:
+        entries, local = await project_audio_catalog(
+            user_id=ctx.requester_user_id, project_id=ctx.project_id
+        )
+    except VoiceDesignError as exc:
+        raise HTTPException(403 if exc.code == "voice_design_forbidden" else 503, exc.code) from exc
+    choices = []
+    for entry in entries:
+        key = str(entry.get("catalogId") or entry.get("id") or "")
+        upstream = str(entry.get("gatewayModel") or entry.get("gateway_model") or key)
+        ids = {key.lower(), upstream.lower(), str(entry.get("id") or "").lower()}
+        if (
+            not key
+            or entry.get("enabled") is False
+            or (entry.get("request") or {}).get("endpoint") != "audio/speech"
+            or "lingshan-mu-11" in ids
+        ):
+            continue
+        requires_voice_id = any(i.rsplit("/", 1)[-1].startswith("cosyvoice") for i in ids)
+        choice = {
+            "id": key,
+            "label": entry.get("label") or key,
+            "model": key if local else upstream,
+            "requiresVoiceId": requires_voice_id,
+        }
+        # Prefer the canonical Seed mapping over aliases pointing to the same upstream.
+        rank = (requires_voice_id, "seed-audio-1.0" not in ids, key.lower() != "seed-audio-1.0")
+        choices.append((rank, choice))
+    return [choice for _, choice in sorted(choices, key=lambda item: item[0])]
+
+
+@router.get("/projects/{project}/freezone/audio/models", tags=[TAG_FREEZONE_AUDIO])
+async def freezone_audio_models(project: str, user: dict = Depends(get_api_user)):
+    ctx, *_ = await _resolve_freezone_project(project, user, required_role="viewer")
+    return {"ok": True, "data": await _audio_clone_choices(ctx)}
+
+
 @router.post(
     "/projects/{project}/freezone/audio/speech",
     response_model=FreezoneJobAcceptedResponse,
@@ -12485,6 +12543,18 @@ async def freezone_audio_speech(
         finally:
             await store.close()
 
+    clone_choice = None
+    if body.speech_mode == "clone":
+        choices = await _audio_clone_choices(ctx)
+        clone_choice = next(
+            (m for m in choices if not body.clone_model_id or m["id"] == body.clone_model_id),
+            None,
+        )
+        if not clone_choice:
+            raise HTTPException(409, "No available audio clone model matches the selection")
+        if clone_choice["requiresVoiceId"]:
+            raise HTTPException(409, "This speech model requires a provider voice ID, not reference audio")
+
     logger.info(
         "freezone_audio_speech_voice_resolved",
         extra={
@@ -12522,6 +12592,7 @@ async def freezone_audio_speech(
                     "text": body.text,
                     "emotion_prompt": body.emotion_prompt,
                     "voice_ref": voice_ref_payload,
+                    **({"clone_model": clone_choice["model"]} if clone_choice else {}),
                     **(
                         {
                             "speech_mode": body.speech_mode,
@@ -12540,6 +12611,14 @@ async def freezone_audio_speech(
                     "billing": freezone_audio_task_billing(
                         "freezone.audio_speech",
                         {
+                            **(
+                                {
+                                    "pricing_kind": "audio",
+                                    "pricing_model": clone_choice["model"],
+                                    "catalog_id": clone_choice["id"],
+                                }
+                                if clone_choice else {}
+                            ),
                             "operation": "speech",
                             "billable_chars": billable_chars,
                             "pricing_quantity": billable_chars,
@@ -12550,6 +12629,7 @@ async def freezone_audio_speech(
             )
         _start_freezone_audio_speech_task(
             username=username,
+            clone_model=clone_choice["model"] if clone_choice else None,
             project=project_name,
             account_voice_username=account_voice_username,
             project_id=ctx.project_id,

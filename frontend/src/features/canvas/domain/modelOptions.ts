@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { MediaModelRequestSchema } from '@/features/canvas/domain/modelCatalogPayload';
+import type { ModelPickerGuide } from '@/lib/media-model-catalog-types';
 
 import {
   FALLBACK_IMAGE_ASPECT_OPTIONS,
@@ -24,6 +25,7 @@ export interface ProviderOption {
 }
 
 export interface ModelOption {
+  pickerGuide?: ModelPickerGuide;
   catalogId?: string;
   id: string;
   providerId: ProviderId;
@@ -162,24 +164,6 @@ export const VIDEO_MODELS: ModelOption[] = [
     maxDuration: 15,
     sceneOptimizeOptions: ['anime', 'realistic'],
     defaultSceneOptimize: 'realistic',
-  },
-  {
-    id: 'newapi_seedance-1.5-pro',
-    providerId: 'seedance',
-    apiModel: 'newapi_seedance-1.5-pro',
-    label: 'Seedance1.5 Pro',
-    ratioOptions: [...FALLBACK_VIDEO_ASPECT_OPTIONS],
-    minDuration: 4,
-    maxDuration: 12,
-  },
-  {
-    id: 'newapi_seedance-1.0-pro-fast',
-    providerId: 'seedance',
-    apiModel: 'newapi_seedance-1.0-pro-fast',
-    label: 'Seedance1.0 Pro Fast',
-    ratioOptions: [...FALLBACK_VIDEO_ASPECT_OPTIONS],
-    minDuration: 2,
-    maxDuration: 12,
   },
 ];
 

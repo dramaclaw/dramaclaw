@@ -17,7 +17,7 @@ describe("canvas audio generation credit contract", () => {
       "const AUDIO_MUSIC_FEATURE_KEY = 'freezone.audio_music'",
     );
     expect(panelSource).toContain(
-      "isMusic ? AUDIO_MUSIC_FEATURE_KEY : AUDIO_SPEECH_FEATURE_KEY",
+      "useCanvasAudioQuote(data, effectivePrompt, isMusic)",
     );
     expect(panelSource).toContain("music_length_ms: musicLengthMs");
     expect(panelSource).toContain(

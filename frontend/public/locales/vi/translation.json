@@ -6458,6 +6458,7 @@
     }
   },
   "modelPicker": {
+    "details": "Chi tiết về {{model}}",
     "provider": "Nhà cung cấp",
     "model": "Model",
     "empty": "Không có model khả dụng"
@@ -7144,6 +7145,10 @@
       "voiceMissing": "Cấu hình hoặc chọn một giọng trước đã",
       "translate": "Dịch (Trung ⇄ Anh)",
       "voiceSettings": "Thiết lập giọng",
+      "cloneModel": "Mô hình giọng nói",
+      "noCloneModel": "Chọn mô hình giọng nói khả dụng",
+      "cloneModelsLoadFailed": "Không tải được mô hình giọng nói",
+      "cloneVoiceIdRequired": "Mô hình này cần ID giọng của nhà cung cấp, không thể sao chép trực tiếp từ âm thanh tham chiếu.",
       "advancedSettings": "Thiết lập nâng cao",
       "generate": "Tạo",
       "help": "Trợ giúp",
@@ -7872,7 +7877,63 @@
       "models": "Model & Kênh",
       "storage": "Lưu trữ media",
       "freezoneSkills": "Skill Xiahua",
-      "freezoneRecipes": "Recipe Freezone"
+      "freezoneRecipes": "Recipe Freezone",
+      "agentKeys": "Agent Key"
+    },
+    "agentKeys": {
+      "title": "Agent Key",
+      "intro": "Agent key cho phép các công cụ AI bên ngoài (MCP client) thay mặt bạn thao tác trên các dự án đã chọn và sử dụng tín dụng của bạn. Không chia sẻ key. Nếu key bị mất hoặc lộ, hãy thu hồi ngay.",
+      "create": {
+        "title": "Tạo key",
+        "label": "Tên",
+        "labelPlaceholder": "Ví dụ: MCP client của tôi",
+        "scope": "Phạm vi dự án",
+        "scopeSelected": "Dự án đã chọn",
+        "scopeAll": "Tất cả dự án",
+        "allWarning": "Key này có thể thao tác trên mọi dự án hiện có của bạn và cả các dự án bạn tạo sau này.",
+        "projectsLoading": "Đang tải dự án…",
+        "projectsError": "Không thể tải danh sách dự án.",
+        "noProjects": "Bạn chưa có dự án nào.",
+        "selectProject": "Hãy chọn ít nhất một dự án.",
+        "submit": "Tạo key",
+        "created": "Đã tạo agent key"
+      },
+      "reveal": {
+        "title": "Agent key mới của bạn",
+        "keyLabel": "Agent key",
+        "warning": "Key này chỉ hiển thị một lần. Hãy sao chép ngay và lưu ở nơi an toàn; bạn sẽ không thể xem lại.",
+        "usage": "Trong MCP client, dùng endpoint {{tools}} hoặc {{workflows}} và gửi HTTP header {{header}}.",
+        "copy": "Sao chép",
+        "copied": "Đã sao chép agent key",
+        "copyFailed": "Sao chép thất bại. Vui lòng sao chép thủ công.",
+        "done": "Xong"
+      },
+      "list": {
+        "title": "Key của bạn",
+        "loading": "Đang tải key…",
+        "empty": "Bạn chưa có agent key nào.",
+        "retry": "Thử lại",
+        "allProjects": "Tất cả dự án",
+        "projects": "Dự án: {{names}}",
+        "created": "Tạo lúc {{time}}",
+        "lastUsed": "Dùng lần cuối {{time}}",
+        "neverUsed": "Chưa từng dùng",
+        "expires": "Hết hạn {{time}}"
+      },
+      "status": {
+        "active": "Đang hoạt động",
+        "revoked": "Đã thu hồi",
+        "expired": "Đã hết hạn"
+      },
+      "revoke": {
+        "button": "Thu hồi",
+        "aria": "Thu hồi {{label}}",
+        "confirmTitle": "Thu hồi agent key",
+        "confirmDescription": "Thu hồi “{{label}}”? Các công cụ dùng key này sẽ ngừng hoạt động ngay lập tức. Không thể hoàn tác.",
+        "confirm": "Thu hồi",
+        "cancel": "Hủy",
+        "done": "Đã thu hồi agent key"
+      }
     },
     "modelConfig": {
       "title": "Cấu hình model",
@@ -8146,7 +8207,13 @@
       },
       "mediaModels": {
         "title": "Model tạo ảnh / video / âm thanh",
-        "description": "Danh sách model lấy từ cấu hình cục bộ tuỳ chỉnh hiện tại. Hãy thêm model ảnh hoặc video và cấu hình các năng lực hiển thị trong XiaHua.",
+        "description": "Quản lý mô hình ảnh, video, âm thanh và blockout cục bộ cùng các khả năng của chúng.",
+        "audioPurpose": "Công dụng âm thanh",
+        "speech": "Tổng hợp giọng nói",
+        "promptedSpeech": "Tạo giọng theo mô tả",
+        "voiceDesign": "Thiết kế giọng với mô hình đích",
+        "audioTarget": "Mô hình tổng hợp giọng đích",
+        "audioTargetRequired": "Hãy chọn mô hình tổng hợp giọng tương thích. Nếu bật mô hình thiết kế giọng, bạn cũng cần bật mô hình đích.",
         "addModel": "Thêm model",
         "addModelTitle": "Thêm model media",
         "editModelTitle": "Sửa model media",

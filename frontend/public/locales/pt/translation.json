@@ -6584,6 +6584,7 @@
     }
   },
   "modelPicker": {
+    "details": "Detalhes de {{model}}",
     "provider": "Fornecedor",
     "model": "Modelo",
     "empty": "Nenhum modelo disponível"
@@ -7411,6 +7412,10 @@
       "voiceMissing": "Não está selecionada nenhuma voz personalizada utilizável",
       "translate": "Traduzir (chinês ⇄ inglês)",
       "voiceSettings": "Definições de voz",
+      "cloneModel": "Modelo de voz",
+      "noCloneModel": "Selecione um modelo de voz disponível",
+      "cloneModelsLoadFailed": "Falha ao carregar os modelos de voz",
+      "cloneVoiceIdRequired": "Este modelo exige um ID de voz do fornecedor e não aceita diretamente um áudio de referência.",
       "advancedSettings": "Definições avançadas",
       "generate": "Gerar",
       "generateWithoutVoice": "Gerar (ignorar quando não estiver selecionada uma voz personalizada)",
@@ -8122,7 +8127,63 @@
       "models": "Modelos e canais",
       "storage": "Armazenamento de multimédia",
       "freezoneSkills": "Competências da Freezone",
-      "freezoneRecipes": "Receitas da Freezone"
+      "freezoneRecipes": "Receitas da Freezone",
+      "agentKeys": "Agent Key"
+    },
+    "agentKeys": {
+      "title": "Agent Key",
+      "intro": "Uma agent key permite que ferramentas de IA externas (clientes MCP) ajam em seu nome nos projetos selecionados e gastem seus créditos. Não a compartilhe. Se a chave for perdida ou vazada, revogue-a imediatamente.",
+      "create": {
+        "title": "Criar chave",
+        "label": "Nome",
+        "labelPlaceholder": "ex.: Meu cliente MCP",
+        "scope": "Acesso a projetos",
+        "scopeSelected": "Projetos selecionados",
+        "scopeAll": "Todos os projetos",
+        "allWarning": "Esta chave pode agir em todos os seus projetos atuais e em qualquer projeto que você criar depois.",
+        "projectsLoading": "Carregando projetos…",
+        "projectsError": "Não foi possível carregar seus projetos.",
+        "noProjects": "Você ainda não tem projetos.",
+        "selectProject": "Selecione pelo menos um projeto.",
+        "submit": "Criar chave",
+        "created": "Agent key criada"
+      },
+      "reveal": {
+        "title": "Sua nova agent key",
+        "keyLabel": "Agent key",
+        "warning": "Esta chave é exibida apenas uma vez. Copie-a agora e guarde-a em local seguro; não será possível vê-la novamente.",
+        "usage": "No seu cliente MCP, use o endpoint {{tools}} ou {{workflows}} e envie o cabeçalho HTTP {{header}}.",
+        "copy": "Copiar",
+        "copied": "Agent key copiada",
+        "copyFailed": "Falha ao copiar. Copie a chave manualmente.",
+        "done": "Concluir"
+      },
+      "list": {
+        "title": "Suas chaves",
+        "loading": "Carregando chaves…",
+        "empty": "Você ainda não tem agent keys.",
+        "retry": "Tentar novamente",
+        "allProjects": "Todos os projetos",
+        "projects": "Projetos: {{names}}",
+        "created": "Criada em {{time}}",
+        "lastUsed": "Último uso {{time}}",
+        "neverUsed": "Nunca usada",
+        "expires": "Expira em {{time}}"
+      },
+      "status": {
+        "active": "Ativa",
+        "revoked": "Revogada",
+        "expired": "Expirada"
+      },
+      "revoke": {
+        "button": "Revogar",
+        "aria": "Revogar {{label}}",
+        "confirmTitle": "Revogar agent key",
+        "confirmDescription": "Revogar “{{label}}”? As ferramentas que usam esta chave deixarão de funcionar imediatamente. Esta ação não pode ser desfeita.",
+        "confirm": "Revogar",
+        "cancel": "Cancelar",
+        "done": "Agent key revogada"
+      }
     },
     "freezoneCatalog": {
       "skills": {
@@ -8641,7 +8702,13 @@
       },
       "mediaModels": {
         "title": "Modelos de geração de imagem/vídeo/áudio",
-        "description": "Os modelos provêm da configuração local personalizada atual. Adicione modelos de imagem ou vídeo e configure as capacidades apresentadas no XiaHua.",
+        "description": "Gira modelos locais de imagem, vídeo, áudio e blockout e as suas capacidades.",
+        "audioPurpose": "Finalidade do áudio",
+        "speech": "Síntese de voz",
+        "promptedSpeech": "Criar voz por descrição",
+        "voiceDesign": "Criar voz com modelo de destino",
+        "audioTarget": "Modelo de síntese de destino",
+        "audioTargetRequired": "Selecione um modelo de síntese compatível. Ative-o se o modelo de criação de voz estiver ativo.",
         "addModel": "Adicionar modelo",
         "addModelTitle": "Adicionar modelo multimédia",
         "editModelTitle": "Editar modelo multimédia",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { ModelOption } from './modelOptions';
+import type { ModelPickerGuide } from '@/lib/media-model-catalog-types';
 import { readReferenceMediaLimits, type ReferenceMediaLimits } from './referenceMediaLimits';
 export type FreezoneProvider =
   | "newapi"
@@ -28,7 +29,24 @@ export interface MediaModelRequestSchema {
   omitPaths?: string[];
 }
 
+// Older/custom catalogs can omit display metadata; never discard the model itself.
+function readPickerGuide(raw: unknown): ModelPickerGuide | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const result: ModelPickerGuide = {};
+  for (const locale of ["zh", "en", "pt", "vi"] as const) {
+    const item = (raw as Record<string, unknown>)[locale];
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const summary = pickString(record, "summary")?.trim().slice(0, 100);
+    const detail = pickString(record, "detail")?.trim().slice(0, 320);
+    const tags = pickStringArray(record, "tags").map(tag => tag.trim().slice(0, 24)).filter(Boolean).slice(0, 2);
+    if (summary || detail || tags.length) result[locale] = { summary, detail, tags };
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
 export interface FreezoneImageModelInfo extends ReferenceMediaLimits {
+  pickerGuide?: ModelPickerGuide;
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   /** Stable picker id, e.g. `"newapi_gpt_image2"`. */
@@ -143,6 +161,7 @@ function modelEntryFromObject(entry: Record<string, unknown>): FreezoneImageMode
     apiModel,
     label,
     resolutionOptions: pickStringArray(entry, "resolutionOptions", "resolution_options"),
+    pickerGuide: readPickerGuide(entry.pickerGuide),
     qualityOptions: pickStringArray(entry, "qualityOptions", "quality_options"),
     ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
     ...readReferenceMediaLimits(entry),
@@ -214,6 +233,7 @@ export function coerceModelList(payload: unknown): FreezoneImageModelInfo[] {
 export type FreezoneVideoProvider = "newapi" | "seedance" | "huimeng";
 
 export interface FreezoneVideoModelInfo extends ReferenceMediaLimits {
+  pickerGuide?: ModelPickerGuide;
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   /** Stable picker id, e.g. `"seedance_2"` (backend currently keys by api id). */
@@ -313,6 +333,7 @@ function videoModelEntryFromObject(
     label,
     ...(resolutionOptions.length > 0 ? { resolutionOptions } : {}),
     humanReview: pickBoolean(entry, "humanReview", "human_review"),
+    pickerGuide: readPickerGuide(entry.pickerGuide),
     supportsGenerateAudio: pickBoolean(
       entry,
       "supportsGenerateAudio",
