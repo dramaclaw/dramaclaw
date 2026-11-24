@@ -115,7 +115,7 @@ import {
 } from "@/features/superchat/use-superchat";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
 import { resolveMessagePresentation } from "@/features/superchat/message-presentation";
-import { bareToolName } from "@/features/superchat/message";
+import { bareToolName, stripTerminalStyleSequences } from "@/features/superchat/message";
 import {
   buildChatTaskBatchNotification,
   resolveChatTaskBatchSummary,
@@ -1821,7 +1821,7 @@ function AgentToolActivityCard({ message }: { message: ChatMessage }) {
   const error = typeof raw?.error === "string"
     ? raw.error.trim()
     : raw?.error ? JSON.stringify(raw.error) : "";
-  const detail = error || (typeof raw?.text === "string" ? raw.text.trim() : "");
+  const detail = error || (typeof raw?.text === "string" ? stripTerminalStyleSequences(raw.text).trim() : "");
   return (
     <div
       className={cn(

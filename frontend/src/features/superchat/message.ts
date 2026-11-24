@@ -75,9 +75,17 @@ function stripInternalContextBlocks(text: string): string {
   return text.replace(INTERNAL_CONTEXT_BLOCK_RE, "\n").trim();
 }
 
+// Agent runtimes format tool traces for a terminal. A browser prints the colour
+// codes instead of applying them, so they are removed wherever text enters the chat.
+const TERMINAL_STYLE_SEQUENCE_RE = /\u001b\[[0-9;]*m/gu;
+
+export function stripTerminalStyleSequences(text: string): string {
+  return text.includes("\u001b") ? text.replace(TERMINAL_STYLE_SEQUENCE_RE, "") : text;
+}
+
 function normalizeDisplayText(text: string): string {
-  const trimmed = text.trim();
-  return EMPTY_AGENT_REPLY_PLACEHOLDERS.has(trimmed) ? EMPTY_AGENT_REPLY_TEXT : text;
+  const plain = stripTerminalStyleSequences(text);
+  return EMPTY_AGENT_REPLY_PLACEHOLDERS.has(plain.trim()) ? EMPTY_AGENT_REPLY_TEXT : plain;
 }
 
 function textFromContent(content: unknown): string {
@@ -193,7 +201,7 @@ export function normalizeMessagePart(part: unknown, index = 0): ChatMessagePart 
   const seq = typeof raw.seq === "number" && Number.isFinite(raw.seq) ? raw.seq : undefined;
   if (type === "tool_status" && isHiddenCanvasWriteToolStatusPart(raw.event)) return null;
   if (type === "text") {
-    const text = typeof raw.text === "string" ? raw.text : "";
+    const text = typeof raw.text === "string" ? stripTerminalStyleSequences(raw.text) : "";
     return { id, type: "text", text, ...(seq == null ? {} : { seq }) };
   }
   if (
