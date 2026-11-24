@@ -1471,6 +1471,7 @@ frontend/src/__tests__/features/superchat/live-items.test.ts,Elastic-2.0,2026 Su
 frontend/src/__tests__/features/superchat/message-attachments.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/superchat/message-bubble.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/superchat/message-presentation.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/superchat/message-terminal-escapes.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/superchat/spec-extract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/superchat/task-notification-batch.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/superchat/task-notification-label.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
