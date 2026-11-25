@@ -381,3 +381,44 @@ def test_concurrent_bounding_of_one_source_succeeds(output_dir, monkeypatch):
 
     assert results[0] == results[1]
     assert _pixel(results[0])[0] > 200
+
+
+@pytest.mark.parametrize("fmt", ["JPEG", "PNG"])
+def test_a_48_megapixel_camera_photo_is_downscaled_not_refused(fmt):
+    """8000x6000 is a common phone/camera original; it must be shrunk and sent."""
+    from novelvideo.utils.reference_image import (
+        REFERENCE_IMAGE_MAX_EDGE,
+        normalize_reference_image,
+    )
+
+    result = normalize_reference_image(_image((8000, 6000), fmt=fmt), ext=fmt.lower())
+
+    assert result.source_size == (8000, 6000)
+    assert result.size == (REFERENCE_IMAGE_MAX_EDGE, 3072)
+
+
+def test_jpeg_over_the_pixel_limit_decodes_at_reduced_scale(monkeypatch):
+    """A JPEG larger than the decode limit is decoded at 1/2..1/8 scale and sent,
+    instead of being refused."""
+    from novelvideo.utils import reference_image
+
+    monkeypatch.setattr(reference_image, "REFERENCE_IMAGE_MAX_SOURCE_PIXELS", 1_000_000)
+    data = _image((8200, 200), fmt="JPEG")  # 1.64M pixels; 1/2 scale is 0.41M
+
+    result = reference_image.normalize_reference_image(data, ext="jpg")
+
+    assert result.size == (reference_image.REFERENCE_IMAGE_MAX_EDGE, 100)
+
+
+def test_lossless_mode_never_returns_an_original_that_was_decoded_smaller():
+    from novelvideo.utils.reference_image import (
+        REFERENCE_IMAGE_MAX_EDGE,
+        normalize_reference_image,
+    )
+
+    data = _image((REFERENCE_IMAGE_MAX_EDGE * 2, 64), fmt="JPEG")
+
+    result = normalize_reference_image(data, ext="jpg", lossless=True)
+
+    assert result.data != data
+    assert result.size == (REFERENCE_IMAGE_MAX_EDGE, 32)

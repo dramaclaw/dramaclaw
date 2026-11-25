@@ -15,7 +15,11 @@ from dataclasses import dataclass
 REFERENCE_IMAGE_MAX_EDGE = 4096
 REFERENCE_IMAGE_JPEG_QUALITY = 95
 REFERENCE_IMAGE_MAX_SOURCE_BYTES = 64 * 1024 * 1024
-REFERENCE_IMAGE_MAX_SOURCE_PIXELS = 40_000_000
+# Limit on the pixels actually decoded. 48-50MP phone and camera originals are
+# common and must be downscaled and sent, not refused. JPEGs larger than this
+# are decoded at 1/2..1/8 scale first (``reduce_decode_scale``), so only huge
+# non-JPEG canvases are refused.
+REFERENCE_IMAGE_MAX_SOURCE_PIXELS = 100_000_000
 
 REFERENCE_CACHE_DIRNAME = ".reference-cache"
 
@@ -128,11 +132,16 @@ def normalize_reference_image(
 
     with source:
         width, height = source.size
-        pixels = width * height
+        reduced = reduce_decode_scale(
+            source, fit_within((width, height), REFERENCE_IMAGE_MAX_EDGE)
+        )
+        decoded_width, decoded_height = source.size
+        pixels = decoded_width * decoded_height
         if pixels > REFERENCE_IMAGE_MAX_SOURCE_PIXELS:
             raise ReferenceImageTooLarge(
-                f"reference image is {width}x{height} ({pixels} pixels); the limit "
-                f"is {REFERENCE_IMAGE_MAX_SOURCE_PIXELS} pixels. Use a smaller image."
+                f"reference image is {width}x{height} ({pixels} pixels to decode); "
+                f"the limit is {REFERENCE_IMAGE_MAX_SOURCE_PIXELS} pixels. "
+                "Use a smaller image."
             )
         source_format = (source.format or source_ext).upper()
         source_mode = source.mode
@@ -146,7 +155,12 @@ def normalize_reference_image(
 
             if lossless:
                 actual_ext = _EXT_BY_FORMAT.get(source.format or "")
-                if target == image.size and not needs_transpose and actual_ext:
+                if (
+                    target == image.size
+                    and not needs_transpose
+                    and not reduced
+                    and actual_ext
+                ):
                     return NormalizedImage(
                         data,
                         actual_ext,
@@ -207,6 +221,30 @@ def prepare_reference_image(
     if result.size is None:
         return None
     return PreparedReference(result.data, mime_type=result.mime_type, size=result.size)
+
+
+def fit_within(size: tuple[int, int], max_edge: int) -> tuple[int, int]:
+    """The size ``size`` scales down to so its long edge fits ``max_edge``."""
+    width, height = size
+    longest = max(width, height)
+    if longest <= max_edge:
+        return size
+    scale = max_edge / longest
+    return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
+
+
+def reduce_decode_scale(image, target: tuple[int, int]) -> bool:
+    """Let a JPEG decode at 1/2..1/8 scale when it will be shrunk to ``target``.
+
+    Call before any pixel access. The decoded size never drops below
+    ``target``; other formats are left as they are. Returns whether the
+    decoded size changed.
+    """
+    before = image.size
+    if target[0] >= before[0] or target[1] >= before[1]:
+        return False
+    image.draft(image.mode, target)
+    return image.size != before
 
 
 def fit_reference_image(image):
