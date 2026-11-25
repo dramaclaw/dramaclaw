@@ -1574,6 +1574,10 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         require_http_url: bool = False,
     ) -> str | None:
         from novelvideo.generators.huimengi import local_file_to_data_url
+        from novelvideo.utils.reference_image import (
+            bound_reference_data_url,
+            bounded_reference_file,
+        )
 
         text = str(value or "").strip()
         if not text:
@@ -1586,12 +1590,12 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                     "human_review requires HTTP/HTTPS media URLs; "
                     f"unsupported direct media reference for {label}: data:"
                 )
-            return text
+            return bound_reference_data_url(text)
         if os.path.exists(text):
             if require_http_url:
                 from novelvideo.utils.oss_client import presign_or_upload_output
 
-                oss_url = presign_or_upload_output(text)
+                oss_url = presign_or_upload_output(str(bounded_reference_file(text)))
                 if not oss_url:
                     raise ValueError(
                         "human_review requires OSS presigned HTTP media URLs. "

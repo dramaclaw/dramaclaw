@@ -574,13 +574,14 @@ def _normalize_ai_reference_image(
         return data, original_ext
 
     logger.info(
-        "DramaClawAPI reference image normalized: %s %dx%d %s %.1fKB -> "
-        "JPEG %dx%d RGB %.1fKB q=%d",
+        "DramaClawAPI reference image normalized: %s %dx%d %s %.1fKB -> %s "
+        "%dx%d %.1fKB q=%d",
         result.source_format or "UNKNOWN",
         result.source_size[0],
         result.source_size[1],
         result.source_mode,
         len(data) / 1024,
+        result.ext.upper(),
         result.size[0],
         result.size[1],
         len(result.data) / 1024,

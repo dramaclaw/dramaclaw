@@ -1654,7 +1654,7 @@ STRICT REQUIREMENTS (MUST AVOID):
 
             from google.genai import types
 
-            return types.Part.from_bytes(data=image_data, mime_type=mime_type)
+            return types.Part.from_bytes(data=bytes(image_data), mime_type=mime_type)
 
         except ReferenceImageTooLarge:
             raise

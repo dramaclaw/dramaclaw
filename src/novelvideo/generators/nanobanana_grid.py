@@ -85,9 +85,11 @@ from novelvideo.image_request_usage import (
     update_image_request_status,
 )
 from novelvideo.utils.reference_image import (
+    PreparedReference,
     ReferenceImageTooLarge,
-    normalize_reference_image,
+    fit_reference_image,
     normalize_reference_inputs,
+    prepare_reference_image,
 )
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
@@ -374,31 +376,33 @@ def _load_reference_image_bytes(
     *,
     compress_quality: int | None = 60,
     min_short_side: int = 0,
-) -> tuple[bytes, str]:
+) -> tuple[PreparedReference, str]:
     """Read a reference image file and return bounded ``(bytes, mime_type)``.
 
     ``compress_quality`` > 0 re-encodes to JPEG at that quality; 0/None keeps
-    the image lossless and only resizes when the bound requires it.
+    the image lossless and only resizes when the bound requires it. The bytes
+    are a ``PreparedReference``, so transports keep this encoding. Raises
+    ``ValueError`` when the file is not a decodable image.
     """
     source = Path(image_path)
     data = source.read_bytes()
     lossless = not (compress_quality and compress_quality > 0)
-    result = normalize_reference_image(
+    prepared = prepare_reference_image(
         data,
         ext=source.suffix.lstrip(".") or "png",
         quality=int(compress_quality) if not lossless else 95,
         lossless=lossless,
         min_short_side=min_short_side,
     )
-    if result.size is not None and (
-        result.data is not data or result.size != result.source_size
-    ):
+    if prepared is None:
+        raise ValueError(f"{source.name} is not a decodable image")
+    if bytes(prepared) != data:
         print(
-            f"[参考图] {source.name}: {result.source_size[0]}x{result.source_size[1]} "
-            f"{len(data) / 1024:.0f}KB → {result.size[0]}x{result.size[1]} "
-            f"{result.mime_type} {len(result.data) / 1024:.0f}KB"
+            f"[参考图] {source.name}: {len(data) / 1024:.0f}KB → "
+            f"{prepared.size[0]}x{prepared.size[1]} {prepared.mime_type} "
+            f"{len(prepared) / 1024:.0f}KB"
         )
-    return result.data, result.mime_type
+    return prepared, prepared.mime_type
 
 
 def _infer_project_dir(*paths: str | None) -> Optional[Path]:
@@ -4077,14 +4081,15 @@ async def _call_newapi_image_api(
 def _reference_image_bytes(
     image_ref: bytes | tuple[bytes, str] | tuple[str, bytes, str],
 ) -> bytes:
-    """Unpack the three reference-image shapes the newAPI path accepts."""
+    """Unpack the three reference-image shapes the newAPI path accepts.
+
+    ``PreparedReference`` keeps its type so the relay sends it unchanged.
+    """
     if isinstance(image_ref, tuple):
-        if len(image_ref) == 3:
-            return bytes(image_ref[1])
-        if len(image_ref) == 2:
-            return bytes(image_ref[0])
-        return bytes(image_ref[0])
-    return bytes(image_ref)
+        data = image_ref[1] if len(image_ref) == 3 else image_ref[0]
+    else:
+        data = image_ref
+    return data if isinstance(data, PreparedReference) else bytes(data)
 
 
 async def _call_newapi_image_api_with_egress(
@@ -6721,13 +6726,13 @@ class NanoBananaGridGenerator:
 
             try:
                 return types.Part.from_bytes(
-                    data=image_data,
+                    data=bytes(image_data),
                     mime_type=mime_type,
                     media_resolution=types.MediaResolution.MEDIA_RESOLUTION_HIGH,
                 )
             except (TypeError, AttributeError):
                 # Gemini 2.x SDK 不支持 media_resolution
-                return types.Part.from_bytes(data=image_data, mime_type=mime_type)
+                return types.Part.from_bytes(data=bytes(image_data), mime_type=mime_type)
 
         except ReferenceImageTooLarge:
             raise
@@ -6919,17 +6924,21 @@ class NanoBananaGridGenerator:
             merged.paste(p, (x_offset, 0))
             x_offset += p.size[0]
 
-        # JPEG 压缩。
+        # 拼接图同样受参考图长边上限约束，再 JPEG 压缩。
+        merged = fit_reference_image(merged)
         buffer = io.BytesIO()
         merged.save(buffer, format="JPEG", quality=compress_quality, optimize=True)
         image_data = buffer.getvalue()
         print(
             f"[NanoBananaPro] 合并参考图: {len(panels)} 角色, "
-            f"{total_w}x{max_h}px, {len(image_data)/1024:.0f}KB"
+            f"{merged.size[0]}x{merged.size[1]}px, {len(image_data)/1024:.0f}KB"
         )
 
         if self.provider != "google":
-            return _InlineImagePart(image_data, "image/jpeg")
+            return _InlineImagePart(
+                PreparedReference(image_data, mime_type="image/jpeg", size=merged.size),
+                "image/jpeg",
+            )
 
         from google.genai import types
 

@@ -318,4 +318,3 @@ def test_upload_image_bytes_can_normalize_ai_reference_jpeg(
     assert uploaded_image.format == "JPEG"
     assert uploaded_image.mode == "RGB"
     assert uploaded_image.size == (32, 16)
-

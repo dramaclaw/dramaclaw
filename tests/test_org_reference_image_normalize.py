@@ -115,3 +115,22 @@ async def test_undecodable_organization_reference_is_relayed_unchanged(relay):
     [(data, ext, _)] = relay.uploads
     assert data == b"not-an-image"
     assert ext == "png"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("organization", [False, True])
+async def test_prepared_line_art_keeps_its_encoding_through_the_relay(
+    relay, organization
+):
+    from novelvideo.generators import nanobanana_grid
+    from novelvideo.utils.reference_image import prepare_reference_image
+
+    prepared = prepare_reference_image(_png(), ext="png", lossless=True)
+
+    await nanobanana_grid._relay_reference_images_for_newapi(
+        [("line_art.png", prepared, prepared.mime_type)],
+        egress_context=_org_context() if organization else None,
+    )
+
+    [(data, ext, _)] = relay.uploads
+    assert (data, ext) == (bytes(prepared), "png")

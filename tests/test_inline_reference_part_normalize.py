@@ -77,3 +77,67 @@ def test_min_short_side_upscale_still_applies(tmp_path):
 
     image, _ = _part_image(part)
     assert image.size == (600, 400)
+
+
+@pytest.mark.parametrize("module_name,class_name", _GENERATORS)
+def test_undecodable_reference_is_skipped(tmp_path, module_name, class_name):
+    generator = _generator(module_name, class_name)
+    path = tmp_path / "broken.png"
+    path.write_bytes(b"not-an-image")
+
+    assert generator._load_image_as_part(str(path)) is None
+
+
+@pytest.mark.parametrize("provider", ["google", "openrouter"])
+def test_merged_character_sheet_is_capped(provider):
+    generator = _generator(*_GENERATORS[0])
+    generator.provider = provider
+    panels = [Image.new("RGB", (2048, 1024), (90, 40, 10)) for _ in range(3)]
+
+    part = generator._merge_character_panels(panels)
+
+    image, mime_type = _part_image(part)
+    assert (image.format, mime_type) == ("JPEG", "image/jpeg")
+    assert max(image.size) == REFERENCE_IMAGE_MAX_EDGE
+
+
+@pytest.mark.asyncio
+async def test_openai_keeps_a_lossless_line_art_part_lossless(tmp_path, monkeypatch):
+    import openai
+
+    from novelvideo.generators import nanobanana_grid
+
+    uploads = []
+
+    class FakeImages:
+        async def edit(self, *, image, **_kwargs):
+            uploads.append(image)
+            raise RuntimeError("stop")
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.images = FakeImages()
+
+    class FakeMeter:
+        async def reserve_current_model_call_credit(self, **_kwargs):
+            return ""
+
+        async def refund_model_call_credit_reservation(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", FakeOpenAI)
+    monkeypatch.setattr(nanobanana_grid, "get_usage_meter", lambda: FakeMeter())
+    generator = _generator(*_GENERATORS[0])
+    part = generator._load_image_as_part(
+        _write_png(tmp_path / "director_sketch_ref.png", (256, 256), mode="RGBA"),
+        compress_quality=0,
+    )
+    _, references = generator._extract_ref_bytes_from_contents([part], include_mime=True)
+
+    await nanobanana_grid._call_openai_image_api(
+        api_key="key", model="gpt-image-1", prompt="prompt", reference_images=references
+    )
+
+    [(filename, data, mime_type)] = uploads[0]
+    assert (filename.endswith(".png"), mime_type) == (True, "image/png")
+    assert Image.open(io.BytesIO(data)).mode == "RGBA"
