@@ -198,6 +198,94 @@ async def test_c1_eg21_context_facade_denies_untrusted_context_before_authority_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("upload_fails", [True, False])
+async def test_reference_audio_uses_tenant_relay_not_unscoped_fallback(
+    monkeypatch, tmp_path, upload_fails
+):
+    from unittest.mock import Mock
+
+    from novelvideo import ports
+    from novelvideo.model_gateway_runtime import model_gateway_request_scope
+    from novelvideo.seedance2_i2v.voice_clone import build_reference_audio_url
+    from novelvideo.storage import media_relay
+    from novelvideo.storage.media_errors import MediaStorageUnavailable
+
+    sample = tmp_path / "voice.mp3"
+    sample.write_bytes(b"voice")
+    url = "https://1.1.1.1/audio.mp3?signature=fixture"
+    ops = FakeOperations()
+    adapter = Mock()
+    adapter.upload_bytes.side_effect = OSError("upload failed") if upload_fails else None
+    adapter.upload_bytes.return_value = url
+    monkeypatch.setattr(ports, "get_egress_operation_port", lambda: ops)
+    monkeypatch.setattr(media_relay, "get_media_relay", lambda: adapter)
+    monkeypatch.setattr(media_relay, "media_relay_ttl_seconds", lambda **_: 7200)
+    unscoped_upload = Mock()
+    monkeypatch.setattr(media_relay, "upload_media_bytes", unscoped_upload)
+    with model_gateway_request_scope(_org_context()):
+        if upload_fails:
+            with pytest.raises(MediaStorageUnavailable):
+                await build_reference_audio_url(sample, object_id="job")
+            assert ops.unknown and not ops.completed
+        else:
+            assert await build_reference_audio_url(sample, object_id="job") == url
+            assert ops.completed
+    unscoped_upload.assert_not_called()
+    (spec,) = ops.claims
+    assert spec.capability == "storage.media.relay"
+    call = adapter.upload_bytes.call_args
+    assert call.args == (b"voice",)
+    assert call.kwargs["resource_type"] == "video"
+    assert call.kwargs["object_key"].startswith("relay/tenants/org-a/projects/project-a/")
+    assert call.kwargs["object_key"].endswith(".mp3")
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_reference_upload_marks_unknown_without_model_dispatch(monkeypatch, tmp_path):
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from novelvideo import ports
+    from novelvideo.seedance2_i2v.voice_clone import generate_reference_speech
+    from novelvideo.storage import media_relay
+
+    ops = FakeOperations()
+    started = asyncio.Event()
+    released = threading.Event()
+    finished = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def upload(*args, **kwargs):
+        loop.call_soon_threadsafe(started.set)
+        assert released.wait(5)
+        finished.set()
+        return "https://1.1.1.1/ref.wav"
+
+    monkeypatch.setattr(ports, "get_egress_operation_port", lambda: ops)
+    monkeypatch.setattr(media_relay, "get_media_relay", lambda: SimpleNamespace(upload_bytes=upload))
+    client = SimpleNamespace(egress_context=_org_context(), generate=AsyncMock())
+    path = tmp_path / "reference.wav"
+    path.write_bytes(b"recording")
+    task = asyncio.create_task(generate_reference_speech(
+        client, prompt="Test.", reference_path=path, output_path=tmp_path / "out.mp3",
+        emotion_prompt="",
+    ))
+    try:
+        await asyncio.wait_for(started.wait(), 3)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert len(ops.unknown) == 1
+    finally:
+        released.set()
+    assert await asyncio.to_thread(finished.wait, 3)
+    assert not ops.accepted and not ops.completed
+    client.generate.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_c1_eg21_context_facade_denies_missing_authority_before_config(
     monkeypatch,
 ):

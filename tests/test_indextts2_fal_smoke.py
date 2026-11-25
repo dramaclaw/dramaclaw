@@ -92,13 +92,19 @@ def test_build_reference_audio_url_size_guard(tmp_path):
     big = tmp_path / "big.mp3"
     big.write_bytes(b"\x00" * (MAX_REFERENCE_AUDIO_BYTES + 1))
     with pytest.raises(ValueError, match="Re-encode"):
-        build_reference_audio_url(big)
+        asyncio.run(build_reference_audio_url(big, object_id="job"))
 
 
-def test_build_reference_audio_url_returns_data_url(tmp_path):
+@pytest.mark.parametrize("url", ["http://1.1.1.1/ref", "data:audio/mp3;base64,AAAA",
+                                 "https://127.0.0.1/ref", "https://[::1]/ref"])
+def test_build_reference_audio_url_rejects_unusable_delivery_url(tmp_path, monkeypatch, url):
     from novelvideo.seedance2_i2v.voice_clone import build_reference_audio_url
+    from novelvideo.storage import media_relay
+    from novelvideo.storage.media_errors import MediaStorageUnavailable
 
     small = tmp_path / "small.mp3"
     small.write_bytes(b"ID3\x03\x00\x00\x00fake-mp3-bytes")
-    url = build_reference_audio_url(small)
-    assert url.startswith("data:")
+    monkeypatch.setattr(media_relay, "media_relay_ttl_seconds", lambda **_: 7200)
+    monkeypatch.setattr(media_relay, "upload_media_bytes", lambda *_, **__: url)
+    with pytest.raises(MediaStorageUnavailable, match="MEDIA_RELAY_AUDIO_UNAVAILABLE"):
+        asyncio.run(build_reference_audio_url(small, object_id="job"))
