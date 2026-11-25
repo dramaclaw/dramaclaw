@@ -2952,6 +2952,7 @@ async def generate_text_to_image(
     config: Optional[dict] = None,
     egress_context: TrustedEgressContext | None = None,
     egress_capability: str = "image.generate",
+    egress_business_task_id: str | None = None,
 ) -> Path:
     """Generate one image from a prompt only — no reference images.
 
@@ -2970,6 +2971,7 @@ async def generate_text_to_image(
         config=config,
         egress_context=egress_context,
         egress_capability=egress_capability,
+        egress_business_task_id=egress_business_task_id,
     )
 
 
@@ -2985,6 +2987,7 @@ async def generate_reference_edit_image(
     config: Optional[dict] = None,
     egress_context: TrustedEgressContext | None = None,
     egress_capability: str = "image.edit",
+    egress_business_task_id: str | None = None,
 ) -> Path:
     """Generate one edited image from reference images plus a free-form edit prompt.
 
@@ -3006,6 +3009,7 @@ async def generate_reference_edit_image(
         config=config,
         egress_context=egress_context,
         egress_capability=egress_capability,
+        egress_business_task_id=egress_business_task_id,
     )
 
 
@@ -3021,6 +3025,7 @@ async def _generate_image(
     config: Optional[dict],
     egress_context: TrustedEgressContext | None,
     egress_capability: str,
+    egress_business_task_id: str | None = None,
 ) -> Path:
     """Shared body for text-only and image-edit single-image generation."""
     ref_paths = list(reference_image_paths or [])
@@ -3049,6 +3054,7 @@ async def _generate_image(
         provider=configured_provider,
         capability=egress_capability,
         request=request,
+        business_task_id=egress_business_task_id,
     )
     effective_config = config
     effective_api_key = api_key

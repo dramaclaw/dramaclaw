@@ -306,6 +306,76 @@ async def test_eg09a_org_generate_edit_use_exact_credential_claim_once_and_never
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("variant_count", [1, 2, 4])
+@pytest.mark.parametrize("with_reference", [False, True])
+async def test_organization_image_batch_claims_each_variant_and_blocks_replay(
+    monkeypatch, tmp_path, variant_count, with_reference
+):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import novelvideo.ports as ports
+    from novelvideo.api import deps
+    from novelvideo.generators import nanobanana_grid
+    from novelvideo.ports.egress import EgressError
+    from novelvideo.task_backend.runners import freezone
+
+    context = _egress_context(kind="organization")
+    operation_port = _OperationPort()
+    credential_port = _CredentialPort(
+        RequestCredential(
+            reference=context.credential,
+            api_key="request-scoped-image-key",
+            base_url="https://gateway.invalid/v1",
+        )
+    )
+    monkeypatch.setattr(ports, "get_egress_operation_port", lambda: operation_port)
+    monkeypatch.setattr(ports, "get_model_credentials", lambda: credential_port)
+    monkeypatch.setattr(freezone, "_extract_trusted_egress_context", lambda _: context)
+    monkeypatch.setattr(freezone, "_update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(deps, "make_static_url_for_context", lambda _ctx, path: str(path))
+
+    async def await_direct(awaitable, **_kwargs):
+        return await awaitable
+
+    monkeypatch.setattr(freezone, "_await_with_cancel_watch", await_direct)
+    submitted = []
+
+    async def fake_gateway(*, trace, delivery_path, **_kwargs):
+        submitted.append(Path(delivery_path).name)
+        trace["request_id"] = f"request-{len(submitted)}"
+        return b"image", None, None
+
+    monkeypatch.setattr(nanobanana_grid, "_call_newapi_image_api", fake_gateway)
+    reference = tmp_path / "reference.png"
+    reference.write_bytes(b"reference")
+    ctx = SimpleNamespace(project_id=context.project_id, output_dir=tmp_path)
+    envelope = {
+        "payload": {
+            "job_id": "batch",
+            "prompt": "same prompt for each variant",
+            "variant_count": variant_count,
+            "reference_paths": [str(reference)] if with_reference else [],
+        }
+    }
+
+    result = await freezone._run_freezone_gen_async(envelope, ctx)
+
+    outputs = result.get("output_paths", [result["output_path"]])
+    assert len(outputs) == len(set(outputs)) == variant_count
+    assert all(Path(path).read_bytes() == b"image" for path in outputs)
+    assert len(submitted) == variant_count
+    assert len(operation_port.states) == variant_count
+    assert operation_port.claims[0].business_task_id == context.envelope_id
+
+    with pytest.raises(EgressError) as replay:
+        await freezone._run_freezone_gen_async(envelope, ctx)
+    assert replay.value.code == "EGRESS_OPERATION_REPLAYED"
+    assert len(submitted) == variant_count
+    assert len(operation_port.states) == variant_count
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["openrouter", "openai", "huimeng", "google"])
 async def test_eg09b_org_direct_providers_are_denied_before_transport(
     monkeypatch: pytest.MonkeyPatch,
