@@ -108,7 +108,7 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 
 按渠道填写 API Key，然后点击 **保存并应用全部配置**。Key 独立保存，不会写入配置 JSON；已经保存的 Key 可以留空，重新输入会替换旧值。
 
-推荐模板的文本和视觉模型都通过 OpenRouter 调用 `openai/gpt-6-luna`，Embedding 使用 `qwen/qwen3-embedding-8b`，Seedance 视频使用 VolcEngine 渠道。音频方面，DoubaoAudio 渠道使用同名的 `seed-audio-1.0` 映射。虾画的音频克隆节点会优先选择这个模型；也可以在节点底部切换到项目中已配置的其他语音模型。切换模型不会更换已选的参考音色。样音以 Base64 随请求发送，不需要公网链接。需要供应商音色 ID 的 CosyVoice 不能直接使用该节点的参考录音。
+推荐模板的文本和视觉模型都通过 OpenRouter 调用 `openai/gpt-6-luna`，Embedding 使用 `qwen/qwen3-embedding-8b`，Seedance 视频使用 VolcEngine 渠道。音频方面，DoubaoAudio 渠道使用同名的 `seed-audio-1.0` 映射。虾画的音频克隆节点会优先选择这个模型；也可以在节点底部切换到项目中已配置的其他语音模型。切换模型不会更换已选的参考音色。参考录音仍保存在本地；克隆配音时会先上传到媒体中转，再将可从公网访问的 HTTPS 链接发给网关。请先配置媒体中转；中转失败不会调用模型。需要供应商音色 ID 的 CosyVoice 不能直接使用该节点的参考录音。
 
 内置推荐配置是只读模板。切换到 **我的配置** 后可以编辑 JSON，保存后的个人配置会在下次打开时恢复。下面用一份最小示例展示 Seed Audio 如何与文本、视觉和 Embedding 一起配置。它不是完整推荐模板；编辑已有配置时，请保留仍在使用的其他渠道和映射。
 

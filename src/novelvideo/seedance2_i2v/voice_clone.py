@@ -7,12 +7,16 @@ so the existing Seedance 2.0 ``reference_audios`` asset path can pick it up.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
+import ipaddress
 import re
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal
+from urllib.parse import urlsplit
 
 from novelvideo.generators.tts_generator import TTSResult
 
@@ -374,7 +378,8 @@ async def generate_seedance2_narration_audio(
 
     if not narrator_audio_path.exists():
         return TTSResult(
-            success=False, error=f"Narrator reference audio not found: {narrator_audio_path}"
+            success=False,
+            error=f"Narrator reference audio not found: {narrator_audio_path}",
         )
 
     if generator is None:
@@ -382,14 +387,45 @@ async def generate_seedance2_narration_audio(
 
         generator = IndexTTS2FalClient()
 
-    builder = audio_url_builder or build_reference_audio_url
     output_path = beat_audio_path(project_dir, episode, beat_num)
-    resolved_emotion = str(emotion_prompt or "").strip() or narration_style_prompt(narration_style)
-    maybe_result = generator.generate(
+    resolved_emotion = str(emotion_prompt or "").strip() or narration_style_prompt(
+        narration_style
+    )
+    return await generate_reference_speech(
+        generator,
         prompt=text,
-        audio_url=builder(narrator_audio_path),
+        reference_path=narrator_audio_path,
+        audio_url_builder=audio_url_builder,
         output_path=output_path,
         emotion_prompt=resolved_emotion,
+    )
+
+
+async def generate_reference_speech(
+    generator,
+    *,
+    prompt: str,
+    reference_path: Path,
+    output_path: Path,
+    emotion_prompt: str,
+    audio_url_builder: AudioUrlBuilder | None = None,
+) -> TTSResult:
+    # Injected speech generators may accept a reference directly; gateway clients
+    # can reject missing credentials or a forbidden provider before sharing it.
+    preflight = getattr(generator, "preflight_error", None)
+    if preflight is not None and (error := preflight()):
+        return TTSResult(success=False, error=error)
+    url = (
+        audio_url_builder(reference_path)
+        if audio_url_builder
+        else await build_reference_audio_url(
+            reference_path,
+            object_id=str(output_path),
+            context=getattr(generator, "egress_context", None),
+        )
+    )
+    maybe_result = generator.generate(
+        prompt=prompt, audio_url=url, output_path=output_path, emotion_prompt=emotion_prompt
     )
     if inspect.isawaitable(maybe_result):
         return await maybe_result
@@ -397,24 +433,80 @@ async def generate_seedance2_narration_audio(
 
 
 MAX_REFERENCE_AUDIO_BYTES = 5_000_000
+REFERENCE_AUDIO_MIN_TTL_SECONDS = 2 * 60 * 60
 
 
-def build_reference_audio_url(audio_path: Path) -> str:
-    """Return an IndexTTS2-readable data URL for a local reference audio file.
+async def build_reference_audio_url(
+    audio_path: Path, *, object_id: str, context=None
+) -> str:
+    """Relay only the recording needed for this synthesis, before model dispatch."""
+    from novelvideo.egress_context import ambient_organization_egress_context
+    from novelvideo.storage import media_relay
+    from novelvideo.storage.media_errors import MediaStorageUnavailable
 
-    Reference audio still follows the v2.0 flow and travels as an inline
-    ``data:`` URL. We cap raw audio at 5 MB and ask the user to re-encode
-    anything larger to mono/16k MP3.
-    """
-    from novelvideo.generators.huimengi import local_file_to_data_url
+    def read_sample() -> bytes:
+        with audio_path.open("rb") as stream:
+            return stream.read(MAX_REFERENCE_AUDIO_BYTES + 1)
 
-    size = Path(audio_path).stat().st_size
-    if size > MAX_REFERENCE_AUDIO_BYTES:
+    data = await asyncio.to_thread(read_sample)
+    if not data or len(data) > MAX_REFERENCE_AUDIO_BYTES:
         raise ValueError(
-            f"Reference audio {Path(audio_path).name} is {size} bytes "
-            f"(> {MAX_REFERENCE_AUDIO_BYTES}). Re-encode to mono/16k MP3 before use."
+            "Reference audio must be non-empty and at most 5 MB. Re-encode to mono/16k MP3."
         )
-    return local_file_to_data_url(str(audio_path))
+    if context is None:
+        context = ambient_organization_egress_context()
+    ext = audio_path.suffix.lstrip(".").lower()
+    try:
+        # Audio is delivered as a video resource by Cloudinary; OSS/S3 keep its extension.
+        if context is not None:
+            url = await media_relay.relay_tenant_media_bytes_from_context(
+                data,
+                object_id=f"audio:{object_id}:{hashlib.sha256(data).hexdigest()}",
+                context=context,
+                ext=ext,
+                ttl=REFERENCE_AUDIO_MIN_TTL_SECONDS,
+                resource_type="video",
+            )
+        else:
+            ttl = media_relay.media_relay_ttl_seconds(
+                minimum=REFERENCE_AUDIO_MIN_TTL_SECONDS
+            )
+            url = await asyncio.to_thread(
+                media_relay.upload_media_bytes,
+                data,
+                ext=ext,
+                ttl=ttl,
+                resource_type="video",
+            )
+        parts = urlsplit(url)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.fragment
+        ):
+            raise ValueError("invalid delivery URL")
+        addresses = await asyncio.wait_for(
+            asyncio.get_running_loop().getaddrinfo(
+                parts.hostname,
+                parts.port or 443,
+                type=socket.SOCK_STREAM,
+            ),
+            timeout=10,
+        )
+        ips = [ipaddress.ip_address(row[4][0]) for row in addresses]
+        if not ips or any(not ip.is_global or ip.is_multicast for ip in ips):
+            raise ValueError("non-public delivery host")
+        return url
+    except (media_relay.ServiceEgressDenied, media_relay.ServiceOperationNotReplayable):
+        raise
+    except Exception:
+        # Provider exceptions may contain signed URLs or credential details.
+        raise MediaStorageUnavailable(
+            "MEDIA_RELAY_AUDIO_UNAVAILABLE",
+            "参考音频中转失败，请检查媒体中转配置及公网 HTTPS 访问地址。",
+        ) from None
 
 
 VoiceTier = Literal["identity_override", "age_group_preset", "character_default"]
@@ -562,18 +654,18 @@ async def generate_seedance2_dialogue_audio(
 
         generator = IndexTTS2FalClient()
 
-    builder = audio_url_builder or build_reference_audio_url
     output_path = beat_audio_path(store.project_dir, episode, beat_num)
-    resolved_emotion_prompt = str(emotion_prompt or "").strip() or dialogue_emotion_prompt(beat)
-    maybe_result = generator.generate(
+    resolved_emotion_prompt = str(
+        emotion_prompt or ""
+    ).strip() or dialogue_emotion_prompt(beat)
+    return await generate_reference_speech(
+        generator,
         prompt=narration,
-        audio_url=builder(reference_path),
+        reference_path=reference_path,
+        audio_url_builder=audio_url_builder,
         output_path=output_path,
         emotion_prompt=resolved_emotion_prompt,
     )
-    if inspect.isawaitable(maybe_result):
-        return await maybe_result
-    return maybe_result
 
 
 async def generate_seedance2_dialogue_audio_for_voice(

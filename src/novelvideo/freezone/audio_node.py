@@ -39,8 +39,8 @@ from novelvideo.project_config import (
     load_narrator_reference_audio_from_state_dir,
 )
 from novelvideo.seedance2_i2v.voice_clone import (
-    build_reference_audio_url,
     file_sha256,
+    generate_reference_speech,
     narration_style_prompt,
     resolve_character_voice,
     resolve_narrator_source,
@@ -748,9 +748,10 @@ async def generate_freezone_audio_speech(
             provider="newapi",
             egress_context=egress_context,
         )
-    result = await generator.generate(
+    result = await generate_reference_speech(
+        generator,
         prompt=clean_text,
-        audio_url=build_reference_audio_url(selected_voice.audio_path),
+        reference_path=selected_voice.audio_path,
         output_path=output_path,
         emotion_prompt=str(emotion_prompt or "").strip()
         or narration_style_prompt(narration_style),
