@@ -5767,6 +5767,7 @@ describe("useSuperChat websocket lifecycle", () => {
       user_text: "查看下当前节点详情然后返回ok",
       context: {
         freezone_canvas_id: "canvas-a",
+        ui_locale: expect.stringMatching(/^(zh|en|pt|vi)$/),
         canvas_command_execution_mode: "auto_execute",
       },
     }));
@@ -5839,6 +5840,7 @@ describe("useSuperChat websocket lifecycle", () => {
     expect(inside[inside.length - 1]).toEqual(expect.objectContaining({
       context: {
         freezone_canvas_id: "canvas-a",
+        ui_locale: expect.stringMatching(/^(zh|en|pt|vi)$/),
         canvas_command_execution_mode: "manual_confirm",
         freezone_compose_node_id: "compose-1",
       },
@@ -5854,6 +5856,7 @@ describe("useSuperChat websocket lifecycle", () => {
     expect(outside[outside.length - 1]).toEqual(expect.objectContaining({
       context: {
         freezone_canvas_id: "canvas-a",
+        ui_locale: expect.stringMatching(/^(zh|en|pt|vi)$/),
         canvas_command_execution_mode: "manual_confirm",
       },
     }));

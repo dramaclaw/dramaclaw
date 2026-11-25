@@ -11,6 +11,7 @@ export type ClientFrame =
       surface?: "freezone";
       context?: {
         freezone_canvas_id?: string | null;
+        ui_locale?: string;
         canvas_command_execution_mode?: "manual_confirm" | "auto_execute";
         /** 视频合成与剪辑工作区打开时，正在剪的 videoComposeNode id。 */
         freezone_compose_node_id?: string | null;

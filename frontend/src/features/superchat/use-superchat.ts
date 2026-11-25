@@ -4,6 +4,7 @@ import type { CanvasCommandToolResultPayload } from "@/features/freezone/canvasC
 import { applyLiveItemFrame, applyLiveItemDeltaFrame } from "./live-items";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import i18next from "i18next";
+import { normalize as normalizeLanguage } from "@/i18n/languages";
 import type {
   ChatAttachment,
   ChatMessage,
@@ -2836,6 +2837,7 @@ export function useSuperChat({
         surface === "freezone" && normalizedFreezoneCanvasId
           ? {
               freezone_canvas_id: normalizedFreezoneCanvasId,
+              ui_locale: normalizeLanguage(i18next.resolvedLanguage ?? i18next.language),
               canvas_command_execution_mode: freezoneCanvasCommandExecutionMode(),
               ...(normalizedComposeNodeId
                 ? { freezone_compose_node_id: normalizedComposeNodeId }
