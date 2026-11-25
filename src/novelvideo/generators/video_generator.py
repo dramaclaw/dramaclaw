@@ -498,20 +498,13 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
             raise ValueError("VOLCENGINE_VISUAL_API_KEY or ARK_API_KEY must be set")
 
     def _local_to_data_url(self, image_path: str) -> str:
-        """将本地图片转换为 data URL（base64）。"""
-        import base64
+        """将本地图片转换为 data URL（base64），图片先按参考图上限归一化。"""
+        import mimetypes
 
-        if image_path.lower().endswith(".png"):
-            mime_type = "image/png"
-        elif image_path.lower().endswith((".jpg", ".jpeg")):
-            mime_type = "image/jpeg"
-        else:
-            mime_type = "image/png"
+        from novelvideo.utils.reference_image import reference_file_to_data_url
 
-        with open(image_path, "rb") as f:
-            image_data = base64.b64encode(f.read()).decode()
-
-        return f"data:{mime_type};base64,{image_data}"
+        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+        return reference_file_to_data_url(image_path, mime_type=mime_type)
 
     @staticmethod
     def _normalize_aspect_ratio(value: str | None) -> str:
@@ -927,8 +920,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
             raise ValueError("VOLCENGINE_VISUAL_API_KEY or ARK_API_KEY must be set")
 
     def _file_to_data_url(self, file_path: str) -> str:
-        """将本地文件转换为 data URL（base64）。"""
-        import base64
+        """将本地文件转换为 data URL（base64），图片先按参考图上限归一化。"""
         import mimetypes
 
         mime_type, _ = mimetypes.guess_type(file_path)
@@ -948,9 +940,9 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
             }
             mime_type = mime_map.get(ext, "application/octet-stream")
 
-        with open(file_path, "rb") as f:
-            data = base64.b64encode(f.read()).decode()
-        return f"data:{mime_type};base64,{data}"
+        from novelvideo.utils.reference_image import reference_file_to_data_url
+
+        return reference_file_to_data_url(file_path, mime_type=mime_type)
 
     async def _download_video(self, url: str, output_path: str) -> bool:
         """下载视频文件。"""
@@ -1247,19 +1239,13 @@ class GrokVideoGenerator(VideoGeneratorBase):
             raise ValueError("XAI_API_KEY must be set for Grok video generation")
 
     def _local_to_data_url(self, image_path: str) -> str:
-        import base64
+        """将本地图片转换为 data URL（base64），图片先按参考图上限归一化。"""
+        import mimetypes
 
-        suffix = Path(image_path).suffix.lower()
-        if suffix == ".png":
-            mime_type = "image/png"
-        elif suffix in {".jpg", ".jpeg"}:
-            mime_type = "image/jpeg"
-        else:
-            mime_type = "image/png"
+        from novelvideo.utils.reference_image import reference_file_to_data_url
 
-        with open(image_path, "rb") as f:
-            encoded = base64.b64encode(f.read()).decode()
-        return f"data:{mime_type};base64,{encoded}"
+        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+        return reference_file_to_data_url(image_path, mime_type=mime_type)
 
     async def _download_video(
         self, url: str, output_path: str, max_retries: int = 3
@@ -1588,6 +1574,10 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         require_http_url: bool = False,
     ) -> str | None:
         from novelvideo.generators.huimengi import local_file_to_data_url
+        from novelvideo.utils.reference_image import (
+            bound_reference_data_url,
+            bounded_reference_file,
+        )
 
         text = str(value or "").strip()
         if not text:
@@ -1600,12 +1590,12 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                     "human_review requires HTTP/HTTPS media URLs; "
                     f"unsupported direct media reference for {label}: data:"
                 )
-            return text
+            return bound_reference_data_url(text)
         if os.path.exists(text):
             if require_http_url:
                 from novelvideo.utils.oss_client import presign_or_upload_output
 
-                oss_url = presign_or_upload_output(text)
+                oss_url = presign_or_upload_output(str(bounded_reference_file(text)))
                 if not oss_url:
                     raise ValueError(
                         "human_review requires OSS presigned HTTP media URLs. "

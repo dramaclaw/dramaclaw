@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import uuid
 import asyncio
-import base64
 import hashlib
-import io
 import inspect
 import logging
 import re
 import mimetypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -187,14 +184,6 @@ class AliyunOSSRelay:
             raise
         return self._bucket.sign_url("GET", key, int(ttl), slash_safe=True)
 
-    def upload_file(self, path: str | Path, *, ttl: int = 1800) -> str:
-        file_path = Path(path)
-        return self.upload_bytes(
-            file_path.read_bytes(),
-            ext=file_path.suffix.lstrip(".") or "png",
-            ttl=ttl,
-        )
-
 
 class CloudinaryRelay:
     """Upload transient bytes to Cloudinary and return its secure delivery URL."""
@@ -283,14 +272,6 @@ class CloudinaryRelay:
         if not secure_url:
             raise MediaRelayConfigError("Cloudinary media relay upload returned no URL")
         return secure_url
-
-    def upload_file(self, path: str | Path, *, ttl: int = 1800) -> str:
-        file_path = Path(path)
-        return self.upload_bytes(
-            file_path.read_bytes(),
-            ext=file_path.suffix.lstrip(".") or "png",
-            ttl=ttl,
-        )
 
 
 def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay | S3Relay:
@@ -395,12 +376,6 @@ def upload_media_bytes(
         ttl=ttl_seconds,
         resource_type=resource_type,
     )
-
-
-def upload_image_file(path: str | Path, *, ttl: int | None = None) -> str:
-    """Upload a local image file to the relay and return a short-lived URL."""
-    ttl_seconds = int(ttl if ttl is not None else _default_media_relay_ttl_seconds())
-    return get_media_relay().upload_file(path, ttl=ttl_seconds)
 
 
 async def relay_tenant_media_bytes(
@@ -577,36 +552,6 @@ async def relay_tenant_image_bytes_from_context(
     )
 
 
-def ensure_image_url(reference: str | Path, *, ttl: int | None = None) -> str:
-    """Return a remote URL for an image reference.
-
-    - http/https URLs are already model-visible and are returned unchanged.
-    - data:image/...;base64 references are uploaded to the relay.
-    - local files are uploaded to the relay.
-
-    This keeps newAPI/HuiMeng image calls from receiving local paths or data URLs
-    when the upstream channel requires fetchable URL inputs.
-    """
-    value = str(reference or "").strip()
-    if not value:
-        raise ValueError("image reference is empty")
-    if _is_remote_url(value):
-        return value
-    data_url_match = _DATA_IMAGE_URL_RE.match(value)
-    if data_url_match:
-        ext = _normalize_ext(data_url_match.group("ext"))
-        try:
-            data = base64.b64decode(data_url_match.group("data"), validate=True)
-        except Exception as exc:
-            raise ValueError("invalid base64 image data URL") from exc
-        return upload_image_bytes(data, ext=ext, ttl=ttl)
-
-    path = Path(value).expanduser()
-    if not path.exists() or not path.is_file():
-        raise ValueError(f"image reference is not a URL or local file: {value}")
-    return upload_image_file(path, ttl=ttl)
-
-
 def _apply_image_transform(
     data: bytes,
     *,
@@ -620,72 +565,53 @@ def _apply_image_transform(
     raise ValueError(f"unsupported image_transform: {image_transform}")
 
 
+def transform_image_bytes(
+    data: bytes,
+    *,
+    ext: str,
+    image_transform: str | None,
+) -> tuple[bytes, str]:
+    """Apply the same transform ``upload_image_bytes`` applies before relaying.
+
+    For callers that relay through a path without an ``image_transform``
+    argument, so every relay path sends references in one shape.
+    """
+
+    return _apply_image_transform(data, ext=ext, image_transform=image_transform)
+
+
 def _normalize_ai_reference_image(
     data: bytes, *, ext: str = "png"
 ) -> tuple[bytes, str]:
+    from novelvideo.utils.reference_image import normalize_reference_image
+
     original_ext = _normalize_ext(ext)
-
-    try:
-        from PIL import Image, ImageOps, UnidentifiedImageError
-
-        with Image.open(io.BytesIO(data)) as img:
-            original_format = (img.format or original_ext or "").upper() or "UNKNOWN"
-            original_mode = img.mode
-            original_size = img.size
-            img = ImageOps.exif_transpose(img)
-            if img.mode in {"RGBA", "LA"} or (
-                img.mode == "P" and "transparency" in img.info
-            ):
-                background = Image.new("RGB", img.size, (255, 255, 255))
-                alpha = img.convert("RGBA").getchannel("A")
-                background.paste(img.convert("RGBA"), mask=alpha)
-                img = background
-            elif img.mode != "RGB":
-                img = img.convert("RGB")
-
-            normalized_size = img.size
-            buffer = io.BytesIO()
-            img.save(
-                buffer,
-                format="JPEG",
-                quality=AI_REFERENCE_JPEG_QUALITY,
-                optimize=True,
-            )
-            normalized = buffer.getvalue()
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    result = normalize_reference_image(
+        data, ext=original_ext, quality=AI_REFERENCE_JPEG_QUALITY
+    )
+    if result.size is None:
         logger.info(
-            "DramaClawAPI reference image normalize skipped: ext=%s bytes=%d error=%s",
+            "DramaClawAPI reference image normalize skipped: ext=%s bytes=%d",
             original_ext,
             len(data),
-            exc,
         )
         return data, original_ext
 
     logger.info(
-        "DramaClawAPI reference image normalized: %s %dx%d %s %.1fKB -> "
-        "JPEG %dx%d RGB %.1fKB q=%d",
-        original_format,
-        original_size[0],
-        original_size[1],
-        original_mode,
+        "DramaClawAPI reference image normalized: %s %dx%d %s %.1fKB -> %s "
+        "%dx%d %.1fKB q=%d",
+        result.source_format or "UNKNOWN",
+        result.source_size[0],
+        result.source_size[1],
+        result.source_mode,
         len(data) / 1024,
-        normalized_size[0],
-        normalized_size[1],
-        len(normalized) / 1024,
+        result.ext.upper(),
+        result.size[0],
+        result.size[1],
+        len(result.data) / 1024,
         AI_REFERENCE_JPEG_QUALITY,
     )
-    return normalized, "jpg"
-
-
-_DATA_IMAGE_URL_RE = re.compile(
-    r"^data:image/(?P<ext>[a-zA-Z0-9.+-]+);base64,(?P<data>.+)$",
-    re.DOTALL,
-)
-
-
-def _is_remote_url(value: str) -> bool:
-    parsed = urlparse(value)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    return result.data, result.ext
 
 
 def _is_safe_object_key(value: str) -> bool:
