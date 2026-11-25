@@ -80,15 +80,13 @@ def test_upload_and_sigv4_url(s3_settings, path_style):
     assert sdk_config.request_checksum_calculation == "when_required"
 
 
-def test_generated_key_and_file_upload(s3_settings, monkeypatch, tmp_path):
+def test_generated_key_and_bytes_upload(s3_settings, monkeypatch):
     relay = s3_relay.build_s3_relay(s3_settings)
     calls = []
     monkeypatch.setattr(
         relay._client, "put_object", lambda **kwargs: calls.append(kwargs)
     )
-    path = tmp_path / "sound.mp3"
-    path.write_bytes(b"audio")
-    url = relay.upload_file(path)
+    url = relay.upload_bytes(b"audio", ext="mp3", ttl=1800)
     assert calls[0]["Key"].startswith("relay/")
     assert calls[0]["Key"].endswith(".mp3")
     assert calls[0]["ContentType"] == "audio/mpeg"

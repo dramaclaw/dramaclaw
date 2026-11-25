@@ -51,8 +51,9 @@ def local_file_to_data_url(path: str | Path) -> str:
         or mimetypes.guess_type(file_path.name)[0]
         or "application/octet-stream"
     )
-    encoded = base64.b64encode(file_path.read_bytes()).decode("utf-8")
-    return f"data:{mime_type};base64,{encoded}"
+    from novelvideo.utils.reference_image import reference_file_to_data_url
+
+    return reference_file_to_data_url(file_path, mime_type=mime_type)
 
 
 def bytes_to_data_url(content: bytes) -> str:

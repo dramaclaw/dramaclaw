@@ -84,6 +84,11 @@ from novelvideo.image_request_usage import (
     record_image_request,
     update_image_request_status,
 )
+from novelvideo.utils.reference_image import (
+    ReferenceImageTooLarge,
+    normalize_reference_image,
+    normalize_reference_inputs,
+)
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
     media_relay_ttl_seconds,
@@ -362,6 +367,38 @@ class _InlineImagePart:
 
     def __init__(self, data: bytes, mime_type: str = "image/png"):
         self.inline_data = SimpleNamespace(data=data, mime_type=mime_type)
+
+
+def _load_reference_image_bytes(
+    image_path: str,
+    *,
+    compress_quality: int | None = 60,
+    min_short_side: int = 0,
+) -> tuple[bytes, str]:
+    """Read a reference image file and return bounded ``(bytes, mime_type)``.
+
+    ``compress_quality`` > 0 re-encodes to JPEG at that quality; 0/None keeps
+    the image lossless and only resizes when the bound requires it.
+    """
+    source = Path(image_path)
+    data = source.read_bytes()
+    lossless = not (compress_quality and compress_quality > 0)
+    result = normalize_reference_image(
+        data,
+        ext=source.suffix.lstrip(".") or "png",
+        quality=int(compress_quality) if not lossless else 95,
+        lossless=lossless,
+        min_short_side=min_short_side,
+    )
+    if result.size is not None and (
+        result.data is not data or result.size != result.source_size
+    ):
+        print(
+            f"[参考图] {source.name}: {result.source_size[0]}x{result.source_size[1]} "
+            f"{len(data) / 1024:.0f}KB → {result.size[0]}x{result.size[1]} "
+            f"{result.mime_type} {len(result.data) / 1024:.0f}KB"
+        )
+    return result.data, result.mime_type
 
 
 def _infer_project_dir(*paths: str | None) -> Optional[Path]:
@@ -3309,10 +3346,10 @@ async def _call_openrouter_image_api(
 
     # 再添加参考图（如果有）
     if reference_images:
-        for img_bytes in reference_images:
+        for _filename, img_bytes, mime_type in normalize_reference_inputs(reference_images):
             img_b64 = base64.b64encode(img_bytes).decode("utf-8")
             content.append(
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{img_b64}"}}
             )
 
     payload = {
@@ -3521,27 +3558,13 @@ async def _call_openai_image_api(
         reservation_id = await _reserve("openai_image_api")
 
         client = AsyncOpenAI(api_key=api_key, timeout=300.0, max_retries=0)
+        # Normalize once, outside the retry loop.
+        normalized_reference_files = normalize_reference_inputs(reference_images)
         result = None
         for _attempt in range(4):
             try:
                 if reference_images:
-                    image_files = []
-                    for idx, image_ref in enumerate(reference_images):
-                        filename = f"reference_{idx + 1}.png"
-                        mime_type = "image/png"
-                        image_bytes: bytes
-                        if isinstance(image_ref, tuple):
-                            if len(image_ref) == 3:
-                                filename, image_bytes, mime_type = image_ref
-                            elif len(image_ref) == 2:
-                                image_bytes, mime_type = image_ref
-                                ext = "jpg" if mime_type == "image/jpeg" else "png"
-                                filename = f"reference_{idx + 1}.{ext}"
-                            else:
-                                image_bytes = bytes(image_ref[0])
-                        else:
-                            image_bytes = bytes(image_ref)
-                        image_files.append((filename, bytes(image_bytes), mime_type))
+                    image_files = normalized_reference_files
                     result = await client.images.edit(
                         model=model,
                         image=image_files,
@@ -4291,18 +4314,12 @@ async def _call_huimeng_image_api(
         )
         params["quality"] = quality if quality in {"low", "medium", "high"} else "medium"
     if reference_images:
-        ref_urls = []
-        for image_ref in reference_images[:9]:
-            if isinstance(image_ref, tuple):
-                if len(image_ref) == 3:
-                    image_bytes = image_ref[1]
-                elif len(image_ref) == 2:
-                    image_bytes = image_ref[0]
-                else:
-                    image_bytes = bytes(image_ref[0])
-            else:
-                image_bytes = bytes(image_ref)
-            ref_urls.append(bytes_to_data_url(bytes(image_bytes)))
+        ref_urls = [
+            bytes_to_data_url(image_bytes)
+            for _filename, image_bytes, _mime in normalize_reference_inputs(
+                reference_images[:9]
+            )
+        ]
         params["image"] = ref_urls[0] if len(ref_urls) == 1 else ref_urls
 
     request_context = f"model={model}, ratio={ratio}, refs={len(reference_images or [])}"
@@ -6683,9 +6700,6 @@ class NanoBananaGridGenerator:
             Gemini Part 对象
         """
         try:
-            from PIL import Image
-            import io
-
             # OpenAI director refs are line-art geometry anchors. JPEG compression can erase
             # subtle table/window/stool lines, so keep those references lossless.
             if self.provider == "openai" and Path(image_path).name in {
@@ -6694,62 +6708,11 @@ class NanoBananaGridGenerator:
             }:
                 compress_quality = 0
 
-            # 加载图片
-            img = Image.open(image_path)
-            original_size = os.path.getsize(image_path)
-            original_dimensions = img.size
-
-            if min_short_side > 0:
-                short_side = min(img.size)
-                if 0 < short_side < min_short_side:
-                    scale = min_short_side / short_side
-                    new_size = (
-                        max(1, int(round(img.size[0] * scale))),
-                        max(1, int(round(img.size[1] * scale))),
-                    )
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-                    print(
-                        f"[参考图放大] {os.path.basename(image_path)}: "
-                        f"{original_dimensions[0]}x{original_dimensions[1]} → "
-                        f"{new_size[0]}x{new_size[1]}"
-                    )
-
-            # 压缩为 JPEG（如果启用）
-            if compress_quality and compress_quality > 0:
-                # 转为 RGB（JPEG 不支持 alpha）
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-
-                # 压缩到内存
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=compress_quality, optimize=True)
-                image_data = buffer.getvalue()
-                mime_type = "image/jpeg"
-
-                compressed_size = len(image_data)
-                ratio = (1 - compressed_size / original_size) * 100
-                print(
-                    f"[压缩] {os.path.basename(image_path)}: "
-                    f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-                    f"({ratio:.0f}% 压缩)"
-                )
-            else:
-                if img.size != original_dimensions:
-                    buffer = io.BytesIO()
-                    img.save(buffer, format="PNG")
-                    image_data = buffer.getvalue()
-                    mime_type = "image/png"
-                else:
-                    # 不压缩，直接读取原文件
-                    with open(image_path, "rb") as f:
-                        image_data = f.read()
-
-                    if image_path.lower().endswith(".png"):
-                        mime_type = "image/png"
-                    elif image_path.lower().endswith(".webp"):
-                        mime_type = "image/webp"
-                    else:
-                        mime_type = "image/jpeg"
+            image_data, mime_type = _load_reference_image_bytes(
+                image_path,
+                compress_quality=compress_quality,
+                min_short_side=min_short_side,
+            )
 
             if self.provider != "google":
                 return _InlineImagePart(image_data, mime_type)
@@ -6766,6 +6729,8 @@ class NanoBananaGridGenerator:
                 # Gemini 2.x SDK 不支持 media_resolution
                 return types.Part.from_bytes(data=image_data, mime_type=mime_type)
 
+        except ReferenceImageTooLarge:
+            raise
         except Exception as e:
             print(f"[NanoBananaPro] 加载参考图失败: {image_path}, {e}")
             return None

@@ -7,7 +7,6 @@ from __future__ import annotations
 import mimetypes
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -125,12 +124,6 @@ class S3Relay:
             )
         except Exception as exc:
             raise safe_media_storage_error(exc) from None
-
-    def upload_file(self, path: str | Path, *, ttl: int = 1800) -> str:
-        path = Path(path)
-        return self.upload_bytes(
-            path.read_bytes(), ext=path.suffix.lstrip(".") or "png", ttl=ttl
-        )
 
     def delete_object(self, key: str) -> None:
         """Clean up a preflight object; callers treat deletion as best effort."""

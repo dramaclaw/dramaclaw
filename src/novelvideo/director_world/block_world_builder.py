@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 from copy import deepcopy
 import json
 import mimetypes
@@ -329,9 +328,11 @@ clear paths, and editable semantic object labels. Do not overfit small texture.
 
 
 def image_to_data_url(path: Path) -> str:
-    mime = mimetypes.guess_type(path.name)[0] or "image/png"
-    data = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{data}"
+    from novelvideo.utils.reference_image import reference_file_to_data_url
+
+    return reference_file_to_data_url(
+        path, mime_type=mimetypes.guess_type(path.name)[0] or "image/png"
+    )
 
 
 def call_openai_chat(
