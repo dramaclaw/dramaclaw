@@ -5843,6 +5843,16 @@ def test_freezone_turn_includes_ui_locale_with_foreign_language_brief(locale):
     assert f"ui_locale: {locale}\n" in prompt
 
 
+@pytest.mark.parametrize("locale", ["zh\nextra-context", "zh" + "-abcdefgh" * 4])
+def test_freezone_turn_discards_invalid_ui_locale(locale):
+    prompt = chat_service._prompt_with_user_context(
+        "admin", "project-a", "Brief bilingue pour une publicité",
+        tool_mode="freezone_canvas", surface_context={"ui_locale": locale},
+    )
+    assert "\nui_locale:" not in prompt
+    assert locale not in prompt
+
+
 def test_freezone_prompt_injects_auto_execute_parameter_policy(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
 
