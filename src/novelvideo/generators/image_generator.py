@@ -11,6 +11,10 @@ from typing import Any, Optional
 import httpx
 from pydantic import BaseModel, Field
 
+from novelvideo.utils.reference_image import (
+    encode_reference_image_file,
+    reference_file_to_data_url,
+)
 from novelvideo.shared.failure_signals import upstream_status_of, with_upstream_status
 from novelvideo.config import (
     IMAGE_GENERATION_SELECTIONS,
@@ -219,47 +223,12 @@ class VolcengineImageGenerator:
                 "Set VOLCENGINE_VISUAL_API_KEY or ARK_API_KEY environment variable."
             )
 
-    def _compress_image(
-        self,
-        image_path: str,
-        quality: int = 60,
-        max_size: tuple = None,
-    ) -> tuple[str, str]:
-        """压缩参考图并返回 base64 和 mime_type。
-
-        Args:
-            image_path: 图像路径
-            quality: JPEG 压缩质量 (1-100)
-            max_size: 可选的最大尺寸限制 (width, height)
-
-        Returns:
-            (base64_data, mime_type)
-        """
-        from PIL import Image
-        import io
-
-        img = Image.open(image_path)
+    def _compress_image(self, image_path: str, quality: int = 60) -> tuple[str, str]:
+        """压缩参考图（按参考图上限归一化）并返回 base64 和 mime_type。"""
         original_size = os.path.getsize(image_path)
-
-        # 可选：缩放到最大尺寸
-        if max_size:
-            img.thumbnail(max_size, Image.Resampling.LANCZOS)
-
-        # 转为 RGB（JPEG 不支持 alpha）
-        if img.mode in ('RGBA', 'P'):
-            img = img.convert('RGB')
-
-        # 压缩到内存
-        buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=quality, optimize=True)
-        image_data = buffer.getvalue()
-
-        compressed_size = len(image_data)
-        ratio = (1 - compressed_size / original_size) * 100
+        image_data = encode_reference_image_file(image_path, quality=quality)
         print(f"[Seedream压缩] {os.path.basename(image_path)}: "
-              f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-              f"({ratio:.0f}% 压缩)", flush=True)
-
+              f"{original_size/1024:.0f}KB → {len(image_data)/1024:.0f}KB", flush=True)
         return base64.b64encode(image_data).decode(), "image/jpeg"
 
     async def generate(
@@ -733,11 +702,8 @@ class VolcengineImageGenerator:
             enhanced_prompt = f"{style_keywords}, {prompt}"
 
             # 读取输入图作为参考
-            with open(input_path, "rb") as f:
-                ref_base64 = base64.b64encode(f.read()).decode()
-
             mime_type = "image/png" if input_path.lower().endswith(".png") else "image/jpeg"
-            data_url = f"data:{mime_type};base64,{ref_base64}"
+            data_url = reference_file_to_data_url(input_path, mime_type=mime_type)
 
             # 构建请求体
             request_body = {
@@ -867,10 +833,8 @@ class VolcengineImageGenerator:
 
         try:
             # 读取图片为 base64 data URL
-            with open(input_path, "rb") as f:
-                ref_base64 = base64.b64encode(f.read()).decode()
             mime_type = "image/png" if input_path.lower().endswith(".png") else "image/jpeg"
-            data_url = f"data:{mime_type};base64,{ref_base64}"
+            data_url = reference_file_to_data_url(input_path, mime_type=mime_type)
 
             # SeedEdit API 请求体（与 Seedream 不同：image 而非 image_urls）
             request_body = {

@@ -38,6 +38,7 @@ from novelvideo.image_request_usage import (
 from novelvideo.services.style_service import StyleService
 from novelvideo.generators.nanobanana_grid import (
     _InlineImagePart,
+    _load_reference_image_bytes,
     _call_huimeng_image_api,
     _call_newapi_image_api,
     _call_openai_image_api,
@@ -47,6 +48,7 @@ from novelvideo.generators.nanobanana_grid import (
     normalize_openai_quality,
     normalize_image_size,
 )
+from novelvideo.utils.reference_image import ReferenceImageTooLarge
 from novelvideo.egress_context import (
     TrustedEgressContext,
     ambient_organization_egress_context,
@@ -1643,51 +1645,19 @@ STRICT REQUIREMENTS (MUST AVOID):
             Gemini Part 对象
         """
         try:
-            from PIL import Image
-            import io
-
-            # 加载图片
-            img = Image.open(image_path)
-            original_size = os.path.getsize(image_path)
-
-            # 压缩为 JPEG（如果启用）
-            if compress_quality and compress_quality > 0:
-                # 转为 RGB（JPEG 不支持 alpha）
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-
-                # 压缩到内存
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=compress_quality, optimize=True)
-                image_data = buffer.getvalue()
-                mime_type = "image/jpeg"
-
-                compressed_size = len(image_data)
-                ratio = (1 - compressed_size / original_size) * 100
-                print(
-                    f"[压缩] {os.path.basename(image_path)}: "
-                    f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-                    f"({ratio:.0f}% 压缩)"
-                )
-            else:
-                # 不压缩，直接读取原文件
-                with open(image_path, "rb") as f:
-                    image_data = f.read()
-
-                if image_path.lower().endswith(".png"):
-                    mime_type = "image/png"
-                elif image_path.lower().endswith(".webp"):
-                    mime_type = "image/webp"
-                else:
-                    mime_type = "image/jpeg"
+            image_data, mime_type = _load_reference_image_bytes(
+                image_path, compress_quality=compress_quality
+            )
 
             if self.provider != "google":
                 return _InlineImagePart(image_data, mime_type)
 
             from google.genai import types
 
-            return types.Part.from_bytes(data=image_data, mime_type=mime_type)
+            return types.Part.from_bytes(data=bytes(image_data), mime_type=mime_type)
 
+        except ReferenceImageTooLarge:
+            raise
         except Exception as e:
             print(f"[NanoBanana Character] 加载参考图失败: {image_path}, {e}")
             return None

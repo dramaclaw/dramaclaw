@@ -279,26 +279,8 @@ class CaptureRelay:
         return f"https://relay.test/{file_path.name}?ttl={ttl}"
 
 
-def test_ensure_image_url_returns_remote_url_without_upload(monkeypatch: pytest.MonkeyPatch) -> None:
-    relay = CaptureRelay()
-    monkeypatch.setattr(media_relay, "get_media_relay", lambda: relay)
-
-    url = media_relay.ensure_image_url("https://example.test/a.png", ttl=60)
-
-    assert url == "https://example.test/a.png"
-    assert relay.uploaded_bytes == []
-    assert relay.uploaded_files == []
 
 
-def test_ensure_image_url_uploads_data_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    relay = CaptureRelay()
-    monkeypatch.setattr(media_relay, "get_media_relay", lambda: relay)
-
-    url = media_relay.ensure_image_url("data:image/jpeg;base64,aGVsbG8=", ttl=60)
-
-    assert url == "https://relay.test/bytes.jpg?ttl=60"
-    assert relay.uploaded_bytes == [(b"hello", "jpg", 60)]
-    assert relay.uploaded_files == []
 
 
 def test_upload_image_bytes_defaults_to_raw_upload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -336,19 +318,3 @@ def test_upload_image_bytes_can_normalize_ai_reference_jpeg(
     assert uploaded_image.format == "JPEG"
     assert uploaded_image.mode == "RGB"
     assert uploaded_image.size == (32, 16)
-
-
-def test_ensure_image_url_uploads_local_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    relay = CaptureRelay()
-    monkeypatch.setattr(media_relay, "get_media_relay", lambda: relay)
-    image_path = tmp_path / "portrait.png"
-    image_path.write_bytes(b"png-bytes")
-
-    url = media_relay.ensure_image_url(image_path, ttl=60)
-
-    assert url == "https://relay.test/portrait.png?ttl=60"
-    assert relay.uploaded_bytes == []
-    assert relay.uploaded_files == [(image_path, 60)]

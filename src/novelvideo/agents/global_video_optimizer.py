@@ -3,7 +3,6 @@
 分析整集草图网格 + 角色颜色映射，一次性为所有 Beat 生成 first_frame 运动提示词。
 """
 
-import io
 import os
 import re
 from pathlib import Path
@@ -11,7 +10,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, BinaryContent
-from PIL import Image as PILImage
+from novelvideo.utils.reference_image import encode_reference_image_file
 
 from novelvideo.brainclaw_contract import BrainClawProfile
 from novelvideo.utils.source_language import asset_language_instruction
@@ -215,20 +214,12 @@ class GlobalVideoPromptOptimizer:
         return self._agents[language]
 
     def _compress_image(self, image_path: str, compress_quality: int = 70) -> bytes:
-        """压缩图片并返回 bytes。"""
-        img = PILImage.open(image_path)
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=compress_quality, optimize=True)
-        image_bytes = buffer.getvalue()
+        """Return the image as a bounded JPEG at ``compress_quality``."""
         original_size = os.path.getsize(image_path)
-        compressed_size = len(image_bytes)
-        ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+        image_bytes = encode_reference_image_file(image_path, quality=compress_quality)
         print(
             f"[GlobalVideoOptimizer] 压缩图片: {os.path.basename(image_path)}: "
-            f"{original_size / 1024:.0f}KB → {compressed_size / 1024:.0f}KB "
-            f"({ratio:.0f}% 压缩)"
+            f"{original_size / 1024:.0f}KB → {len(image_bytes) / 1024:.0f}KB"
         )
         return image_bytes
 
@@ -803,13 +794,11 @@ Use an empty identities array for panels with no colored markers."""
     for path in sketch_image_paths:
         if os.path.exists(path):
             try:
-                img = PILImage.open(path)
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=70, optimize=True)
                 images.append(
-                    BinaryContent(data=buffer.getvalue(), media_type="image/jpeg")
+                    BinaryContent(
+                        data=encode_reference_image_file(path, quality=70),
+                        media_type="image/jpeg",
+                    )
                 )
             except Exception as e:
                 print(f"[detect_identities_by_ai] 加载图片失败: {path}, {e}")
