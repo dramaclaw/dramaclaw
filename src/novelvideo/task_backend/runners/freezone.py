@@ -897,13 +897,15 @@ async def _run_freezone_gen_async(
         raise ValueError("invalid image variant count")
 
     async def generate_variant(index: int) -> Path:
-        # Keep the primary path compatible with the single-image result endpoint.
+        # Keep the primary output path and egress identity compatible with existing tasks.
+        variant_job_id = job_id if index == 0 else f"{job_id}_v{index + 1}"
         return await _call_freezone_leaf(
             envelope,
             run_freezone_gen,
             "run_freezone_gen",
             project_dir=project_dir,
-            job_id=job_id if index == 0 else f"{job_id}_v{index + 1}",
+            job_id=variant_job_id,
+            egress_business_task_id=f"freezone-image-variant:{variant_job_id}" if index else None,
             prompt=str(payload.get("prompt") or ""),
             aspect_ratio=str(payload.get("aspect_ratio") or "1:1"),
             image_size=str(payload.get("image_size") or "2K"),
