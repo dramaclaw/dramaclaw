@@ -124,7 +124,7 @@ async def test_indextts2_newapi_posts_audio_speech_schema(monkeypatch, tmp_path)
     )
     result = await client.generate(
         prompt="你终于来了。",
-        audio_url="data:audio/wav;base64,abc",
+        audio_url="https://relay.example/reference.wav?sig=fixture",
         output_path=output_path,
         emotion_prompt="压低声音，克制但急切",
     )
@@ -153,7 +153,7 @@ async def test_indextts2_newapi_posts_audio_speech_schema(monkeypatch, tmp_path)
                 "model": "index-tts-2",
                 "input": "你终于来了。",
                 "metadata": {
-                    "audio_url": "data:audio/wav;base64,abc",
+                    "audio_url": "https://relay.example/reference.wav?sig=fixture",
                     "should_use_prompt_for_emotion": True,
                     "emotion_prompt": "压低声音，克制但急切",
                 },

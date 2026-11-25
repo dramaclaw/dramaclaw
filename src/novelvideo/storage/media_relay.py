@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import asyncio
 import base64
 import hashlib
 import io
@@ -402,7 +403,7 @@ def upload_image_file(path: str | Path, *, ttl: int | None = None) -> str:
     return get_media_relay().upload_file(path, ttl=ttl_seconds)
 
 
-async def relay_tenant_image_bytes(
+async def relay_tenant_media_bytes(
     data: bytes,
     *,
     object_id: str,
@@ -412,6 +413,7 @@ async def relay_tenant_image_bytes(
     relay=None,
     ext: str = "png",
     ttl: int = 1800,
+    resource_type: str = "image",
 ) -> str:
     """Relay bytes through a tenant-bound service identity and durable claim."""
 
@@ -479,14 +481,22 @@ async def relay_tenant_image_bytes(
 
     try:
         adapter = relay or get_media_relay()
-        result = adapter.upload_bytes(
+        result = await asyncio.to_thread(
+            adapter.upload_bytes,
             data,
             ext=normalized_ext,
             ttl=int(ttl),
             object_key=object_key,
+            **({"resource_type": resource_type} if resource_type != "image" else {}),
         )
         if inspect.isawaitable(result):
             result = await result
+    except asyncio.CancelledError:
+        # The caller stopped waiting, but the upload thread can still finish.
+        await record_unknown_outcome(
+            operations, claim=claim, capability="storage.media.relay"
+        )
+        raise
     except Exception:
         await record_unknown_outcome(
             operations, claim=claim, capability="storage.media.relay"
@@ -510,15 +520,16 @@ async def relay_tenant_image_bytes(
     return str(result)
 
 
-async def relay_tenant_image_bytes_from_context(
+async def relay_tenant_media_bytes_from_context(
     data: bytes,
     *,
     object_id: str,
     context: object,
     ext: str = "png",
     ttl: int = 1800,
+    resource_type: str = "image",
 ) -> str:
-    """Relay tenant image bytes using only verified context and registered authority."""
+    """Relay tenant media using only verified context and registered authority."""
 
     from novelvideo.egress_context import TrustedEgressContext
     from novelvideo.ports import get_egress_operation_port
@@ -542,7 +553,7 @@ async def relay_tenant_image_bytes_from_context(
         organization_id=context.billing_principal.id,
         project_id=context.project_id,
     )
-    return await relay_tenant_image_bytes(
+    return await relay_tenant_media_bytes(
         data,
         object_id=object_id,
         context=context,
@@ -550,6 +561,19 @@ async def relay_tenant_image_bytes_from_context(
         operations=operations,
         ext=ext,
         ttl=ttl,
+        resource_type=resource_type,
+    )
+
+
+# Existing image callers use the same tenant boundary and default resource type.
+relay_tenant_image_bytes = relay_tenant_media_bytes
+
+
+async def relay_tenant_image_bytes_from_context(
+    data: bytes, *, object_id: str, context: object, ext: str = "png", ttl: int = 1800,
+) -> str:
+    return await relay_tenant_media_bytes_from_context(
+        data, object_id=object_id, context=context, ext=ext, ttl=ttl,
     )
 
 
