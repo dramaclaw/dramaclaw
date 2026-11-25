@@ -596,6 +596,21 @@ def _apply_image_transform(
     raise ValueError(f"unsupported image_transform: {image_transform}")
 
 
+def transform_image_bytes(
+    data: bytes,
+    *,
+    ext: str,
+    image_transform: str | None,
+) -> tuple[bytes, str]:
+    """Apply the same transform ``upload_image_bytes`` applies before relaying.
+
+    For callers that relay through a path without an ``image_transform``
+    argument, so every relay path sends references in one shape.
+    """
+
+    return _apply_image_transform(data, ext=ext, image_transform=image_transform)
+
+
 def _normalize_ai_reference_image(
     data: bytes, *, ext: str = "png"
 ) -> tuple[bytes, str]:

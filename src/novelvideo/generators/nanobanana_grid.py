@@ -88,6 +88,7 @@ from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
     media_relay_ttl_seconds,
     relay_tenant_image_bytes_from_context,
+    transform_image_bytes,
     upload_image_bytes,
 )
 
@@ -4215,7 +4216,14 @@ async def _relay_reference_images_for_newapi(
     if context is not None and context.is_organization:
         urls: list[str] = []
         for index, image_ref in enumerate(reference_images):
-            data = _reference_image_bytes(image_ref)
+            # Same normalization as the personal path below; re-encoding a large
+            # reference is CPU-bound, so keep it off the event loop.
+            data, ext = await asyncio.to_thread(
+                transform_image_bytes,
+                _reference_image_bytes(image_ref),
+                ext=_image_ext(image_ref),
+                image_transform=IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+            )
             content_digest = hashlib.sha256(data).hexdigest()
             object_id = (
                 f"{context.envelope_id}:{context.project_id}:{index}:{content_digest}"
@@ -4225,7 +4233,7 @@ async def _relay_reference_images_for_newapi(
                     data,
                     object_id=object_id,
                     context=context,
-                    ext=_image_ext(image_ref),
+                    ext=ext,
                     ttl=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
                 )
             )

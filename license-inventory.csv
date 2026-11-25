@@ -4571,6 +4571,7 @@ tests/test_openfilm_studio_server_copy_branding.py,Elastic-2.0,2026 SuperTale co
 tests/test_openfilm_studio_ui_patch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openfilm_studio_update_guard.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openresty_upload_limit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_org_reference_image_normalize.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_org_relay_failure_diagnosability.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_org_relay_granted_prefix.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_org_scoped_narrator_voice.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
