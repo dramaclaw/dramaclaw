@@ -455,6 +455,68 @@ def test_in_product_session_with_operation_and_evidence_is_delivered_and_settled
     assert _draft_rows(draft_client.state_dir) == [(draft["draft_id"], operation_id, "ready")]
 
 
+@pytest.mark.parametrize("terminal_status", ["cancelled", "failed"])
+def test_terminal_workflow_operation_requires_new_attempt(draft_client, terminal_status):
+    import asyncio
+    from types import SimpleNamespace
+
+    from novelvideo.chat import service
+    from novelvideo.chat.agent_api_errors import _http_error_result
+    from novelvideo.freezone.agent_product_operations import finish_agent_product_operation
+
+    draft_client.use(IN_PRODUCT_CODEX_SESSION)
+    admission = {
+        "product_kind": "workflow_result",
+        "generation_session_id": "terminal-workflow",
+        "canvas_id": "default",
+        "artifact_id": "video-ad@1.0.0",
+        "normalized_inputs_hash": "terminal-workflow-inputs",
+        "metadata": {"skill_id": "video-ad", "skill_version": "1.0.0"},
+    }
+    operation = draft_client.post(OPERATIONS, json=admission).json()["data"]
+    operation_id = operation["operation_id"]
+    finish_agent_product_operation(
+        project_dir=draft_client.state_dir,
+        operation_id=operation_id,
+        outcome=terminal_status,
+        expected_task_id=operation["task_id"],
+    )
+
+    response = draft_client.post(DRAFTS, json=_draft_request(operation_id=operation_id))
+
+    assert response.status_code == 409
+    error = _http_error_result(response.status_code, response.text, response.reason_phrase)
+    assert error["code"] == "workflow_result_generation_attempt_required"
+    assert error["next_action"] == "begin_workflow_result_generation"
+    assert "new generation_session_id" in error["message"]
+    assert _draft_rows(draft_client.state_dir) == []
+
+    admission["generation_session_id"] = "fresh-workflow"
+    fresh = draft_client.post(OPERATIONS, json=admission).json()["data"]["operation_id"]
+    assert fresh != operation_id
+    asyncio.run(service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_started",
+            name="freezone_prepare_workflow",
+            turn_id="recovery-turn",
+            call_id="recovery-call",
+            input={
+                "operation_id": fresh,
+                "intent": {
+                    "schema_version": "freezone_workflow_intent.v1",
+                    **_draft_request()["intent"],
+                },
+            },
+        ),
+        project_dir=draft_client.state_dir,
+        project_state_dir=draft_client.state_dir,
+    ))
+    response = draft_client.post(DRAFTS, json=_draft_request(operation_id=fresh))
+
+    assert response.status_code == 200, response.text
+    assert draft_client.settled == [("delivered", fresh)]
+
+
 @pytest.mark.parametrize(
     ("path", "body"),
     [

@@ -7568,15 +7568,9 @@ def _workflow_plan_operation_admission_error(
             "agent_instruction": instruction,
         }
     if operation.get("status") in {"failed", "cancelled"}:
-        return {
-            "ok": False,
-            "status": "workflow_result_generation_attempt_required",
-            "code": "workflow_result_generation_attempt_required",
-            "error": "The workflow_result operation is already terminal.",
-            "retryable": False,
-            "next_action": "begin_workflow_result_generation",
-            "agent_instruction": instruction,
-        }
+        from novelvideo.freezone.agent_product_operations import workflow_result_attempt_required
+
+        return workflow_result_attempt_required(operation_id)
     return None
 
 

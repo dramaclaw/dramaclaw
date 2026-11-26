@@ -100,6 +100,32 @@ def is_recipe_compile_receipt(
     )
 
 
+def workflow_result_attempt_required(operation_id: str) -> dict[str, Any]:
+    """Tell workflow callers how to recover from an undelivered terminal operation."""
+    code = "workflow_result_generation_attempt_required"
+    return {
+        "ok": False,
+        "status": code,
+        "code": code,
+        "error": "The workflow_result operation is already terminal.",
+        "message": (
+            "Call freezone_begin_agent_product_generation with a new "
+            "generation_session_id, then submit the draft with its new operation_id."
+        ),
+        "operation_id": operation_id,
+        "retryable": False,
+        "next_action": "begin_workflow_result_generation",
+    }
+
+
+class AgentProductOperationTerminal(ValueError):
+    """Model evidence cannot be added to a terminal operation."""
+
+    def __init__(self, status: str) -> None:
+        self.status = status
+        super().__init__("agent product operation is already terminal")
+
+
 class AgentProductSettlementPending(RuntimeError):
     """The product may still arrive, so its credit reservation must stay open."""
 
@@ -431,10 +457,11 @@ def bind_agent_product_model_execution(
             raise ValueError("agent product operation not found")
         payload = _payload(current)
         if payload["status"] in TERMINAL_STATUSES:
-            raise ValueError("agent product operation is already terminal")
+            raise AgentProductOperationTerminal(payload["status"])
         existing = payload["model_evidence"]
         if existing:
-            if existing != evidence:
+            # A replay observes the same execution at a different time.
+            if existing != {**evidence, "executed_at": existing.get("executed_at")}:
                 raise ValueError(
                     "agent product operation is bound to another model execution"
                 )
