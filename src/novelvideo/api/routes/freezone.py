@@ -275,6 +275,7 @@ from novelvideo.freezone.agent_product_operations import (
     read_recipe_model_prompt,
     save_agent_generation_session,
     terminalize_undelivered_agent_product_task,
+    workflow_result_attempt_required,
 )
 from novelvideo.freezone.workflow_runs import (
     RECIPE_ATTEMPT_ENDED_MARKER,
@@ -16688,6 +16689,8 @@ async def create_canvas_workflow_draft(
                 ),
             }
         raise HTTPException(409, error or "delivered workflow result is missing")
+    if operation and operation["status"] in {"failed", "cancelled"}:
+        raise HTTPException(409, workflow_result_attempt_required(operation_id))
     if operation and operation.get("status") not in {
         "reserved",
         "running",

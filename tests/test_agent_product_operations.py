@@ -32,6 +32,35 @@ def _create(project_dir, *, key="stable-key", kind="workflow_result"):
     )
 
 
+def _workflow_tool_args(operation_id, *, exact_plan=False):
+    if exact_plan:
+        return {
+            "operation_id": operation_id,
+            "plan": {
+                "schema_version": "freezone_workflow_plan.v1",
+                "skill": {"id": "video-ad", "version": "1.0.0"},
+                "nodes": [{
+                    "id": "intro",
+                    "node_type": "textAnnotationNode",
+                    "data": {
+                        "displayName": "Intro",
+                        "content": "Intro",
+                        "workflowCatalog": {"recipeId": "intro"},
+                    },
+                }],
+                "edges": [],
+            },
+        }
+    return {
+        "operation_id": operation_id,
+        "intent": {
+            "schema_version": "freezone_workflow_intent.v1",
+            "skill_id": "video-ad",
+            "user_goal": "Create a clip",
+        },
+    }
+
+
 def test_agent_product_operation_is_durable_and_idempotent(tmp_path):
     first = _create(tmp_path)
     second = _create(tmp_path)
@@ -471,6 +500,81 @@ def test_generation_manifest_and_draft_survive_process_memory_loss(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_invalid_workflow_plan_does_not_claim_operation(tmp_path, monkeypatch):
+    from novelvideo.chat import dramaclaw_mcp, service
+
+    def unexpected_diagnostics(*args, **kwargs):
+        pytest.fail("the chat observer must not build tool diagnostics")
+
+    monkeypatch.setattr(dramaclaw_mcp, "_tool_validation_error", unexpected_diagnostics)
+    operation = _create(tmp_path)
+    operation_id = operation["operation_id"]
+    event = SimpleNamespace(
+        type="tool_started",
+        name="freezone_prepare_workflow",
+        turn_id="turn-a",
+        call_id="invalid-call",
+        input={"operation_id": operation_id, "plan": "a plain string"},
+    )
+    await service._bind_server_observed_agent_product_execution(
+        event, project_dir=tmp_path, project_state_dir=tmp_path
+    )
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["model_evidence"] == {}
+
+    event.call_id = "corrected-call"
+    event.input = _workflow_tool_args(operation_id, exact_plan=True)
+    await service._bind_server_observed_agent_product_execution(
+        event, project_dir=tmp_path, project_state_dir=tmp_path
+    )
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["model_evidence"]["tool_call_id"] == "corrected-call"
+
+
+def test_model_execution_replay_keeps_original_timestamp(tmp_path):
+    operation = _create(tmp_path)
+    binding = {
+        "project_dir": tmp_path,
+        "operation_id": operation["operation_id"],
+        "model_call_id": "agent-turn:a:tool:b",
+        "source": "server_observed_agent_turn",
+    }
+
+    first = bind_agent_product_model_execution(**binding, executed_at=1.0)
+    replay = bind_agent_product_model_execution(**binding, executed_at=2.0)
+
+    assert replay == first
+    assert replay["model_evidence"]["executed_at"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_workflow_observation_does_not_count_as_failure(tmp_path, monkeypatch):
+    from novelvideo.chat import evidence_metrics, service
+
+    metrics = []
+    monkeypatch.setattr(evidence_metrics, "observe", metrics.append)
+    operation_id = _create(tmp_path)["operation_id"]
+    cancelled = finish_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id, outcome="cancelled",
+        expected_task_id="",
+    )
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_started", name="freezone_prepare_workflow_draft", turn_id="late",
+            call_id="late-call",
+            input=_workflow_tool_args(operation_id),
+        ),
+        project_dir=tmp_path, project_state_dir=tmp_path,
+    )
+    assert metrics == []
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    ) == cancelled
+
+
+@pytest.mark.asyncio
 async def test_admission_tool_call_is_not_model_generation_evidence(tmp_path):
     from novelvideo.chat import service
 
@@ -543,7 +647,7 @@ async def test_admission_cannot_deliver_until_result_tool_binds_evidence(tmp_pat
             error=None,
             turn_id="turn-result",
             call_id="call-result",
-            input={"operation_id": operation["operation_id"], "intent": {"title": "A"}},
+            input=_workflow_tool_args(operation["operation_id"]),
             structured=None,
             output=None,
         ),
@@ -614,9 +718,24 @@ async def test_unsuccessful_result_update_does_not_bind_model_evidence(
     "freezone_prepare_workflow", "freezone_prepare_workflow_draft",
     "freezone_prepare_workflow_plan_draft",
 ])
-async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_path, tool_name):
-    from novelvideo.chat import service
+async def test_workflow_result_tool_binds_server_observed_model_execution(
+    tmp_path, tool_name, monkeypatch
+):
+    import threading
 
+    from novelvideo.chat import dramaclaw_mcp, service
+
+    loop_thread = threading.get_ident()
+    validation_threads = []
+    validate = dramaclaw_mcp.workflow_draft_arguments_are_valid
+
+    def record_validation_thread(name, arguments):
+        validation_threads.append(threading.get_ident())
+        return validate(name, arguments)
+
+    monkeypatch.setattr(
+        dramaclaw_mcp, "workflow_draft_arguments_are_valid", record_validation_thread
+    )
     operation = _create(tmp_path, key="observed-workflow-result")
     await service._bind_server_observed_agent_product_execution(
         SimpleNamespace(
@@ -626,7 +745,10 @@ async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_pa
             error=None,
             turn_id="turn-a",
             call_id="call-result",
-            input={"operation_id": operation["operation_id"], "intent": {"title": "A"}},
+            input=_workflow_tool_args(
+                operation["operation_id"],
+                exact_plan=tool_name == "freezone_prepare_workflow_plan_draft",
+            ),
             structured=None,
             output=None,
         ),
@@ -638,6 +760,8 @@ async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_pa
         project_dir=tmp_path,
         operation_id=operation["operation_id"],
     )
+    assert len(validation_threads) == 1
+    assert validation_threads[0] != loop_thread
     assert stored["model_evidence"] == {
         "model_call_id": "agent-turn:turn-a:tool:call-result",
         "executed_at": stored["model_evidence"]["executed_at"],
@@ -670,7 +794,7 @@ async def test_conflicting_model_evidence_binding_is_counted(tmp_path, monkeypat
             error=None,
             turn_id="turn-second",
             call_id="call-second",
-            input={"operation_id": operation["operation_id"]},
+            input=_workflow_tool_args(operation["operation_id"]),
             structured=None,
             output=None,
         ),

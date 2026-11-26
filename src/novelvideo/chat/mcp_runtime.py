@@ -222,32 +222,24 @@ def _log_call_end(
     )
 
 
-async def call_tool(
+def _tool_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    parameters = schema.get("parameters")
+    return parameters if isinstance(parameters, dict) else {"type": "object"}
+
+
+def _validate_tool_arguments(
     name: str,
     arguments: dict[str, Any],
+    input_schema: dict[str, Any],
+    hooks: ToolCallHooks,
     *,
-    tool_index: ToolIndex,
-    hooks: ToolCallHooks = DEFAULT_HOOKS,
-    scope: str = "project",
-    log: logging.Logger = logger,
-) -> types.CallToolResult:
-    """Validate, execute, and encode one tool without loading any host modules."""
-    if name not in tool_index:
-        raise ValueError(f"unknown MCP tool: {name}")
-    arguments = hooks.normalize_arguments(name, arguments or {})
-    started = time.monotonic()
-    log.info(
-        "mcp.call.start scope=%s tool=%s arg_keys=%s",
-        scope,
-        name,
-        sorted(str(key) for key in arguments),
-    )
-    schema, handler = tool_index[name]
-    parameters = schema.get("parameters")
-    input_schema = parameters if isinstance(parameters, dict) else {"type": "object"}
-    errors: list[Any] = []
+    check_schema: bool,
+) -> tuple[dict[str, Any], list[ValidationError | SchemaError]]:
+    """Validate normalized arguments, applying the tool's existing repair policy."""
+    errors: list[ValidationError | SchemaError] = []
     try:
-        Draft202012Validator.check_schema(input_schema)
+        if check_schema:
+            Draft202012Validator.check_schema(input_schema)
         validator = Draft202012Validator(input_schema)
         if hooks.collect_all_errors(name):
             errors = sorted(
@@ -273,12 +265,50 @@ async def call_tool(
             except ValidationError:
                 repaired = None
         if repaired is None:
-            payload = hooks.validation_error(
-                name, arguments, input_schema, exc, errors or [exc]
-            )
-            _log_call_end(log, scope, name, started, payload)
-            return mcp_error_result(name, payload, tool_index, hooks=hooks)
+            return arguments, errors or [exc]
         arguments = repaired
+    return arguments, []
+
+
+def tool_arguments_are_valid(
+    name: str, arguments: dict[str, Any], schema: dict[str, Any], hooks: ToolCallHooks
+) -> bool:
+    """Check normalized arguments against a bundled schema without rendering diagnostics."""
+    _, errors = _validate_tool_arguments(
+        name, arguments, _tool_input_schema(schema), hooks, check_schema=False
+    )
+    return not errors
+
+
+async def call_tool(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    tool_index: ToolIndex,
+    hooks: ToolCallHooks = DEFAULT_HOOKS,
+    scope: str = "project",
+    log: logging.Logger = logger,
+) -> types.CallToolResult:
+    """Validate, execute, and encode one tool without loading any host modules."""
+    if name not in tool_index:
+        raise ValueError(f"unknown MCP tool: {name}")
+    arguments = hooks.normalize_arguments(name, arguments or {})
+    started = time.monotonic()
+    log.info(
+        "mcp.call.start scope=%s tool=%s arg_keys=%s",
+        scope,
+        name,
+        sorted(str(key) for key in arguments),
+    )
+    schema, handler = tool_index[name]
+    input_schema = _tool_input_schema(schema)
+    arguments, errors = _validate_tool_arguments(
+        name, arguments, input_schema, hooks, check_schema=True
+    )
+    if errors:
+        error = hooks.validation_error(name, arguments, input_schema, errors[0], errors)
+        _log_call_end(log, scope, name, started, error)
+        return mcp_error_result(name, error, tool_index, hooks=hooks)
     try:
         result = await asyncio.to_thread(handler, arguments)
         if inspect.isawaitable(result):

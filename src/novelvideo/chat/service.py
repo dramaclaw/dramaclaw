@@ -1373,19 +1373,22 @@ async def _bind_server_observed_agent_product_execution(
         return
     state_dir = Path(state_root)
     from novelvideo.freezone.agent_product_operations import (
+        AgentProductOperationTerminal,
         bind_agent_product_model_execution,
         read_agent_generation_session,
     )
 
     operation_ids: set[str] = set()
-    if tool_name in {
+    workflow_draft_tool = tool_name in {
         "freezone_prepare_workflow",
         "freezone_prepare_workflow_draft",
         "freezone_prepare_workflow_plan_draft",
-    }:
+    }
+    if workflow_draft_tool:
         operation_id = str(tool_args.get("operation_id") or "").strip()
-        if operation_id.startswith("agent_product_"):
-            operation_ids.add(operation_id)
+        if not operation_id.startswith("agent_product_"):
+            return
+        operation_ids.add(operation_id)
     else:
         session_id = str(tool_args.get("skill_studio_session_id") or "").strip()
         if not session_id:
@@ -1431,25 +1434,42 @@ async def _bind_server_observed_agent_product_execution(
         return
 
     model_call_id = f"agent-turn:{turn_id}:tool:{tool_call_id}"
+
+    def bind_observed_execution(operation_id: str) -> None:
+        if workflow_draft_tool:
+            from novelvideo.chat.dramaclaw_mcp import workflow_draft_arguments_are_valid
+
+            # A start event also arrives for inputs the MCP subprocess rejects.
+            # Validate and bind off the API loop in one worker dispatch.
+            if not workflow_draft_arguments_are_valid(tool_name, tool_args):
+                return
+        bind_agent_product_model_execution(
+            project_dir=state_dir,
+            operation_id=operation_id,
+            model_call_id=model_call_id,
+            executed_at=datetime.now(tz=timezone.utc).timestamp(),
+            source="server_observed_agent_turn",
+            turn_id=turn_id,
+            tool_call_id=tool_call_id,
+        )
+
     for operation_id in sorted(operation_ids):
         try:
-            await asyncio.to_thread(
-                bind_agent_product_model_execution,
-                project_dir=state_dir,
-                operation_id=operation_id,
-                model_call_id=model_call_id,
-                executed_at=datetime.now(tz=timezone.utc).timestamp(),
-                source="server_observed_agent_turn",
-                turn_id=turn_id,
-                tool_call_id=tool_call_id,
+            await asyncio.to_thread(bind_observed_execution, operation_id)
+        except AgentProductOperationTerminal as exc:
+            logger.info(
+                "skipped observed Agent product execution operation=%s status=%s "
+                "event=%s turn=%s call=%s",
+                operation_id, exc.status, event_type, turn_id, tool_call_id,
             )
         except ValueError:
             from novelvideo.chat import evidence_metrics
 
             evidence_metrics.observe("agent_product_binding_failed")
             logger.warning(
-                "could not bind observed Agent product execution operation=%s",
-                operation_id,
+                "could not bind observed Agent product execution operation=%s "
+                "event=%s turn=%s call=%s",
+                operation_id, event_type, turn_id, tool_call_id,
                 exc_info=True,
             )
 
@@ -4136,6 +4156,12 @@ def _bind_clarification_recovery(
     )
 
 
+def _preload_codex_workflow_draft_schemas() -> None:
+    from novelvideo.chat.dramaclaw_mcp import load_workflow_draft_tool_schemas
+
+    load_workflow_draft_tool_schemas()
+
+
 def _build_codex_thread(
     username: str,
     project: str,
@@ -5832,6 +5858,8 @@ async def _stream_assistant_reply_codex(
                 "execution_context": parts.execution_context,
                 "client_user_message_id": business_turn_id,
             }
+        if tool_mode == "freezone_canvas" and exact_audio_action_target is None:
+            await asyncio.to_thread(_preload_codex_workflow_draft_schemas)
         thread = _build_codex_thread(
             username,
             project,

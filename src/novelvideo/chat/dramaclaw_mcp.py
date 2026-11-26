@@ -924,6 +924,22 @@ def _tool_call_hooks(name: str) -> mcp_runtime.ToolCallHooks:
     )
 
 
+def load_workflow_draft_tool_schemas() -> ToolIndex:
+    """Load the bundled tool definitions before a hosted Codex turn starts."""
+    return _plugin_tools("freezone")
+
+
+def workflow_draft_arguments_are_valid(name: str, arguments: dict[str, Any]) -> bool:
+    """Apply the same input contract used to dispatch a hosted workflow draft tool."""
+    schema, _ = load_workflow_draft_tool_schemas()[name]
+    hooks = _tool_call_hooks(name)
+    # The subprocess dispatch checks the bundled schema itself. The observer
+    # only has to validate the arguments before the draft request can arrive.
+    return mcp_runtime.tool_arguments_are_valid(
+        name, hooks.normalize_arguments(name, arguments), schema, hooks
+    )
+
+
 @SERVER.call_tool(validate_input=False)
 async def call_tool(
     name: str, arguments: dict[str, Any], *, tool_index: ToolIndex | None = None
