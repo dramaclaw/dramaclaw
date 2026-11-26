@@ -18,7 +18,7 @@ from urllib.parse import unquote, urlsplit
 import pytest
 from mcp import types
 
-from novelvideo.chat import dramaclaw_mcp
+from novelvideo.chat import agent_key_session, dramaclaw_mcp
 
 
 KEY = "fake-agent-key-DO-NOT-USE-1111"
@@ -706,26 +706,64 @@ def test_key_mode_preserves_path_validation_errors(plugin, api, monkeypatch, pat
     assert api.requests == []
 
 
-@pytest.mark.parametrize("status,kind", [
-    (401, "rejected"), (403, "rejected"), (503, "unavailable"), (500, "unavailable"),
+@pytest.mark.parametrize("status,kind,reason", [
+    (401, "rejected", "agent_key_rejected"),
+    (403, "rejected", "agent_key_project_forbidden"),
+    (503, "unavailable", "agent_key_service_unavailable"),
+    (500, "unavailable", "agent_key_service_unavailable"),
 ])
-def test_exchange_failure_says_whether_key_was_rejected(plugin, api, monkeypatch, status, kind):
+def test_exchange_failure_says_whether_key_was_rejected(
+    plugin, api, monkeypatch, status, kind, reason,
+):
     monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
     api.exchange_status = status
     result = request_result(plugin)
     assert result.get("code") == "agent_key_exchange_failed"
     assert result.get("status_code") == status
     assert result.get("status") == kind
-    assert result.get("reason") == (
-        "agent_key_rejected" if kind == "rejected" else "agent_key_service_unavailable"
-    )
+    assert result.get("reason") == reason
     assert result.get("next_action") == ("tell_user" if kind == "rejected" else "retry")
     assert result.get("retryable") is (kind == "unavailable")
     message = result.get("message", "")
-    if kind == "rejected":
+    if status == 403:
+        assert message == (
+            "The agent key is valid but cannot be used on this project (HTTP 403). "
+            "You can switch to a project the key can access, or ask the key owner "
+            "to check that their account has access to this project and that the key "
+            "includes it."
+        )
+        assert result["agent_instruction"] == (
+            "Do not retry with the same key for this project. Tell the user the agent "
+            "key cannot be used on this project and that they can switch to a project "
+            "the key can access, or ask the key owner to check that their account has "
+            "access to this project and that the key includes it."
+        )
+        for guidance in (message, result["agent_instruction"]):
+            assert "new agent key" not in guidance.lower()
+            assert "new key" not in guidance.lower()
+            assert "replace" not in guidance.lower()
+    elif status == 401:
         assert "rejected" in message and "new agent key" in message
     else:
         assert "temporarily unavailable" in message and "try again later" in message
+
+
+def test_exchange_401_guidance_is_unchanged():
+    assert agent_key_session._failure_guidance(401) == {
+        "status": "rejected",
+        "reason": "agent_key_rejected",
+        "retryable": False,
+        "next_action": "tell_user",
+        "message": (
+            "The server rejected the agent key (HTTP 401): it is invalid, revoked, "
+            "expired or not allowed for this project. Ask the key owner for a new agent key "
+            "and configure the agent with it."
+        ),
+        "agent_instruction": (
+            "Do not retry with the same key. Tell the user the agent key was rejected "
+            "and that a new agent key must be configured."
+        ),
+    }
 
 
 def test_exchange_network_failure_is_unavailable(plugin, monkeypatch):
@@ -836,17 +874,17 @@ async def test_canvas_request_keeps_key_refusal_after_executor_was_chosen(canvas
     content = refused.structuredContent
     assert content.get("code") == "agent_key_exchange_failed", content
     assert content.get("status") == "rejected"
-    assert "new agent key" in content.get("message", "")
+    assert "cannot be used on this project" in content.get("message", "")
 
 
-def assert_session_failure(content: dict[str, Any], kind: str) -> None:
+def assert_session_failure(content: dict[str, Any], kind: str, status: int) -> None:
     """The agent key session's own refusal, with its guidance, reached the agent."""
     assert content.get("code") == "agent_key_exchange_failed", content
     assert content.get("status") == kind, content
     assert content.get("retryable") is (kind == "unavailable"), content
     assert content.get("next_action") == ("tell_user" if kind == "rejected" else "retry"), content
     assert content.get("message") and content.get("agent_instruction"), content
-    assert ("new agent key" in content["message"]) is (kind == "rejected"), content
+    assert ("new agent key" in content["message"]) is (status == 401), content
 
 
 KEY_FAILURES = pytest.mark.parametrize("status,kind", [
@@ -873,7 +911,7 @@ async def test_bound_canvas_write_reports_key_session_failure(
     canvas_tools.exchange_status = status
     result = await dramaclaw_mcp.call_tool(tool, arguments)
     assert result.structuredContent.get("code") != "canvas_revision_check_unavailable"
-    assert_session_failure(result.structuredContent, kind)
+    assert_session_failure(result.structuredContent, kind, status)
     assert result.isError is True
     assert canvas_tools.business == []
 
@@ -912,7 +950,7 @@ async def test_canvas_context_reports_key_session_failure_with_executor_remember
     assert selected.structuredContent.get("ok") is not False, selected.structuredContent
     canvas_tools.exchange_status = status
     result = await dramaclaw_mcp.call_tool("freezone_get_selection", arguments)
-    assert_session_failure(result.structuredContent, kind)
+    assert_session_failure(result.structuredContent, kind, status)
 
 
 @pytest.fixture
@@ -942,7 +980,7 @@ async def test_production_tool_reports_key_session_failure(
     result = await dramaclaw_mcp.call_tool(
         "dramaclaw_generate_sketches", {"project_id": "project-a", "episode": 1},
     )
-    assert_session_failure(result.structuredContent, kind)
+    assert_session_failure(result.structuredContent, kind, status)
     assert mainline_tools.business == []
 
 
@@ -959,7 +997,7 @@ async def test_workflow_catalog_reports_key_session_failure(
         "workflow_catalog_search", {"kind": "skills", "query": "storyboard"},
     )
     assert result.structuredContent.get("status") != "catalog_read_failed"
-    assert_session_failure(result.structuredContent, kind)
+    assert_session_failure(result.structuredContent, kind, status)
     assert result.isError is True
 
 
@@ -992,5 +1030,5 @@ def test_plugin_tool_result_carries_key_session_failure(plugin, api, monkeypatch
     api.exchange_status = status
     name, arguments = PLUGIN_FAILED_STAGE_TOOLS[plugin.TOOLSET]
     handler = next(handler for tool, _, handler in plugin.TOOLS if tool == name)
-    assert_session_failure(json.loads(handler(dict(arguments))), kind)
+    assert_session_failure(json.loads(handler(dict(arguments))), kind, status)
     assert api.business == []

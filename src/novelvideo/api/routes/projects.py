@@ -653,6 +653,13 @@ async def list_projects(user: dict = Depends(get_api_user)):
     principals = await access.resolve_requester_principals(user_id)
     records = await registry.list_accessible_projects([(p.type, p.id) for p in principals])
     records = [record for record in records if not record.purged_at]
+    allowed_projects = user.get("allowed_projects")
+    if (
+        user.get("credential_kind") == "agent_session"
+        and isinstance(allowed_projects, list)
+        and allowed_projects
+    ):
+        records = [record for record in records if record.id in allowed_projects]
     roles = {
         record.id: await access.effective_project_role(record, principals) for record in records
     }
