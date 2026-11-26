@@ -215,7 +215,7 @@ docker compose -f docker-compose.release.yml up -d
 
 打开 <http://localhost:8080>，进入**设置 → 模型与渠道**，粘贴 DC key（到 <https://relayclaw.cdnfg.com> 获取）—— 或切到**自定义**接入你自己的供应商。就这样。
 
-Release Compose 文件运行已发布的 **v2.1.1** 多架构镜像（`DRAMACLAW_VERSION=2.1.1`、`DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`）。中国大陆用户可通过 `DRAMACLAW_IMAGE_PREFIX` 切换到阿里云 ACR 镜像。
+Release Compose 文件运行已发布的 **v2.2.0** 多架构镜像（`DRAMACLAW_VERSION=2.2.0`、`DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`）。中国大陆用户可通过 `DRAMACLAW_IMAGE_PREFIX` 切换到阿里云 ACR 镜像。
 
 <details>
 <summary><b>其他运行方式</b></summary>

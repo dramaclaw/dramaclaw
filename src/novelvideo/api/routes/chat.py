@@ -154,6 +154,8 @@ def _user_facing_chat_error(exc: BaseException) -> str:
     from novelvideo.chat.codex_app_server import CodexRuntimeError
     from novelvideo.chat.hermes_fork_requirement import HermesForkMissing
 
+    if isinstance(exc, chat_service.RetiredHermesBackend):
+        return str(exc)  # Fixed configuration guidance, never a provider payload.
     if isinstance(exc, (CodexRuntimeError, HermesForkMissing)):
         return "本地助手运行时不可用：请重启应用；若仍失败，请更新应用并导出诊断日志。"
 
@@ -4096,7 +4098,8 @@ async def _stream_home_turn(
     turn_id: str,
     send_lock: asyncio.Lock | None = None,
 ) -> None:
-    if chat_service.get_chat_backend_name() == "codex":
+    backend = chat_service.get_chat_backend_name()
+    if backend == "codex":
         await _stream_home_turn_codex(
             websocket=websocket,
             user=user,
@@ -4108,6 +4111,13 @@ async def _stream_home_turn(
             send_lock=send_lock,
         )
         return
+
+    # The production selector rejects Hermes. Do not route any other backend
+    # into the retained legacy adapter either.
+    if backend != "hermes":
+        from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+        raise CodexRuntimeError("Home chat requires the configured Codex runtime.")
 
     from novelvideo.chat.hermes_egress import HOME_SCOPE_EGRESS_PROJECT_ID
     from novelvideo.chat.hermes_pool import pool as hermes_pool

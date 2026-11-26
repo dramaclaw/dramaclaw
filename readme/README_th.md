@@ -215,7 +215,7 @@ docker compose -f docker-compose.release.yml up -d
 
 เปิด <http://localhost:8080> ไปที่ **Settings → Models & Channels** แล้ววาง DC key ของคุณ (รับได้ที่ <https://relayclaw.cdnfg.com>) — หรือสลับไป **Custom** เพื่อใช้ผู้ให้บริการของคุณเอง แค่นั้นเอง
 
-ไฟล์ Compose สำหรับ release จะรัน image แบบ multi-arch ที่เผยแพร่แล้วของ **v2.1.1** (`DRAMACLAW_VERSION=2.1.1`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`) ผู้ใช้ในจีนแผ่นดินใหญ่สามารถสลับไปใช้ mirror ของ ACR ได้ด้วย `DRAMACLAW_IMAGE_PREFIX`
+ไฟล์ Compose สำหรับ release จะรัน image แบบ multi-arch ที่เผยแพร่แล้วของ **v2.2.0** (`DRAMACLAW_VERSION=2.2.0`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`) ผู้ใช้ในจีนแผ่นดินใหญ่สามารถสลับไปใช้ mirror ของ ACR ได้ด้วย `DRAMACLAW_IMAGE_PREFIX`
 
 <details>
 <summary><b>วิธีรันแบบอื่น</b></summary>
