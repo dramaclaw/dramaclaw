@@ -330,6 +330,7 @@ async def _generate_identity_image(
     from novelvideo.utils.path_resolver import (
         compute_identity_costume_path,
         compute_identity_portrait_path,
+        compute_portrait_path,
     )
 
     identity = _find_identity(character, identity_id, identity_name)
@@ -355,9 +356,7 @@ async def _generate_identity_image(
     output_path = identity_dir / f"{safe_name}.png"
     temp_output_path = identity_dir / f".tmp_{safe_name}_{_asset_suffix()}.png"
 
-    identity_age = str(identity.age_group or "").strip()
-    char_age = str(character.age_group or "youth").strip() or "youth"
-    if identity_age and identity_age != char_age:
+    if identity.is_age_variant(character.age_group):
         if has_identity_portrait:
             identity_prompt = "" if has_costume_image else appearance_details
             reference_image_path = identity_portrait
@@ -370,11 +369,10 @@ async def _generate_identity_image(
             )
             reference_image_path = ""
     else:
-        portrait_path = char_assets_dir / "portrait.png"
-        if not portrait_path.exists():
+        reference_image_path = compute_portrait_path(output_dir, character.name)
+        if not reference_image_path:
             raise RuntimeError(f"请先为角色「{character.name}」生成 Portrait（面部特写）")
         identity_prompt = "" if has_costume_image else appearance_details
-        reference_image_path = str(portrait_path)
 
     update(0.45, "调用图像模型生成身份图...")
     try:
