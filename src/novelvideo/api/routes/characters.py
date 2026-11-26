@@ -44,6 +44,7 @@ from novelvideo.project_context import ProjectContext
 from novelvideo.novel_source import has_imported_novel, novel_import_required_response
 from novelvideo.ports import get_task_backend
 from novelvideo.task_identity import project_task_state_key
+from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
 from novelvideo.api.schemas import (
     AssetImageSourceSelectionRequest,
     PortraitGenRequest,
@@ -2333,6 +2334,25 @@ async def generate_identity_image_async(
     identity = _identity_by_id(character, identity_id)
     if identity is None:
         return {"ok": False, "error": f"Identity '{identity_id}' not found"}
+
+    if (
+        ctx is not None
+        and not identity.is_age_variant(character.age_group)
+        and not compute_portrait_path(project_dir, character.name)
+    ):
+        portrait_task = await asyncio.to_thread(
+            get_task_manager().get_task_for_project,
+            ctx,
+            "character_portrait",
+            0,
+            scope=f"character:{character.name}:portrait",
+        )
+        # Episode auto recovers genuinely missing portraits from the worker's failure.
+        if portrait_task is not None and portrait_task.status in ACTIVE_PROJECT_TASK_STATUSES:
+            return {
+                "ok": False,
+                "error": f"角色「{character.name}」的 Portrait（面部特写）正在生成，完成后再生成身份图",
+            }
 
     config = load_project_config(username, project_name)
     scope = f"character:{name}:identity:{identity.identity_name}"
