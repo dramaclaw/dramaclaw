@@ -154,6 +154,8 @@ def _user_facing_chat_error(exc: BaseException) -> str:
     from novelvideo.chat.codex_app_server import CodexRuntimeError
     from novelvideo.chat.hermes_fork_requirement import HermesForkMissing
 
+    if isinstance(exc, chat_service.RetiredHermesBackend):
+        return str(exc)  # Fixed configuration guidance, never a provider payload.
     if isinstance(exc, (CodexRuntimeError, HermesForkMissing)):
         return "本地助手运行时不可用：请重启应用；若仍失败，请更新应用并导出诊断日志。"
 

@@ -49,6 +49,7 @@ from novelvideo.chat.backend_sdk import (
 )
 from novelvideo.chat.codex_app_server import (
     CodexAppServerNotRunning,
+    CodexRuntimeError,
     attach_shared_codex,
     complete_pending_drain,
     set_active_turn_probe,
@@ -187,7 +188,7 @@ _CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
 _DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
 _RETIRED_HERMES_MESSAGE = (
     "Hermes runtime has been retired. Set DRAMACLAW_CHAT_BACKEND=codex "
-    "and CODEX_BIN to the verified DramaClaw Codex executable."
+    "and CODEX_BIN to the verified DramaClaw Codex executable, then restart DramaClaw."
 )
 _DEFAULT_CODEX_REASONING_EFFORT = "low"
 _CODEX_REASONING_EFFORT_VALUES = frozenset(
@@ -2095,11 +2096,14 @@ def _pipeline_continuation_instructions(prompt: str, *, tool_mode: str) -> str:
     return f"{_DRAMACLAW_CONTINUATION_INSTRUCTIONS}\n\n"
 
 
+class RetiredHermesBackend(CodexRuntimeError):
+    def __init__(self) -> None:
+        super().__init__(_RETIRED_HERMES_MESSAGE)
+
+
 def _reject_hermes_backend(backend: str | None) -> None:
     if str(backend or "").strip().lower() == "hermes":
-        from novelvideo.chat.codex_app_server import CodexRuntimeError
-
-        raise CodexRuntimeError(_RETIRED_HERMES_MESSAGE)
+        raise RetiredHermesBackend()
 
 
 def _configured_chat_backend() -> str:
@@ -3137,7 +3141,12 @@ async def read_codex_scope_history(
     project_state_dir: str | Path | None = None,
     before: str | None = None,
 ) -> CodexHistoryPage | None:
-    if get_chat_backend_name() != "codex":
+    try:
+        backend = get_chat_backend_name()
+    except RetiredHermesBackend:
+        # No Codex history to merge; the caller can still page the local store.
+        return None
+    if backend != "codex":
         return None
     thread_id = _get_codex_thread_id(
         username, project, agent_profile=agent_profile, canvas_id=canvas_id,
@@ -3672,10 +3681,16 @@ def _build_codex_env(
     from novelvideo import config
 
     env = os.environ.copy()
-    # Installed desktop resources live beside env/, while containers use /app.
-    # Pass the known application root to MCP instead of relying on its Docker fallback.
+    # An explicit root disables MCP's /app fallback. Only suggest the desktop
+    # resource root if both plugins used by the shared server are bundled there.
     if not env.get("DRAMACLAW_ROOT", "").strip():
-        env["DRAMACLAW_ROOT"] = str(_repo_root())
+        root = _repo_root()
+        plugins = root / ".hermes" / "plugins"
+        if all(
+            any((plugins / name / entry).is_file() for entry in ("__init__.py", "init.py"))
+            for name in ("dramaclaw", "freezone")
+        ):
+            env["DRAMACLAW_ROOT"] = str(root)
     # MCP subprocesses run from project workspaces, not the API data root.
     env["NOVELVIDEO_OUTPUT_DIR"] = str(Path(config.OUTPUT_DIR).resolve())
     agent_scope = "project" if project else "user"

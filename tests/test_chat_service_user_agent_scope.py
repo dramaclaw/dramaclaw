@@ -5188,6 +5188,29 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     )
 
 
+def test_wheel_codex_env_preserves_mcp_runtime_plugin_fallback(monkeypatch, tmp_path):
+    from novelvideo.chat import dramaclaw_mcp
+
+    installed = tmp_path / "lib" / "python3.12" / "site-packages" / "novelvideo" / "chat"
+    monkeypatch.setattr(chat_service, "__file__", str(installed / "service.py"))
+    monkeypatch.setattr(dramaclaw_mcp, "__file__", str(installed / "dramaclaw_mcp.py"))
+    monkeypatch.delenv("DRAMACLAW_ROOT", raising=False)
+    runtime = tmp_path / "app"
+    monkeypatch.setattr(dramaclaw_mcp, "_FIXED_RUNTIME_ROOT", runtime)
+    monkeypatch.setattr(chat_service, "ensure_user_codex_workspace",
+                        lambda *a, **kw: (tmp_path / "workspace", tmp_path / "home"))
+    monkeypatch.setattr(chat_service, "_codex_turn_gateway_credentials",
+                        lambda *_: ("test-only", "https://gateway.example/v1"))
+
+    env = chat_service._build_codex_env("alice", "")
+    assert "DRAMACLAW_ROOT" not in env
+    for name in ("dramaclaw", "freezone"):
+        plugin = runtime / ".hermes" / "plugins" / name / "__init__.py"
+        plugin.parent.mkdir(parents=True)
+        plugin.touch()
+        assert dramaclaw_mcp._plugin_path(name) == plugin
+
+
 def test_codex_freezone_env_fails_closed_when_canvas_bridge_is_unavailable(
     monkeypatch, tmp_path
 ):
