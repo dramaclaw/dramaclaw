@@ -222,18 +222,21 @@ def _log_call_end(
     )
 
 
-def validate_tool_arguments(
+def _tool_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    parameters = schema.get("parameters")
+    return parameters if isinstance(parameters, dict) else {"type": "object"}
+
+
+def _validate_tool_arguments(
     name: str,
     arguments: dict[str, Any],
-    schema: dict[str, Any],
+    input_schema: dict[str, Any],
     hooks: ToolCallHooks,
     *,
-    check_schema: bool = True,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    check_schema: bool,
+) -> tuple[dict[str, Any], list[ValidationError | SchemaError]]:
     """Validate normalized arguments, applying the tool's existing repair policy."""
-    parameters = schema.get("parameters")
-    input_schema = parameters if isinstance(parameters, dict) else {"type": "object"}
-    errors: list[Any] = []
+    errors: list[ValidationError | SchemaError] = []
     try:
         if check_schema:
             Draft202012Validator.check_schema(input_schema)
@@ -262,11 +265,19 @@ def validate_tool_arguments(
             except ValidationError:
                 repaired = None
         if repaired is None:
-            return arguments, hooks.validation_error(
-                name, arguments, input_schema, exc, errors or [exc]
-            )
+            return arguments, errors or [exc]
         arguments = repaired
-    return arguments, None
+    return arguments, []
+
+
+def tool_arguments_are_valid(
+    name: str, arguments: dict[str, Any], schema: dict[str, Any], hooks: ToolCallHooks
+) -> bool:
+    """Check normalized arguments against a bundled schema without rendering diagnostics."""
+    _, errors = _validate_tool_arguments(
+        name, arguments, _tool_input_schema(schema), hooks, check_schema=False
+    )
+    return not errors
 
 
 async def call_tool(
@@ -290,8 +301,12 @@ async def call_tool(
         sorted(str(key) for key in arguments),
     )
     schema, handler = tool_index[name]
-    arguments, error = validate_tool_arguments(name, arguments, schema, hooks)
-    if error is not None:
+    input_schema = _tool_input_schema(schema)
+    arguments, errors = _validate_tool_arguments(
+        name, arguments, input_schema, hooks, check_schema=True
+    )
+    if errors:
+        error = hooks.validation_error(name, arguments, input_schema, errors[0], errors)
         _log_call_end(log, scope, name, started, error)
         return mcp_error_result(name, error, tool_index, hooks=hooks)
     try:

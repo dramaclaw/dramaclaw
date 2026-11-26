@@ -935,10 +935,9 @@ def workflow_draft_arguments_are_valid(name: str, arguments: dict[str, Any]) -> 
     hooks = _tool_call_hooks(name)
     # The subprocess dispatch checks the bundled schema itself. The observer
     # only has to validate the arguments before the draft request can arrive.
-    _, error = mcp_runtime.validate_tool_arguments(
-        name, hooks.normalize_arguments(name, arguments), schema, hooks, check_schema=False
+    return mcp_runtime.tool_arguments_are_valid(
+        name, hooks.normalize_arguments(name, arguments), schema, hooks
     )
-    return error is None
 
 
 @SERVER.call_tool(validate_input=False)

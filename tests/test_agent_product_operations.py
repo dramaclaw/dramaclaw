@@ -500,9 +500,13 @@ def test_generation_manifest_and_draft_survive_process_memory_loss(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_invalid_workflow_plan_does_not_claim_operation(tmp_path):
-    from novelvideo.chat import service
+async def test_invalid_workflow_plan_does_not_claim_operation(tmp_path, monkeypatch):
+    from novelvideo.chat import dramaclaw_mcp, service
 
+    def unexpected_diagnostics(*args, **kwargs):
+        pytest.fail("the chat observer must not build tool diagnostics")
+
+    monkeypatch.setattr(dramaclaw_mcp, "_tool_validation_error", unexpected_diagnostics)
     operation = _create(tmp_path)
     operation_id = operation["operation_id"]
     event = SimpleNamespace(
@@ -714,9 +718,24 @@ async def test_unsuccessful_result_update_does_not_bind_model_evidence(
     "freezone_prepare_workflow", "freezone_prepare_workflow_draft",
     "freezone_prepare_workflow_plan_draft",
 ])
-async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_path, tool_name):
-    from novelvideo.chat import service
+async def test_workflow_result_tool_binds_server_observed_model_execution(
+    tmp_path, tool_name, monkeypatch
+):
+    import threading
 
+    from novelvideo.chat import dramaclaw_mcp, service
+
+    loop_thread = threading.get_ident()
+    validation_threads = []
+    validate = dramaclaw_mcp.workflow_draft_arguments_are_valid
+
+    def record_validation_thread(name, arguments):
+        validation_threads.append(threading.get_ident())
+        return validate(name, arguments)
+
+    monkeypatch.setattr(
+        dramaclaw_mcp, "workflow_draft_arguments_are_valid", record_validation_thread
+    )
     operation = _create(tmp_path, key="observed-workflow-result")
     await service._bind_server_observed_agent_product_execution(
         SimpleNamespace(
@@ -741,6 +760,8 @@ async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_pa
         project_dir=tmp_path,
         operation_id=operation["operation_id"],
     )
+    assert len(validation_threads) == 1
+    assert validation_threads[0] != loop_thread
     assert stored["model_evidence"] == {
         "model_call_id": "agent-turn:turn-a:tool:call-result",
         "executed_at": stored["model_evidence"]["executed_at"],
