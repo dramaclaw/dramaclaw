@@ -2334,6 +2334,14 @@ async def generate_identity_image_async(
     if identity is None:
         return {"ok": False, "error": f"Identity '{identity_id}' not found"}
 
+    if not identity.is_age_variant(character.age_group) and not compute_portrait_path(
+        project_dir, character.name
+    ):
+        return {
+            "ok": False,
+            "error": f"请先为角色「{character.name}」生成 Portrait（面部特写），完成后再生成身份图",
+        }
+
     config = load_project_config(username, project_name)
     scope = f"character:{name}:identity:{identity.identity_name}"
     style = body.style or config.get("visual_style", "chinese_period_drama")

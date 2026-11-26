@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import UploadFile
@@ -87,6 +88,68 @@ def _write_png(path: Path, color: tuple[int, int, int]) -> bytes:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return data
+
+
+@pytest.mark.parametrize(
+    ("identity_age", "portrait_state", "accepted"),
+    [
+        ("", "missing", False),
+        ("youth", "pending", False),
+        ("", "ready", True),
+        ("elder", "missing", True),
+    ],
+)
+async def test_generate_identity_image_async_requires_ready_character_portrait(
+    tmp_path, monkeypatch, identity_age, portrait_state, accepted
+):
+    from novelvideo.api.routes import characters
+    from novelvideo.utils.path_resolver import canonical_portrait_path
+
+    identity = CharacterIdentity(
+        identity_id="秦_将军",
+        character_name="秦",
+        identity_name="将军",
+        age_group=identity_age,
+        appearance_details="甲胄",
+    )
+    character = NovelCharacter(name="秦", age_group="youth")
+    character.identities = [identity]
+    _patch_character_project(monkeypatch, characters, tmp_path, _CharacterStore(character))
+    monkeypatch.setattr(characters, "load_project_config", lambda *_: {})
+    monkeypatch.setattr(characters, "_resolve_character_image_model", lambda *_: "image-model")
+    monkeypatch.setattr(characters, "_character_image_billing_metadata", lambda *_, **__: {})
+    enqueue = AsyncMock(
+        return_value=SimpleNamespace(
+            task_state=SimpleNamespace(task_id="identity-task"),
+            backend="celery",
+            queue="default",
+        )
+    )
+    monkeypatch.setattr(
+        characters, "get_task_backend", lambda: SimpleNamespace(enqueue_project_task=enqueue)
+    )
+
+    portrait = canonical_portrait_path(tmp_path, character.name)
+    if portrait_state == "pending":
+        _write_png(portrait.parent / ".tmp_portrait" / "reference_portrait.png", (0, 0, 0))
+    elif portrait_state == "ready":
+        _write_png(portrait, (0, 0, 0))
+
+    response = await characters.generate_identity_image_async(
+        project="demo",
+        name=character.name,
+        identity_id=identity.identity_id,
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is accepted
+    if accepted:
+        assert response["task_id"] == "identity-task"
+        enqueue.assert_awaited_once()
+    else:
+        assert "Portrait（面部特写）" in response["error"]
+        assert "完成后" in response["error"]
+        enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio
