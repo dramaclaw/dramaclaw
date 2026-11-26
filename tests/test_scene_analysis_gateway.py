@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -287,3 +288,86 @@ def test_text_model_credential_override_bypasses_platform_resolution(
     assert transport == "transport"
     assert built[0][1]["api_key"] == ORG_KEY
     assert built[0][1]["base_url"] == ORG_BASE_URL
+
+
+def _non_json_then_valid(requests):
+    def respond(request):
+        requests.append(request)
+        content = "not json at all" if len(requests) == 1 else '{"ok": true}'
+        return httpx.Response(
+            200,
+            json={
+                "id": f"analysis-{len(requests)}",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "DC-scene-overlap-analyzer-LLM",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": content},
+                    }
+                ],
+            },
+        )
+
+    return respond
+
+
+async def test_org_child_submits_once_and_fails_on_invalid_output(
+    monkeypatch, tmp_path
+):
+    """一次组织出网占用只能对应一次网关提交：输出校验失败直接报错，不重试再计费。"""
+
+    image = tmp_path / "sheet.jpg"
+    image.write_bytes(b"reference-sheet")
+    monkeypatch.setenv("ST_ORG_EGRESS_MODE", "1")
+    monkeypatch.setenv("ST_ORG_GATEWAY_API_KEY", ORG_KEY)
+    monkeypatch.setenv("ST_ORG_GATEWAY_BASE_URL", ORG_BASE_URL)
+    requests = []
+    transport = httpx.MockTransport(_non_json_then_valid(requests))
+    async with httpx.AsyncClient(transport=transport) as client:
+
+        def factory(env, default_model, **kwargs):
+            assert kwargs["credential_override"] == (ORG_KEY, ORG_BASE_URL)
+            return OpenAIChatModel(
+                default_model,
+                provider=OpenAIProvider(
+                    base_url=ORG_BASE_URL, api_key=ORG_KEY, http_client=client
+                ),
+            )
+
+        monkeypatch.setattr(config, "get_newapi_text_pydantic_model", factory)
+        with pytest.raises(UnexpectedModelBehavior):
+            await scene_overlap_analyzer.ask_gateway(image_path=image, prompt="Analyze")
+
+    assert len(requests) == 1
+
+
+async def test_platform_child_keeps_default_output_retry(monkeypatch, tmp_path):
+    image = tmp_path / "sheet.jpg"
+    image.write_bytes(b"reference-sheet")
+    monkeypatch.delenv("ST_ORG_EGRESS_MODE", raising=False)
+    monkeypatch.delenv("ST_ORG_GATEWAY_API_KEY", raising=False)
+    monkeypatch.delenv("ST_ORG_GATEWAY_BASE_URL", raising=False)
+    requests = []
+    transport = httpx.MockTransport(_non_json_then_valid(requests))
+    async with httpx.AsyncClient(transport=transport) as client:
+        monkeypatch.setattr(
+            config,
+            "get_newapi_text_pydantic_model",
+            lambda env, default_model, **kw: OpenAIChatModel(
+                default_model,
+                provider=OpenAIProvider(
+                    base_url="https://gateway.invalid/v1",
+                    api_key="gateway-test-key",
+                    http_client=client,
+                ),
+            ),
+        )
+        result = await scene_overlap_analyzer.ask_gateway(
+            image_path=image, prompt="Analyze"
+        )
+
+    assert json.loads(result) == {"ok": True}
+    assert len(requests) == 2

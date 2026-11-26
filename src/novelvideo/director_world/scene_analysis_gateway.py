@@ -82,6 +82,9 @@ async def analyze_scene_references(
         capability="vision.analyze",
         credential_override=organization_credential,
     )
+    # One claimed organization operation covers exactly one organization
+    # gateway submit, so an output-validation failure must not re-submit.
+    retry_kwargs = {"retries": {"output": 0}} if organization_credential else {}
     agent = Agent(
         transport,
         output_type=PromptedOutput(
@@ -94,6 +97,7 @@ async def analyze_scene_references(
             "max_tokens": max_tokens,
             **get_newapi_structured_output_model_settings(),
         },
+        **retry_kwargs,
     )
     result = await asyncio.wait_for(
         agent.run(
