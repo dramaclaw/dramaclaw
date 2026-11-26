@@ -2450,12 +2450,10 @@ def _handle_generate_identity_image(args: dict[str, Any], **_: Any) -> str:
 def _handle_start_single_video(args: dict[str, Any], **_: Any) -> str:
     """Generate one beat's video (单 beat 视频, single_video task).
 
-    POST /projects/{project}/episodes/{episode}/beats/{beat}/video. The beat's
-    prompt is taken from its stored ``video_prompt`` (set by the script step) —
-    you do NOT pass a prompt. Requires the beat's first frame to exist already
-    (otherwise the API returns "首帧不存在") and the beat to have a non-empty
-    video_prompt (otherwise the backend returns "prompt is required"). Only
-    video_backend / duration / resolution / mode are accepted request fields.
+    POST /projects/{project}/episodes/{episode}/beats/{beat}/video. The beat
+    needs its first frame and the stored prompt for the selected backend.
+    Seedance 2.0 Fast requires a saved final prompt. Only video_backend,
+    duration, resolution and mode are accepted request fields.
     """
     try:
         project = _project_from_args(args)
@@ -3940,10 +3938,9 @@ TOOLS = (
         _schema(
             "dramaclaw_start_single_video",
             "Generate one beat's video (单 beat 视频, single_video task), POST /episodes/{ep}/beats/"
-            "{beat}/video. You do NOT pass a prompt — the beat's stored video_prompt is used. "
-            "Prerequisites: the beat's first frame must exist AND the beat must have a non-empty "
-            "video_prompt; if the API returns '首帧不存在' or 'prompt is required', that prerequisite "
-            "is missing — report it, do NOT invent fixes. Compose only works after all beat videos exist.",
+            "{beat}/video. The beat needs an existing first frame and the saved prompt for the "
+            "selected backend. Seedance 2.0 Fast requires a saved final prompt. Report any missing "
+            "prerequisite from the API. Compose only works after all beat videos exist.",
             {
                 "project_id": {"type": "string"},
                 "episode": {"type": "integer"},
@@ -3960,8 +3957,9 @@ TOOLS = (
         "dramaclaw_start_video_batch",
         _schema(
             "dramaclaw_start_video_batch",
-            "Generate videos for up to nine ready beats in one write operation. Each beat uses its "
-            "stored video_prompt and must already have a first frame. Use this instead of repeated "
+            "Generate videos for up to nine ready beats in one write operation. Each beat needs "
+            "a first frame and a saved prompt for the selected backend, including a saved final prompt "
+            "for Seedance 2.0 Fast. Use this instead of repeated "
             "dramaclaw_start_single_video calls when two to nine beats are ready. Tasks remain "
             "independent, continue to obey the existing video queue limits, and waiting Beats are "
             "submitted automatically as capacity opens. By default, a short beats "

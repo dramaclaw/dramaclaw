@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable
 
-from novelvideo.config import STATE_DIR
+from novelvideo.config import STATE_DIR, resolve_newapi_video_backend_alias
+from novelvideo.video_backend import DEFAULT_MAINLINE_VIDEO_BACKEND, is_retired_video_backend
 
 _log = logging.getLogger(__name__)
 
@@ -168,7 +169,7 @@ def _default_project_config() -> dict:
         "ethnicity": "Chinese",
         "scene_grouping": False,
         "character_grouping": False,
-        "video_backend": VIDEO_BACKEND,
+        "video_backend": resolve_newapi_video_backend_alias(VIDEO_BACKEND),
         "video_resolution": VIDEO_RESOLUTION,
         "use_director_render": False,
         "sketch_image_selection": DEFAULT_SKETCH_IMAGE_SELECTION,
@@ -228,6 +229,12 @@ def _effective_project_config(
         and VIDEO_BACKEND != "comfyui"
     ):
         result["video_backend"] = VIDEO_BACKEND
+    backend = result["video_backend"]
+    if isinstance(backend, str):
+        backend = resolve_newapi_video_backend_alias(backend)
+        result["video_backend"] = (
+            DEFAULT_MAINLINE_VIDEO_BACKEND if is_retired_video_backend(backend) else backend
+        )
 
     available = _available_style_labels_for_config(
         result,

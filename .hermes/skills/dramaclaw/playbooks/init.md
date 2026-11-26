@@ -75,7 +75,6 @@ Step 0（SKILL.md §0）的 `/pipeline/status` 返回决定从哪一步开始：
 
 **用户必选**（首次或用户主动问时展示）：
 - 配音: `tts_provider`+`tts_voice`（默认 cosyvoice + longanling_v3）
-- 视频后端: `video_backend`（默认 `huimeng_seedance-1.0-pro-fast`；`huimeng_seedance-1.5-pro` 仅在用户明确指定时使用；旧值仅兼容历史任务）
 - 分辨率: `video_resolution`（720x1280/1080x1920，默认 720x1280）
 
 ## Step 7 完成 → 阶段过渡

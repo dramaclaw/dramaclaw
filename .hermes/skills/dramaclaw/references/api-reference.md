@@ -103,8 +103,9 @@
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
+| `GET` | `/projects/{project}/video-backends` | 查询主线可选视频模型和默认项 |
 | `POST` | `/projects/{project}/episodes/{ep}/optimize/video-global` | 全局视频优化(SuperPower⚡️) `{"language":"en"}` en=英文(默认), zh=中文 [ASYNC] |
-| `POST` | `/projects/{project}/episodes/{ep}/beats/{beat}/video` | 单beat视频重做 [ASYNC: single_video]。默认 `{"video_backend": "huimeng_seedance-1.0-pro-fast"}`；只有用户明确指定 1.5 Pro / 有声 1.5 / Huimeng 1.5 时才传 `{"video_backend": "huimeng_seedance-1.5-pro"}`。同一用户请求里同一 beat 只 POST 一次；启动接口返回 `ok:false` 或 HTTP 错误时，必须直接反馈接口 `error`。POST 返回 2xx 且 `ok`/`generated: true` 后，查 `GET /projects/{project}/tasks/single_video/{ep}?beat_num={beat}`；若状态是 `failed` / `cancelled`，必须反馈 `task.error`/`error_code`，不要说已完成。不要因 `Task not found`、任务状态缺失或无 `result.video_path` 重复 POST。没有 `result.video_path` 时不要探测 `/files`，不要探测 `/api/v1/projects/{project}/files`，只能按已启动或当前状态收口；`generated: true` 不等于返回新视频路径，不要交付 beat 记录里的旧 `video_url`，不要拼接 host。**不要触发整集 compose/generate/optimize** |
+| `POST` | `/projects/{project}/episodes/{ep}/beats/{beat}/video` | 单beat视频重做 [ASYNC: single_video]。默认 `{"video_backend": "newapi_seedance-2.0-fast"}`。同一用户请求里同一 beat 只 POST 一次；启动接口返回 `ok:false` 或 HTTP 错误时，必须直接反馈接口 `error`。POST 返回 2xx 且 `ok`/`generated: true` 后，查 `GET /projects/{project}/tasks/single_video/{ep}?beat_num={beat}`；若状态是 `failed` / `cancelled`，必须反馈 `task.error`/`error_code`，不要说已完成。不要因 `Task not found`、任务状态缺失或无 `result.video_path` 重复 POST。没有 `result.video_path` 时不要探测 `/files`，不要探测 `/api/v1/projects/{project}/files`，只能按已启动或当前状态收口；`generated: true` 不等于返回新视频路径，不要交付 beat 记录里的旧 `video_url`，不要拼接 host。**不要触发整集 compose/generate/optimize** |
 | `POST` | `/projects/{project}/episodes/{ep}/videos/compose` | 合成 `{"add_subtitles":true,"add_bgm":false}` [ASYNC] |
 
 ## 导出 & 文件
