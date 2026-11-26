@@ -49,6 +49,7 @@ from novelvideo.chat.backend_sdk import (
 )
 from novelvideo.chat.codex_app_server import (
     CodexAppServerNotRunning,
+    CodexRuntimeError,
     attach_shared_codex,
     complete_pending_drain,
     set_active_turn_probe,
@@ -185,6 +186,10 @@ _MERGEABLE_MEDIA_SPEC_TYPES = presentation.MERGEABLE_MEDIA_SPEC_TYPES
 
 _CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
 _DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
+_RETIRED_HERMES_MESSAGE = (
+    "Hermes runtime has been retired. Set DRAMACLAW_CHAT_BACKEND=codex "
+    "and CODEX_BIN to the verified DramaClaw Codex executable, then restart DramaClaw."
+)
 _DEFAULT_CODEX_REASONING_EFFORT = "low"
 _CODEX_REASONING_EFFORT_VALUES = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
@@ -565,7 +570,11 @@ def _codex_agent_skill_locator_instructions(workspace: Path) -> str:
         workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
     ).resolve()
     if not skill_path.is_file():
-        raise RuntimeError("managed dramaclaw-workflows Agent Skill is unavailable")
+        from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+        raise CodexRuntimeError(
+            "managed dramaclaw-workflows Agent Skill is unavailable"
+        )
     locators = {
         "agent_skills": [
             {
@@ -2087,6 +2096,16 @@ def _pipeline_continuation_instructions(prompt: str, *, tool_mode: str) -> str:
     return f"{_DRAMACLAW_CONTINUATION_INSTRUCTIONS}\n\n"
 
 
+class RetiredHermesBackend(CodexRuntimeError):
+    def __init__(self) -> None:
+        super().__init__(_RETIRED_HERMES_MESSAGE)
+
+
+def _reject_hermes_backend(backend: str | None) -> None:
+    if str(backend or "").strip().lower() == "hermes":
+        raise RetiredHermesBackend()
+
+
 def _configured_chat_backend() -> str:
     return (
         os.environ.get("DRAMACLAW_CHAT_BACKEND")
@@ -2097,16 +2116,7 @@ def _configured_chat_backend() -> str:
 
 def _chat_backend() -> str:
     preferred = _configured_chat_backend()
-    if preferred == "hermes":
-        # Explicit "hermes" must succeed — do NOT silently fall back to
-        # claude/codex. A missing hermes binary is a config error to surface.
-        if is_hermes_backend_available():
-            return "hermes"
-        raise RuntimeError(
-            "DRAMACLAW_CHAT_BACKEND=hermes requested but hermes is unavailable. "
-            "Run `uv tool install 'hermes-agent[acp]'`, "
-            "then run `hermes doctor` to diagnose."
-        )
+    _reject_hermes_backend(preferred)
     if preferred == "codex":
         if is_codex_backend_available():
             return "codex"
@@ -2230,8 +2240,8 @@ def is_hermes_backend_available() -> bool:
 
 
 def is_chat_backend_available() -> bool:
-    # NOTE: _chat_backend() raises when DRAMACLAW_CHAT_BACKEND=hermes is
-    # requested but unavailable; catch so this probe stays non-throwing.
+    # Configuration errors, including a retired backend, must not make this
+    # availability probe throw.
     try:
         backend = _chat_backend()
     except RuntimeError:
@@ -2252,15 +2262,27 @@ def get_chat_backend_name() -> str:
 def _repo_skill_roots() -> list[Path]:
     root = _repo_root()
     return [
-        root / "src" / "novelvideo" / "agent_skills",
+        Path(__file__).resolve().parents[1] / "agent_skills",
         root / ".claude" / "skills",
         root / ".codex" / "skills",
     ]
 
 
 def _skill_sources() -> list[tuple[str, Path]]:
+    roots = _repo_skill_roots()
+    required = roots[0] / "dramaclaw-workflows" / "SKILL.md"
+    try:
+        if not required.read_text(encoding="utf-8").strip():
+            raise ValueError("empty bundled Skill")
+    except (OSError, UnicodeError, ValueError) as exc:
+        from novelvideo.chat.codex_app_server import CodexRuntimeError
+
+        raise CodexRuntimeError(
+            "Bundled Agent Skill resource is missing or unreadable: "
+            "dramaclaw-workflows/SKILL.md"
+        ) from exc
     sources: dict[str, Path] = {}
-    for repo_skills_root in _repo_skill_roots():
+    for repo_skills_root in roots:
         if not repo_skills_root.exists():
             continue
         for child in sorted(repo_skills_root.iterdir()):
@@ -3119,7 +3141,12 @@ async def read_codex_scope_history(
     project_state_dir: str | Path | None = None,
     before: str | None = None,
 ) -> CodexHistoryPage | None:
-    if get_chat_backend_name() != "codex":
+    try:
+        backend = get_chat_backend_name()
+    except RetiredHermesBackend:
+        # No Codex history to merge; the caller can still page the local store.
+        return None
+    if backend != "codex":
         return None
     thread_id = _get_codex_thread_id(
         username, project, agent_profile=agent_profile, canvas_id=canvas_id,
@@ -3654,6 +3681,16 @@ def _build_codex_env(
     from novelvideo import config
 
     env = os.environ.copy()
+    # An explicit root disables MCP's /app fallback. Only suggest the desktop
+    # resource root if both plugins used by the shared server are bundled there.
+    if not env.get("DRAMACLAW_ROOT", "").strip():
+        root = _repo_root()
+        plugins = root / ".hermes" / "plugins"
+        if all(
+            any((plugins / name / entry).is_file() for entry in ("__init__.py", "init.py"))
+            for name in ("dramaclaw", "freezone")
+        ):
+            env["DRAMACLAW_ROOT"] = str(root)
     # MCP subprocesses run from project workspaces, not the API data root.
     env["NOVELVIDEO_OUTPUT_DIR"] = str(Path(config.OUTPUT_DIR).resolve())
     agent_scope = "project" if project else "user"
@@ -4340,6 +4377,7 @@ async def stream_assistant_reply(
     project_context: ProjectContext | None = None,
     image_paths: Sequence[Path] = (),
 ) -> dict[str, Any] | None:
+    _reject_hermes_backend(backend)
     if project_context is not None and project != project_context.project_id:
         raise ValueError("project context project mismatch")
     if execution_context is not None:

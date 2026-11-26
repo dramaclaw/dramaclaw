@@ -215,7 +215,7 @@ docker compose -f docker-compose.release.yml up -d
 
 Mở <http://localhost:8080>, vào **Settings → Models & Channels**, và dán DC key của bạn (lấy tại <https://relayclaw.cdnfg.com>) — hoặc chuyển sang **Custom** để dùng các nhà cung cấp của riêng bạn. Vậy là xong.
 
-File Compose phát hành chạy các image đa kiến trúc **v2.1.1** đã phát hành (`DRAMACLAW_VERSION=2.1.1`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`). Người dùng ở Trung Quốc đại lục có thể chuyển sang mirror ACR bằng `DRAMACLAW_IMAGE_PREFIX`.
+File Compose phát hành chạy các image đa kiến trúc **v2.2.0** đã phát hành (`DRAMACLAW_VERSION=2.2.0`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`). Người dùng ở Trung Quốc đại lục có thể chuyển sang mirror ACR bằng `DRAMACLAW_IMAGE_PREFIX`.
 
 <details>
 <summary><b>Các cách chạy khác</b></summary>

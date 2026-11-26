@@ -2418,11 +2418,11 @@ class CodexThread:
                 ApprovalMode,
                 Sandbox,
             )
-            from novelvideo.chat.codex_app_server import shared_codex
+            from novelvideo.chat.codex_app_server import CodexRuntimeError, shared_codex
             from openai_codex.generated.v2_all import TurnCompletedNotification, TurnStatus
 
             if self._codex_bin is not None and not self._codex_bin.exists():
-                raise RuntimeError(f"Codex binary not found: {self._codex_bin}")
+                raise CodexRuntimeError(f"Codex binary not found: {self._codex_bin}")
 
             final_response: str | None = None
             final_disposition: str | None = None
@@ -2654,9 +2654,7 @@ class CodexThread:
                             yield event
                     break
                 if kind == "error":
-                    if isinstance(payload, (CodexThreadBusyError, CodexMalformedToolCallError)):
-                        raise payload
-                    raise RuntimeError(str(payload))
+                    raise payload
                 event = payload
                 if event.type in {"tool_started", "tool_updated", "tool_update"} or (
                     event.type == "item_started"

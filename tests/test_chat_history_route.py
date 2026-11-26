@@ -117,6 +117,31 @@ def websocket_app(monkeypatch):
     return app, effects
 
 
+@pytest.mark.parametrize("selector", ["DRAMACLAW_CHAT_BACKEND", "SUPERTALE_CHAT_BACKEND"])
+def test_retired_backend_keeps_local_history_and_explains_new_turns(store, monkeypatch, selector):
+    monkeypatch.delenv("DRAMACLAW_CHAT_BACKEND", raising=False)
+    monkeypatch.setenv(selector, "hermes")
+    append_users(store, ChatScope(kind="home"), 1)
+    app, _ = websocket_app(monkeypatch)
+    # Simulate an admitted chat user; this router-only app has no billing ports.
+    monkeypatch.setattr(routes, "_require_ai_assistant_access", AsyncMock(return_value=None))
+    with TestClient(app).websocket_connect("/api/v1/chat/ws") as websocket:
+        first = websocket.receive_json()
+        assert first["type"] == "scope.changed"
+        assert [m["content"] for m in first["history"]] == ["user1"]
+        websocket.send_json({
+            "type": "chat.message", "scope": {"kind": "home"},
+            "turn_id": "retired-1", "text": "hello",
+        })
+        frame = websocket.receive_json()
+        if frame["type"] == "assistant.message":
+            frame = websocket.receive_json()
+        assert frame["type"] == "error"
+        assert frame["turn_id"] == "retired-1"
+        assert "DRAMACLAW_CHAT_BACKEND=codex" in frame["message"]
+        assert "restart" in frame["message"]
+
+
 def test_websocket_history_pages_have_every_message_once(store, monkeypatch):
     row_ids = append_users(store, ChatScope(kind="home"), 250)
     install_reader(monkeypatch, 250)
