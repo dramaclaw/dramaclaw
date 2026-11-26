@@ -11,7 +11,8 @@ ambient 回落与 OI-52 的调用点闸门对这一处都无效。
 fail-closed、绝不回落 settings.db 的平台 Key，trace 经 manifest 回来完成 claim。
 
 两个可选场景分析子进程（`scene_overlap_analyzer` /
-`scene_spatial_contract`）尚未单独接入组织 operation admission，组织下保留跳过分支。
+`scene_spatial_contract`）走同一形状：父进程按各自 capability 单独 claim + 解组织凭证，
+经 env 交给子进程；拿不到组织凭证时跳过该分析并记录原因，全景照常出图，绝不回落平台 Key。
 """
 
 from __future__ import annotations
@@ -183,6 +184,8 @@ class _SceneHarness:
         context: TrustedEgressContext | None,
         *,
         returncode: int = 0,
+        analysis_returncode: int | None = None,
+        analysis_stderr: str = "child failed",
         write_manifest: bool = True,
     ) -> None:
         import novelvideo.ports as ports
@@ -226,6 +229,24 @@ class _SceneHarness:
             launches.append(
                 {"cmd": list(cmd), "env": kwargs.get("env"), "module": module_name}
             )
+            if not module_name.endswith("scene_360_builder"):
+                child_returncode = (
+                    returncode if analysis_returncode is None else analysis_returncode
+                )
+                if child_returncode == 0:
+                    out_dir = Path(cmd[cmd.index("--output-dir") + 1])
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    name = (
+                        "overlap_continuation_analysis.json"
+                        if module_name.endswith("scene_overlap_analyzer")
+                        else "scene_spatial_contract.json"
+                    )
+                    (out_dir / name).write_text(
+                        json.dumps({"analysis": module_name}), encoding="utf-8"
+                    )
+                return SimpleNamespace(
+                    returncode=child_returncode, stdout="", stderr=analysis_stderr
+                )
             if module_name.endswith("scene_360_builder") and returncode == 0:
                 out_dir = Path(cmd[cmd.index("--output-dir") + 1])
                 out_dir.mkdir(parents=True, exist_ok=True)
@@ -417,10 +438,101 @@ def _master_pair(tmp_path: Path) -> dict[str, Path]:
     return {"master": master, "reverse": reverse}
 
 
-def test_organization_skips_the_scene_analysis_children(
+class _FailingFirstResolvesCredentialPort(_CredentialPort):
+    """前 N 次解凭证失败：模拟组织凭证暂不可用，只命中两个分析的 claim。"""
+
+    def __init__(self, credential, events, *, failures: int) -> None:
+        super().__init__(credential, events)
+        self.failures = failures
+
+    async def resolve(self, admission):
+        from novelvideo.ports.model_credentials import ModelCredentialError
+
+        self.events.append("resolve")
+        self.admissions.append(admission)
+        if self.failures > 0:
+            self.failures -= 1
+            raise ModelCredentialError("ORG_CREDENTIAL_DECRYPT_FAILED")
+        return self.credential
+
+
+def _run_master_pano(tmp_path: Path, pair: dict[str, Path]):
+    return _run_pano(
+        tmp_path,
+        source="master",
+        master_path_override=pair["master"],
+        reverse_master_path_override=pair["reverse"],
+    )
+
+
+ANALYSIS_CAPABILITIES = [
+    "vision.analyze.scene_overlap",
+    "vision.analyze.scene_spatial_contract",
+]
+
+
+def test_organization_runs_both_scene_analyses_under_organization_claims(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Configured platform analysis must not bypass organization admission."""
+    """组织与普通项目同条件下都跑两项分析；每次分析单独 claim，凭证经 env 过边界。
+
+    平台 Key 未配置（`scene_analysis_gateway_configured() is False`）也不影响组织：
+    组织走的是自己的凭证，不该被平台网关配置卡住。
+    """
+
+    from novelvideo.director_world import scene_analysis_gateway
+
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: False
+    )
+    for name in ("NEWAPI_API_KEY", "MODEL_API_KEY", "MODEL_BASE_URL"):
+        monkeypatch.setenv(name, PLATFORM_CANARY)
+    pair = _master_pair(tmp_path)
+    context = _egress_context(kind="organization")
+    harness = _SceneHarness(monkeypatch, context)
+
+    with model_gateway_request_scope(context):
+        result = _run_master_pano(tmp_path, pair)
+
+    assert result["ok"]
+    assert harness.modules_launched() == [
+        "scene_overlap_analyzer",
+        "scene_spatial_contract",
+        "scene_360_builder",
+    ]
+    assert harness.events[:6] == [
+        "claim",
+        "resolve",
+        "launch:scene_overlap_analyzer",
+        "claim",
+        "resolve",
+        "launch:scene_spatial_contract",
+    ]
+    claims = harness.operation_port.claims
+    assert [claim.capability for claim in claims] == [
+        *ANALYSIS_CAPABILITIES,
+        "image.generate.pano_360",
+    ]
+    assert len({claim.business_task_id for claim in claims}) == 3
+    assert {claim.organization_id for claim in claims} == {"org-360"}
+    for launch in harness.launches:
+        env = launch["env"]
+        assert env is not None, f"{launch['module']} 必须拿 curated env"
+        assert env["ST_ORG_EGRESS_MODE"] == "1"
+        assert env["ST_ORG_GATEWAY_API_KEY"] == GATEWAY_KEY
+        assert env["ST_ORG_GATEWAY_BASE_URL"] == GATEWAY_BASE_URL
+        assert PLATFORM_CANARY not in env.values()
+    assert len(harness.operation_port.completed_refs) == 3
+    assert harness.operation_port.unknowns == []
+    assert harness.operation_port.rejected == []
+
+
+def test_organization_analysis_without_credential_is_skipped_and_pano_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """组织凭证解不出来时：分析跳过并记录原因，绝不以平台身份起子进程，全景照常。"""
 
     from novelvideo.director_world import scene_analysis_gateway
 
@@ -430,16 +542,197 @@ def test_organization_skips_the_scene_analysis_children(
     pair = _master_pair(tmp_path)
     context = _egress_context(kind="organization")
     harness = _SceneHarness(monkeypatch, context)
+    harness.credential_port = _FailingFirstResolvesCredentialPort(
+        harness.credential_port.credential, harness.events, failures=2
+    )
+    import novelvideo.ports as ports
+
+    monkeypatch.setattr(ports, "get_model_credentials", lambda: harness.credential_port)
+
+    with caplog.at_level("WARNING"), model_gateway_request_scope(context):
+        result = _run_master_pano(tmp_path, pair)
+
+    assert result["ok"]
+    assert harness.modules_launched() == ["scene_360_builder"]
+    assert [claim.capability for claim in harness.operation_port.claims] == [
+        *ANALYSIS_CAPABILITIES,
+        "image.generate.pano_360",
+    ]
+    assert len(harness.operation_port.rejected) == 2
+    assert harness.operation_port.unknowns == []
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "scene overlap analysis skipped" in messages
+    assert "scene spatial contract skipped" in messages
+    assert "ORG_CREDENTIAL_DECRYPT_FAILED" in messages
+
+
+def test_organization_analysis_child_failure_marks_unknown_and_pano_continues(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """凭证已交出后子进程失败：无法证明没提交，claim 落 unknown；全景照常出图。"""
+
+    from novelvideo.director_world import scene_analysis_gateway
+
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
+    pair = _master_pair(tmp_path)
+    context = _egress_context(kind="organization")
+    harness = _SceneHarness(monkeypatch, context, analysis_returncode=1)
 
     with model_gateway_request_scope(context):
-        _run_pano(
-            tmp_path,
-            source="master",
-            master_path_override=pair["master"],
-            reverse_master_path_override=pair["reverse"],
+        result = _run_master_pano(tmp_path, pair)
+
+    assert result["ok"]
+    assert harness.modules_launched() == [
+        "scene_overlap_analyzer",
+        "scene_spatial_contract",
+        "scene_360_builder",
+    ]
+    assert len(harness.operation_port.unknowns) == 2
+    assert harness.operation_port.rejected == []
+    assert len(harness.operation_port.completed_refs) == 1
+
+
+ANALYSIS_SECRET = "sk-analysis-secret-0123456789abcdef"
+ANALYSIS_CAUSE = (
+    "openai.NotFoundError: Error code: 404 - "
+    "{'error': {'code': 'model_not_found', 'message': 'no such model'}}"
+)
+
+
+def _long_child_traceback() -> str:
+    frames = "".join(
+        f'  File "/app/site-packages/lib_{index}.py", line {index + 10}, in call_{index}\n'
+        f"    return call_{index + 1}(request, headers=headers)\n"
+        for index in range(40)
+    )
+    return (
+        "INFO starting analysis with Authorization: Bearer "
+        f"{ANALYSIS_SECRET}\n"
+        "Traceback (most recent call last):\n"
+        f"{frames}"
+        f"{ANALYSIS_CAUSE}\n"
+    )
+
+
+def test_analysis_failure_warning_leads_with_the_cause_and_stays_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed analysis child logs its final exception line first, not a cut-off tail."""
+
+    from novelvideo.director_world import scene_analysis_gateway
+
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
+    pair = _master_pair(tmp_path)
+    _SceneHarness(
+        monkeypatch,
+        None,
+        analysis_returncode=1,
+        analysis_stderr=_long_child_traceback(),
+    )
+
+    with caplog.at_level("WARNING"):
+        assert _run_master_pano(tmp_path, pair)["ok"]
+
+    failures = [
+        record.getMessage()
+        for record in caplog.records
+        if " failed for scene-360: " in record.getMessage()
+    ]
+    assert len(failures) == 2
+    for message in failures:
+        detail = message.split(" failed for scene-360: ", 1)[1]
+        assert detail.startswith(ANALYSIS_CAUSE)
+        assert len(message) <= 1200
+        assert ANALYSIS_SECRET not in message
+
+
+def test_pano_generator_start_is_not_logged_when_credential_preparation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No "running scene 360 generator" line unless the generator actually launches."""
+
+    import novelvideo.ports as ports
+
+    context = _egress_context(kind="organization")
+    harness = _SceneHarness(monkeypatch, context)
+    harness.credential_port = _FailingFirstResolvesCredentialPort(
+        harness.credential_port.credential, harness.events, failures=1
+    )
+    monkeypatch.setattr(ports, "get_model_credentials", lambda: harness.credential_port)
+
+    with caplog.at_level("INFO"), model_gateway_request_scope(context):
+        with pytest.raises(Exception):
+            _run_pano(tmp_path)
+
+    assert harness.launches == []
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "running scene 360 generator" not in messages
+
+
+def test_pano_generator_start_is_logged_after_credential_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    context = _egress_context(kind="organization")
+    harness = _SceneHarness(monkeypatch, context)
+    original_resolve = harness.credential_port.resolve
+
+    async def resolve_and_check_log(admission):
+        messages = [record.getMessage() for record in caplog.records]
+        assert not any("running scene 360 generator" in m for m in messages)
+        return await original_resolve(admission)
+
+    harness.credential_port.resolve = resolve_and_check_log
+
+    with caplog.at_level("INFO"), model_gateway_request_scope(context):
+        _run_pano(tmp_path)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("running scene 360 generator" in m for m in messages)
+
+
+def test_organization_reuses_cached_analyses_without_claiming(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """有效缓存照旧复用：不起分析子进程，也不为分析占 claim。"""
+
+    from novelvideo import stage_asset_tasks
+
+    pair = _master_pair(tmp_path)
+    analysis = (
+        pair["master"].parent
+        / "overlap_continuation_test"
+        / "overlap_continuation_analysis.json"
+    )
+    contract = (
+        pair["master"].parent / "scene_spatial_contract" / "scene_spatial_contract.json"
+    )
+    for path in (analysis, contract):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {"schema_version": stage_asset_tasks.SPATIAL_CONTRACT_SCHEMA_VERSION}
+            )
         )
+    context = _egress_context(kind="organization")
+    harness = _SceneHarness(monkeypatch, context)
+
+    with model_gateway_request_scope(context):
+        assert _run_master_pano(tmp_path, pair)["ok"]
 
     assert harness.modules_launched() == ["scene_360_builder"]
+    assert [claim.capability for claim in harness.operation_port.claims] == [
+        "image.generate.pano_360"
+    ]
 
 
 def test_platform_launches_scene_analysis_with_gateway_only(
@@ -467,6 +760,8 @@ def test_platform_launches_scene_analysis_with_gateway_only(
     assert "scene_overlap_analyzer" in launched
     assert "scene_spatial_contract" in launched
     assert "scene_360_builder" in launched
+    assert harness.operation_port.claims == []
+    assert all(launch["env"] is None for launch in harness.launches)
 
 
 def test_platform_skips_analysis_without_gateway_even_with_legacy_key(

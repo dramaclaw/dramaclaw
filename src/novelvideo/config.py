@@ -387,8 +387,14 @@ def get_newapi_text_pydantic_model(
     brainclaw_profile=None,
     brainclaw_profile_variant=None,
     capability: str = "text.generate",
+    credential_override: tuple[str, str] | None = None,
 ):
-    """Create a PydanticAI OpenAI-compatible model that routes through newAPI."""
+    """Create a PydanticAI OpenAI-compatible model that routes through newAPI.
+
+    ``credential_override`` is an already-admitted ``(api_key, base_url)`` pair,
+    used by model children that received an organization credential from their
+    parent process. It bypasses platform credential resolution entirely.
+    """
     from novelvideo.brainclaw_contract import brainclaw_profile_headers
     from novelvideo.model_gateway_settings import get_effective_llm_config
 
@@ -416,6 +422,18 @@ def get_newapi_text_pydantic_model(
         profile_variant=brainclaw_profile_variant,
         brainclaw_active=llm_config.is_brainclaw if uses_local_ce_runtime() else True,
     )
+    if credential_override is not None:
+        api_key, base_url = credential_override
+        if not api_key or not base_url:
+            raise ValueError("credential_override requires both api_key and base_url")
+        return _newapi_text_openai_model(
+            model_name,
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            profile=profile,
+            default_headers=default_headers,
+        )
     if not uses_local_ce_runtime():
         from novelvideo.model_gateway_runtime import (
             create_request_scoped_gateway_model,

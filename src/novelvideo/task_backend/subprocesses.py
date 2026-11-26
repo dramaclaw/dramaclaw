@@ -186,6 +186,27 @@ def build_model_child_env(
     return child
 
 
+def organization_gateway_credential_from_env(
+    environ: dict[str, str] | None = None,
+) -> tuple[str, str] | None:
+    """Read, inside a model child, the credential ``build_model_child_env`` handed over.
+
+    Returns None for a platform child. In organization mode a missing credential
+    raises ``ORG_CONTEXT_REQUIRED`` instead of returning None, so the child can
+    never mistake "the credential did not arrive" for "this is a platform task"
+    and fall back to the platform key.
+    """
+
+    env = os.environ if environ is None else environ
+    if env.get(ORG_EGRESS_MODE_ENV) != "1":
+        return None
+    api_key = (env.get(ORG_GATEWAY_API_KEY_ENV) or "").strip()
+    base_url = (env.get(ORG_GATEWAY_BASE_URL_ENV) or "").strip()
+    if not api_key or not base_url:
+        raise EgressBoundaryError("ORG_CONTEXT_REQUIRED")
+    return api_key, base_url
+
+
 def _restricted_launch_values(
     *,
     args: Sequence[str],
