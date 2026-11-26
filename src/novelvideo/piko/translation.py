@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Language = Literal["zh", "en", "vi"]
+Language = Literal["zh", "en", "vi", "my"]
 
 
 class Translation(BaseModel):

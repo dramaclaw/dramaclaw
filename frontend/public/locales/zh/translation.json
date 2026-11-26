@@ -540,7 +540,8 @@
         "initializeExpired": "本次验证码登录已超过可设置密码的时限，请重新用验证码登录后再试。",
         "error": "密码修改失败，请重试。"
       },
-      "languagePortuguese": "Português"
+      "languagePortuguese": "Português",
+      "languageBurmese": "မြန်မာဘာသာ"
     },
     "pikoHub": {
       "play": "Piko 一下",

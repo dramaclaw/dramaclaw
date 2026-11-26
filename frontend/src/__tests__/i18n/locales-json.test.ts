@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
+import { SUPPORTED } from "@/i18n/languages";
 
 function collectKeys(value: unknown, prefix = ""): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -19,7 +20,7 @@ function loadLocale(language: string): unknown {
 }
 
 describe("locale translation files", () => {
-  it.each(["en", "zh", "vi", "pt"])("%s translation JSON is valid", (language) => {
+  it.each(SUPPORTED)("%s translation JSON is valid", (language) => {
     const content = readFileSync(`public/locales/${language}/translation.json`, "utf8");
 
     expect(() => JSON.parse(content)).not.toThrow();
@@ -28,7 +29,7 @@ describe("locale translation files", () => {
   // `en` is the reference key set. A locale may leave a value in English on
   // purpose — prompt fragments, domain terms and product names all stay as they
   // are — but it may never be missing a key, or i18next renders the raw key.
-  it.each(["zh", "vi", "pt"])("keeps %s aligned with the en key set", (language) => {
+  it.each(SUPPORTED.filter((language) => language !== "en"))("keeps %s aligned with the en key set", (language) => {
     const en = loadLocale("en");
     const other = loadLocale(language);
     const enKeys = new Set(collectKeys(en));
@@ -131,6 +132,17 @@ function localeValue(root: unknown, path: string): unknown {
   }
   return value;
 }
+
+it("preserves interpolation variables in Burmese", () => {
+  const en = loadLocale("en");
+  const my = loadLocale("my");
+  const placeholders = (value: unknown) =>
+    (JSON.stringify(value)?.match(/\{\{[^{}]+\}\}/g) ?? []).sort();
+
+  for (const key of collectKeys(en)) {
+    expect(placeholders(localeValue(my, key)), key).toEqual(placeholders(localeValue(en, key)));
+  }
+});
 
 it.each(["canvas.story", "storyPublication"])("localizes %s in Vietnamese and preserves interpolation", (namespace) => {
   const en = loadLocale("en");
