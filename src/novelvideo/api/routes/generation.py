@@ -25,7 +25,6 @@ from novelvideo.api.deps import (
 )
 from novelvideo.api.schemas import (
     GlobalOptimizeRequest,
-    VideoGenerateRequest,
     VideoBackendOption,
     VideoComposeRequest,
     TTSGenerateRequest,
@@ -93,6 +92,7 @@ from novelvideo.services.background_anchor_service import (
     select_background_anchor,
 )
 from novelvideo.utils.path_resolver import PathResolver, compute_identity_path, compute_portrait_path
+from novelvideo.video_backend import DEFAULT_MAINLINE_VIDEO_BACKEND, is_retired_video_backend
 
 
 _TemporaryFileResponse = TemporaryFileResponse
@@ -741,24 +741,6 @@ async def _build_character_map(
         sketch_colors=_sc,
         use_detected_identities=use_detected_identities,
     )
-
-
-def _validate_seedance_pro_dialogue_only(beats: list[dict], video_backend: str) -> str | None:
-    """Seedance 1.5 有声仅允许 dialogue beat。"""
-    if video_backend not in {"seedance_pro", "newapi_seedance-1.5-pro"}:
-        return None
-
-    non_dialogue = [
-        int(beat.get("beat_number", 0))
-        for beat in beats
-        if beat.get("audio_type", "narration") != "dialogue"
-    ]
-    if not non_dialogue:
-        return None
-
-    preview = "、".join(str(num) for num in non_dialogue[:8])
-    suffix = " 等" if len(non_dialogue) > 8 else ""
-    return f"Seedance 1.5 有声只允许用于 dialogue beat；当前包含非 dialogue Beat: {preview}{suffix}"
 
 
 def _is_seedance2_backend(video_backend: str | None) -> bool:
@@ -1683,12 +1665,11 @@ def _api_video_backend_options() -> list[VideoBackendOption]:
         for value, label in newapi_video_backend_options(
             include_seedance2_variants=True
         ).items()
-        if value not in hidden_mainline_backends
+        if value not in hidden_mainline_backends and not is_retired_video_backend(value)
     }
     duration_bounds = NewApiVideoGenerator._parse_duration_bounds_config(
         NEWAPI_VIDEO_DURATION_BOUNDS
     )
-    default_backend = VideoGenerateRequest().video_backend
     backend_options: list[VideoBackendOption] = []
     for value, label in options.items():
         model = parse_newapi_video_backend(value)
@@ -1705,11 +1686,10 @@ def _api_video_backend_options() -> list[VideoBackendOption]:
             VideoBackendOption(
                 value=value,
                 label=label,
-                is_default=value == default_backend,
+                is_default=value == DEFAULT_MAINLINE_VIDEO_BACKEND,
                 is_seedance2=_is_seedance2_backend(value),
                 is_happyhorse=is_happyhorse,
                 is_grok_video=is_grok_video,
-                dialogue_only=value in {"seedance_pro", "newapi_seedance-1.5-pro"},
                 min_duration=bounds[0] if bounds else None,
                 max_duration=bounds[1] if bounds else None,
                 resolution_options=(
@@ -4759,6 +4739,11 @@ async def generate_single_video(
 ):
     """单 Beat 视频再生。"""
     resolved = await _resolve_generation_project(project, user, required_role="editor")
+    from novelvideo.config import resolve_newapi_video_backend_alias
+
+    video_backend = resolve_newapi_video_backend_alias(body.video_backend)
+    if is_retired_video_backend(video_backend):
+        return {"ok": False, "error": "所选视频模型已下线，请选择其他视频模型。"}
     ctx = resolved.ctx
     username = resolved.username
     project_name = resolved.project_name
@@ -4774,12 +4759,9 @@ async def generate_single_video(
     beat = next((b for b in beats if b.get("beat_number") == beat_num), None)
     if not beat:
         return {"ok": False, "error": f"Beat {beat_num} not found"}
-    backend_error = _validate_seedance_pro_dialogue_only([beat], body.video_backend)
-    if backend_error:
-        return {"ok": False, "error": backend_error}
-    is_seedance2 = _is_seedance2_backend(body.video_backend)
-    is_happyhorse = _is_happyhorse_backend(body.video_backend)
-    is_grok_video = _is_grok_video_backend(body.video_backend)
+    is_seedance2 = _is_seedance2_backend(video_backend)
+    is_happyhorse = _is_happyhorse_backend(video_backend)
+    is_grok_video = _is_grok_video_backend(video_backend)
 
     # 首帧路径
     from novelvideo.utils.path_resolver import PathResolver
@@ -4844,7 +4826,7 @@ async def generate_single_video(
                 beat=beat,
                 all_beats=beats,
                 index=beat_index,
-                video_backend=body.video_backend,
+                video_backend=video_backend,
                 resolution=body.resolution if "resolution" in body.model_fields_set else None,
                 ratio=body.ratio if "ratio" in body.model_fields_set else None,
                 prop_menu=prop_menu,
@@ -4973,13 +4955,13 @@ async def generate_single_video(
             video_duration = max(float(video_duration), float(math.ceil(float(audio_duration))))
         if "resolution" in body.model_fields_set:
             single_video_resolution = _seedance2_resolution_for_backend(
-                body.video_backend, body.resolution
+                video_backend, body.resolution
             )
 
     from novelvideo.video_duration import normalize_video_duration_for_backend
 
     video_duration = normalize_video_duration_for_backend(
-        body.video_backend,
+        video_backend,
         video_duration,
     )
 
@@ -4989,7 +4971,7 @@ async def generate_single_video(
         "video_mode": video_mode,
         "prompt": prompt,
         "video_duration": video_duration,
-        "video_backend": body.video_backend,
+        "video_backend": video_backend,
         "use_director_render": bool(body.use_director_render),
         "last_frame_path": last_frame_path,
         "cognee_store_project": f"{username}/{project_name}",
@@ -5008,11 +4990,11 @@ async def generate_single_video(
         config["references"] = grok_video_references
 
     billing_resolution = single_video_resolution or _seedance2_resolution_for_backend(
-        body.video_backend,
+        video_backend,
         body.resolution,
     )
     billing = _single_video_billing_metadata(
-        body.video_backend,
+        video_backend,
         resolution=billing_resolution,
         duration=video_duration,
     )

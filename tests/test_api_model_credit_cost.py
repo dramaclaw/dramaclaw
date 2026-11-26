@@ -1231,12 +1231,12 @@ async def test_generation_credit_cost_route_resolves_newapi_video_backend_label(
     from novelvideo.generators.video_generator import newapi_video_backend_options
 
     patch_quote(
-        monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12
+        monkeypatch, model_credits, expected_model="seedance-2.0-fast", cost=12
     )
 
     result = await model_credits.get_generation_credit_cost(
         kind="video_backend",
-        value=newapi_video_backend_options()["newapi_seedance-1.0-pro-fast"],
+        value=newapi_video_backend_options()["newapi_seedance-2.0-fast"],
         user={"user_id": "usr_1"},
     )
 

@@ -25,6 +25,7 @@ import portalocker
 
 from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.freezone.paths import freezone_root
+from novelvideo.video_backend import RETIRED_SEEDANCE_MODELS
 from novelvideo.video_duration import (
     normalize_video_duration_for_backend as normalize_video_duration_for_backend,
     video_duration_bounds_for_backend,
@@ -124,7 +125,6 @@ FREEZONE_NEWAPI_VIDEO_BACKENDS = {
     "newapi_happyhorse-1.0",
 }
 FREEZONE_DISABLED_VIDEO_BACKENDS = {"newapi_grok-video-channel"}
-_RETIRED_VIDEO_NODE_MODELS = {"seedance-1.0-pro", "seedance-1.0-pro-fast", "seedance-1.5-pro"}
 
 
 def get_video_camera_templates() -> list[dict[str, str]]:
@@ -212,7 +212,7 @@ def is_retired_video_node_model(model: str | None) -> bool:
         or LEGACY_FREEZONE_VIDEO_LABEL_ALIASES.get(token)
         or token
     )
-    return _freezone_video_model_from_backend(canonical) in _RETIRED_VIDEO_NODE_MODELS
+    return _freezone_video_model_from_backend(canonical) in RETIRED_SEEDANCE_MODELS
 
 
 def freezone_video_resolution_options(backend: str | None) -> tuple[str, ...]:
