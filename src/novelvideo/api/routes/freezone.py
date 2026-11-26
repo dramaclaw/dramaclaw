@@ -81,6 +81,7 @@ from novelvideo.api.schemas import (
     FreezoneImageVectorizeRequest,
     FreezoneImageAnimateGifRequest,
     CanvasCreateRequest,
+    CanvasLocale,
     CanvasPayload,
     AgentCanvasCommandsRequest,
     AgentCanvasContextRequest,
@@ -16066,7 +16067,7 @@ async def create_canvas(
 @router.get("/projects/{project}/freezone/canvases:agent-view", tags=[TAG_FREEZONE_CANVAS])
 async def get_canvas_agent_view(
     project: str, chat_canvas_id: str | None = None,
-    locale: Literal["zh", "en", "vi", "pt"] | None = None,
+    locale: CanvasLocale | None = None,
     user: dict = Depends(require_project_scope("projects:read")),
 ):
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(

@@ -1,3 +1,5 @@
+import type { Supported } from "@/i18n/languages";
+
 /**
  * 媒体模型目录的类型及其请求形状。镜像后端 `media_model_request_schema.py`：
  * 图片、视频、音频和白模均可在本地目录中管理。
@@ -6,7 +8,7 @@ export const MEDIA_MODEL_CATALOG_TYPES = ["image", "video", "audio", "blockout"]
 
 export type MediaModelCatalogType = (typeof MEDIA_MODEL_CATALOG_TYPES)[number];
 
-export type ModelPickerGuide = Partial<Record<"zh" | "en" | "pt" | "vi", {
+export type ModelPickerGuide = Partial<Record<Supported, {
   summary?: string;
   detail?: string;
   tags?: string[];

@@ -68,7 +68,7 @@ import {
   EMPTY_CATALOG_IMAGE_MODEL,
   useCatalogImageModels,
 } from '@/features/canvas/domain/catalogImageModels';
-import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
+import { pricingLocale, resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import { ModelParamsControls } from '@/features/canvas/ui/ModelParamsControls';
 import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
@@ -790,9 +790,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       lines.push(
         t('pricing.grsaiTier', {
           price: resolvedPriceDisplay.grsaiCreditTier.priceCny.toFixed(2),
-          credits: resolvedPriceDisplay.grsaiCreditTier.credits.toLocaleString(
-            i18n.language.startsWith('zh') ? 'zh-CN' : i18n.language.startsWith('pt') ? 'pt-PT' : i18n.language.startsWith('vi') ? 'vi-VN' : 'en-US'
-          ),
+          credits: resolvedPriceDisplay.grsaiCreditTier.credits.toLocaleString(pricingLocale(i18n.language)),
         })
       );
     }

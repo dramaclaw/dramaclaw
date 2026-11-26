@@ -17,7 +17,10 @@ from novelvideo.media_model_request_schema import (
 
 @pytest.mark.parametrize("kind", ["image", "video"])
 def test_picker_guide_is_optional_localized_catalog_metadata(kind):
-    config = {"pickerGuide": {"zh": {"summary": "分镜试稿", "detail": "先确定构图。", "tags": ["分镜"]}}}
+    config = {"pickerGuide": {
+        "zh": {"summary": "分镜试稿", "detail": "先确定构图。", "tags": ["分镜"]},
+        "my": {"summary": "ပုံကြမ်း", "detail": "ဖွဲ့စည်းပုံကို အရင်သတ်မှတ်ပါ"},
+    }}
     assert validate_media_model_catalog_config(config, kind) == config
     assert validate_media_model_catalog_config({}, kind) == {}
 

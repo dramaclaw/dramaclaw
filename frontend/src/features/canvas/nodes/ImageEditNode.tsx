@@ -82,7 +82,7 @@ import {
   useCatalogImageModels,
 } from '@/features/canvas/domain/catalogImageModels';
 import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
-import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
+import { pricingLocale, resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import {
   NODE_CONTROL_CHIP_CLASS,
   NODE_CONTROL_ICON_CLASS,
@@ -511,9 +511,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       lines.push(
         t('pricing.grsaiTier', {
           price: resolvedPriceDisplay.grsaiCreditTier.priceCny.toFixed(2),
-          credits: resolvedPriceDisplay.grsaiCreditTier.credits.toLocaleString(
-            i18n.language.startsWith('zh') ? 'zh-CN' : i18n.language.startsWith('pt') ? 'pt-PT' : i18n.language.startsWith('vi') ? 'vi-VN' : 'en-US'
-          ),
+          credits: resolvedPriceDisplay.grsaiCreditTier.credits.toLocaleString(pricingLocale(i18n.language)),
         })
       );
     }
