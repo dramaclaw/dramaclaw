@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
+import novelvideo.model_gateway_settings as gateway_settings
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.schemas import FreezoneImageToBlockoutRequest
 from novelvideo.project_context import ProjectContext
@@ -67,7 +68,13 @@ def route_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         "get_task_backend",
         lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
     )
-    monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
+    monkeypatch.setattr(
+        gateway_settings,
+        "get_effective_llm_config",
+        lambda: SimpleNamespace(is_brainclaw=False),
+    )
 
     def write(name: str) -> str:
         path = project_dir / "freezone" / "_uploads" / name
@@ -80,8 +87,11 @@ def route_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     )
 
 
-async def test_route_enqueues_the_job_with_feature_billing(route_env, monkeypatch):
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+async def test_ee_route_enqueues_the_default_model_with_feature_billing(
+    route_env, blockout_catalog, monkeypatch
+):
+    monkeypatch.setenv("ST_EDITION", "ee")
+    blockout_catalog([_blockout_entry("DC-previz-blockout-LLM")], authoritative=True)
     source_url = route_env.write("reference.png")
 
     result = await freezone_routes.freezone_image_to_blockout(
@@ -114,13 +124,13 @@ async def test_route_enqueues_the_job_with_feature_billing(route_env, monkeypatc
         "render_check": True,
         "canvas_id": "canvas_1",
         "node_id": "node_1",
-        "model": "blockout-model",
+        "model": "DC-previz-blockout-LLM",
         "billing": {
             "feature_key": "freezone.image_to_blockout",
             "operation": "image_to_blockout",
-            "model": "blockout-model",
+            "model": "DC-previz-blockout-LLM",
             "pricing_kind": "text",
-            "pricing_model": "blockout-model",
+            "pricing_model": "DC-previz-blockout-LLM",
             "pricing_params": {},
             "pricing_quantity": 1,
             "pricing_metrics": {"call_count": 1, "item_count": 1},
@@ -232,14 +242,13 @@ def blockout_catalog(monkeypatch):
 
 
 async def test_route_lists_the_catalog_with_the_default_model_first(
-    route_env, blockout_catalog, monkeypatch
+    route_env, blockout_catalog
 ):
-    """下拉框数据源：目录里的白模模型，设置页的默认模型排第一。"""
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    """下拉框数据源：目录里的白模模型，默认路由对应的模型排第一。"""
     seen = blockout_catalog(
         [
             _blockout_entry("candidate-b", sortOrder=1),
-            _blockout_entry("blockout-model", label="默认白模", sortOrder=2),
+            _blockout_entry("DC-previz-blockout-LLM", label="默认白模", sortOrder=2),
             _blockout_entry("candidate-c", sortOrder=3),
         ]
     )
@@ -251,7 +260,7 @@ async def test_route_lists_the_catalog_with_the_default_model_first(
     assert seen == ["blockout"]
     assert result["ok"] is True
     assert [row["id"] for row in result["data"]] == [
-        "blockout-model",
+        "DC-previz-blockout-LLM",
         "candidate-b",
         "candidate-c",
     ]
@@ -259,29 +268,28 @@ async def test_route_lists_the_catalog_with_the_default_model_first(
 
 
 async def test_ce_route_adds_the_default_model_when_the_catalog_lacks_it(
-    route_env, blockout_catalog, monkeypatch
+    route_env, blockout_catalog
 ):
     """CE 自己管模型表：目录里没配默认模型，也要能用默认模型生成。"""
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
     blockout_catalog([_blockout_entry("candidate-b")])
 
     result = await freezone_routes.freezone_blockout_models(
         project="58", user={"username": "admin"}
     )
 
-    assert [row["id"] for row in result["data"]] == ["blockout-model", "candidate-b"]
+    assert [row["id"] for row in result["data"]] == ["DC-previz-blockout-LLM", "candidate-b"]
     first = result["data"][0]
     assert first["providerId"] == first["provider"] == "newapi"
-    assert first["apiModel"] == first["api_model"] == "blockout-model"
-    assert first["gatewayModel"] == "blockout-model"
-    assert first["label"] == "blockout-model"
+    assert first["apiModel"] == first["api_model"] == "DC-previz-blockout-LLM"
+    assert first["gatewayModel"] == "DC-previz-blockout-LLM"
+    assert first["label"] == "DC-previz-blockout-LLM"
 
 
 async def test_ee_route_lists_only_what_the_catalog_allows(
     route_env, blockout_catalog, monkeypatch
 ):
     """EE 的目录是权威的：组织没开放默认模型，就不替它补上。"""
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    monkeypatch.setenv("ST_EDITION", "ee")
     blockout_catalog([_blockout_entry("candidate-b")], authoritative=True)
 
     result = await freezone_routes.freezone_blockout_models(
@@ -313,7 +321,7 @@ async def test_route_refuses_a_model_that_is_not_in_the_catalog(
 async def test_ee_route_refuses_the_default_model_when_the_catalog_hides_it(
     route_env, blockout_catalog, monkeypatch
 ):
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    monkeypatch.setenv("ST_EDITION", "ee")
     blockout_catalog([_blockout_entry("candidate-b")], authoritative=True)
     source_url = route_env.write("reference.png")
 
@@ -346,16 +354,14 @@ async def test_route_names_the_media_type_when_the_catalog_is_empty(
     assert "白模" in caught.value.detail
 
 
-async def test_route_bills_and_runs_the_chosen_models_gateway_name(
+async def test_ee_route_bills_and_runs_an_authorized_explicit_model(
     route_env, blockout_catalog, monkeypatch
 ):
-    """按目录条目的别名选，按它的网关模型名执行和计费。"""
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    """默认模型未开放时，仍可按目录别名显式选模，并使用网关模型名计费。"""
+    monkeypatch.setenv("ST_EDITION", "ee")
     blockout_catalog(
-        [
-            _blockout_entry("blockout-model"),
-            _blockout_entry("Astra", gateway="GPT-6-Astra", aliases=["astra-alias"]),
-        ]
+        [_blockout_entry("Astra", gateway="GPT-6-Astra", aliases=["astra-alias"])],
+        authoritative=True,
     )
     source_url = route_env.write("reference.png")
 
@@ -470,15 +476,14 @@ async def test_job_result_of_a_running_job_says_so(route_env, monkeypatch):
 def test_billing_is_one_unit_per_job_whatever_the_caller_sends(monkeypatch):
     from novelvideo.api.routes import model_credits
 
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
-
+    monkeypatch.setenv("ST_EDITION", "ee")
     assert model_credits._feature_billing_params(
         "freezone.image_to_blockout",
         {"operation": "image_to_blockout", "pricing_quantity": 99},
     ) == {
         "operation": "image_to_blockout",
         "pricing_kind": "text",
-        "pricing_model": "blockout-model",
+        "pricing_model": "DC-previz-blockout-LLM",
         "pricing_params": {},
         "pricing_quantity": 1,
         "pricing_metrics": {"call_count": 1, "item_count": 1},
