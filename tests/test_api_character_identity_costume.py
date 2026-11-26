@@ -91,16 +91,18 @@ def _write_png(path: Path, color: tuple[int, int, int]) -> bytes:
 
 
 @pytest.mark.parametrize(
-    ("identity_age", "portrait_state", "accepted"),
+    ("identity_age", "portrait_task_status", "has_portrait", "accepted"),
     [
-        ("", "missing", False),
-        ("youth", "pending", False),
-        ("", "ready", True),
-        ("elder", "missing", True),
+        ("", None, False, True),
+        ("", "failed", False, True),
+        ("youth", "queued", False, False),
+        ("youth", "running", False, False),
+        ("", "running", True, True),
+        ("elder", "running", False, True),
     ],
 )
-async def test_generate_identity_image_async_requires_ready_character_portrait(
-    tmp_path, monkeypatch, identity_age, portrait_state, accepted
+async def test_generate_identity_image_async_waits_for_active_character_portrait(
+    tmp_path, monkeypatch, identity_age, portrait_task_status, has_portrait, accepted
 ):
     from novelvideo.api.routes import characters
     from novelvideo.utils.path_resolver import canonical_portrait_path
@@ -129,11 +131,22 @@ async def test_generate_identity_image_async_requires_ready_character_portrait(
         characters, "get_task_backend", lambda: SimpleNamespace(enqueue_project_task=enqueue)
     )
 
+    def get_task(ctx, task_type, episode, *, scope):
+        assert ctx.project_id == "proj_demo"
+        assert (task_type, episode, scope) == ("character_portrait", 0, "character:秦:portrait")
+        if portrait_task_status is not None:
+            return SimpleNamespace(status=portrait_task_status)
+        return None
+
+    monkeypatch.setattr(
+        characters, "get_task_manager", lambda: SimpleNamespace(get_task_for_project=get_task)
+    )
+
     portrait = canonical_portrait_path(tmp_path, character.name)
-    if portrait_state == "pending":
-        _write_png(portrait.parent / ".tmp_portrait" / "reference_portrait.png", (0, 0, 0))
-    elif portrait_state == "ready":
+    if has_portrait:
         _write_png(portrait, (0, 0, 0))
+    elif portrait_task_status == "running":
+        _write_png(portrait.parent / ".tmp_portrait" / "reference_portrait.png", (0, 0, 0))
 
     response = await characters.generate_identity_image_async(
         project="demo",
