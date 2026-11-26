@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 
@@ -23,10 +24,12 @@ def test_local_ce_keeps_hermes_out_of_application_venv():
     assert "HERMES_ENV_DIR" not in start_script
     assert 'codex_bin="$(bash "$root_dir/scripts/setup-codex.sh")"' in start_script
     assert 'export CODEX_BIN="$codex_bin"' in start_script
-    assert (
-        'HERMES_PYTHON="${HERMES_PYTHON:-$HERMES_ENV_DIR/bin/python}"' in setup_script
+    assert "git clone" not in setup_script
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/setup-hermes.sh")], capture_output=True, text=True
     )
-    assert 'uv pip install --python "$HERMES_PYTHON"' in setup_script
+    assert result.returncode == 2
+    assert "retired" in result.stderr and "scripts/start-ce.sh" in result.stderr
 
 
 def test_source_startup_docs_configure_codex_runtime():
