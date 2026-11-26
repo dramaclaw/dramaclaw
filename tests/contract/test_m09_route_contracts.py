@@ -76,7 +76,8 @@ def _png_bytes() -> bytes:
 
 
 class _M09Store:
-    def __init__(self):
+    def __init__(self, state_dir: Path):
+        self.state_dir = state_dir
         identity = CharacterIdentity(
             identity_id=_IDENTITY,
             character_name="Hero",
@@ -104,7 +105,7 @@ class _M09Store:
                 "scene_ref": {"scene_id": _SCENE},
                 "detected_identities": [NO_CHARACTER_MARKER],
                 "detected_props": [],
-                "seedance2_config_json": "{}",
+                "seedance2_config_json": '{"final_prompt": "Hero walks through the alley."}',
             },
             {
                 "episode_number": 1,
@@ -226,10 +227,10 @@ def m09_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from novelvideo.generators.video_pool_indexer import add_video_to_pool
     from novelvideo.seedance2_i2v import panel_service
 
-    store = _M09Store()
     project_dir = tmp_path / "output" / _USER / _PROJECT
     state_dir = tmp_path / "state" / _USER / _PROJECT
     runtime_dir = tmp_path / "runtime" / _USER / _PROJECT
+    store = _M09Store(state_dir)
     for path in (project_dir, state_dir, runtime_dir):
         path.mkdir(parents=True, exist_ok=True)
 
@@ -529,10 +530,14 @@ def test_m09_l2_exercises_all_23_endpoint_contracts(m09_client_factory):
 def test_m09_task_backend_responses_are_ce_ee_isomorphic(m09_client_factory, backend: str):
     client, task_backend, _project_dir, _pool_id = m09_client_factory(backend)
 
-    single_video = _assert_ok(
-        client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/beats/1/video", json={})
-    )
-    _assert_task_payload(single_video, backend=backend, task_type="single_video")
+    for request in ({}, {"video_backend": "newapi"}):
+        single_video = _assert_ok(
+            client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/beats/1/video", json=request)
+        )
+        _assert_task_payload(single_video, backend=backend, task_type="single_video")
+        video_payload = task_backend.calls[-1]["payload"]
+        assert video_payload["config"]["video_backend"] == "newapi_seedance-2.0-fast"
+        assert video_payload["billing"]["video_backend"] == "newapi_seedance-2.0-fast"
 
     plan_data = _assert_ok(
         client.post(

@@ -19,14 +19,12 @@ Agent 处理用户编辑请求时，查此文档获取具体字段名、类型�
 | `tts_voice` | string | `longanling_v3`, `zh-CN-XiaoxiaoNeural` 等 | `longanling_v3` |
 | `grid_mode` | string | `3x3` 等 | `3x3` |
 | `grid_model` | string | `nanobanana` | `nanobanana` |
-| `video_backend` | string | `huimeng_seedance-1.0-pro-fast`, `huimeng_seedance-1.5-pro`, `seedance_fast`, `seedance_pro`, `seedance_pro_silent`, `comfyui`, `wan26`, `ltx23` | `huimeng_seedance-1.0-pro-fast` |
+| `video_backend` | string | 见 `GET /projects/{project}/video-backends` | `newapi_seedance-2.0-fast` |
 | `video_resolution` | string | `720x1280`, `1080x1920` | `720x1280` |
 
 `video_backend` 选择规则：
-- `huimeng_seedance-1.0-pro-fast`：默认值；用户没有明确指定其它后端时，逐 beat 视频生成和单 beat 重做都用它。
-- `huimeng_seedance-1.5-pro`：只在用户明确指定 1.5 Pro / 有声 1.5 / Huimeng 1.5 时传，不作为默认值。
+- `newapi_seedance-2.0-fast`：默认值；用户没有明确指定其它后端时，逐 beat 视频生成和单 beat 重做都用它。
 - 已知限制：当前主线没有整集批量视频生成路由；不要把整集拆成多个单 beat 请求来模拟批量内分流。同一轮最多只启动一个 eligible beat 的 `single_video`。
-- `seedance_fast`、`seedance_pro`、`seedance_pro_silent` 是旧兼容值；默认不要推荐旧值。
 
 ## 角色
 
