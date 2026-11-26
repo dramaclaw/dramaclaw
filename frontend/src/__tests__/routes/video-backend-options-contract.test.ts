@@ -31,12 +31,12 @@ describe("video backend options alignment", () => {
     expect(videoPane).toContain("3:2");
   });
 
-  it("defaults to the ST2 canonical video backend instead of legacy comfyui", () => {
+  it("defaults to Seedance 2.0 Fast", () => {
     const beatsRoute = read("src/routes/_app/projects.$project/episodes.$episode/beats.lazy.tsx");
     const videoQueries = read("src/lib/queries/video.ts");
 
     expect(beatsRoute).toContain("DEFAULT_VIDEO_BACKEND");
-    expect(videoQueries).toContain("huimeng_seedance-1.0-pro-fast");
+    expect(videoQueries).toContain('DEFAULT_VIDEO_BACKEND = "newapi_seedance-2.0-fast"');
     expect(videoQueries).not.toContain('videoBackend ?? "comfyui"');
   });
 });

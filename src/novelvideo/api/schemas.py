@@ -11,6 +11,7 @@ from novelvideo.models import SceneRef
 from novelvideo.director_world.blockout.prompts import MAX_DESCRIPTION_CHARS
 from novelvideo.freezone.asset_copy import MAX_SOURCE_URL_LENGTH, MAX_SOURCES_PER_REQUEST
 from novelvideo.freezone.slots import PushTarget
+from novelvideo.video_backend import DEFAULT_MAINLINE_VIDEO_BACKEND
 
 ProjectStatus = Literal["active", "archived", "deleted"]
 ProjectStatusFilter = Literal["all", "active", "archived", "deleted", "visible"]
@@ -230,7 +231,7 @@ class GlobalOptimizeRequest(BaseModel):
 
 class VideoGenerateRequest(BaseModel):
     resolution: str = "720x1280"
-    video_backend: str = "newapi_seedance-1.0-pro-fast"
+    video_backend: str = DEFAULT_MAINLINE_VIDEO_BACKEND
     use_director_render: bool = False
 
 
@@ -354,7 +355,7 @@ class InsertManualShotRequest(BaseModel):
 
 class SingleVideoRequest(BaseModel):
     resolution: str = "720x1280"
-    video_backend: str = "newapi_seedance-1.0-pro-fast"
+    video_backend: str = DEFAULT_MAINLINE_VIDEO_BACKEND
     use_director_render: bool = False
     seedance2_config_json: Optional[str] = None
     mode: Optional[str] = None
