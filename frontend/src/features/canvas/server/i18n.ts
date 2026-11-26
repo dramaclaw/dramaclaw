@@ -5,10 +5,17 @@ import zh from '../../../../public/locales/zh/translation.json';
 import en from '../../../../public/locales/en/translation.json';
 import vi from '../../../../public/locales/vi/translation.json';
 import pt from '../../../../public/locales/pt/translation.json';
+import my from '../../../../public/locales/my/translation.json';
 import { normalize } from '@/i18n/languages';
 import type { CanvasEnvironment } from '../core/environment';
 
-const resources = { zh: { translation: zh }, en: { translation: en }, vi: { translation: vi }, pt: { translation: pt } };
+const resources = {
+  zh: { translation: zh },
+  en: { translation: en },
+  vi: { translation: vi },
+  pt: { translation: pt },
+  my: { translation: my },
+};
 
 export async function initializeWorkerI18n(locale?: string): Promise<void> {
   if (!i18next.isInitialized) {

@@ -24,7 +24,10 @@ vi.mock("@/api/client", () => ({
 }));
 
 it.each([fetchFreezoneImageModels, fetchFreezoneVideoModels])("retains localized model guides and accepts legacy catalog rows", async (load) => {
-  const guide = { zh: { summary: "草图", detail: "先确定构图", tags: ["推荐"] } };
+  const guide = {
+    zh: { summary: "草图", detail: "先确定构图", tags: ["推荐"] },
+    my: { summary: "ပုံကြမ်း", detail: "ဖွဲ့စည်းပုံကို အရင်သတ်မှတ်ပါ", tags: ["အကြံပြု"] },
+  };
   vi.mocked(apiCall).mockResolvedValueOnce([
     { id: "guided", apiModel: "guided", pickerGuide: guide },
     { id: "legacy", apiModel: "legacy" },

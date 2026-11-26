@@ -447,7 +447,8 @@ async def test_legacy_file_without_revision_is_never_overwritten(
     assert creation.events == []
 
 
-def test_http_ignores_forged_creator_and_metadata(creation):
+@pytest.mark.parametrize("locale", ["en", "my"])
+def test_http_ignores_forged_creator_and_metadata(creation, locale):
     _use_creation_pool(creation)
     app = FastAPI()
     app.include_router(routes.router, prefix="/api/v1")
@@ -458,7 +459,7 @@ def test_http_ignores_forged_creator_and_metadata(creation):
             json={
                 "name": "New plan",
                 "request_id": "request-1",
-                "locale": "en",
+                "locale": locale,
                 "creator_username": "mallory",
                 "metadata": {
                     "creator_username": "mallory",
@@ -468,7 +469,15 @@ def test_http_ignores_forged_creator_and_metadata(creation):
                 },
             },
         )
+        agent_view = client.get(
+            "/api/v1/projects/proj/freezone/canvases:agent-view", params={"locale": locale}
+        )
     assert response.status_code == 200, response.text
+    assert agent_view.status_code == 200, agent_view.text
+    assert _plan_wires(creation.pool)[0]["env"]["locale"] == locale
+    assert next(
+        payload for op, payload in creation.pool.calls if op == "describe_canvases"
+    )["env"]["locale"] == locale
     saved = canvas_store.read_canvas(
         creation.root, response.json()["data"]["canvas_id"]
     )

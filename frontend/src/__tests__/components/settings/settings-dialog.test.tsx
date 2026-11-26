@@ -152,6 +152,7 @@ vi.mock("react-i18next", async () => {
         "header.account.languageEnglish": "English",
         "header.account.languageVietnamese": "Tiếng Việt",
         "header.account.languagePortuguese": "Português",
+        "header.account.languageBurmese": "မြန်မာဘာသာ",
         "settings.close": "关闭",
         "settings.navigationLabel": "设置导航",
         "settings.pages.models": "模型配置",
@@ -647,6 +648,9 @@ describe("SettingsDialog pages", () => {
     fireEvent.click(screen.getByRole("button", { name: "Português" }));
     expect(languageMocks.changeLanguage).toHaveBeenCalledWith("pt");
     expect(languageMocks.setLanguage).toHaveBeenCalledWith("pt");
+    fireEvent.click(screen.getByRole("button", { name: "မြန်မာဘာသာ" }));
+    expect(languageMocks.changeLanguage).toHaveBeenCalledWith("my");
+    expect(languageMocks.setLanguage).toHaveBeenCalledWith("my");
     fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     expect(screen.getByText("暂无虾画 Skills")).toBeInTheDocument();
   });

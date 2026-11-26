@@ -9,9 +9,10 @@
  * — otherwise every consumer's test has to stand up the full i18next runtime.
  *
  * Adding a locale: add the tag here, add `locales/<tag>/translation.json`, and
- * add its label key to `LANGUAGE_LABEL_KEYS` in `components/settings/settings-dialog.tsx`.
+ * add its label key to `LANGUAGE_LABEL_KEYS` in the settings dialog, and register
+ * the translation in `features/canvas/server/i18n.ts` for the canvas worker.
  */
-export const SUPPORTED = ["zh", "en", "vi", "pt"] as const;
+export const SUPPORTED = ["zh", "en", "vi", "pt", "my"] as const;
 export type Supported = (typeof SUPPORTED)[number];
 
 export function normalize(lng: string | undefined): Supported {

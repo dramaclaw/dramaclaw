@@ -540,7 +540,8 @@
         "initializeExpired": "Este início de sessão por OTP já não é suficientemente recente. Inicie sessão com um novo código e tente novamente.",
         "error": "Não foi possível alterar a palavra-passe. Tente novamente."
       },
-      "languagePortuguese": "Português"
+      "languagePortuguese": "Português",
+      "languageBurmese": "မြန်မာဘာသာ"
     },
     "pikoHub": {
       "play": "Piko Play",

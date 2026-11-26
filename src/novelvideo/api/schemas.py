@@ -2213,9 +2213,12 @@ class FreezoneStageAssetAcceptedResponse(BaseModel):
     data: FreezoneStageAssetAcceptedData
 
 
+CanvasLocale = Literal["zh", "en", "vi", "pt", "my"]
+
+
 class AgentCanvasCommandsRequest(BaseModel):
     envelopes: list[dict] = Field(min_length=1, max_length=20)
-    locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
+    locale: CanvasLocale | None = None
 
 
 class CanvasConfirmationRequest(BaseModel):
@@ -2248,7 +2251,7 @@ class CanvasCreateOrigin(BaseModel):
 class CanvasCreateRequest(BaseModel):
     name: str = Field(max_length=100)
     request_id: str = Field(min_length=1, max_length=128)
-    locale: Optional[Literal["zh", "en", "vi", "pt"]] = None
+    locale: CanvasLocale | None = None
     origin: Optional[CanvasCreateOrigin] = None
 
 

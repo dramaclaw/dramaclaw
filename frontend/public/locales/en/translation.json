@@ -540,7 +540,8 @@
         "initializeExpired": "This OTP sign-in is no longer recent enough. Sign in with a new code and try again.",
         "error": "Could not change the password. Try again."
       },
-      "languagePortuguese": "Português"
+      "languagePortuguese": "Português",
+      "languageBurmese": "မြန်မာဘာသာ"
     },
     "pikoHub": {
       "play": "Piko Play",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { ModelOption } from './modelOptions';
+import { SUPPORTED } from '@/i18n/languages';
 import type { ModelPickerGuide } from '@/lib/media-model-catalog-types';
 import { readReferenceMediaLimits, type ReferenceMediaLimits } from './referenceMediaLimits';
 export type FreezoneProvider =
@@ -33,7 +34,7 @@ export interface MediaModelRequestSchema {
 function readPickerGuide(raw: unknown): ModelPickerGuide | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const result: ModelPickerGuide = {};
-  for (const locale of ["zh", "en", "pt", "vi"] as const) {
+  for (const locale of SUPPORTED) {
     const item = (raw as Record<string, unknown>)[locale];
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;

@@ -111,7 +111,7 @@ async def dispatch():
 
 
 @pytest.mark.parametrize(
-    "recorded,body_locale,expected", [("en", None, "en"), ("en", "vi", "vi"), (None, None, "zh")],
+    "recorded,body_locale,expected", [("en", None, "en"), ("en", "vi", "vi"), ("en", "my", "my"), (None, None, "zh")],
 )
 async def test_commands_locale_precedence(setup, monkeypatch, recorded, body_locale, expected):
     root, _, _ = setup

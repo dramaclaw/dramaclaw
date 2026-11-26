@@ -493,7 +493,7 @@ def validate_media_model_catalog_config(
     expected_endpoint = media_model_request_endpoint(media_type)
     if "pickerGuide" in config:
         guide = config["pickerGuide"]
-        if not isinstance(guide, dict) or set(guide) - {"zh", "en", "pt", "vi"}:
+        if not isinstance(guide, dict) or set(guide) - {"zh", "en", "pt", "vi", "my"}:
             raise MediaModelSchemaError("pickerGuide must be keyed by supported language")
         for localized in guide.values():
             if not isinstance(localized, dict) or set(localized) - {"summary", "detail", "tags"}:
