@@ -10396,7 +10396,7 @@ async def freezone_blockout_models(
 
 
 async def _blockout_model_catalog(*, requester_user_id: str) -> list[dict[str, Any]]:
-    """白模目录：图片/视频同一套目录的 ``blockout`` 类型，设置页的默认模型排第一。
+    """白模目录：图片/视频同一套目录的 ``blockout`` 类型，默认路由对应的模型排第一。
 
     CE 没有组织策略，目录里缺默认模型时补一条，装好就能生成；EE 的目录是权威的，
     组织没开放默认模型就不替它补上。
