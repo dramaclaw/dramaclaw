@@ -186,6 +186,7 @@ class _SceneHarness:
         returncode: int = 0,
         analysis_returncode: int | None = None,
         analysis_stderr: str = "child failed",
+        analysis_exception: BaseException | None = None,
         write_manifest: bool = True,
     ) -> None:
         import novelvideo.ports as ports
@@ -230,6 +231,8 @@ class _SceneHarness:
                 {"cmd": list(cmd), "env": kwargs.get("env"), "module": module_name}
             )
             if not module_name.endswith("scene_360_builder"):
+                if analysis_exception is not None:
+                    raise analysis_exception
                 child_returncode = (
                     returncode if analysis_returncode is None else analysis_returncode
                 )
@@ -592,6 +595,139 @@ def test_organization_analysis_child_failure_marks_unknown_and_pano_continues(
     assert len(harness.operation_port.unknowns) == 2
     assert harness.operation_port.rejected == []
     assert len(harness.operation_port.completed_refs) == 1
+
+
+def test_analysis_child_local_timeout_marks_unknown_and_pano_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """分析子进程自己的 240s 预算耗尽（任务本身没到期）：与普通分析失败同等对待。
+
+    `run_project_subprocess` 把单次 timeout 与任务 deadline 合成同一个截止点，
+    两者到期都抛 `TaskTimedOut`；只有任务自身到期才该终止全景。
+    """
+
+    from novelvideo.director_world import scene_analysis_gateway
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
+    pair = _master_pair(tmp_path)
+    context = _egress_context(kind="organization")
+    harness = _SceneHarness(
+        monkeypatch, context, analysis_exception=TaskTimedOut(timeout_seconds=240)
+    )
+
+    with caplog.at_level("WARNING"), model_gateway_request_scope(context):
+        result = _run_master_pano(tmp_path, pair)
+
+    assert result["ok"]
+    assert harness.modules_launched() == [
+        "scene_overlap_analyzer",
+        "scene_spatial_contract",
+        "scene_360_builder",
+    ]
+    assert len(harness.operation_port.unknowns) == 2
+    assert harness.operation_port.rejected == []
+    assert len(harness.operation_port.completed_refs) == 1
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "scene overlap analysis timed out for scene-360 after 240s" in messages
+    assert "scene spatial contract timed out for scene-360 after 240s" in messages
+
+
+def test_platform_analysis_child_local_timeout_does_not_block_pano(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """普通项目（无 claim）同样：分析超时只记警告，全景照常出图。"""
+
+    from novelvideo.director_world import scene_analysis_gateway
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
+    pair = _master_pair(tmp_path)
+    harness = _SceneHarness(
+        monkeypatch, None, analysis_exception=TaskTimedOut(timeout_seconds=240)
+    )
+
+    with caplog.at_level("WARNING"):
+        result = _run_master_pano(tmp_path, pair)
+
+    assert result["ok"]
+    assert harness.modules_launched() == [
+        "scene_overlap_analyzer",
+        "scene_spatial_contract",
+        "scene_360_builder",
+    ]
+    assert harness.operation_port.claims == []
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "scene overlap analysis timed out for scene-360 after 240s" in messages
+
+
+@pytest.mark.parametrize("org", [True, False], ids=["organization", "platform"])
+def test_task_deadline_during_analysis_still_stops_the_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, org: bool
+) -> None:
+    """任务自身 deadline 到期时 `TaskTimedOut` 照旧上抛，已交出的 claim 落 unknown。"""
+
+    import time
+
+    from novelvideo.director_world import scene_analysis_gateway
+    from novelvideo.task_backend.cancel import TaskTimedOut
+    from novelvideo.task_backend.subprocesses import project_task_subprocess_context
+
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
+    pair = _master_pair(tmp_path)
+    context = _egress_context(kind="organization") if org else None
+    harness = _SceneHarness(
+        monkeypatch, context, analysis_exception=TaskTimedOut(timeout_seconds=600)
+    )
+
+    with (
+        project_task_subprocess_context(
+            project_id="project",
+            task_type="scene_360",
+            episode=0,
+            task_id="task-360",
+            deadline_monotonic=time.monotonic() - 1,
+            timeout_seconds=600,
+        ),
+        model_gateway_request_scope(context),
+        pytest.raises(TaskTimedOut),
+    ):
+        _run_master_pano(tmp_path, pair)
+
+    assert harness.modules_launched() == ["scene_overlap_analyzer"]
+    assert len(harness.operation_port.unknowns) == (1 if org else 0)
+
+
+def test_task_cancel_during_analysis_still_stops_the_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """真正的任务取消照旧上抛，已交出的 claim 落 unknown。"""
+
+    from novelvideo.director_world import scene_analysis_gateway
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    monkeypatch.setattr(
+        scene_analysis_gateway, "scene_analysis_gateway_configured", lambda: True
+    )
+    pair = _master_pair(tmp_path)
+    context = _egress_context(kind="organization")
+    harness = _SceneHarness(monkeypatch, context, analysis_exception=TaskCancelled())
+
+    with model_gateway_request_scope(context), pytest.raises(TaskCancelled):
+        _run_master_pano(tmp_path, pair)
+
+    assert harness.modules_launched() == ["scene_overlap_analyzer"]
+    assert len(harness.operation_port.unknowns) == 1
 
 
 ANALYSIS_SECRET = "sk-analysis-secret-0123456789abcdef"

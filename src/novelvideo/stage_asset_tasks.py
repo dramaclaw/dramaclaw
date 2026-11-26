@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1240,6 +1241,9 @@ def _summarize_child_failure(
     return f"{cause} | tail: {tail}"
 
 
+SCENE_REFERENCE_ANALYSIS_TIMEOUT_SECONDS = 240
+
+
 def _run_scene_reference_analysis(
     cmd: list[str],
     *,
@@ -1328,11 +1332,31 @@ def _run_scene_reference_analysis(
             env=child_env,
             capture_output=True,
             text=True,
-            timeout=240,
+            timeout=SCENE_REFERENCE_ANALYSIS_TIMEOUT_SECONDS,
         )
-    except (TaskCancelled, TaskTimedOut):
+    except TaskCancelled:
         abandon()
         raise
+    except TaskTimedOut:
+        abandon()
+        # run_project_subprocess folds this call's timeout into the task deadline,
+        # so TaskTimedOut alone does not say whose budget ran out. Only the task's
+        # own deadline stops the task; the child's budget is an analysis failure.
+        from novelvideo.task_backend.subprocesses import (
+            _deadline_for,
+            _scope_from_envelope,
+        )
+
+        task_deadline = _deadline_for(_scope_from_envelope(None), None)
+        if task_deadline is not None and time.monotonic() >= task_deadline:
+            raise
+        logger.warning(
+            "%s timed out for %s after %ss; the panorama continues without it",
+            label,
+            scene_id,
+            SCENE_REFERENCE_ANALYSIS_TIMEOUT_SECONDS,
+        )
+        return
     except Exception as exc:
         abandon()
         logger.warning("%s failed for %s: %s", label, scene_id, exc)
