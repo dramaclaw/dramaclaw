@@ -1,23 +1,11 @@
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.m02
-
-
-def _reset_port_modules():
-    import novelvideo.ports as ports
-    import novelvideo.ports.local as local_ports
-    import novelvideo.ports.registry as registry
-
-    registry = importlib.reload(registry)
-    ports = importlib.reload(ports)
-    local_ports = importlib.reload(local_ports)
-    return registry, ports, local_ports
 
 
 def _patch_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -42,35 +30,40 @@ def _patch_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(project_context, "resolve_worker_id", lambda: "node_local")
 
 
-def test_ce_project_create_list_detail_and_project_context_contract(
+@pytest.fixture
+def project_client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    registry, _, _ = _reset_port_modules()
+):
+    from novelvideo.ports import registry
+    from novelvideo.ports.local import project as local_project
+
+    monkeypatch.setattr(registry, "_PORTS", {})
+    monkeypatch.setattr(registry, "_BOOTSTRAPPED", False)
     _patch_roots(monkeypatch, tmp_path)
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
+    monkeypatch.delenv("DRAMACLAW_LOCAL_AGENT_TRUST", raising=False)
     monkeypatch.setenv("ST_EDITION", "ce")
     monkeypatch.setenv("ST_LOCAL_USERNAME", "alice")
-
-    from novelvideo.ports.local import project as local_project
 
     monkeypatch.setattr(local_project, "resolve_worker_id", lambda: "node_local", raising=False)
     registry.ensure_bootstrap()
 
-    from novelvideo.api import auth as api_auth
     from novelvideo.api.app import create_app
 
     app = create_app()
-    app.dependency_overrides[api_auth.get_api_user] = lambda: {
-        "id": "local",
-        "user_id": "local",
-        "username": "alice",
-        "role": "owner",
-    }
     app.router.on_startup.clear()
     app.router.on_shutdown.clear()
+    return TestClient(app), registry
 
-    with TestClient(app) as client:
+
+def test_ce_project_create_list_detail_and_project_context_contract(
+    tmp_path: Path,
+    project_client,
+) -> None:
+    client, _ = project_client
+
+    with client:
         created = client.post("/api/v1/projects", json={"name": "demo"})
         assert created.status_code == 200
         body = created.json()
@@ -119,3 +112,44 @@ def test_ce_project_create_list_detail_and_project_context_contract(
     payload = tmp_path / "state" / "alice" / "demo" / "project.json"
     assert not payload.exists()
     assert (tmp_path / "state" / "local" / "projects.db").exists()
+
+
+@pytest.mark.parametrize(
+    "agent_session,allowed_projects,expected_ids",
+    [
+        (True, ("01ARZ3NDEKTSV4RRFFQ69G5FAV",), {"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+        (True, (), {"01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAW"}),
+        (False, (), {"01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAW"}),
+    ],
+    ids=["restricted-agent", "unrestricted-agent", "browser"],
+)
+def test_list_projects_respects_agent_session_allowlist(
+    project_client, monkeypatch, agent_session, allowed_projects, expected_ids
+) -> None:
+    from novelvideo.ports.auth_contract import AgentAuthenticatedUser
+    from novelvideo.ports.local import project as local_project
+
+    client, registry = project_client
+    project_ids = iter(("01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAW"))
+    monkeypatch.setattr(local_project, "ULID", lambda: next(project_ids))
+
+    async def verify_agent_session(_token):
+        return AgentAuthenticatedUser(
+            id="local", username="alice", role="owner", allowed_projects=allowed_projects
+        ).to_legacy_dict()
+
+    monkeypatch.setattr(
+        registry.get_port("auth_session"), "verify_agent_session", verify_agent_session
+    )
+    headers = (
+        {"Authorization": "Bearer example"} if agent_session else {"Cookie": "st_session=browser"}
+    )
+
+    with client:
+        for name in ("alpha", "beta"):
+            created = client.post("/api/v1/projects", json={"name": name})
+            assert created.status_code == 200, created.text
+
+        listed = client.get("/api/v1/projects", headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert {project["id"] for project in listed.json()["data"]} == expected_ids

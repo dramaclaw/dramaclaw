@@ -243,8 +243,8 @@ def is_session_failure(result: Any) -> bool:
 
 
 def _failure_guidance(status: int | None) -> dict[str, Any]:
-    """Say who can fix a failed exchange: 401/403 need a new key, anything else a retry."""
-    if status in {401, 403}:
+    """Give retry and user guidance for an unsuccessful agent key exchange."""
+    if status == 401:
         return {
             "status": "rejected", "reason": "agent_key_rejected",
             "retryable": False, "next_action": "tell_user",
@@ -256,6 +256,23 @@ def _failure_guidance(status: int | None) -> dict[str, Any]:
             "agent_instruction": (
                 "Do not retry with the same key. Tell the user the agent key was rejected "
                 "and that a new agent key must be configured."
+            ),
+        }
+    if status == 403:
+        return {
+            "status": "rejected", "reason": "agent_key_project_forbidden",
+            "retryable": False, "next_action": "tell_user",
+            "message": (
+                "The agent key is valid but cannot be used on this project (HTTP 403). "
+                "You can switch to a project the key can access, or ask the key owner "
+                "to check that their account has access to this project and that the key "
+                "includes it."
+            ),
+            "agent_instruction": (
+                "Do not retry with the same key for this project. Tell the user the agent "
+                "key cannot be used on this project and that they can switch to a project "
+                "the key can access, or ask the key owner to check that their account has "
+                "access to this project and that the key includes it."
             ),
         }
     received = f"HTTP {status}" if status is not None else "no response"

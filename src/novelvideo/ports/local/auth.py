@@ -58,6 +58,8 @@ class LocalAuthSession:
             exp = data.pop("exp")
             expired = exp <= self._clock()
             data["scopes"] = tuple(data["scopes"])
+            if "allowed_projects" in data:
+                data["allowed_projects"] = tuple(data["allowed_projects"])
             session = AgentAuthenticatedUser(**data)
         except (OSError, ValueError, TypeError, KeyError):
             raise AuthError(AuthFailureReason.INVALID, "agent session not found") from None

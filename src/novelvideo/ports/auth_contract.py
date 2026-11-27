@@ -68,6 +68,8 @@ class AgentAuthenticatedUser(AuthenticatedUser):
     # Set only by the auth session port for external agent key exchanges;
     # never taken from client input.
     external_agent_key_id: Optional[str] = None
+    # Set only by the auth session port. An empty tuple adds no restriction.
+    allowed_projects: tuple[str, ...] = ()
 
     def to_legacy_dict(self) -> Dict[str, Any]:
         data = super().to_legacy_dict()
@@ -85,6 +87,8 @@ class AgentAuthenticatedUser(AuthenticatedUser):
         )
         if isinstance(self.external_agent_key_id, str) and self.external_agent_key_id.strip():
             data["external_agent_key_id"] = self.external_agent_key_id.strip()
+        if self.allowed_projects:
+            data["allowed_projects"] = list(self.allowed_projects)
         return data
 
 
