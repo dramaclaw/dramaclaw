@@ -9,6 +9,7 @@ import random
 from threading import Event, Lock, Thread, current_thread, main_thread
 import time
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 from urllib.request import OpenerDirector
 
 import httpx
@@ -16,7 +17,8 @@ from mcp import types
 import pytest
 from starlette.applications import Starlette
 
-from novelvideo.ports.auth_contract import AuthFailureReason
+from novelvideo.ports.auth_contract import AuthError, AuthFailureReason
+from novelvideo.ports.project import ProjectRecord
 from support.remote_mcp_api import (
     FAKE_TOKEN,
     KEY,
@@ -497,6 +499,123 @@ def test_project_the_key_may_not_use_is_forbidden(monkeypatch, fake_api):
                 assert body["code"] == "agent_key_project_forbidden"
                 assert "project" in body["error"].lower()
                 assert_secret_free(response.text)
+
+    asyncio.run(scenario())
+
+
+def assert_deleted_project_refusal(response):
+    assert response.status_code == 409, response.text
+    from novelvideo.ports.auth_contract import AGENT_KEY_PROJECT_DELETED_MESSAGE
+
+    assert response.json() == {
+        "error": "Agent key project has been deleted",
+        "code": "agent_key_project_deleted",
+        "detail": AGENT_KEY_PROJECT_DELETED_MESSAGE,
+    }
+
+
+@pytest.fixture
+def project_record(monkeypatch, tmp_path):
+    from novelvideo.ports import registry
+
+    state = SimpleNamespace(status="active")
+
+    async def get_project(project_id):
+        assert project_id == "project-a"
+        return ProjectRecord(
+            id=project_id,
+            owner_type="user",
+            owner_id="local",
+            owner_username="alice",
+            name="demo",
+            home_node_id="local",
+            output_dir=str(tmp_path / "output"),
+            state_dir=str(tmp_path / "state"),
+            runtime_dir=str(tmp_path / "runtime"),
+            status=state.status,
+        )
+
+    monkeypatch.setitem(
+        registry._PORTS, "project_registry", SimpleNamespace(get_project=get_project)
+    )
+    return state
+
+
+@pytest.mark.parametrize("mode", ["workflows", "tools"])
+def test_project_exchange_refuses_deleted_project_before_serving_mcp(monkeypatch, fake_api, mode):
+    from novelvideo.api import remote_mcp
+
+    exchange = AsyncMock(side_effect=AuthError(AuthFailureReason.PROJECT_DELETED))
+    monkeypatch.setattr(fake_api.port, "exchange_agent_key", exchange)
+    server = Mock()
+    monkeypatch.setattr(remote_mcp, "_server", server)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post(
+                f"/mcp/{mode}/projects/project-a", json=rpc("tools/list"), headers=bearer(KEY_A),
+            )
+            server.assert_not_called()
+            exchange.assert_awaited_once()
+            assert fake_api.port.checks == 1
+            assert_deleted_project_refusal(response)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["deleted", "archived"])
+def test_cached_project_session_checks_current_project_status(
+    monkeypatch, fake_api, project_record, status
+):
+    from novelvideo.api import remote_mcp
+
+    identity_tools(monkeypatch)
+    server = Mock(wraps=remote_mcp._server)
+    monkeypatch.setattr(remote_mcp, "_server", server)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            first = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_A))
+            assert first.status_code == 200, first.text
+            server.reset_mock()
+            project_record.status = status
+
+            response = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_A))
+
+            assert fake_api.port.checks == 2
+            assert fake_api.port.exchanges == [{"kind": "project", "id": "project-a"}]
+            if status == "deleted":
+                assert_deleted_project_refusal(response)
+                server.assert_not_called()
+            else:
+                assert response.status_code == 200, response.text
+                assert response.json()["result"]["structuredContent"]["ok"] is True
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("reason,status,code", [
+    (AuthFailureReason.REVOKED, 401, "agent_key_rejected"),
+    (AuthFailureReason.FORBIDDEN, 403, "agent_key_project_forbidden"),
+])
+def test_key_check_refusal_takes_precedence_over_cached_project_deletion(
+    monkeypatch, fake_api, project_record, reason, status, code
+):
+    identity_tools(monkeypatch)
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            first = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_A))
+            assert first.status_code == 200, first.text
+            project_record.status = "deleted"
+            fake_api.port.refusals[KEY_A] = reason
+
+            response = await client.post(PROJECT_PATH, json=call("whoami"), headers=bearer(KEY_A))
+
+            assert response.status_code == status, response.text
+            assert response.json()["code"] == code
+            assert fake_api.port.checks == 2
+            assert fake_api.port.exchanges == [{"kind": "project", "id": "project-a"}]
 
     asyncio.run(scenario())
 
@@ -1008,26 +1127,36 @@ def test_requests_being_checked_count_against_the_process_limit(monkeypatch, fak
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["rejected", "forbidden", "unavailable", "insecure"])
+@pytest.mark.parametrize(
+    "failure", ["rejected", "forbidden", "deleted", "unavailable", "insecure"],
+)
 def test_a_request_refused_before_it_runs_gives_its_place_back(
     monkeypatch, fake_api, failure,
 ):
     holding_tools(monkeypatch)
     limits(monkeypatch, total=1, per_key=1)
     port = fake_api.port
-    expected = {"rejected": 401, "forbidden": 403, "unavailable": 503, "insecure": 503}[failure]
+    expected = {
+        "rejected": 401, "forbidden": 403, "deleted": 409, "unavailable": 503, "insecure": 503,
+    }[failure]
+    exchange_agent_key = port.exchange_agent_key
 
     def refuse():
         if failure == "rejected":
             port.refusals[KEY_A] = AuthFailureReason.REVOKED
         elif failure == "forbidden":
             port.forbidden.add((KEY_A, "project-a"))
+        elif failure == "deleted":
+            exchange = AsyncMock(side_effect=AuthError(AuthFailureReason.PROJECT_DELETED))
+            monkeypatch.setattr(port, "exchange_agent_key", exchange)
         elif failure == "unavailable":
             port.failure = RuntimeError("key service down")
         else:
             monkeypatch.setenv("DRAMACLAW_API_URL", "http://api.example.test:8780")
 
     def accept():
+        if failure == "deleted":
+            monkeypatch.setattr(port, "exchange_agent_key", exchange_agent_key)
         port.refusals.clear()
         port.forbidden.clear()
         port.failure = None

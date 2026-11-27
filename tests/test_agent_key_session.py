@@ -766,6 +766,52 @@ def test_exchange_401_guidance_is_unchanged():
     }
 
 
+@pytest.mark.parametrize("nested", [True, False], ids=["nested-code", "top-level-code"])
+def test_exchange_deleted_project_guides_user_to_restore_it(plugin, api, monkeypatch, nested):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    api.exchange_status = 409
+    server_message = "Untrusted exchange response text"
+    detail = {"code": "agent_key_project_deleted", "message": server_message}
+    monkeypatch.setattr(api, "error_body", lambda _: {"detail": detail} if nested else detail)
+
+    result = request_result(plugin)
+
+    assert len(api.exchanges) == 1
+    assert api.business == []
+    assert result["status_code"] == 409
+    assert result["reason"] == "agent_key_project_deleted"
+    assert result["status"] == "rejected"
+    assert result["retryable"] is False
+    assert result["next_action"] == "tell_user"
+    assert server_message not in json.dumps(result)
+    for guidance_field in ("message", "agent_instruction"):
+        guidance = result[guidance_field].lower()
+        for phrase in ("agent key", "valid", "project", "deleted", "restor", "owner", "web app"):
+            assert phrase in guidance
+        assert "new agent key" not in guidance
+        assert "new key" not in guidance
+
+
+@pytest.mark.parametrize(
+    "body", [{"detail": {"code": "another_conflict"}}, {"detail": "conflict"}]
+)
+def test_exchange_conflict_without_deleted_project_code_is_unavailable(
+    plugin, api, monkeypatch, body
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    api.exchange_status = 409
+    monkeypatch.setattr(api, "error_body", lambda _: body)
+
+    result = request_result(plugin)
+
+    assert result["status_code"] == 409
+    assert result["reason"] == "agent_key_service_unavailable"
+    assert result["status"] == "unavailable"
+    assert result["retryable"] is True
+    assert result["next_action"] == "retry"
+    assert api.business == []
+
+
 def test_exchange_network_failure_is_unavailable(plugin, monkeypatch):
     monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
     monkeypatch.setenv("DRAMACLAW_API_URL", "http://127.0.0.1:9")

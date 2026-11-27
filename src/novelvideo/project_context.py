@@ -8,6 +8,11 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from novelvideo.ports import get_project_access, get_project_registry
+from novelvideo.ports.auth_contract import (
+    AGENT_KEY_PROJECT_DELETED_CODE,
+    AGENT_KEY_PROJECT_DELETED_MESSAGE,
+    is_external_agent_key_session,
+)
 from novelvideo.ports.project import (
     Principal,
     ProjectRecord,
@@ -63,6 +68,10 @@ def is_record_home_node(project: ProjectRecord) -> bool:
     if project.home_node_id == "local":
         return True
     return project.home_node_id == resolve_worker_id()
+
+
+def is_project_soft_deleted(record: ProjectRecord) -> bool:
+    return record.status == "deleted" and not record.purged_at
 
 
 async def user_id_from_api_user(user: dict) -> str:
@@ -140,6 +149,15 @@ async def resolve_project_context(
     else:
         role = await access.effective_project_role(record, principals)
     require_role_value(role, required_role)
+    if is_external_agent_key_session(user) and is_project_soft_deleted(record):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": AGENT_KEY_PROJECT_DELETED_CODE,
+                "message": AGENT_KEY_PROJECT_DELETED_MESSAGE,
+                "project_id": record.id,
+            },
+        )
     return _ctx_from_record(
         project=record,
         requester_user_id=requester_user_id,

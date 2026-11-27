@@ -86,6 +86,8 @@ class AuthSessionPort(Protocol):
 
         Raises ``AuthError`` with the reasons of ``check_agent_key``, and with
         ``FORBIDDEN`` when the key is valid but may not be used on
-        ``current_project_id``.
+        ``current_project_id``. Raises ``PROJECT_DELETED`` when the key may be used
+        on the project but it has been deleted, checked after the allow-list and
+        the project role.
         """
         ...

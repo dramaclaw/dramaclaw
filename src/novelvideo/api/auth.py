@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Mapping
 from typing import Callable, Optional
 from urllib.parse import unquote
 
@@ -21,7 +20,11 @@ from fastapi import Depends, HTTPException, Request
 
 from novelvideo.ports import get_auth_port, get_auth_session_port
 from novelvideo.ports import registry as port_registry
-from novelvideo.ports.auth_contract import AuthError, AuthFailureReason
+from novelvideo.ports.auth_contract import (
+    AuthError,
+    AuthFailureReason,
+    is_external_agent_key_session as is_external_agent_key_session,
+)
 
 logger = logging.getLogger("novelvideo.api.auth")
 
@@ -157,18 +160,6 @@ def _reject_unsupported_credential_classes(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unsupported credential")
     if any(name in request.query_params for name in UNSUPPORTED_QUERY_CREDENTIALS):
         raise HTTPException(status_code=401, detail="Unsupported credential")
-
-
-def is_external_agent_key_session(user: object) -> bool:
-    """Recognize agent sessions using only the server-written external key marker.
-
-    The marker comes only from the verified session returned by the auth session
-    port; client input cannot establish an external agent key session.
-    """
-    if not isinstance(user, Mapping) or user.get("credential_kind") != "agent_session":
-        return False
-    key_id = user.get("external_agent_key_id")
-    return isinstance(key_id, str) and bool(key_id.strip())
 
 
 def _enforce_agent_request_boundary(request: Request, user: dict) -> None:

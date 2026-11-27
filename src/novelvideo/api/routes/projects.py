@@ -15,7 +15,7 @@ from anyio.lowlevel import RunVar
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import JSONResponse
 
-from novelvideo.api.auth import get_api_user, require_scope
+from novelvideo.api.auth import get_api_user, is_external_agent_key_session, require_scope
 from novelvideo.api.deps import (
     make_sqlite_store_for_context,
     make_static_url_for_context,
@@ -653,6 +653,8 @@ async def list_projects(user: dict = Depends(get_api_user)):
     principals = await access.resolve_requester_principals(user_id)
     records = await registry.list_accessible_projects([(p.type, p.id) for p in principals])
     records = [record for record in records if not record.purged_at]
+    if is_external_agent_key_session(user):
+        records = [record for record in records if record.status != "deleted"]
     allowed_projects = user.get("allowed_projects")
     if (
         user.get("credential_kind") == "agent_session"

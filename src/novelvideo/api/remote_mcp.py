@@ -13,8 +13,8 @@ on every request, so a revoked key is refused from its next request on. The sess
 key is exchanged for is cached per key and scope and handed to the tools, which call the
 API with it; it is exchanged again only once it is missing or close to expiry. A request
 without a bearer key, or with a key the port rejects, gets 401; a key that may not be
-used on the requested project gets 403; an installation without an agent key service,
-or a check that cannot complete, gets 503.
+used on the requested project gets 403; a key allowed on a soft-deleted project gets
+409. An installation without an agent key service or a check that cannot complete gets 503.
 
 Requests that carry a bearer key are counted from the moment they are admitted, in
 total and per key (by the key's SHA-256 digest), until they end: their key check, key
@@ -46,10 +46,19 @@ from novelvideo.chat import agent_key_session, request_context
 from novelvideo.chat import service as chat_service
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
 from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
-from novelvideo.ports import get_auth_session_port
-from novelvideo.ports.auth_contract import AuthError, AuthFailureReason
+from novelvideo.ports import get_auth_session_port, get_project_registry
+from novelvideo.ports.auth_contract import (
+    AGENT_KEY_PROJECT_DELETED_CODE,
+    AGENT_KEY_PROJECT_DELETED_MESSAGE,
+    AuthError,
+    AuthFailureReason,
+)
 from novelvideo.ports.registry import PortNotRegistered
-from novelvideo.project_context import require_project_home_node, resolve_project_context
+from novelvideo.project_context import (
+    is_project_soft_deleted,
+    require_project_home_node,
+    resolve_project_context,
+)
 
 logger = logging.getLogger("novelvideo.api.remote_mcp")
 
@@ -197,14 +206,24 @@ async def _open_session(port: Any, api_base: str, key: str, project_id: str | No
     agent_key_session.remember_session(api_base, key, project_id, token.value, token.exp)
 
 
+def _deleted_project_refusal() -> JSONResponse:
+    return JSONResponse({
+        "error": "Agent key project has been deleted",
+        "code": AGENT_KEY_PROJECT_DELETED_CODE,
+        "detail": AGENT_KEY_PROJECT_DELETED_MESSAGE,
+    }, status_code=409)
+
+
 def _key_refusal(exc: Exception) -> JSONResponse:
-    """Turn a failed key check or exchange into 401, 403 or 503."""
+    """Turn a failed key check or exchange into 401, 403, 409 or 503."""
     if isinstance(exc, AuthError):
         if exc.reason is AuthFailureReason.FORBIDDEN:
             return JSONResponse({
                 "error": "Agent key is not allowed on this project",
                 "code": "agent_key_project_forbidden",
             }, status_code=403)
+        if exc.reason is AuthFailureReason.PROJECT_DELETED:
+            return _deleted_project_refusal()
         return JSONResponse(
             {"error": "Agent key rejected", "code": "agent_key_rejected"}, status_code=401,
         )
@@ -432,6 +451,14 @@ class RemoteMcpApp:
             await _open_session(port, api_base, key, project_id)
         except Exception as exc:
             return _key_refusal(exc)
+        if project_id is not None:
+            try:
+                record = await get_project_registry().get_project(project_id)
+            except Exception:
+                # Let tool calls get the API's own answer if the record is unavailable.
+                record = None
+            if record is not None and is_project_soft_deleted(record):
+                return _deleted_project_refusal()
         with request_context.scope(_request_values(mode, key, api_base, project_id, canvas_id)):
             if project_id is None:
                 project_id, reason = await asyncio.to_thread(_single_visible_project, api_base)
