@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Callable
 
 from novelvideo import ports
 from novelvideo.ports.registry import PortNotRegistered
 from novelvideo.ports.video_delivery import ArchivedVideoSource, VideoDeliveryError
+from novelvideo.shared import runtime_env
 
 
 async def copy_archived_result(
@@ -20,10 +20,7 @@ async def copy_archived_result(
     try:
         delivery = ports.get_video_result_delivery()
     except PortNotRegistered as exc:
-        if (
-            os.environ.get("ST_MEDIA_ARCHIVE_COPY_ENABLED", "").strip().lower()
-            == "true"
-        ):
+        if runtime_env.media_archive_copy_enabled():
             raise VideoDeliveryError(
                 "MEDIA_DELIVERY_PORT_UNAVAILABLE", retryable=False
             ) from exc

@@ -33,6 +33,10 @@ def is_ce() -> bool:
     return edition() == "ce"
 
 
+def media_archive_copy_enabled() -> bool:
+    return os.environ.get("ST_MEDIA_ARCHIVE_COPY_ENABLED", "").strip().lower() == "true"
+
+
 def is_ce_effective() -> bool:
     return edition() == "ce" and not os.environ.get("ST_CONTROL_PLANE_DSN", "").strip()
 
