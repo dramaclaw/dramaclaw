@@ -11,6 +11,10 @@ name: dependency-review
 
 on:
   push:
+    branches-ignore:
+      - 'gh-readonly-queue/**'
+    tags:
+      - '**'
   pull_request:
 
 permissions:

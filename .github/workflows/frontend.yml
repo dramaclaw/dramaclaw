@@ -6,6 +6,10 @@ name: frontend
 
 on:
   push:
+    branches-ignore:
+      - 'gh-readonly-queue/**'
+    tags:
+      - '**'
     paths:
       - "frontend/**"
       - "tests/fixtures/interactive_story/**"
