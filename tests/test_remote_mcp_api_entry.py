@@ -749,6 +749,84 @@ def test_plugin_tool_calls_the_address_resolved_for_its_request(monkeypatch, fak
     assert "/api/v1/projects" in fake_api.gets
 
 
+def test_single_project_key_can_list_its_project(monkeypatch, fake_api):
+    fake_api.projects = ["project-a"]
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            listed = await client.post(
+                "/mcp/tools", json=rpc("tools/list"), headers=bearer(KEY_A),
+            )
+            called = await client.post(
+                "/mcp/tools", json=call("freezone_list_projects"), headers=bearer(KEY_A),
+            )
+
+        for response in (listed, called):
+            assert response.status_code == 200
+            assert_secret_free(response.text)
+        tools = listed.json()["result"]["tools"]
+        assert "freezone_list_projects" in {tool["name"] for tool in tools}
+        result = called.json()["result"]
+        assert result["isError"] is False
+        payload = json.loads(result["content"][0]["text"])
+        assert payload["ok"] is True
+        assert payload["count"] == 1
+        assert [project["project_id"] for project in payload["projects"]] == ["project-a"]
+        instruction = payload["agent_instruction"].lower()
+        assert "project-a" in instruction
+        assert "bound" in instruction
+        assert "call freezone_list_projects first" not in instruction
+
+    asyncio.run(scenario())
+
+
+def test_project_path_connection_lists_the_projects_of_its_key(monkeypatch, fake_api):
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            listed = await client.post(PROJECT_PATH, json=rpc("tools/list"), headers=bearer(KEY_A))
+            called = await client.post(
+                PROJECT_PATH, json=call("freezone_list_projects"), headers=bearer(KEY_A),
+            )
+
+        assert listed.status_code == 200
+        assert called.status_code == 200
+        tools = listed.json()["result"]["tools"]
+        assert "freezone_list_projects" in {tool["name"] for tool in tools}
+        result = called.json()["result"]
+        assert result["isError"] is False
+        payload = json.loads(result["content"][0]["text"])
+        assert payload["ok"] is True
+        assert [project["project_id"] for project in payload["projects"]] == [
+            "project-a", "project-b",
+        ]
+        instruction = payload["agent_instruction"].lower()
+        assert "project-a" in instruction
+        assert "bound" in instruction
+
+    asyncio.run(scenario())
+
+
+def test_unbound_connection_of_a_multi_project_key_keeps_discovery_guidance(monkeypatch, fake_api):
+    from novelvideo.chat import dramaclaw_mcp
+
+    async def scenario():
+        async with client_for(entry_app(monkeypatch)) as client:
+            response = await client.post(
+                "/mcp/tools", json=call("freezone_list_projects"), headers=bearer(KEY_A),
+            )
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["isError"] is False
+        payload = json.loads(result["content"][0]["text"])
+        assert payload["ok"] is True
+        assert [project["project_id"] for project in payload["projects"]] == [
+            "project-a", "project-b",
+        ]
+        assert payload["agent_instruction"] == dramaclaw_mcp._PROJECT_DISCOVERY_INSTRUCTIONS
+
+    asyncio.run(scenario())
+
+
 def test_workflow_catalog_is_read_from_the_address_resolved_for_its_request(
     monkeypatch, exchange_factory,
 ):

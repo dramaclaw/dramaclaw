@@ -1803,7 +1803,7 @@ def test_external_unbound_freezone_server_instructions(external_unbound_freezone
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outside_gate", [
     "token", "token_file", "external_unset", "external_zero", "no_key",
-    "default_plugin", "bound_project",
+    "default_plugin",
 ])
 async def test_external_freezone_outside_gate_preserves_tools_and_instructions(
     external_unbound_freezone_env, monkeypatch, tmp_path, outside_gate,
@@ -1826,14 +1826,80 @@ async def test_external_freezone_outside_gate_preserves_tools_and_instructions(
         monkeypatch.delenv("DRAMACLAW_CHAT_SURFACE")
         monkeypatch.delenv("DRAMACLAW_AGENT_PROFILE")
         expected = set(dramaclaw_mcp.HOME_TOOL_NAMES)
-    elif outside_gate == "bound_project":
-        monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-        expected = set(dramaclaw_mcp._plugin_tools("freezone"))
 
     names = {tool.name for tool in await dramaclaw_mcp.list_tools()}
     assert names == expected
     assert "freezone_list_projects" not in names
     assert dramaclaw_mcp.SERVER.create_initialization_options().instructions is None
+
+
+@pytest.mark.asyncio
+async def test_external_bound_freezone_lists_project_discovery_tool(
+    external_unbound_freezone_env, monkeypatch,
+):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+
+    tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
+    assert set(tools) == set(dramaclaw_mcp._plugin_tools("freezone")) | {"freezone_list_projects"}
+    tool = tools["freezone_list_projects"]
+    assert tool.annotations is not None
+    assert tool.annotations.readOnlyHint is True
+    description = (tool.description or "").lower()
+    assert "project-a" in description
+    assert "bound" in description
+    assert "first" not in description
+    assert "no project is bound" not in description
+    assert dramaclaw_mcp.SERVER.create_initialization_options().instructions is None
+
+
+@pytest.mark.asyncio
+async def test_external_bound_freezone_project_discovery_result(
+    external_unbound_freezone_env, monkeypatch,
+):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        return {"ok": True, "data": [{"id": "project-a"}, {"id": "project-b"}]}
+
+    monkeypatch.setattr(dramaclaw_mcp._plugin("freezone"), "_request", request)
+    result = await dramaclaw_mcp.call_tool("freezone_list_projects", {})
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload["ok"] is True
+    assert payload["count"] == 2
+    assert [project["project_id"] for project in payload["projects"]] == ["project-a", "project-b"]
+    assert calls == [("GET", "/api/v1/projects")]
+    instruction = payload["agent_instruction"].lower()
+    assert "project-a" in instruction
+    assert "bound" in instruction
+    assert "project_id" in instruction
+    assert "call freezone_list_projects first" not in instruction
+    assert "no project is bound" not in instruction
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["token", "token_file", "external_unset", "no_key"])
+async def test_bound_freezone_without_external_key_has_no_project_discovery(
+    external_unbound_freezone_env, monkeypatch, tmp_path, case,
+):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    if case == "token":
+        monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN", "test-token-placeholder")
+    elif case == "token_file":
+        token_file = tmp_path / "agent-token"
+        token_file.write_text("test-token-placeholder")
+        monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN_FILE", str(token_file))
+    elif case == "external_unset":
+        monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP")
+    elif case == "no_key":
+        monkeypatch.delenv("DRAMACLAW_AGENT_KEY")
+
+    names = {tool.name for tool in await dramaclaw_mcp.list_tools()}
+    assert names == set(dramaclaw_mcp._plugin_tools("freezone"))
+    with pytest.raises(ValueError, match="unknown DramaClaw tool"):
+        await dramaclaw_mcp.call_tool("freezone_list_projects", {})
 
 
 @pytest.mark.asyncio
