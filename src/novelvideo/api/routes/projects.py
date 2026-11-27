@@ -43,6 +43,10 @@ from novelvideo.embedding_models import (
 from novelvideo.knowledge_pipeline import KNOWLEDGE_PIPELINE_KEY, KNOWLEDGE_PIPELINE_STRUCTURED
 from novelvideo.novel_source import has_imported_novel
 from novelvideo.ports import get_project_access, get_project_registry
+from novelvideo.ports.auth_contract import (
+    AGENT_KEY_PROJECT_DELETED_CODE,
+    AGENT_KEY_PROJECT_DELETED_MESSAGE,
+)
 from novelvideo.scene_prerequisites import scene_build_applies
 from novelvideo.ports.project import ProjectRecord, require_role_value
 from novelvideo.security import (
@@ -60,6 +64,7 @@ from novelvideo.project_config import (
 )
 from novelvideo.project_context import (
     ProjectContext,
+    is_project_soft_deleted,
     is_record_home_node,
     require_project_home_node,
     resolve_project_context,
@@ -836,6 +841,18 @@ async def authorize_project_static_media(project: str, user: dict = Depends(get_
     principals = await access.resolve_requester_principals(requester_user_id)
     role = await access.effective_project_role_by_id(project, principals)
     require_role_value(role, "viewer")
+    if is_external_agent_key_session(user):
+        record = await get_project_registry().get_project(project)
+        if record is not None and is_project_soft_deleted(record):
+            # The proxy auth subrequest accepts only 2xx, 401, and 403, so 409 becomes 500.
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": AGENT_KEY_PROJECT_DELETED_CODE,
+                    "message": AGENT_KEY_PROJECT_DELETED_MESSAGE,
+                    "project_id": project,
+                },
+            )
     return Response(status_code=204)
 
 
