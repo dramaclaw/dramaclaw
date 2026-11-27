@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 import hashlib
+from http.client import HTTPException
 import json
 import math
 import importlib.util
@@ -242,7 +243,7 @@ def is_session_failure(result: Any) -> bool:
     )
 
 
-def _failure_guidance(status: int | None) -> dict[str, Any]:
+def _failure_guidance(status: int | None, code: str | None = None) -> dict[str, Any]:
     """Give retry and user guidance for an unsuccessful agent key exchange."""
     if status == 401:
         return {
@@ -275,6 +276,21 @@ def _failure_guidance(status: int | None) -> dict[str, Any]:
                 "access to this project and that the key includes it."
             ),
         }
+    if status == 409 and code == "agent_key_project_deleted":
+        return {
+            "status": "rejected", "reason": code,
+            "retryable": False, "next_action": "tell_user",
+            "message": (
+                "The agent key is valid, but this project has been deleted (HTTP 409). "
+                "Only the project owner can restore it in the web app, after which the "
+                "same agent key works again."
+            ),
+            "agent_instruction": (
+                "Tell the user the agent key is valid but this project has been deleted. "
+                "Ask the project owner to restore it in the web app before retrying, or "
+                "switch to another project the agent key can access."
+            ),
+        }
     received = f"HTTP {status}" if status is not None else "no response"
     return {
         "status": "unavailable", "reason": "agent_key_service_unavailable",
@@ -290,14 +306,28 @@ def _failure_guidance(status: int | None) -> dict[str, Any]:
     }
 
 
-def _exchange_error(status: int, *, unsupported: bool = False) -> dict[str, Any]:
+def _exchange_error(
+    status: int, *, unsupported: bool = False, code: str | None = None,
+) -> dict[str, Any]:
     return {
         "ok": False,
         "status_code": status,
         "code": "agent_key_exchange_unsupported" if unsupported else "agent_key_exchange_failed",
         "error": _UNSUPPORTED if unsupported else "Agent key session exchange failed",
-        **({} if unsupported else _failure_guidance(status)),
+        **({} if unsupported else _failure_guidance(status, code)),
     }
+
+
+def _exchange_conflict_code(exc: HTTPError) -> str | None:
+    try:
+        body = json.loads(exc.read(65536))
+    except (HTTPException, OSError, RecursionError, ValueError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("detail")
+    code = (detail if isinstance(detail, dict) else body).get("code")
+    return code if isinstance(code, str) else None
 
 
 def _exchange(
@@ -321,13 +351,16 @@ def _exchange(
             text = resp.read().decode("utf-8", errors="replace")
     except HTTPError as exc:
         # Never forward the exchange body, which may echo credentials.
-        exc.close()
+        try:
+            code = _exchange_conflict_code(exc) if exc.code == 409 else None
+        finally:
+            exc.close()
         if 300 <= exc.code < 400:
             return {
                 "ok": False, "status_code": exc.code,
                 "code": "agent_key_exchange_redirected", "error": _REDIRECTED,
             }
-        return _exchange_error(exc.code, unsupported=exc.code in {404, 405})
+        return _exchange_error(exc.code, unsupported=exc.code in {404, 405}, code=code)
     except (URLError, OSError) as exc:
         reason = exc.reason if isinstance(exc, URLError) else str(exc)
         return {

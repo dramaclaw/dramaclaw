@@ -122,6 +122,20 @@ class FakeAPI:
                 "debug": {"credentials": secrets}, "extra": secrets}
 
 
+@pytest.fixture(autouse=True)
+def clear_agent_key_session_state():
+    """Clear process-wide sessions keyed by API base, as random ports can recur in a worker."""
+    agent_key_session._state.cache.clear()
+    agent_key_session._state.locks.clear()
+    agent_key_session._state.secrets.clear()
+    try:
+        yield
+    finally:
+        agent_key_session._state.cache.clear()
+        agent_key_session._state.locks.clear()
+        agent_key_session._state.secrets.clear()
+
+
 @pytest.fixture
 def api_factory():
     running = []
@@ -212,6 +226,15 @@ def request_result(plugin, method="GET", path=PROJECT_PATH, **kwargs):
 def assert_success(result):
     assert result.get("ok") is True
     assert result.get("status_code") == 200
+
+
+def test_each_test_starts_without_cached_agent_sessions(plugin, api, monkeypatch):
+    assert agent_key_session._state.cache == {}
+    assert agent_key_session._state.locks == {}
+
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    assert_success(request_result(plugin))
+    assert len(agent_key_session._state.cache) == 1
 
 
 @pytest.mark.parametrize("source", ["DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE"])
@@ -764,6 +787,52 @@ def test_exchange_401_guidance_is_unchanged():
             "and that a new agent key must be configured."
         ),
     }
+
+
+@pytest.mark.parametrize("nested", [True, False], ids=["nested-code", "top-level-code"])
+def test_exchange_deleted_project_guides_user_to_restore_it(plugin, api, monkeypatch, nested):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    api.exchange_status = 409
+    server_message = "Untrusted exchange response text"
+    detail = {"code": "agent_key_project_deleted", "message": server_message}
+    monkeypatch.setattr(api, "error_body", lambda _: {"detail": detail} if nested else detail)
+
+    result = request_result(plugin)
+
+    assert len(api.exchanges) == 1
+    assert api.business == []
+    assert result["status_code"] == 409
+    assert result["reason"] == "agent_key_project_deleted"
+    assert result["status"] == "rejected"
+    assert result["retryable"] is False
+    assert result["next_action"] == "tell_user"
+    assert server_message not in json.dumps(result)
+    for guidance_field in ("message", "agent_instruction"):
+        guidance = result[guidance_field].lower()
+        for phrase in ("agent key", "valid", "project", "deleted", "restor", "owner", "web app"):
+            assert phrase in guidance
+        assert "new agent key" not in guidance
+        assert "new key" not in guidance
+
+
+@pytest.mark.parametrize(
+    "body", [{"detail": {"code": "another_conflict"}}, {"detail": "conflict"}]
+)
+def test_exchange_conflict_without_deleted_project_code_is_unavailable(
+    plugin, api, monkeypatch, body
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    api.exchange_status = 409
+    monkeypatch.setattr(api, "error_body", lambda _: body)
+
+    result = request_result(plugin)
+
+    assert result["status_code"] == 409
+    assert result["reason"] == "agent_key_service_unavailable"
+    assert result["status"] == "unavailable"
+    assert result["retryable"] is True
+    assert result["next_action"] == "retry"
+    assert api.business == []
 
 
 def test_exchange_network_failure_is_unavailable(plugin, monkeypatch):

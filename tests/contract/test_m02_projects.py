@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -153,3 +154,130 @@ def test_list_projects_respects_agent_session_allowlist(
         listed = client.get("/api/v1/projects", headers=headers)
         assert listed.status_code == 200, listed.text
         assert {project["id"] for project in listed.json()["data"]} == expected_ids
+
+
+def _create_project_with_status(client, registry, name, status):
+    created = client.post("/api/v1/projects", json={"name": name})
+    assert created.status_code == 200, created.text
+    project_id = created.json()["data"]["project_id"]
+    updated = asyncio.run(
+        registry.get_port("project_registry").update_project_status(project_id, status)
+    )
+    assert updated is not None and updated.status == status and not updated.purged_at
+    return project_id
+
+
+def _agent_headers(monkeypatch, registry, *, project_id=None, external=True):
+    from novelvideo.ports.auth_contract import AgentAuthenticatedUser
+
+    async def verify_agent_session(_token):
+        return AgentAuthenticatedUser(
+            id="local",
+            username="alice",
+            role="owner",
+            scopes=("projects:read", "projects:write"),
+            current_scope_kind="project" if project_id else "home",
+            current_project_id=project_id,
+            external_agent_key_id="key-1" if external else None,
+        ).to_legacy_dict()
+
+    monkeypatch.setattr(
+        registry.get_port("auth_session"), "verify_agent_session", verify_agent_session
+    )
+    return {"Authorization": "Bearer example"}
+
+
+def test_project_list_hides_deleted_projects_only_from_external_agent_keys(
+    project_client, monkeypatch
+):
+    client, registry = project_client
+    with client:
+        deleted_id = _create_project_with_status(client, registry, "deleted_project", "deleted")
+        archived_id = _create_project_with_status(client, registry, "archived_project", "archived")
+        external_headers = _agent_headers(monkeypatch, registry)
+        browser = client.get("/api/v1/projects", headers={"Cookie": "st_session=browser"})
+        external = client.get("/api/v1/projects", headers=external_headers)
+        in_app_headers = _agent_headers(monkeypatch, registry, external=False)
+        in_app = client.get("/api/v1/projects", headers=in_app_headers)
+
+    assert browser.status_code == 200, browser.text
+    assert external.status_code == 200, external.text
+    assert in_app.status_code == 200, in_app.text
+    visible_projects = {
+        deleted_id: "deleted",
+        archived_id: "archived",
+    }
+    for response in (browser, in_app):
+        assert {
+            record["id"]: record["status"] for record in response.json()["data"]
+        } == visible_projects
+    assert {record["id"]: record["status"] for record in external.json()["data"]} == {
+        archived_id: "archived",
+    }
+
+
+@pytest.mark.parametrize("method", ["GET", "PATCH"], ids=["list-canvases", "update-project"])
+@pytest.mark.parametrize("status,expected_status", [("deleted", 409), ("archived", 200)])
+def test_external_agent_project_routes_respect_project_status(
+    project_client, monkeypatch, method, status, expected_status
+):
+    client, registry = project_client
+    with client:
+        project_id = _create_project_with_status(client, registry, "demo", status)
+        headers = _agent_headers(monkeypatch, registry, project_id=project_id)
+        path = f"/api/v1/projects/{project_id}"
+        if method == "GET":
+            response = client.get(path + "/freezone/canvases", headers=headers)
+        else:
+            response = client.patch(path, headers=headers, json={"aspect_ratio": "16:9"})
+
+    assert response.status_code == expected_status, response.text
+    if status == "deleted":
+        assert response.json()["detail"]["code"] == "agent_key_project_deleted"
+
+
+@pytest.mark.parametrize("credential", ["browser", "in-app-agent", "local-trusted-agent"])
+def test_deleted_project_canvases_are_readable_without_an_external_key(
+    project_client, monkeypatch, credential
+):
+    client, registry = project_client
+    with client:
+        project_id = _create_project_with_status(client, registry, "demo", "deleted")
+
+    headers = {}
+    if credential == "in-app-agent":
+        headers = _agent_headers(monkeypatch, registry, project_id=project_id, external=False)
+    elif credential == "browser":
+        headers = {"Cookie": "st_session=browser"}
+    else:
+        monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "1")
+        client = TestClient(
+            client.app, base_url="http://localhost", client=("127.0.0.1", 50000)
+        )
+
+    with client:
+        if credential == "local-trusted-agent":
+            identity = client.get("/api/v1/auth/me")
+            assert identity.status_code == 200, identity.text
+            assert identity.json()["data"]["credential_kind"] == "local_trusted_agent"
+        response = client.get(
+            f"/api/v1/projects/{project_id}/freezone/canvases", headers=headers
+        )
+
+    assert response.status_code == 200, response.text
+
+
+def test_external_agent_scope_mismatch_takes_precedence_over_deleted_project(
+    project_client, monkeypatch
+):
+    client, registry = project_client
+    with client:
+        deleted_id = _create_project_with_status(client, registry, "deleted_project", "deleted")
+        other_id = _create_project_with_status(client, registry, "other_project", "active")
+        headers = _agent_headers(monkeypatch, registry, project_id=other_id)
+        response = client.get(
+            f"/api/v1/projects/{deleted_id}/freezone/canvases", headers=headers
+        )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "Agent session scope mismatch"

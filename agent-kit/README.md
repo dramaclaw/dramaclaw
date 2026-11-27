@@ -215,6 +215,9 @@ GET、DELETE 返回 405，WebSocket 连接被关闭。每个请求都先通过�
 - 缺少 Bearer 或 Key 为空时返回 401，`code` 为 `agent_key_required`（`Bearer key required`）。
 - Key 无效、被撤销、已过期或所属用户被停用时返回 401，`code` 为 `agent_key_rejected`。
 - Key 有效但不允许用于请求的项目时返回 403，`code` 为 `agent_key_project_forbidden`。
+- Key 有效且允许访问该项目，项目已删除且仍可恢复时返回 409，
+  `code` 为 `agent_key_project_deleted`。
+  项目所有者可在 Web 应用中恢复项目，恢复后原 Key 可继续使用。
 - Key 服务暂时不可用、校验无法完成时返回 503，`code` 为 `agent_key_check_unavailable`；
   这不是对 Key 的拒绝，稍后重试即可。
 - 每个请求都在执行任何工具代码前校验 Key；`DRAMACLAW_LOCAL_AGENT_TRUST` 以及 API 进程环境中的
