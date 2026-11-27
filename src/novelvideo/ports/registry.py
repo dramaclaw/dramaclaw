@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from importlib.metadata import entry_points
+from threading import RLock
 from typing import Any
 
 from novelvideo.shared import runtime_env
@@ -22,6 +23,8 @@ class PortNotRegistered(RuntimeError):
 
 _PORTS: dict[str, Any] = {}
 _BOOTSTRAPPED = False
+_BOOTSTRAPPING = False
+_BOOTSTRAP_LOCK = RLock()
 # Every port this package fetches without a PortNotRegistered fallback. Ports
 # with a fallback (release_feed, media_model_catalog) are deliberately absent —
 # listing them would make EE refuse to start over something CE can supply
@@ -60,9 +63,19 @@ def get_port(name: str):
 
 
 def ensure_bootstrap() -> None:
-    global _BOOTSTRAPPED
-    if _BOOTSTRAPPED:
-        return
+    global _BOOTSTRAPPED, _BOOTSTRAPPING
+    with _BOOTSTRAP_LOCK:
+        if _BOOTSTRAPPED or _BOOTSTRAPPING:
+            return
+        _BOOTSTRAPPING = True
+        try:
+            _bootstrap_ports()
+            _BOOTSTRAPPED = True
+        finally:
+            _BOOTSTRAPPING = False
+
+
+def _bootstrap_ports() -> None:
     edition = runtime_env.edition()
     dsn = os.environ.get("ST_CONTROL_PLANE_DSN", "").strip()
     if edition not in {"ce", "ee"}:
@@ -82,12 +95,10 @@ def ensure_bootstrap() -> None:
                 + ", ".join(missing)
                 + "（入口点组 novelvideo.ports_bootstrap 未发现或注册不全）"
             )
-        _BOOTSTRAPPED = True
         return
     if edition == "ce":
         from novelvideo.ports.local import register_local_ports
 
         register_local_ports()
-        _BOOTSTRAPPED = True
         return
     raise RuntimeError("ST_EDITION=ee 但缺 ST_CONTROL_PLANE_DSN，拒绝启动")

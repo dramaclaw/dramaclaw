@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
+from textwrap import dedent
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +26,64 @@ ARCHIVE = {
     "size": 5,
     "sha256": "a" * 64,
 }
+
+
+@pytest.mark.parametrize("edition", ["ee", "ce"])
+def test_archive_copy_in_fresh_child(tmp_path: Path, edition: str):
+    child = dedent(
+        """
+        import asyncio
+        import json
+        import os
+        import sys
+        from pathlib import Path
+
+        from novelvideo.media_archive_copy import copy_archived_result
+        from novelvideo.ports import registry
+
+        class Delivery:
+            async def deliver(self, *, source, output_path):
+                Path(output_path).write_text(source.object_key, encoding="utf-8")
+
+        class EntryPoint:
+            def load(self):
+                def register():
+                    for name in registry._EE_REQUIRED_PORTS:
+                        registry.register_port(name, object())
+                    registry.register_port("video_result_delivery", Delivery())
+                return register
+
+        def entry_points(*, group):
+            assert os.environ["ST_EDITION"] == "ee", "CE discovered extension ports"
+            assert group == "novelvideo.ports_bootstrap"
+            return [EntryPoint()]
+
+        registry.entry_points = entry_points
+        copied = asyncio.run(copy_archived_result(json.loads(sys.argv[1]), sys.argv[2]))
+        assert copied == (os.environ["ST_EDITION"] == "ee")
+        """
+    )
+    output = tmp_path / "image.png"
+    result = subprocess.run(
+        [sys.executable, "-c", child, json.dumps(ARCHIVE), str(output)],
+        cwd=tmp_path,
+        env={
+            "PYTHON_DOTENV_DISABLED": "1",
+            "ST_EDITION": edition,
+            "ST_CONTROL_PLANE_DSN": "postgresql://example.invalid/test"
+            if edition == "ee"
+            else "",
+            "ST_MEDIA_ARCHIVE_COPY_ENABLED": "true",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    if edition == "ee":
+        assert output.read_text(encoding="utf-8") == ARCHIVE["object_key"]
+    else:
+        assert not output.exists()
 
 
 @pytest.mark.asyncio

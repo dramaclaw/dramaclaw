@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+
+from novelvideo.ports import registry
 from novelvideo.ports.registry import get_port
 from novelvideo.shared import runtime_env
 
@@ -148,8 +151,20 @@ def get_egress_operation_port():
 
 def get_video_result_delivery():
     """Return the EE archive-copy port; CE keeps its result_url download path."""
-    if runtime_env.edition() == "ce":
+    edition = runtime_env.edition()
+    if edition == "ce":
         return None
+    try:
+        return get_port("video_result_delivery")
+    except registry.PortNotRegistered:
+        # Model subprocesses start with an empty process-local registry.
+        if (
+            edition != "ee"
+            or not runtime_env.media_archive_copy_enabled()
+            or not os.environ.get("ST_CONTROL_PLANE_DSN", "").strip()
+        ):
+            raise
+        registry.ensure_bootstrap()
     return get_port("video_result_delivery")
 
 
