@@ -24,7 +24,7 @@ cp .env.example .env
 
 ```dotenv
 DRAMACLAW_VERSION=2.2.0
-DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5
 ```
 
 发布版 Compose 默认使用镜像内置的凭据保护版 Codex 0.162.0 虾导。
