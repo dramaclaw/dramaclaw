@@ -1339,6 +1339,7 @@ async def _bind_server_observed_agent_product_execution(
     *,
     project_dir: str | Path | None,
     project_state_dir: str | Path | None,
+    hosted_workflow_delivery: bool = False,
 ) -> None:
     """Bind an admitted product operation to the tool call carrying its result."""
     tool_name = _codex_freezone_tool_name(event)
@@ -1385,6 +1386,9 @@ async def _bind_server_observed_agent_product_execution(
         "freezone_prepare_workflow_plan_draft",
     }
     if workflow_draft_tool:
+        if hosted_workflow_delivery:
+            # This path commits the attempt's evidence together with its draft.
+            return
         operation_id = str(tool_args.get("operation_id") or "").strip()
         if not operation_id.startswith("agent_product_"):
             return
@@ -6008,6 +6012,7 @@ async def _stream_assistant_reply_codex(
                         event,
                         project_dir=project_dir,
                         project_state_dir=project_state_dir,
+                        hosted_workflow_delivery=True,
                     )
                     if event.type == "tool_updated":
                         turn_agent_product_operations.observe(event)

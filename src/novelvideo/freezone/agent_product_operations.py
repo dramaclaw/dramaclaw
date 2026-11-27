@@ -12,7 +12,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -323,12 +323,15 @@ def create_agent_product_operation(
 
 
 def read_agent_product_operation(
-    *, project_dir: Path, operation_id: str
+    *,
+    project_dir: Path,
+    operation_id: str,
+    connection: sqlite3.Connection | None = None,
 ) -> dict[str, Any] | None:
     clean_id = str(operation_id or "").strip()
     if not OPERATION_ID_RE.match(clean_id):
         raise ValueError("invalid agent product operation id")
-    with _connect(project_dir) as conn:
+    with (nullcontext(connection) if connection is not None else _connect(project_dir)) as conn:
         row = conn.execute(
             "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
             (clean_id,),
@@ -570,6 +573,8 @@ def finish_agent_product_operation(
     server_recipe_compile: bool = False,
     server_recipe_direct_audio: bool = False,
     keep_pending_if_model_executed: bool = False,
+    workflow_attempt: dict[str, str] | None = None,
+    connection: sqlite3.Connection | None = None,
 ) -> dict[str, Any]:
     """Write an operation outcome in one transaction.
 
@@ -579,12 +584,16 @@ def finish_agent_product_operation(
     the caller keeps the reservation for reconciliation. The check runs inside
     the write transaction, so evidence recorded after the caller's own read is
     still seen.
+
+    Workflow draft delivery may supply its authenticated tool attempt and share
+    the caller's transaction with the draft insert.
     """
     status = str(outcome or "").strip()
     if status not in PENDING_STATUSES | TERMINAL_STATUSES:
         raise ValueError("invalid agent product operation outcome")
-    with _connect(project_dir) as conn:
-        conn.execute("BEGIN IMMEDIATE")
+    with (nullcontext(connection) if connection is not None else _connect(project_dir)) as conn:
+        if connection is None:
+            conn.execute("BEGIN IMMEDIATE")
         current = conn.execute(
             "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
             (operation_id,),
@@ -617,6 +626,22 @@ def finish_agent_product_operation(
                 )
             return payload
         evidence = payload["model_evidence"]
+        if workflow_attempt is not None:
+            if (
+                payload["product_kind"] != "workflow_result"
+                or status != "delivered"
+                or result.get("kind") != "workflow_draft"
+            ):
+                raise ValueError("workflow tool attempt requires workflow draft delivery")
+            call_id = workflow_attempt["id"]
+            turn_id = workflow_attempt["turn_id"]
+            evidence = {
+                "model_call_id": f"agent-turn:{turn_id}:workflow-tool:{call_id}",
+                "tool_call_id": call_id,
+                "turn_id": turn_id,
+                "executed_at": time.time(),
+                "source": "hosted_workflow_tool",
+            }
         if (
             keep_pending_if_model_executed
             and status in {"cancelled", "failed"}
