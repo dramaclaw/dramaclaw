@@ -6,7 +6,12 @@ name: ee-terms
 
 on:
   push:
+    branches-ignore:
+      - 'gh-readonly-queue/**'
+    tags:
+      - '**'
   pull_request:
+  merge_group:
 
 permissions:
   contents: read
