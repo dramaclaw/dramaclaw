@@ -218,20 +218,33 @@ _MISSING_PROJECT_ERROR = (
 _PROJECT_DISCOVERY_HINT = " Call freezone_list_projects and pass project_id."
 
 
-def _external_unbound_freezone() -> bool:
-    # Only external MCP connections opt into per-call project selection.
+def _external_key_freezone() -> bool:
     if request_context.get("DRAMACLAW_EXTERNAL_MCP", "").strip() != "1":
         return False
-    # Keep other plugins and already-bound connections on their existing paths.
-    if _agent_plugin_name() != "freezone" or _scope_kind() != "home":
+    if _agent_plugin_name() != "freezone":
         return False
     plugin = _plugin("freezone")
     # Turn tokens take precedence over keys; hosted turns also set EXTERNAL_MCP.
     return plugin._agent_key_configured() and not plugin._agent_token_configured()
 
 
+def _external_unbound_freezone() -> bool:
+    return _external_key_freezone() and _scope_kind() == "home"
+
+
 def server_instructions() -> str | None:
     return _PROJECT_DISCOVERY_INSTRUCTIONS if _external_unbound_freezone() else None
+
+
+def _project_discovery_guidance() -> str:
+    project_id = request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
+    if not project_id:
+        return _PROJECT_DISCOVERY_INSTRUCTIONS
+    return (
+        f"This connection is already bound to project {project_id}. "
+        "Other Freezone tools act on it without project_id. "
+        "This list shows the projects this agent key can access."
+    )
 
 
 def _list_freezone_projects(arguments: dict[str, Any]) -> str:
@@ -252,7 +265,7 @@ def _list_freezone_projects(arguments: dict[str, Any]) -> str:
         "ok": True,
         "projects": projects,
         "count": len(projects),
-        "agent_instruction": _PROJECT_DISCOVERY_INSTRUCTIONS,
+        "agent_instruction": _project_discovery_guidance(),
     }, ensure_ascii=False)
 
 
@@ -297,10 +310,11 @@ _PROJECT_DISCOVERY_SCHEMA = {
 def _agent_tools() -> dict[str, tuple[dict[str, Any], Any]]:
     """Load only the plugin belonging to the active agent profile."""
     tools = _plugin_tools(_agent_plugin_name())
-    if _external_unbound_freezone():
-        return {**tools, "freezone_list_projects": (
-            _PROJECT_DISCOVERY_SCHEMA, _list_freezone_projects,
-        )}
+    if _external_key_freezone():
+        schema = _PROJECT_DISCOVERY_SCHEMA
+        if _scope_kind() == "project":
+            schema = {**schema, "description": _project_discovery_guidance()}
+        return {**tools, "freezone_list_projects": (schema, _list_freezone_projects)}
     if _scope_kind() == "home":
         return {name: tools[name] for name in sorted(HOME_TOOL_NAMES) if name in tools}
     return tools
