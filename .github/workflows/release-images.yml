@@ -13,6 +13,10 @@ on:
         description: "同时更新 latest tag(重建旧版本时保持关闭)"
         type: boolean
         default: false
+      backend_only:
+        description: "仅构建后端（非默认分支上的后端试跑不会发布镜像）"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,21 +26,23 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
-  backend:
+  backend-meta:
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+      publish: ${{ github.event_name == 'release' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v5
         with:
+          context: git
           images: claymorelab/dramaclaw
           # release: latest=auto(prerelease 不推 latest);手动触发由 push_latest 决定,
           # 默认 false —— 重建历史版本时避免把 latest 回退到旧版。
@@ -44,15 +50,89 @@ jobs:
             type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
           flavor: |
             latest=${{ github.event_name == 'release' && 'auto' || (inputs.push_latest && 'true' || 'false') }}
-      - uses: docker/build-push-action@v6
+  backend:
+    needs: backend-meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.backend-meta.outputs.sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: needs.backend-meta.outputs.publish == 'true'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ needs.backend-meta.outputs.labels }}
+          # Branch dispatches run the same Dockerfile and smoke tests without registry writes.
+          outputs: ${{ needs.backend-meta.outputs.publish == 'true' && 'type=image,name=claymorelab/dramaclaw,push-by-digest=true,name-canonical=true,push=true' || 'type=cacheonly' }}
+      - name: Record platform digest
+        if: needs.backend-meta.outputs.publish == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/$ARCH"
+      - uses: actions/upload-artifact@v4
+        if: needs.backend-meta.outputs.publish == 'true'
+        with:
+          name: backend-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/${{ matrix.arch }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  publish-backend:
+    needs: [backend-meta, backend]
+    if: needs.backend-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: backend-digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish both platforms under the release tags
+        env:
+          TAGS: ${{ needs.backend-meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          refs=()
+          for arch in amd64 arm64; do
+            digest=$(cat "$RUNNER_TEMP/digests/$arch")
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+            refs+=("claymorelab/dramaclaw@$digest")
+          done
+          tags=()
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            [[ "$tag" == claymorelab/dramaclaw:?* ]] || exit 1
+            tags+=(--tag "$tag")
+          done <<< "$TAGS"
+          (( ${#tags[@]} > 0 )) || exit 1
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
 
   frontend:
+    if: github.event_name != 'workflow_dispatch' || !inputs.backend_only
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
