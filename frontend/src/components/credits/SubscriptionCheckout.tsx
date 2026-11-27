@@ -13,12 +13,14 @@ import {
 } from "lucide-react";
 import { HTTPError } from "ky";
 import { CheckoutShell } from "@/components/credits/CheckoutShell";
+import { CheckoutRefreshNotice, useCheckoutPolicyRefresh } from "@/components/credits/CheckoutRefreshNotice";
 import { SubscriptionAgreementDialog } from "@/components/credits/SubscriptionAgreementDialog";
 import {
   creditOrgOf,
   creditScopeOf,
   useCreditSummary,
 } from "@/lib/queries/credits";
+import { checkoutCreditPolicyChanged } from "@/lib/payment-errors";
 import {
   CHECKOUT_RETURN_KEY,
   CREDIT_CENTER_TAB_KEY,
@@ -129,6 +131,10 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
     (creditScopeOf(summary.data.data) !== "org_member" || Boolean(org)) &&
     (plan?.org_id ?? null) === (org?.org_id ?? null),
   );
+  const creditPolicyVersion = plan && subjectMatches
+    ? summary.data?.data.checkout_credit_policies?.subscription?.version
+    : undefined;
+  const checkoutSettings = useCheckoutPolicyRefresh(creditPolicyVersion);
   const versionMatches = plan?.version === draft.planVersion;
   const blocked = membership.data?.data.active === true || (subscriptions.data?.data.items ?? []).some(
     (row) =>
@@ -181,6 +187,7 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
     !plans.isFetching &&
     !plans.isError &&
     !summary.isError &&
+    checkoutSettings.status !== "stale" &&
     !subscriptions.isError &&
     (selectedMethod !== "dodo" ||
       (offer.payment_currency === "USD" &&
@@ -390,6 +397,7 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
     submitting.current = true;
     const selection = selectionVersion.current;
     setNotice(null);
+    checkoutSettings.clear();
     if (newAttempt) {
       forgetSubscriptionAttempt(username ?? "", plan.plan_id, plan.version, selectedMethod);
       setCreatedId(null);
@@ -400,6 +408,7 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
         plan,
         method: selectedMethod,
         termsAccepted: true,
+        ...(creditPolicyVersion === undefined ? {} : { creditPolicyVersion }),
         key: subscriptionAttemptKey(
           username ?? "",
           plan.plan_id,
@@ -424,6 +433,12 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
       if (selection !== selectionVersion.current) return;
       redirectingRef.current = false;
       setRedirecting(false);
+      if (checkoutCreditPolicyChanged(error)) {
+        forgetSubscriptionAttempt(username ?? "", plan.plan_id, plan.version, selectedMethod);
+        checkoutSettings.reject();
+        void summary.refetch();
+        return;
+      }
       const errorBody = error instanceof HTTPError ? error.data : null;
       if (errorBody && typeof errorBody === "object" && "data" in errorBody) {
         const data = errorBody.data;
@@ -810,6 +825,13 @@ export function SubscriptionCheckout({ draft }: { draft: SubscriptionDraft }) {
         <p role="alert" className="mt-4 text-sm text-warning">
           {t("subscriptions.loadError")}
         </p>
+      )}
+      {!resumeExisting && (
+        <CheckoutRefreshNotice
+          status={checkoutSettings.status}
+          refreshing={summary.isFetching}
+          onRefresh={() => void summary.refetch()}
+        />
       )}
       <button
         type="button"

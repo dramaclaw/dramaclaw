@@ -1684,7 +1684,16 @@
     }
   },
   "credits": {
+    "transactionExpiry": "Expires on {{time}}",
+    "refundExpiry": "{{amount}} credits expired",
+    "creditTypes": {
+      "subscription": "Subscription credits",
+      "recharge": "Purchased credits",
+      "gift": "Gift credits"
+    },
     "transactionSource": {
+      "expired": "Credits expired",
+      "expiration": "Credit expiration",
       "initialGrant": "Initial credit grant",
       "accountInitialized": "Account initialization credits",
       "subscriptionGrant": "Subscription credit grant",
@@ -1856,7 +1865,7 @@
         "help": "Recharge help"
       },
       "descriptions": {
-        "packages": "Make a one-time purchase of a credit pack. Credits never expire.",
+        "packages": "Buy a credit pack with a one-time payment.",
         "subscriptions": "Renew automatically through your payment account and receive credits according to the plan.",
         "custom": "Choose the number of credits you need.",
         "benefits": "Review promotions and benefits available to this account.",
@@ -1866,7 +1875,7 @@
       },
       "firstPurchase": "New customer",
       "mostPopular": "Most popular",
-      "oneTimePurchase": "One-time purchase · Credits never expire",
+      "oneTimePurchase": "One-time purchase",
       "baseCredits": "Base credits",
       "giftCredits": "Bonus credits",
       "totalCredits": "Credits received",
@@ -1951,6 +1960,10 @@
     }
   },
   "checkout": {
+    "settingsRefreshing": "Refreshing payment information…",
+    "settingsRefreshFailed": "Could not refresh payment information. Please try again.",
+    "settingsUpdated": "Payment information has been updated. Please try again.",
+    "refreshSettings": "Refresh payment information",
     "account": "Current account",
     "loading": "Preparing secure checkout…",
     "invalidTitle": "Checkout session expired",
@@ -9377,7 +9390,7 @@
     "monthlyEquivalent": "Equivalent to approximately {{price}} per month; the full period is charged at once.",
     "introCycles": "First {{cycles}} billing cycles at {{price}} each.",
     "title": "Subscription plans",
-    "intro": "Automatic renewal uses your payment account. Credits are granted under the plan rules and remain permanently valid.",
+    "intro": "Automatic renewal uses your payment account. Credits are granted under the plan rules.",
     "refresh": "Refresh",
     "loadError": "Unable to load subscriptions.",
     "createUnconfirmed": "The request result is not confirmed. You can choose another payment method while we check the original attempt automatically.",
@@ -9414,8 +9427,8 @@
     "grants": "Credit grants",
     "method": "Payment method",
     "renewPrice": "Renews every {{months}} month(s) at {{price}}.",
-    "monthlyCredits": "{{credits}} credits each month, permanently valid.",
-    "upfrontCredits": "{{credits}} credits granted after payment, permanently valid.",
+    "monthlyCredits": "{{credits}} credits each month.",
+    "upfrontCredits": "{{credits}} credits granted after payment.",
     "taxNote": "Applicable taxes, if any, are displayed at checkout.",
     "consent": "I authorize automatic renewal and have read and accepted the",
     "terms": "subscription terms",
@@ -9478,7 +9491,7 @@
       "monthly": "Monthly",
       "upfront": "Upfront"
     },
-    "renewalNote": "Auto renewal · Credits never expire",
+    "renewalNote": "Auto renewal",
     "purchaseBlocked": "Your account has a subscription or an unresolved application. View it below and use Check latest status to reconcile it.",
     "paymentUnavailable": "Some payment channels are unavailable. An administrator needs to check the payment service configuration. Please check again later.",
     "recheckPayment": "Recheck payment channels",
@@ -9499,8 +9512,8 @@
     "membership": "Paid membership period",
     "months": "{{months}} month(s)",
     "periodCredits": "Credits for this period",
-    "monthlyGrants": "{{credits}} credits per month, {{count}} grants this period. Granted credits remain permanently valid.",
-    "upfrontGrants": "{{credits}} credits granted after payment confirmation, permanently valid.",
+    "monthlyGrants": "{{credits}} credits per month, {{count}} grants this period.",
+    "upfrontGrants": "{{credits}} credits granted after payment confirmation.",
     "fullPeriod": "The full period is charged at once.",
     "account": "Account receiving subscription benefits",
     "cancelPolicy": "Cancel future automatic renewal in subscription management. Paid membership and scheduled grants for the paid period remain. Cancellation does not request a refund.",

@@ -6,7 +6,8 @@ import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { OkResponse } from "@/types/api";
 
-export type CreditTransactionCategory = "all" | "earned" | "spent" | "refunded";
+export type CreditTransactionCategory = "all" | "earned" | "spent" | "refunded" | "expired" | "adjusted";
+export type CreditType = "subscription" | "recharge" | "gift";
 
 // Which account the `credits/me/*` figures were read from. An organization
 // member's tasks are charged to their org member account, so the page must
@@ -19,6 +20,11 @@ export interface CreditOrgRef {
   name: string;
 }
 
+export interface CheckoutCreditPolicy {
+  version: number;
+  valid_days: number | null;
+}
+
 export interface CreditSummary {
   balance: number;
   earned: number;
@@ -27,6 +33,8 @@ export interface CreditSummary {
   pending: number;
   promotion_count: number;
   updated_at: string | null;
+  next_expiring?: { amount: number; expires_at: string } | null;
+  checkout_credit_policies?: Record<"recharge" | "subscription", CheckoutCreditPolicy>;
   // The three keys below are optional on purpose: a backend that predates the
   // scope contract simply omits them, and such a response must keep working
   // as a personal account rather than failing to parse.
@@ -121,6 +129,9 @@ export interface CreditTransaction {
   model: string;
   original_cost: number | null;
   charged_cost: number | null;
+  credit_type?: CreditType;
+  expires_at?: string | null;
+  expired_amount?: number;
   promotion: {
     id?: string;
     name?: string;
@@ -161,25 +172,41 @@ export interface CreditTransactionFilters {
   model?: string;
 }
 
+type CreditSummaryResponse = OkResponse<CreditSummary> & { requestedAt: number };
+
+function nextCreditExpiry(summary?: CreditSummaryResponse) {
+  const expiresAt = Date.parse(summary?.data.next_expiring?.expires_at ?? "");
+  // Ignore a deadline already checked by a request started at or after it,
+  // even if that response still carried the same deadline.
+  return summary && expiresAt > summary.requestedAt ? expiresAt : Infinity;
+}
+
 export function useCreditSummary(enabled = true) {
   return useQuery({
     queryKey: queryKeys.creditSummary(),
-    queryFn: ({ signal }) =>
-      api
+    queryFn: async ({ signal }): Promise<CreditSummaryResponse> => {
+      const requestedAt = Date.now();
+      const summary = await api
         .get("api/v1/credits/me/summary", { signal, retry: 0 })
-        .json<OkResponse<CreditSummary>>(),
+        .json<OkResponse<CreditSummary>>();
+      return { ...summary, requestedAt };
+    },
     enabled,
-    // Task events invalidate normal lifecycle changes. Only accounts with
-    // unsettled reservations poll: CronJob recovery has no browser event and
-    // may otherwise leave pending/refund totals stale indefinitely.
     staleTime: 60_000,
-    refetchInterval: (query) =>
-      query.state.error == null && (query.state.data?.data.pending ?? 0) > 0
-        ? 60_000
-        : false,
+    refetchInterval(query) {
+      if (query.state.error != null || query.state.fetchStatus !== "idle") return false;
+      const settlementDelay = (query.state.data?.data.pending ?? 0) > 0 ? 60_000 : Infinity;
+      const expiryDelay = Math.max(1_000, nextCreditExpiry(query.state.data) - Date.now());
+      const delay = Math.min(settlementDelay, expiryDelay);
+      // Browsers clamp timers beyond the signed 32-bit range to a short delay.
+      return Number.isFinite(delay) ? Math.min(delay, 2_147_483_647) : false;
+    },
     refetchIntervalInBackground: false,
     refetchOnMount: "always",
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: (query) =>
+      query.state.error == null && nextCreditExpiry(query.state.data) <= Date.now()
+        ? "always"
+        : false,
     retry: false,
   });
 }

@@ -6,6 +6,8 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { CheckoutRefreshNotice, useCheckoutPolicyRefresh } from "@/components/credits/CheckoutRefreshNotice";
+import { useCreditSummary } from "@/lib/queries/credits";
 import {
   type RechargePaymentMethod,
   submitPaymentCheckout,
@@ -16,10 +18,11 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import {
+  clearPaymentAttempt,
   paymentIdempotencyKey,
   rememberPaymentOrder,
 } from "@/lib/payment-navigation";
-import { paymentErrorToastMessage, paymentQuoteNeedsRefresh } from "@/lib/payment-errors";
+import { checkoutCreditPolicyChanged, paymentErrorToastMessage, paymentQuoteNeedsRefresh } from "@/lib/payment-errors";
 
 const TOKEN_STORAGE_KEY = "supertale-recharge-token";
 
@@ -51,10 +54,15 @@ function RechargePage() {
   const [paymentMethod, setPaymentMethod] = useState<RechargePaymentMethod>("alipay");
   const packages = useRechargeLinkPackages(token, authenticated);
   const createOrder = useCreateRechargeLinkOrder(token);
+  const summary = useCreditSummary(authenticated);
   const items = packages.data?.data.items ?? [];
   const selectedPackageItem = items.find(
     (item) => item.package_id === selectedPackage,
   );
+  const creditPolicyVersion = selectedPackageItem?.order_type === "personal_recharge"
+    ? summary.data?.data.checkout_credit_policies?.recharge?.version
+    : undefined;
+  const checkoutSettings = useCheckoutPolicyRefresh(creditPolicyVersion);
   const availablePaymentMethods = selectedPackageItem?.payment_methods ?? [];
   const selectedPaymentMethod = availablePaymentMethods.includes(paymentMethod)
     ? paymentMethod
@@ -90,12 +98,15 @@ function RechargePage() {
   }, [token, validateSession]);
 
   const pay = async () => {
-    if (!selectedPackage || !selectedPaymentMethod || !quoteReady || createOrder.isPending) return;
+    if (!selectedPackage || !selectedPaymentMethod || !quoteReady || createOrder.isPending ||
+        checkoutSettings.status === "stale" || !summary.data) return;
+    checkoutSettings.clear();
     try {
       const response = await createOrder.mutateAsync({
         packageId: selectedPackage,
         quote: selectedPaymentMethod === "dodo" ? quote : undefined,
         paymentMethod: selectedPaymentMethod,
+        ...(creditPolicyVersion === undefined ? {} : { creditPolicyVersion }),
         idempotencyKey: paymentIdempotencyKey(
           "link",
           JSON.stringify({ token, packageId: selectedPackage, paymentMethod: selectedPaymentMethod, quote: selectedPaymentMethod === "dodo" ? quote : undefined }),
@@ -108,6 +119,12 @@ function RechargePage() {
       }
       submitPaymentCheckout(response.data.checkout);
     } catch (error) {
+      if (checkoutCreditPolicyChanged(error)) {
+        clearPaymentAttempt();
+        checkoutSettings.reject();
+        void summary.refetch();
+        return;
+      }
       if (selectedPaymentMethod === "dodo" && paymentQuoteNeedsRefresh(error)) void quoteQuery.refetch();
       toast.error(paymentErrorToastMessage(error, t, "rechargeLink.createFailed"));
     }
@@ -179,6 +196,11 @@ function RechargePage() {
           <p className="text-sm text-muted-foreground">{t("checkout.dodoTax")}</p>
           {quoteQuery.isError ? <button type="button" onClick={() => void quoteQuery.refetch()}>{t("checkout.retryQuote")}</button> : null}
         </div> : null}
+        <CheckoutRefreshNotice
+          status={summary.isError && !summary.data ? "stale" : checkoutSettings.status}
+          refreshing={summary.isFetching}
+          onRefresh={() => void summary.refetch()}
+        />
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-foreground/12 pt-5">
           <div className="inline-flex rounded-md border border-foreground/12 bg-foreground/8 p-1">
             {availablePaymentMethods.map((method) => (
@@ -201,7 +223,8 @@ function RechargePage() {
           </div>
           <button
             type="button"
-            disabled={!selectedPackage || !selectedPaymentMethod || !quoteReady || createOrder.isPending}
+            disabled={!selectedPackage || !selectedPaymentMethod || !quoteReady ||
+              createOrder.isPending || checkoutSettings.status === "stale" || !summary.data}
             className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
             onClick={() => void pay()}
           >

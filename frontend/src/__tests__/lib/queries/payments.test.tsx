@@ -161,12 +161,14 @@ describe("recharge checkout", () => {
     ).toBe("credits.recharge.errors.serviceUnavailable");
   });
 
-  it("posts the selected package with an explicit idempotency key", async () => {
+  it("posts the selected package with idempotency and displayed policy headers", async () => {
     let capturedHeader = "";
+    let capturedPolicy = "";
     let capturedBody: unknown;
     server.use(
       http.post("http://localhost:3000/api/v1/payments/orders", async ({ request }) => {
         capturedHeader = request.headers.get("idempotency-key") ?? "";
+        capturedPolicy = request.headers.get("x-credit-policy-version") ?? "";
         capturedBody = await request.json();
         return HttpResponse.json({
           ok: true,
@@ -187,10 +189,12 @@ describe("recharge checkout", () => {
         packageId: "paypkg-1",
         paymentMethod: "wxpay",
         idempotencyKey: "web-request-0001",
+        creditPolicyVersion: 2,
       });
     });
 
     expect(capturedHeader).toBe("web-request-0001");
+    expect(capturedPolicy).toBe("2");
     expect(capturedBody).toEqual({
       package_id: "paypkg-1",
       payment_method: "wxpay",
@@ -230,10 +234,11 @@ describe("recharge checkout", () => {
     expect(capturedUrl).not.toContain(token);
   });
 
-  it("creates a linked recharge order with token and idempotency headers", async () => {
+  it("creates a linked recharge order with token, idempotency, and displayed policy headers", async () => {
     const token = "abcdefghijklmnopqrstuvwxyz_0123456789-ABCDE";
     let capturedToken = "";
     let capturedIdempotency = "";
+    let capturedPolicy = "";
     let capturedBody: unknown;
     server.use(
       http.post(
@@ -241,6 +246,7 @@ describe("recharge checkout", () => {
         async ({ request }) => {
           capturedToken = request.headers.get("x-recharge-token") ?? "";
           capturedIdempotency = request.headers.get("idempotency-key") ?? "";
+          capturedPolicy = request.headers.get("x-credit-policy-version") ?? "";
           capturedBody = await request.json();
           return HttpResponse.json({
             ok: true,
@@ -259,11 +265,13 @@ describe("recharge checkout", () => {
         packageId: "paypkg-org-1",
         paymentMethod: "alipay",
         idempotencyKey: "link-request-0001",
+        creditPolicyVersion: 3,
       });
     });
 
     expect(capturedToken).toBe(token);
     expect(capturedIdempotency).toBe("link-request-0001");
+    expect(capturedPolicy).toBe("3");
     expect(capturedBody).toEqual({
       package_id: "paypkg-org-1",
       payment_method: "alipay",

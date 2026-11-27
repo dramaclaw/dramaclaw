@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CHECKOUT_DRAFT_KEY, PAYMENT_ATTEMPT_KEY } from "@/lib/payment-navigation";
+import { BackendStatusError } from "@/lib/api-errors";
 import type { RechargePackage } from "@/lib/queries/payments";
 import { CheckoutPage } from "@/routes/checkout";
 
@@ -12,6 +13,8 @@ const state = vi.hoisted(() => ({
   org: { org_id: "org-a", name: "Organization A" } as { org_id: string; name: string } | null,
   summaryPending: false,
   summaryError: false,
+  creditPolicy: undefined as { version: number; valid_days: number | null } | undefined,
+  refetchSummary: vi.fn(),
   enabled: true,
   packages: [] as RechargePackage[],
   createCustom: vi.fn(),
@@ -21,8 +24,10 @@ const state = vi.hoisted(() => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, args?: { organization?: string }) =>
-      key === "checkout.orgCredits" ? `${key}:${args?.organization}` : key,
+    t: (key: string, args?: { organization?: string }) => {
+      if (key === "checkout.orgCredits") return `${key}:${args?.organization}`;
+      return key;
+    },
     i18n: { language: "zh" },
   }),
 }));
@@ -41,10 +46,15 @@ vi.mock("@/lib/queries/credits", async (original) => ({
   ...await original<typeof import("@/lib/queries/credits")>(),
   useCreditSummary: () => ({
     data: state.summaryPending || state.summaryError ? undefined : {
-      data: { scope: state.scope, organization: state.org },
+      data: {
+        scope: state.scope,
+        organization: state.org,
+        checkout_credit_policies: state.creditPolicy ? { recharge: state.creditPolicy } : undefined,
+      },
     },
     isPending: state.summaryPending,
     isError: state.summaryError,
+    refetch: state.refetchSummary,
   }),
 }));
 vi.mock("@/lib/queries/payments", () => ({
@@ -69,6 +79,7 @@ describe("custom recharge checkout identity", () => {
     state.org = { org_id: "org-a", name: "Organization A" };
     state.summaryPending = false;
     state.summaryError = false;
+    state.creditPolicy = undefined;
     state.enabled = true;
     state.packages = [];
     state.createCustom.mockResolvedValue({ data: {
@@ -106,6 +117,34 @@ describe("custom recharge checkout identity", () => {
     state.summaryPending = false;
     view.rerender(<CheckoutPage />);
     expect(screen.getByRole("button", { name: "checkout.continue" })).toBeInTheDocument();
+  });
+
+  it.each(["personal", "org_member"])("refreshes %s checkout after a policy conflict and waits for another payment click", async (scope) => {
+    state.scope = scope;
+    if (scope === "personal") state.org = null;
+    state.creditPolicy = { version: 2, valid_days: 30 };
+    state.createCustom.mockRejectedValueOnce(new BackendStatusError("CREDIT_CHECKOUT_POLICY_CHANGED", 409));
+    const view = render(<CheckoutPage />);
+    const pay = screen.getByRole("button", { name: "checkout.continue" });
+    expect(screen.queryByText(/checkout\.creditValidity/)).not.toBeInTheDocument();
+    fireEvent.click(pay);
+    await waitFor(() => expect(state.refetchSummary).toHaveBeenCalledTimes(1));
+    expect(pay).toBeDisabled();
+    expect(screen.getByText("checkout.settingsRefreshFailed")).toBeInTheDocument();
+    expect(sessionStorage.getItem(PAYMENT_ATTEMPT_KEY)).toBeNull();
+
+    state.creditPolicy = { version: 3, valid_days: null };
+    view.rerender(<CheckoutPage />);
+    expect(screen.getByText("checkout.settingsUpdated")).toBeInTheDocument();
+    expect(screen.queryByText(/checkout\.creditValidity/)).not.toBeInTheDocument();
+    expect(pay).toBeEnabled();
+    expect(state.createCustom).toHaveBeenCalledTimes(1);
+    fireEvent.click(pay);
+    await waitFor(() => expect(state.submit).toHaveBeenCalledTimes(1));
+    expect(state.createCustom.mock.calls[0]?.[0].creditPolicyVersion).toBe(2);
+    expect(state.createCustom.mock.calls[1]?.[0].creditPolicyVersion).toBe(3);
+    expect(state.createCustom.mock.calls[1]?.[0].idempotencyKey)
+      .not.toBe(state.createCustom.mock.calls[0]?.[0].idempotencyKey);
   });
 
   it.each(["missing organization", "identity query failed", "disabled rule", "below minimum", "above maximum"])(

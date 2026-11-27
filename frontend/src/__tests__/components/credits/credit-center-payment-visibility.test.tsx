@@ -130,10 +130,32 @@ describe("CreditCenterDialog payment visibility", () => {
     expect(screen.queryByText("12,345")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "credits.centerModal.tabs.usage" })).toBeInTheDocument();
   });
+
+  it("shows the balance without a separate reminder when credits are about to expire", () => {
+    creditState.summary = {
+      scope: "personal",
+      balance: 3999,
+      next_expiring: { amount: 29, expires_at: "2026-11-29T12:00:00+00:00" },
+    };
+    renderDialog(false, "orders");
+    expect(screen.getAllByText("3,999").length).toBeGreaterThan(0);
+    expect(screen.queryByText("credits.nextExpiring")).not.toBeInTheDocument();
+  });
 });
 
 
 describe("credit transaction source", () => {
+  it("labels expiration without presenting it as a generation charge", () => {
+    creditState.transactions = [{
+      id: "expired", reason: "credit_expired", category: "expired", status: "completed",
+      delta: -29, balance_after: 100, credit_type: "gift", feature_label: "", model: "",
+    }];
+    renderDialog(false, "orders");
+    expect(screen.getByText("credits.transactionSource.expired")).toBeInTheDocument();
+    expect(screen.getByText("credits.creditTypes.gift")).toBeInTheDocument();
+    expect(screen.getByText("-29")).toBeInTheDocument();
+  });
+
   it.each([
     ["payment_org_member_recharge", "credits.transactionSource.orgRecharge"],
     ["payment_personal_recharge", "credits.transactionSource.personalRecharge"],
