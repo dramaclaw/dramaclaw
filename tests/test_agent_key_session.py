@@ -122,6 +122,20 @@ class FakeAPI:
                 "debug": {"credentials": secrets}, "extra": secrets}
 
 
+@pytest.fixture(autouse=True)
+def clear_agent_key_session_state():
+    """Clear process-wide sessions keyed by API base, as random ports can recur in a worker."""
+    agent_key_session._state.cache.clear()
+    agent_key_session._state.locks.clear()
+    agent_key_session._state.secrets.clear()
+    try:
+        yield
+    finally:
+        agent_key_session._state.cache.clear()
+        agent_key_session._state.locks.clear()
+        agent_key_session._state.secrets.clear()
+
+
 @pytest.fixture
 def api_factory():
     running = []
@@ -212,6 +226,15 @@ def request_result(plugin, method="GET", path=PROJECT_PATH, **kwargs):
 def assert_success(result):
     assert result.get("ok") is True
     assert result.get("status_code") == 200
+
+
+def test_each_test_starts_without_cached_agent_sessions(plugin, api, monkeypatch):
+    assert agent_key_session._state.cache == {}
+    assert agent_key_session._state.locks == {}
+
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", KEY)
+    assert_success(request_result(plugin))
+    assert len(agent_key_session._state.cache) == 1
 
 
 @pytest.mark.parametrize("source", ["DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE"])
