@@ -30,7 +30,7 @@ DramaClaw CE 是单机服务,**无需 PostgreSQL / Redis**。Docker 起 `api` + 
 
 装好后，选择**官方镜像**或**源码构建**。使用 v2.2.0 官方镜像不需要克隆网关源码；
 按[快速开始的方式 A](quickstart.md)指定 `DRAMACLAW_VERSION=2.2.0`
-和 `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`。
+和 `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5`。
 
 需要构建本地代码时：
 
@@ -135,7 +135,7 @@ curl http://localhost:8780/api/v1/config   # 返回 200 即正常
 mkdir -p state/newapi
 docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
   -v "$PWD/state/newapi:/data" \
-  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.3
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.5
 ```
 
 或者在旁边的 `dramaclaw-gateway` checkout 里构建并用 `SQLITE_PATH` 指向该文件来启动。模式配置见[配置模型供应商](configuring-models.md)。

@@ -38,7 +38,7 @@ Key points shared by both (defined once in `docker-compose.release.yml`, reused 
 |---|---|---|
 | Services | `api` + `newapi` + `web` | No PG/Redis; `newapi` is the bundled gateway |
 | Images (release) | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | Pulled from Docker Hub; set `DRAMACLAW_IMAGE_PREFIX` in `.env` to use the ACR mirror (pinned tags only) |
-| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | For this release, explicitly set `2.2.0` / `v1.0.0-rc.24-dramaclaw.3` in `.env` |
+| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | For this release, explicitly set `2.2.0` / `v1.0.0-rc.24-dramaclaw.5` in `.env` |
 | Agent backend | `DRAMACLAW_CHAT_BACKEND` | Both source and release Compose default to `codex` |
 | Port | `8780:8780` | REST API |
 | Gateway admin port | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | Bound to `127.0.0.1` by default; set `ST_NEWAPI_BIND=0.0.0.0` in `.env` to widen it |
@@ -57,7 +57,7 @@ For the **v2.2.0 published images**, add or update these entries in `.env`:
 
 ```dotenv
 DRAMACLAW_VERSION=2.2.0
-DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5
 ```
 
 These are also the current release Compose defaults. Explicit pins make the selected

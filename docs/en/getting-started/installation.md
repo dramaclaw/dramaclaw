@@ -30,7 +30,7 @@ Prerequisites: Docker + `docker compose`.
 
 Once installed, choose **published images** or a **source build**. For published
 v2.2.0 images, no gateway checkout is needed; follow [Quickstart option A](quickstart.md)
-to pin `DRAMACLAW_VERSION=2.2.0` and `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`.
+to pin `DRAMACLAW_VERSION=2.2.0` and `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5`.
 
 To build your local code instead:
 
@@ -140,7 +140,7 @@ Official mode needs nothing else. For the other two modes the API expects a gate
 mkdir -p state/newapi
 docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
   -v "$PWD/state/newapi:/data" \
-  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.3
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.5
 ```
 
 or build and run the gateway from the sibling `dramaclaw-gateway` checkout with `SQLITE_PATH` pointing at that file. See [Configuring Models](configuring-models.md) for the mode setup.

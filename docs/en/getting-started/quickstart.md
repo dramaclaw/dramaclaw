@@ -24,7 +24,7 @@ Edit `.env`: change `PROMPT_EXPORT_PASSWORD` to a non-default value and add or u
 
 ```dotenv
 DRAMACLAW_VERSION=2.2.0
-DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5
 ```
 
 The release Compose file defaults to the bundled credential-safe Codex 0.162.0 Agent.

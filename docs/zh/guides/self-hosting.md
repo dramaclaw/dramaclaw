@@ -38,7 +38,7 @@ cp .env.example .env
 |---|---|---|
 | 服务 | `api` + `newapi` + `web` | 无 PG/Redis；`newapi` 是内置网关 |
 | 镜像（release） | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | 默认拉 Docker Hub；`.env` 设 `DRAMACLAW_IMAGE_PREFIX` 切到 ACR 镜像（只有钉 tag） |
-| 版本（release） | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 当前版本请在 `.env` 中显式指定 `2.2.0` / `v1.0.0-rc.24-dramaclaw.3` |
+| 版本（release） | `DRAMACLAW_VERSION`（api/web）、`DRAMACLAW_GATEWAY_VERSION` | 当前版本请在 `.env` 中显式指定 `2.2.0` / `v1.0.0-rc.24-dramaclaw.5` |
 | 虾导后端 | `DRAMACLAW_CHAT_BACKEND` | 源码和发布版 Compose 均默认 `codex` |
 | 端口 | `8780:8780` | REST API |
 | 网关管理端口 | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | 默认只绑 `127.0.0.1`；`.env` 设 `ST_NEWAPI_BIND=0.0.0.0` 放开 |
@@ -57,7 +57,7 @@ cp .env.example .env
 
 ```dotenv
 DRAMACLAW_VERSION=2.2.0
-DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5
 ```
 
 这两个版本也是发布版 Compose 当前的默认值；显式指定可明确实际使用的版本。
