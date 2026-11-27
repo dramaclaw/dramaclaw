@@ -2985,6 +2985,10 @@ export const VideoNode = memo(
             <video
               ref={setVideoRef}
               src={videoPosterSource ?? undefined}
+              // 首帧解出来之前（readyState < 2，实测 200–650ms）<video> 是空黑框。
+              // 平移结束 shell 升级成完整组件时，就会「缩略图 → 黑一下 → 画面」闪一次。
+              // 用 shell 正在显示的同一张抓帧（同为 0.1s 那一帧）当 poster 垫底。
+              poster={lodStill ?? undefined}
               className="h-full w-full object-contain"
               playsInline
               preload="metadata"
