@@ -12,33 +12,62 @@ def test_default(monkeypatch):
     assert agent_canvas_executor() == "browser"
 
 
-@pytest.mark.parametrize("value", ["1", "true", "yes", "on", "TRUE"])
-def test_push_values(monkeypatch, value):
+@pytest.mark.parametrize("executor", [None, "browser"])
+@pytest.mark.parametrize(
+    "value,enabled",
+    [
+        (None, False), ("", False), ("  ", False), ("1", True), ("true", True),
+        ("yes", True), ("on", True), (" TRUE ", True),
+    ],
+)
+def test_browser_push_values(monkeypatch, executor, value, enabled):
     from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
 
-    monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", value)
-    assert canvas_patch_push_enabled()
+    if executor is None:
+        monkeypatch.delenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", raising=False)
+    else:
+        monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
+    if value is None:
+        monkeypatch.delenv("DRAMACLAW_CANVAS_PATCH_PUSH", raising=False)
+    else:
+        monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", value)
+    assert canvas_patch_push_enabled() is enabled
 
 
-@pytest.mark.parametrize("executor,push", [("server", "0"), ("invalid", "1")])
+@pytest.mark.parametrize(
+    "executor,push",
+    [
+        ("server", "0"), ("server", " FALSE "), ("server", "no"), ("server", "OFF"),
+        ("server", "unknown"), ("invalid", "1"),
+    ],
+)
 def test_bad_configuration_refuses_app(monkeypatch, executor, push):
     from novelvideo.api.app import create_app
     from novelvideo.freezone.agent_canvas_config import AgentCanvasConfigError
 
     monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
     monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", push)
-    with pytest.raises(AgentCanvasConfigError, match="DRAMACLAW"):
+    with pytest.raises(AgentCanvasConfigError, match="DRAMACLAW") as error:
         create_app()
+    if executor == "server" and push != "unknown":
+        assert "DRAMACLAW_AGENT_CANVAS_EXECUTOR=server conflicts with" in str(error.value)
+        assert "Unset DRAMACLAW_CANVAS_PATCH_PUSH or set it to 1" in str(error.value)
 
 
-async def test_server_app_and_public_config(monkeypatch):
+@pytest.mark.parametrize("push", [None, "", "  ", "1"])
+async def test_server_app_and_public_config(monkeypatch, push):
     from novelvideo.api.app import create_app
     from novelvideo.api.routes.config import get_runtime_config
+    from novelvideo.freezone.agent_canvas_config import canvas_patch_push_enabled
 
     monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "server")
-    monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "1")
+    if push is None:
+        monkeypatch.delenv("DRAMACLAW_CANVAS_PATCH_PUSH", raising=False)
+    else:
+        monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", push)
     app = create_app()
     assert app is not None
+    assert canvas_patch_push_enabled()
     response = await get_runtime_config()
     assert json.loads(response.body)["data"]["agent_canvas_executor"] == "server"
 
@@ -48,11 +77,16 @@ def test_executor_values_are_exact(monkeypatch, executor):
     from novelvideo.freezone.agent_canvas_config import (
         AgentCanvasConfigError,
         agent_canvas_executor,
+        canvas_patch_push_enabled,
     )
 
     monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
     with pytest.raises(AgentCanvasConfigError):
         agent_canvas_executor()
+    monkeypatch.delenv("DRAMACLAW_CANVAS_PATCH_PUSH", raising=False)
+    assert not canvas_patch_push_enabled()
+    monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "1")
+    assert canvas_patch_push_enabled()
 
 
 @pytest.mark.parametrize("executor", ["browser", "server"])
