@@ -193,7 +193,13 @@ async def test_invalid_cursor_sends_one_reset_without_patches(scoped_canvas, mon
         await assert_idle(iterator)
 
 
-async def test_no_cursor_starts_at_log_head_and_delivers_next_save(scoped_canvas):
+@pytest.mark.parametrize("executor", ["browser", "server"])
+async def test_no_cursor_starts_at_log_head_and_delivers_next_save(
+    scoped_canvas, monkeypatch, executor
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", executor)
+    if executor == "server":
+        monkeypatch.delenv("DRAMACLAW_CANVAS_PATCH_PUSH", raising=False)
     save(scoped_canvas, 1)
     async with connected_stream() as iterator:
         await asyncio.to_thread(save, scoped_canvas, 2)
@@ -261,6 +267,17 @@ async def test_flag_off_sends_no_change_frames(scoped_canvas, monkeypatch):
     monkeypatch.setenv("DRAMACLAW_CANVAS_PATCH_PUSH", "0")
     async with connected_stream() as iterator:
         await asyncio.to_thread(save, scoped_canvas, 1)
+        await assert_idle(iterator)
+
+
+async def test_invalid_executor_with_unset_push_keeps_save_and_stream_working(
+    scoped_canvas, monkeypatch
+):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "invalid")
+    monkeypatch.delenv("DRAMACLAW_CANVAS_PATCH_PUSH", raising=False)
+    async with connected_stream() as iterator:
+        result = await asyncio.to_thread(save, scoped_canvas, 1)
+        assert result.payload["revision"] == 1
         await assert_idle(iterator)
 
 

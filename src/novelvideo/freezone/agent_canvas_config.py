@@ -24,16 +24,15 @@ def agent_canvas_executor() -> Literal["browser", "server"]:
 
 
 def canvas_patch_push_enabled() -> bool:
-    return os.environ.get("DRAMACLAW_CANVAS_PATCH_PUSH", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    value = os.environ.get("DRAMACLAW_CANVAS_PATCH_PUSH", "").strip().lower()
+    if not value:
+        return os.environ.get("DRAMACLAW_AGENT_CANVAS_EXECUTOR") == "server"
+    return value in {"1", "true", "yes", "on"}
 
 
 def validate_agent_canvas_config() -> None:
     if agent_canvas_executor() == "server" and not canvas_patch_push_enabled():
         raise AgentCanvasConfigError(
-            "DRAMACLAW_AGENT_CANVAS_EXECUTOR=server requires DRAMACLAW_CANVAS_PATCH_PUSH=1"
+            "DRAMACLAW_AGENT_CANVAS_EXECUTOR=server conflicts with a disabled or unrecognized "
+            "DRAMACLAW_CANVAS_PATCH_PUSH value. Unset DRAMACLAW_CANVAS_PATCH_PUSH or set it to 1."
         )
