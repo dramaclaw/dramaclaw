@@ -407,6 +407,46 @@ def test_in_product_codex_turn_still_requires_workflow_result_operation(monkeypa
     assert result["next_action"] == "begin_workflow_result_generation"
 
 
+@pytest.mark.parametrize("tool", ["freezone_prepare_workflow_draft", "freezone_prepare_workflow_plan_draft"])
+def test_hosted_workflow_requests_identify_each_tool_attempt(monkeypatch, tool):
+    from uuid import UUID
+
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-runtime")
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    operation_id = "agent_product_" + "0" * 32
+    plan = {"schema_version": "freezone_workflow_plan.v1", "skill": {"id": "video-ad"}}
+    intent = {"skill_id": "video-ad", "user_goal": "广告"}
+    compiled = {"ok": True, "skill_id": "video-ad", "plan": plan}
+    monkeypatch.setattr(plugin, "validate_agent_workflow_plan", lambda _: copy.deepcopy(compiled))
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _: copy.deepcopy(compiled))
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    submissions = []
+
+    def request(method, path, *, body=None):
+        if method == "GET":
+            return {"ok": True, "data": {"product_kind": "workflow_result", "canvas_id": "c"}}
+        assert method == "POST"
+        assert path.endswith("/workflow-drafts")
+        submissions.append(body)
+        return {"ok": False, "status": "test_stop"}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    handler = next(handler for name, _, handler in plugin.TOOLS if name == tool)
+    args = {"operation_id": operation_id, "project_id": "p", "canvas_id": "c"}
+    args.update({"plan": plan} if tool.endswith("plan_draft") else {"intent": intent})
+    handler(args)
+    handler(args)
+
+    first, second = submissions
+    assert first["operation_id"] == second["operation_id"] == operation_id
+    assert first["workflow_attempt"]["turn_id"] == second["workflow_attempt"]["turn_id"] == "turn-runtime"
+    assert UUID(hex=first["workflow_attempt"]["id"]) != UUID(hex=second["workflow_attempt"]["id"])
+
+
 # What an external MCP host without a product chat turn is told about when to
 # create a canvas and which path builds a generation request. In-product hosts
 # (a chat turn, or no external MCP flag) must keep seeing exactly these texts.

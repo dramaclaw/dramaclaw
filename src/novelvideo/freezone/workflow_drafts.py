@@ -357,6 +357,8 @@ def create_workflow_draft(
     run_after_create: bool = False,
     operation_id: str = "",
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    operation: dict[str, Any] | None = None,
+    workflow_attempt: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     _validate_scope(canvas_id)
     if not isinstance(intent, dict):
@@ -389,6 +391,41 @@ def create_workflow_draft(
     }
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if operation is not None:
+            from novelvideo.freezone.agent_product_operations import (
+                AgentProductOperationTerminal,
+                PENDING_STATUSES,
+                finish_agent_product_operation,
+                read_agent_product_operation,
+            )
+
+            current = read_agent_product_operation(
+                project_dir=project_dir, operation_id=operation_id, connection=conn
+            )
+            if current and current["status"] == "delivered":
+                existing = _read_draft(
+                    conn, canvas_id=canvas_id, draft_id=current["result_ref"].get("id", "")
+                )
+                if existing is not None:
+                    return existing
+            if current is None:
+                raise ValueError("workflow result operation not found")
+            if current["status"] not in PENDING_STATUSES:
+                raise AgentProductOperationTerminal(current["status"])
+            finish_agent_product_operation(
+                project_dir=project_dir,
+                operation_id=operation_id,
+                outcome="delivered",
+                expected_task_id=operation["task_id"],
+                result_ref={
+                    "kind": "workflow_draft",
+                    "id": payload["draft_id"],
+                    "revision": payload["revision"],
+                    "digest": payload["plan_digest"],
+                },
+                workflow_attempt=workflow_attempt,
+                connection=conn,
+            )
         _write_draft(conn, payload)
     return deepcopy(payload)
 

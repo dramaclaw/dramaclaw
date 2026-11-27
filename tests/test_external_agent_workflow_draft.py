@@ -455,6 +455,103 @@ def test_in_product_session_with_operation_and_evidence_is_delivered_and_settled
     assert _draft_rows(draft_client.state_dir) == [(draft["draft_id"], operation_id, "ready")]
 
 
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_hosted_workflow_retry_delivers_with_its_own_evidence(
+    draft_client, monkeypatch, concurrent
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from uuid import uuid4
+
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import read_agent_product_operation
+
+    hosted_session = {**IN_PRODUCT_CODEX_SESSION, "worker_id": "page-agent:codex:alice"}
+    draft_client.use(hosted_session)
+    admission = draft_client.post(
+        OPERATIONS,
+        json={
+            "product_kind": "workflow_result",
+            "generation_session_id": "workflow-retry",
+            "canvas_id": "default",
+            "artifact_id": "video-ad@1.0.0",
+            "normalized_inputs_hash": "workflow-retry",
+            "metadata": {"skill_id": "video-ad", "skill_version": "1.0.0"},
+        },
+    )
+    operation_id = admission.json()["data"]["operation_id"]
+
+    def operation():
+        return read_agent_product_operation(
+            project_dir=draft_client.state_dir, operation_id=operation_id
+        )
+
+    first = {"id": uuid4().hex, "turn_id": "turn-a"}
+    second = {"id": uuid4().hex, "turn_id": "turn-a"}
+
+    missing = draft_client.post(DRAFTS, json=_draft_request(operation_id=operation_id))
+    assert missing.status_code == 409
+
+    rejected = draft_client.post(
+        DRAFTS,
+        json=_draft_request(
+            operation_id=operation_id,
+            workflow_attempt=first,
+            intent={"skill_id": "other-skill"},
+            compiled={},
+        ),
+    )
+    assert rejected.status_code == 400
+    assert operation()["status"] == "reserved"
+    assert operation()["model_evidence"] == {}
+    assert _draft_rows(draft_client.state_dir) == []
+
+    body = _draft_request(operation_id=operation_id, workflow_attempt=second)
+    draft_client.use(IN_PRODUCT_CODEX_SESSION)
+    untrusted = draft_client.post(DRAFTS, json=body)
+    assert untrusted.status_code == 403
+    assert operation()["model_evidence"] == {}
+    draft_client.use(hosted_session)
+
+    if concurrent:
+        both_validated = Barrier(2, timeout=10)
+        create = freezone.create_workflow_draft
+
+        def simultaneous_create(**kwargs):
+            both_validated.wait()
+            return create(**kwargs)
+
+        third = {"id": uuid4().hex, "turn_id": "turn-a"}
+        with monkeypatch.context() as patch, ThreadPoolExecutor(2) as pool:
+            patch.setattr(freezone, "create_workflow_draft", simultaneous_create)
+            requests = [
+                pool.submit(draft_client.post, DRAFTS, json={**body, "workflow_attempt": attempt})
+                for attempt in (second, third)
+            ]
+            delivered, duplicate = [request.result(timeout=12) for request in requests]
+        assert duplicate.status_code == 200, duplicate.text
+        assert duplicate.json()["data"]["draft_id"] == delivered.json()["data"]["draft_id"]
+        valid_call_ids = {second["id"], third["id"]}
+    else:
+        delivered = draft_client.post(DRAFTS, json=body)
+        valid_call_ids = {second["id"]}
+
+    assert delivered.status_code == 200, delivered.text
+    draft_id = delivered.json()["data"]["draft_id"]
+    assert operation()["status"] == "delivered"
+    winner = operation()["model_evidence"]["tool_call_id"]
+    assert winner in valid_call_ids
+    assert operation()["model_evidence"]["turn_id"] == "turn-a"
+
+    for attempt in (second, first):
+        replay = draft_client.post(DRAFTS, json={**body, "workflow_attempt": attempt})
+        assert replay.status_code == 200
+        assert replay.json()["data"]["draft_id"] == draft_id
+    assert operation()["model_evidence"]["tool_call_id"] == winner
+    assert _draft_rows(draft_client.state_dir) == [(draft_id, operation_id, "ready")]
+    assert len(draft_client.enqueued) == 1
+
+
 @pytest.mark.parametrize("terminal_status", ["cancelled", "failed"])
 def test_terminal_workflow_operation_requires_new_attempt(draft_client, terminal_status):
     import asyncio

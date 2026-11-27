@@ -262,6 +262,7 @@ from novelvideo.freezone.workflow_drafts import (
     workflow_draft_revision_conflict_pending,
 )
 from novelvideo.freezone.agent_product_operations import (
+    AgentProductOperationTerminal,
     PRODUCT_TASK_TYPES,
     bind_agent_product_model_execution,
     bind_agent_product_task,
@@ -16548,6 +16549,49 @@ async def _prepare_workflow_draft_story_references(
     compiled.update(validated)
 
 
+def _require_matching_workflow_draft_source(body: dict, existing: dict) -> None:
+    if _workflow_draft_source_kind(body) != _workflow_draft_source_kind(existing):
+        raise HTTPException(
+            409,
+            {
+                "ok": False,
+                "status": "workflow_result_source_conflict",
+                "error": (
+                    "workflow result operation already delivered a draft from a "
+                    "different workflow source kind"
+                ),
+                "draft_id": existing.get("draft_id"),
+                "revision": existing.get("revision"),
+                "retryable": False,
+                "next_action": "use_existing_draft",
+            },
+        )
+
+
+def _workflow_delivery_attempt(body: dict, user: dict) -> dict[str, str] | None:
+    if "workflow_attempt" not in body:
+        return None
+    username = user.get("username")
+    if (
+        user.get("credential_kind") != "agent_session"
+        or user.get("agent_kind") != "codex"
+        or not username
+        or user.get("worker_id") != f"page-agent:codex:{username}"
+        or is_external_agent_key_session(user)
+    ):
+        raise HTTPException(403, "workflow tool attempts require a hosted Codex session")
+    attempt = body["workflow_attempt"]
+    if (
+        not isinstance(attempt, dict)
+        or not isinstance(attempt.get("id"), str)
+        or not re.fullmatch(r"[0-9a-f]{32}", attempt["id"])
+        or not isinstance(attempt.get("turn_id"), str)
+        or not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", attempt["turn_id"])
+    ):
+        raise HTTPException(400, "invalid workflow tool attempt")
+    return {"id": attempt["id"], "turn_id": attempt["turn_id"]}
+
+
 @router.post(
     "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts",
     tags=[TAG_FREEZONE_CANVAS],
@@ -16607,6 +16651,9 @@ async def create_canvas_workflow_draft(
         )
     if operation_id and operation is None:
         raise HTTPException(400, "workflow result operation is unavailable")
+    workflow_attempt = _workflow_delivery_attempt(body, user)
+    if workflow_attempt is not None and operation is None:
+        raise HTTPException(400, "workflow tool attempt requires an admitted operation")
     if operation is not None:
         operation_canvas_id = str(operation.get("canvas_id") or "").strip()
         if operation_canvas_id != canvas_id:
@@ -16666,22 +16713,7 @@ async def create_canvas_workflow_draft(
             draft_id=existing_id,
         )
         if existing is not None:
-            if _workflow_draft_source_kind(body) != _workflow_draft_source_kind(existing):
-                raise HTTPException(
-                    409,
-                    {
-                        "ok": False,
-                        "status": "workflow_result_source_conflict",
-                        "error": (
-                            "workflow result operation already delivered a draft from a "
-                            "different workflow source kind"
-                        ),
-                        "draft_id": existing_id,
-                        "revision": existing.get("revision"),
-                        "retryable": False,
-                        "next_action": "use_existing_draft",
-                    },
-                )
+            _require_matching_workflow_draft_source(body, existing)
             await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
             return {
                 "ok": True,
@@ -16699,7 +16731,9 @@ async def create_canvas_workflow_draft(
         "submitted",
     }:
         raise HTTPException(409, "workflow result operation is not admitted")
-    if operation and not (operation.get("model_evidence") or {}).get("model_call_id"):
+    if operation and workflow_attempt is None and not (
+        operation.get("model_evidence") or {}
+    ).get("model_call_id"):
         evidence_metrics.observe("agent_product_evidence_rejected")
         logger.warning(
             "workflow_draft.create.rejected project_id=%s canvas_id=%s "
@@ -16785,7 +16819,13 @@ async def create_canvas_workflow_draft(
             compiled=validated,
             run_after_create=bool(body.get("run_after_create")),
             operation_id=operation_id,
+            operation=operation,
+            workflow_attempt=workflow_attempt,
         )
+    except AgentProductOperationTerminal as exc:
+        if exc.status in {"failed", "cancelled"}:
+            raise HTTPException(409, workflow_result_attempt_required(operation_id)) from exc
+        raise HTTPException(409, "workflow result is no longer available for delivery") from exc
     except ValueError as exc:
         logger.warning(
             "workflow_draft.create.failed project_id=%s canvas_id=%s "
@@ -16811,19 +16851,11 @@ async def create_canvas_workflow_draft(
             )
         raise HTTPException(400, str(exc)) from exc
     if operation is not None:
+        _require_matching_workflow_draft_source(body, draft)
         operation = await asyncio.to_thread(
-            finish_agent_product_operation,
-            project_dir=state_dir,
-            operation_id=operation_id,
-            outcome="delivered",
-            expected_task_id=str(operation.get("task_id") or ""),
-            result_ref={
-                "kind": "workflow_draft",
-                "id": draft["draft_id"],
-                "revision": draft["revision"],
-                "digest": draft["plan_digest"],
-            },
+            read_agent_product_operation, project_dir=state_dir, operation_id=operation_id
         )
+        assert operation is not None
         await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
     logger.info(
         "workflow_draft.create.delivered project_id=%s canvas_id=%s operation_id=%s "

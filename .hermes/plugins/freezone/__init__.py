@@ -7701,6 +7701,7 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
                 **({"run_after_create": args["run_after_create"]}
                    if "run_after_create" in args else {}),
                 "operation_id": operation_id,
+                **_hosted_workflow_attempt(operation_id),
             },
         )
     )
@@ -7806,6 +7807,14 @@ def _workflow_draft_unavailable() -> str:
         f"catalog import error: {_JSON_WORKFLOW_CATALOG_IMPORT_ERROR}; "
         f"graph import error: {_WORKFLOW_GRAPH_IMPORT_ERROR}"
     )
+
+
+def _hosted_workflow_attempt(operation_id: str) -> dict[str, Any]:
+    turn_id = request_context.get("DRAMACLAW_TURN_ID", "").strip()
+    if not operation_id or not turn_id:
+        return {}
+    # The hosted tool process supplies this identity, separate from tool arguments.
+    return {"workflow_attempt": {"id": uuid.uuid4().hex, "turn_id": turn_id}}
 
 
 def _run_after_create_arg(args: dict[str, Any]) -> bool | None:
@@ -8786,6 +8795,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 **({"run_after_create": args["run_after_create"]}
                    if "run_after_create" in args else {}),
                 "operation_id": operation_id,
+                **_hosted_workflow_attempt(operation_id),
             },
         )
     )
