@@ -1,0 +1,456 @@
+"""In-memory sessions for servers that support agent keys (stdlib only)."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+import hashlib
+from http.client import HTTPException
+import json
+import math
+import importlib.util
+from pathlib import Path
+import re
+import sys
+from threading import Lock
+import time
+from types import ModuleType
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+def _load_request_context():
+    path = Path(__file__).with_name("_request_context.py")
+    if not path.is_file():
+        path = path.with_name("request_context.py")
+    spec = importlib.util.spec_from_file_location("_dramaclaw_request_context", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load request context from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+request_context = _load_request_context()
+
+
+# Sessions are kept process-wide, so every bundled copy of this module reuses the
+# sessions any other copy, or a server that opened them for a request, already holds.
+_holder = ModuleType("_dramaclaw_agent_key_session_state")
+_holder.cache = {}
+_holder.locks = {}
+_holder.secrets = set()
+_holder.lock = Lock()
+_state = sys.modules.setdefault(_holder.__name__, _holder)
+_CACHE: dict[tuple[str, str, str], tuple[str, float]] = _state.cache
+_LOCKS: dict[tuple[str, str, str], Any] = _state.locks
+_SECRETS: set[str] = _state.secrets
+_GLOBAL_LOCK = _state.lock
+if not hasattr(_state, "failures"):
+    _state.failures = ContextVar("dramaclaw_agent_key_session_failures", default=None)
+# The session failures of the current tool call, shared by every bundled copy.
+_FAILURES: ContextVar[list[dict[str, Any]] | None] = _state.failures
+# A session closer than this to its expiry is exchanged again before it is used.
+_RENEW_SECONDS = 60
+_UNSUPPORTED = (
+    "This server does not support agent keys via POST /api/v1/agent/sessions; "
+    "for a local community API use DRAMACLAW_LOCAL_AGENT_TRUST=1 instead."
+)
+_REDIRECTED = (
+    "Agent key session exchange was answered with a redirect, which is never followed "
+    "because it would send the agent key to another address; "
+    "DRAMACLAW_API_URL must be the final API address."
+)
+_REQUEST_REDIRECTED = (
+    "Agent key request was answered with a redirect, which is never followed "
+    "because it would send the agent session token to another address; "
+    "DRAMACLAW_API_URL must be the final API address."
+)
+
+
+class _RefuseRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # No follow-up request: the redirect surfaces as the response's HTTPError.
+        return None
+
+
+# The exchange carries the agent key, so it never uses a caller-supplied opener.
+_open_exchange = build_opener(_RefuseRedirects).open
+
+
+class _EveryAddressVisited(dict):
+    """Redirect history that reports every address as already visited too often."""
+
+    def get(self, key, default=None):
+        return math.inf
+
+
+def _session_request(
+    url: str, payload: bytes | None, headers: dict[str, str], method: str,
+) -> Request:
+    """Build the request that carries a session token, which no opener may redirect.
+
+    The opener is the caller's, so the refusal travels on the request: urllib's redirect
+    handler consults ``redirect_dict`` before every follow-up and raises the redirect as an
+    HTTPError, without contacting the new address, once its loop limit is reached.
+    """
+    req = Request(url, data=payload, headers=headers, method=method)
+    req.redirect_dict = _EveryAddressVisited()
+    return req
+
+
+def agent_key_mode() -> bool:
+    """Whether an agent key is configured without a turn token override."""
+    return any(
+        request_context.get(name, "").strip()
+        for name in ("DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_KEY")
+    ) and not any(
+        request_context.get(name, "").strip()
+        for name in ("DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE")
+    )
+
+
+def _remember(secret: str) -> None:
+    if secret:
+        with _GLOBAL_LOCK:
+            _SECRETS.add(secret)
+
+
+def redact(value: Any) -> Any:
+    """Remove all credentials held by this module, including expired sessions."""
+    with _GLOBAL_LOCK:
+        secrets = sorted(_SECRETS, key=len, reverse=True)
+
+    def visit(item: Any) -> Any:
+        if isinstance(item, str):
+            for secret in secrets:
+                item = item.replace(secret, "[redacted]")
+            return item
+        if isinstance(item, dict):
+            return {key: visit(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [visit(child) for child in item]
+        return item
+
+    return visit(value)
+
+
+def protect(call: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Keep exceptions and results from carrying credentials out of key mode.
+
+    A session failure is also recorded for an enclosing ``watch_failures`` block.
+    """
+    try:
+        result = call()
+    except Exception:
+        # Exceptions from preparation, openers or decoders may contain secrets.
+        result = {"ok": False, "code": "agent_key_request_failed", "error": "Agent key request failed"}
+    result = redact(result)
+    seen = _FAILURES.get()
+    if seen is not None and is_session_failure(result):
+        seen.append(result)
+    return result
+
+
+@contextmanager
+def watch_failures() -> Iterator[list[dict[str, Any]]]:
+    """Collect the session failures of the requests made inside this block.
+
+    A tool that turns a failed request into an error of its own loses the session
+    failure's guidance: whether the key was rejected or the server was unavailable,
+    and who can fix it. Watching the whole tool call lets ``failure_behind`` answer
+    with that guidance instead, wherever the tool shaped its error.
+    """
+    seen: list[dict[str, Any]] = []
+    token = _FAILURES.set(seen)
+    try:
+        yield seen
+    finally:
+        _FAILURES.reset(token)
+
+
+def failure_behind(result: Any, seen: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The session failure a failed tool ``result`` came from, if one was watched.
+
+    A tool that still succeeded, for example by tolerating an optional read, keeps
+    its result.
+    """
+    if not seen or not isinstance(result, dict) or result.get("ok") is not False:
+        return None
+    return seen[0]
+
+
+def transport_refusal(api_base: str) -> dict[str, Any] | None:
+    """The refusal for an API address a session token must not be sent to, if any."""
+    parsed = urlsplit(api_base)
+    if parsed.scheme == "https" or (
+        parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    ):
+        return None
+    return {
+        "ok": False, "code": "agent_key_insecure_transport",
+        "error": "Agent keys require https or a loopback http API URL",
+    }
+
+
+def _scope_for(project_id: str | None) -> dict[str, str]:
+    return {"kind": "project", "id": project_id} if project_id else {"kind": "home"}
+
+
+def _cache_key(api_base: str, key: str, scope: dict[str, str]) -> tuple[str, str, str]:
+    return (
+        api_base, hashlib.sha256(key.encode("utf-8")).hexdigest(),
+        json.dumps(scope, sort_keys=True),
+    )
+
+
+def live_session(api_base: str, key: str, project_id: str | None) -> str | None:
+    """The cached session token of ``key`` for the scope, unless it is close to expiry."""
+    with _GLOBAL_LOCK:
+        session = _CACHE.get(_cache_key(api_base, key, _scope_for(project_id)))
+    if session is None or session[1] - time.time() <= _RENEW_SECONDS:
+        return None
+    return session[0]
+
+
+def remember_session(
+    api_base: str, key: str, project_id: str | None, token: str, expires_at: float,
+) -> None:
+    """Cache a session ``key`` was exchanged for elsewhere, for the requests it makes."""
+    _remember(key)
+    _remember(token)
+    with _GLOBAL_LOCK:
+        _CACHE[_cache_key(api_base, key, _scope_for(project_id))] = (token, expires_at)
+
+
+# Codes of results this module returns instead of the server's answer: no request
+# reached the API with a session, so the result says nothing about the API itself.
+SESSION_FAILURE_CODES = frozenset({
+    "agent_key_unavailable", "agent_key_insecure_transport", "agent_key_request_failed",
+    "agent_key_exchange_failed", "agent_key_exchange_unsupported",
+    "agent_key_exchange_redirected", "agent_key_request_redirected",
+})
+
+
+def is_session_failure(result: Any) -> bool:
+    """Whether ``result`` is this module's refusal rather than an answer from the API."""
+    return (
+        isinstance(result, dict) and result.get("ok") is False
+        and result.get("code") in SESSION_FAILURE_CODES
+    )
+
+
+def _failure_guidance(status: int | None, code: str | None = None) -> dict[str, Any]:
+    """Give retry and user guidance for an unsuccessful agent key exchange."""
+    if status == 401:
+        return {
+            "status": "rejected", "reason": "agent_key_rejected",
+            "retryable": False, "next_action": "tell_user",
+            "message": (
+                f"The server rejected the agent key (HTTP {status}): it is invalid, revoked, "
+                "expired or not allowed for this project. Ask the key owner for a new agent key "
+                "and configure the agent with it."
+            ),
+            "agent_instruction": (
+                "Do not retry with the same key. Tell the user the agent key was rejected "
+                "and that a new agent key must be configured."
+            ),
+        }
+    if status == 403:
+        return {
+            "status": "rejected", "reason": "agent_key_project_forbidden",
+            "retryable": False, "next_action": "tell_user",
+            "message": (
+                "The agent key is valid but cannot be used on this project (HTTP 403). "
+                "You can switch to a project the key can access, or ask the key owner "
+                "to check that their account has access to this project and that the key "
+                "includes it."
+            ),
+            "agent_instruction": (
+                "Do not retry with the same key for this project. Tell the user the agent "
+                "key cannot be used on this project and that they can switch to a project "
+                "the key can access, or ask the key owner to check that their account has "
+                "access to this project and that the key includes it."
+            ),
+        }
+    if status == 409 and code == "agent_key_project_deleted":
+        return {
+            "status": "rejected", "reason": code,
+            "retryable": False, "next_action": "tell_user",
+            "message": (
+                "The agent key is valid, but this project has been deleted (HTTP 409). "
+                "Only the project owner can restore it in the web app, after which the "
+                "same agent key works again."
+            ),
+            "agent_instruction": (
+                "Tell the user the agent key is valid but this project has been deleted. "
+                "Ask the project owner to restore it in the web app before retrying, or "
+                "switch to another project the agent key can access."
+            ),
+        }
+    received = f"HTTP {status}" if status is not None else "no response"
+    return {
+        "status": "unavailable", "reason": "agent_key_service_unavailable",
+        "retryable": True, "next_action": "retry",
+        "message": (
+            f"The agent key could not be checked because the server is temporarily "
+            f"unavailable ({received}); the key itself was not rejected. Please try again later."
+        ),
+        "agent_instruction": (
+            "Retry once later. If it still fails, tell the user the service is temporarily "
+            "unavailable; the agent key does not need to be replaced."
+        ),
+    }
+
+
+def _exchange_error(
+    status: int, *, unsupported: bool = False, code: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status_code": status,
+        "code": "agent_key_exchange_unsupported" if unsupported else "agent_key_exchange_failed",
+        "error": _UNSUPPORTED if unsupported else "Agent key session exchange failed",
+        **({} if unsupported else _failure_guidance(status, code)),
+    }
+
+
+def _exchange_conflict_code(exc: HTTPError) -> str | None:
+    try:
+        body = json.loads(exc.read(65536))
+    except (HTTPException, OSError, RecursionError, ValueError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("detail")
+    code = (detail if isinstance(detail, dict) else body).get("code")
+    return code if isinstance(code, str) else None
+
+
+def _exchange(
+    api_base: str, key: str, scope: dict[str, str], headers: dict[str, str],
+    timeout: float,
+) -> tuple[str, float] | dict[str, Any]:
+    exchange_headers = {
+        **headers,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}",
+    }
+    req = Request(
+        f"{api_base}/api/v1/agent/sessions",
+        data=json.dumps({"scope": scope}).encode("utf-8"),
+        headers=exchange_headers, method="POST",
+    )
+    try:
+        with _open_exchange(req, timeout=timeout) as resp:
+            status = resp.status
+            text = resp.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        # Never forward the exchange body, which may echo credentials.
+        try:
+            code = _exchange_conflict_code(exc) if exc.code == 409 else None
+        finally:
+            exc.close()
+        if 300 <= exc.code < 400:
+            return {
+                "ok": False, "status_code": exc.code,
+                "code": "agent_key_exchange_redirected", "error": _REDIRECTED,
+            }
+        return _exchange_error(exc.code, unsupported=exc.code in {404, 405}, code=code)
+    except (URLError, OSError) as exc:
+        reason = exc.reason if isinstance(exc, URLError) else str(exc)
+        return {
+            "ok": False, "code": "agent_key_exchange_failed", "error": f"network_error: {reason}",
+            **_failure_guidance(None),
+        }
+    try:
+        response = json.loads(text)
+    except ValueError:
+        return _exchange_error(status, unsupported=True)
+    data = response.get("data") if isinstance(response, dict) else None
+    token = data.get("token") if isinstance(data, dict) else None
+    if isinstance(token, str):
+        _remember(token)
+    expiry = data.get("expires_at") if isinstance(data, dict) else None
+    if (
+        not isinstance(response, dict) or response.get("ok") is not True
+        or not isinstance(token, str) or not token.strip()
+        or isinstance(expiry, bool) or not isinstance(expiry, (int, float))
+        or not math.isfinite(expiry)
+    ):
+        return _exchange_error(status, unsupported=True)
+    return token, expiry
+
+
+def request(
+    *, api_base: str, api_path: str, method: str, query_string: str,
+    payload: bytes | None, headers: dict[str, str], timeout: float,
+    opener: Callable[..., Any], decode_success: Callable[[int, str], dict[str, Any]],
+    shape_http_error: Callable[[int, str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    """Exchange a key lazily, then retry one business 401 with a fresh session."""
+    key_file = request_context.get("DRAMACLAW_AGENT_KEY_FILE", "").strip()
+    try:
+        key = (
+            Path(key_file).read_text(encoding="utf-8").strip() if key_file
+            else request_context.get("DRAMACLAW_AGENT_KEY", "").strip()
+        )
+    except (OSError, UnicodeError, ValueError):
+        key = ""
+    if not key:
+        return {"ok": False, "code": "agent_key_unavailable", "error": "Agent key is unavailable"}
+    _remember(key)
+    refused = transport_refusal(api_base)
+    if refused is not None:
+        return refused
+    project = re.search(r"/projects/([^/?#]+)", api_path)
+    project_id = (
+        unquote(project.group(1))
+        if project
+        else request_context.get("DRAMACLAW_PROJECT_ID", "").strip()
+    )
+    scope = _scope_for(project_id)
+    cache_key = _cache_key(api_base, key, scope)
+    with _GLOBAL_LOCK:
+        entry_lock = _LOCKS.setdefault(cache_key, Lock())
+
+    for attempt in range(2):
+        with entry_lock:
+            session = _CACHE.get(cache_key)
+            if session is None or session[1] - time.time() <= _RENEW_SECONDS:
+                exchanged = _exchange(api_base, key, scope, headers, timeout)
+                if isinstance(exchanged, dict):
+                    return exchanged
+                session = _CACHE[cache_key] = exchanged
+            token = session[0]
+        req = _session_request(
+            f"{api_base}{api_path}{query_string}", payload,
+            {**headers, "Authorization": f"Bearer {token}"}, method.upper(),
+        )
+        try:
+            with opener(req, timeout=timeout) as resp:
+                return decode_success(resp.status, resp.read().decode("utf-8", errors="replace"))
+        except HTTPError as exc:
+            with exc:
+                text = exc.read(65537).decode("utf-8", errors="replace")
+            if 300 <= exc.code < 400:
+                return {
+                    "ok": False, "status_code": exc.code,
+                    "code": "agent_key_request_redirected", "error": _REQUEST_REDIRECTED,
+                }
+            if exc.code == 401:
+                with entry_lock:
+                    current = _CACHE.get(cache_key)
+                    if current is not None and current[0] == token:
+                        del _CACHE[cache_key]
+                if attempt == 0:
+                    continue
+            return shape_http_error(exc.code, text, str(exc.reason))
+        except (URLError, OSError) as exc:
+            reason = exc.reason if isinstance(exc, URLError) else str(exc)
+            return {"ok": False, "error": f"network_error: {reason}"}
+    raise AssertionError("unreachable retry state")

@@ -25,11 +25,12 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
 from PIL import Image
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
 from novelvideo.freezone.video_slowdown import slowdown_factor
 from novelvideo.egress_context import (
@@ -43,6 +44,9 @@ from novelvideo.task_backend.subprocesses import (
     RestrictedSubprocessPolicy,
     run_project_subprocess,
 )
+
+if TYPE_CHECKING:
+    from novelvideo.freezone.studio import StudioFilm
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,7 @@ async def run_freezone_gen(
     request_schema: Optional[dict[str, Any]] = None,
     output_task_type: str = "freezone_gen",
     egress_context: TrustedEgressContext | None = None,
+    egress_business_task_id: str | None = None,
 ) -> Path:
     """text → image (with optional reference images).
 
@@ -131,6 +136,7 @@ async def run_freezone_gen(
             config=cfg,
             egress_context=egress_context,
             egress_capability="freezone.image.generate",
+            egress_business_task_id=egress_business_task_id,
         )
     else:
         await generate_text_to_image(
@@ -143,6 +149,7 @@ async def run_freezone_gen(
             config=cfg,
             egress_context=egress_context,
             egress_capability="freezone.image.generate",
+            egress_business_task_id=egress_business_task_id,
         )
     return out
 
@@ -264,7 +271,7 @@ async def run_freezone_upscale(
     )
     if not result or not result.success:
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"upscale failed: {err}")
+        raise with_upstream_status(RuntimeError(f"upscale failed: {err}"), result)
     if not out.exists():
         if result.image_base64:
             import base64
@@ -295,7 +302,10 @@ async def _run_volcengine_text_to_image(
     )
     if not result or not result.success:
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"Volcengine text→image generation failed: {err}")
+        raise with_upstream_status(
+            RuntimeError(f"Volcengine text→image generation failed: {err}"),
+            result,
+        )
     if not out.exists():
         if result.image_base64:
             import base64
@@ -460,6 +470,7 @@ async def run_freezone_video_upscale(
     frame_rate_model_params: Optional[dict[str, Any]] = None,
     frame_rate_request_schema: Optional[dict[str, Any]] = None,
     egress_context: TrustedEgressContext | None = None,
+    enhancement_model: str = "standard",
 ) -> tuple[Path, dict]:
     """Enhance a video through configured gateway models.
 
@@ -485,6 +496,7 @@ async def run_freezone_video_upscale(
             frame_rate_model_params=frame_rate_model_params,
             frame_rate_request_schema=frame_rate_request_schema,
             egress_context=egress_context,
+            enhancement_model=enhancement_model,
         )
     if frame_interpolation != "none":
         raise ValueError("basic video upscale only supports frame_interpolation='none'")
@@ -533,10 +545,18 @@ async def probe_video_stream(
     *,
     cwd: Path | None = None,
     egress_context: TrustedEgressContext | None = None,
-) -> dict[str, float | int]:
+    verify_constant_frame_rate: bool = False,
+) -> dict[str, Any]:
     """Return the first video stream geometry, frame rate, and duration."""
     if not shutil.which("ffprobe"):
         raise RuntimeError("ffprobe not found on PATH; install via brew/apt")
+    entries = "stream=width,height,avg_frame_rate:format=duration"
+    if verify_constant_frame_rate:
+        entries = (
+            "stream=width,height,avg_frame_rate,pix_fmt,color_transfer,field_order,"
+            "sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation:format=duration"
+            ":frame=best_effort_timestamp_time"
+        )
     cmd = [
         "ffprobe",
         "-v",
@@ -544,11 +564,17 @@ async def probe_video_stream(
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height,avg_frame_rate:format=duration",
+        entries,
+    ]
+    if verify_constant_frame_rate:
+        # Read past the supported 120s * 30fps cap so an incomplete prefix
+        # cannot be accepted as a complete constant-rate source.
+        cmd.extend(["-show_frames", "-read_intervals", "%+#3632"])
+    cmd.extend([
         "-of",
         "json",
         source_path,
-    ]
+    ])
     if egress_context is None:
         proc = await asyncio.to_thread(
             subprocess.run,
@@ -582,12 +608,38 @@ async def probe_video_stream(
         stream = data["streams"][0]
         numerator, denominator = str(stream.get("avg_frame_rate") or "0/1").split("/", 1)
         fps = float(numerator) / max(float(denominator), 1.0)
-        return {
+        result: dict[str, Any] = {
             "width": int(stream["width"]),
             "height": int(stream["height"]),
             "fps": fps,
             "duration": max(0.1, float(data["format"]["duration"])),
         }
+        if verify_constant_frame_rate:
+            result.update({
+                **({"hdr": stream["color_transfer"] in {"smpte2084", "arib-std-b67"}} if stream.get("color_transfer") else {}),
+                **({"pixel_format": stream["pix_fmt"]} if stream.get("pix_fmt") else {}),
+                **({"field_order": stream["field_order"]} if stream.get("field_order") else {}),
+                **({"sample_aspect_ratio": stream["sample_aspect_ratio"]} if stream.get("sample_aspect_ratio") else {}),
+                "rotated": (stream.get("tags") or {}).get("rotate") not in {None, "0"}
+                or any(item.get("rotation") for item in stream.get("side_data_list") or []),
+            })
+            timestamps = [
+                float(frame["best_effort_timestamp_time"])
+                for frame in data.get("frames", [])
+            ]
+            timestamp_tolerance = 0.002
+            has_valid_timestamps = math.isfinite(fps) and fps > 0 and 0 < len(timestamps) <= 3600
+            first_timestamp = timestamps[0] if timestamps else 0.0
+            result["constant_frame_rate"] = has_valid_timestamps and all(
+                abs((timestamp - first_timestamp) - index / fps) <= timestamp_tolerance
+                for index, timestamp in enumerate(timestamps)
+            )
+            # The service validates timestamps against a separate zero-origin grid.
+            result["timestamps_aligned_to_zero"] = has_valid_timestamps and all(
+                abs(timestamp - index / fps) <= timestamp_tolerance
+                for index, timestamp in enumerate(timestamps)
+            )
+        return result
     except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as exc:
         raise RuntimeError("unable to parse video stream metadata") from exc
 
@@ -693,7 +745,10 @@ async def _run_video_processing_model(
         project_output_dir=str(project_dir),
     )
     if not result or result.status.value != "done":
-        raise RuntimeError(result.error if result else f"{mode} failed")
+        raise with_upstream_status(
+            RuntimeError(result.error if result else f"{mode} failed"),
+            result,
+        )
     if not output_path.exists():
         raise RuntimeError(f"{mode} completed without an output file")
 
@@ -716,17 +771,38 @@ async def _run_model_video_enhancement(
     frame_rate_model_params: Optional[dict[str, Any]],
     frame_rate_request_schema: Optional[dict[str, Any]],
     egress_context: TrustedEgressContext | None,
+    enhancement_model: str = "standard",
 ) -> tuple[Path, dict]:
     src = Path(source_path)
     if not src.exists():
         raise FileNotFoundError(f"video source not found: {src}")
     factor = slowdown_factor(slowdown)
     probe = await probe_video_stream(
-        str(src), cwd=project_dir, egress_context=egress_context
+        str(src), cwd=project_dir, egress_context=egress_context,
+        **({"verify_constant_frame_rate": True} if enhancement_model == "claymore" else {}),
     )
     from novelvideo.freezone.video_slowdown import is_topaz_backend, topaz_requires_frame_rate
 
     topaz = is_topaz_backend(upscale_backend)
+    claymore = enhancement_model == "claymore"
+    if claymore:
+        from novelvideo.freezone.video_enhancement import (
+            CLAYMORE_PROCESSING_MODELS,
+            claymore_source_error,
+            processing_model_name,
+        )
+
+        if (
+            processing_model_name(upscale_backend) != CLAYMORE_PROCESSING_MODELS["video_upscale"]
+            or (frame_rate_backend and processing_model_name(frame_rate_backend) != CLAYMORE_PROCESSING_MODELS["video_frame_rate"])
+            or slowdown != "auto" or face_enhance or scene != "realistic"
+            or (target_fps is not None and target_fps != 60)
+            or (target_fps is not None and not frame_rate_backend)
+        ):
+            raise RuntimeError("unsupported Claymore video enhancement parameters")
+        error = claymore_source_error(probe, resolution, frame_rate=target_fps is not None)
+        if error:
+            raise RuntimeError(error)
     topaz_frame_rate = topaz and topaz_requires_frame_rate(target_fps, slowdown)
     if topaz_frame_rate and not frame_rate_backend:
         raise RuntimeError("video frame-rate model is not configured")
@@ -751,7 +827,7 @@ async def _run_model_video_enhancement(
                 ),
                 **(
                     {}
-                    if topaz
+                    if topaz or claymore
                     else {"scene": scene, "face_enhance": bool(face_enhance)}
                 ),
             },
@@ -794,11 +870,9 @@ async def _run_model_video_enhancement(
                         if topaz
                         else {"smart_interpolation": smart_interpolation}
                     ),
-                    "resolution_tier": {
-                        "1080p": "fhd",
-                        "2k": "2k",
-                        "4k": "4k",
-                    }.get(resolution, resolution),
+                    **({"resolution_tier": {
+                        "1080p": "fhd", "2k": "2k", "4k": "4k",
+                    }.get(resolution, resolution)} if not claymore else {}),
                 },
                 model_params=frame_rate_model_params,
                 request_schema=frame_rate_request_schema,
@@ -1113,7 +1187,14 @@ async def _render_audio_clip(
     source_start: float,
     duration: float,
     volume: float,
+    fade_out: float = 0.0,
+    speed: float = 1.0,
 ) -> None:
+    filters = [f"volume={volume:.4f}"]
+    if speed != 1.0:
+        filters.insert(0, _audio_tempo_filter(speed))
+    if fade_out > 0:
+        filters.append(f"afade=t=out:st={max(0, duration / speed - fade_out):.6f}:d={fade_out:.6f}")
     await _run_cmd(
         [
             "ffmpeg",
@@ -1126,7 +1207,7 @@ async def _render_audio_clip(
             source_path,
             "-vn",
             "-af",
-            f"volume={volume:.4f}",
+            ",".join(filters),
             "-c:a",
             "aac",
             "-ar",
@@ -1189,7 +1270,7 @@ async def _mix_audio_tracks(
     for index, item in enumerate(audio_items):
         if bool(item.get("muted")):
             continue
-        volume = float(item.get("volume", 1.0) or 1.0)
+        volume = float(item.get("volume", 1.0))
         if volume <= 0:
             continue
         source_start = float(item.get("source_start", 0.0) or 0.0)
@@ -1204,6 +1285,8 @@ async def _mix_audio_tracks(
             source_start=source_start,
             duration=duration,
             volume=volume,
+            fade_out=float(item.get("fade_out", 0.0)),
+            speed=float(item.get("speed", 1.0)),
         )
         audio_inputs.append((audio_path, float(item.get("timeline_start", 0.0) or 0.0)))
 
@@ -1250,7 +1333,7 @@ async def run_freezone_studio_export(
     *,
     project_dir: Path,
     job_id: str,
-    film_dir: str,
+    film: StudioFilm,
     fps: int = 30,
 ) -> Path:
     """Render a compose node's hand-cut OpenFilm film into the compose output slot.
@@ -1263,14 +1346,14 @@ async def run_freezone_studio_export(
     output_dir = outputs_dir(project_dir, "freezone_video_compose")
     output_dir.mkdir(parents=True, exist_ok=True)
     final_output_path = output_dir / f"{job_id}.mp4"
-    film = Path(film_dir).resolve()
+    root = film.root.resolve()
     try:
-        film.relative_to(Path(project_dir).resolve())
+        root.relative_to(Path(project_dir).resolve())
     except ValueError as exc:
         raise RuntimeError("studio film folder is outside the project") from exc
     try:
         return await export_studio_film(
-            film_dir=film, output_path=final_output_path, fps=int(fps or 30)
+            film=film, output_path=final_output_path, fps=int(fps or 30)
         )
     except StudioError as exc:
         raise RuntimeError(str(exc)) from exc
@@ -1388,6 +1471,11 @@ async def run_freezone_video_compose(
 
     if not final_output_path.exists():
         raise RuntimeError("video compose finished without output file")
+    try:
+        await probe_video_stream(str(final_output_path))
+    except RuntimeError as exc:
+        final_output_path.unlink(missing_ok=True)
+        raise RuntimeError(f"video compose output has no readable video stream: {exc}") from exc
     return final_output_path
 
 
@@ -1744,6 +1832,7 @@ async def run_freezone_video_gen(
     gen_mode: Optional[str] = None,
     model_params: Optional[dict[str, Any]] = None,
     request_schema: Optional[dict[str, Any]] = None,
+    accepted_job_receipt: Path | None = None,
 ) -> Path:
     """Freezone 文生视频。
 
@@ -1847,11 +1936,12 @@ async def run_freezone_video_gen(
                 {"scene_optimize": scene_optimize} if scene_optimize else None
             ),
             gen_mode=gen_mode,
+            accepted_job_receipt=accepted_job_receipt,
             **extra_kwargs,
         )
     if not result or result.status.value != "done":
         err = result.error if result else "unknown error"
-        raise RuntimeError(f"freezone video generation failed: {err}")
+        raise with_upstream_status(RuntimeError(f"freezone video generation failed: {err}"), result)
     if not out.exists():
         raise RuntimeError(
             "video generation returned success but no output file was written"

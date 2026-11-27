@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from novelvideo.api.auth import AUTH_COOKIE_NAME
 from novelvideo.ports.auth_contract import AgentAuthenticatedUser, AuthenticatedUser
+from novelvideo.ports.local.auth import LocalAuthSession
 
 import pytest
 
@@ -55,3 +56,59 @@ def test_agent_legacy_dict_key_set() -> None:
     assert data["credential_kind"] == "agent_session"
     assert isinstance(data["scopes"], list), "scopes 必须序列化为 list"
     assert data["current_scope_kind"] == "home", "默认 scope kind 为 home"
+
+
+def test_agent_legacy_dict_adds_external_key_marker_only_when_server_set() -> None:
+    """The external-key marker is additive: unset sessions keep the pinned key set."""
+    plain = AgentAuthenticatedUser(
+        id="u1", username="alice", role="owner", agent_session_id="as1"
+    )
+    assert plain.external_agent_key_id is None
+    assert set(plain.to_legacy_dict()) == AGENT_LEGACY_KEYS
+
+    blank = AgentAuthenticatedUser(
+        id="u1",
+        username="alice",
+        role="owner",
+        agent_session_id="as1",
+        external_agent_key_id="",
+    )
+    assert set(blank.to_legacy_dict()) == AGENT_LEGACY_KEYS
+
+    external = AgentAuthenticatedUser(
+        id="u1",
+        username="alice",
+        role="owner",
+        agent_session_id="as1",
+        external_agent_key_id="test-key-id-not-a-secret",
+    )
+    data = external.to_legacy_dict()
+    assert set(data) == AGENT_LEGACY_KEYS | {"external_agent_key_id"}
+    assert data["external_agent_key_id"] == "test-key-id-not-a-secret"
+    assert data["credential_kind"] == "agent_session"
+
+
+def test_agent_legacy_dict_adds_allowed_projects_only_when_restricted() -> None:
+    unrestricted = AgentAuthenticatedUser(
+        id="u1", username="alice", role="owner", allowed_projects=()
+    )
+    assert set(unrestricted.to_legacy_dict()) == AGENT_LEGACY_KEYS
+
+    restricted = AgentAuthenticatedUser(
+        id="u1", username="alice", role="owner", allowed_projects=("project-a", "project-b")
+    )
+    data = restricted.to_legacy_dict()
+    assert set(data) == AGENT_LEGACY_KEYS | {"allowed_projects"}
+    assert data["allowed_projects"] == ["project-a", "project-b"]
+
+
+def test_local_auth_session_loads_allowed_projects_as_tuple(tmp_path) -> None:
+    sessions = LocalAuthSession(tmp_path, clock=lambda: 0)
+    user = AgentAuthenticatedUser(
+        id="u1", username="alice", role="owner", allowed_projects=("project-a",)
+    )
+    sessions._write_session("example", user, exp=60)
+
+    loaded, _ = sessions._load_session("example")
+
+    assert loaded.allowed_projects == ("project-a",)

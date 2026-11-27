@@ -3,13 +3,24 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { server } from "@/__mocks__/msw/server";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import type { AudioNodeData } from "@/features/canvas/domain/canvasNodes";
 import { AudioOperationsPanel } from "@/features/canvas/nodes/AudioOperationsPanel";
 import { useCanvasStore } from "@/stores/canvasStore";
+
+vi.mock("@/lib/url-params", async (original) => ({
+  ...(await original<typeof import("@/lib/url-params")>()),
+  readUrl: () => ({ project: "demo", canvas: "default" }),
+}));
+vi.mock("@/api/ops", async (original) => ({
+  ...(await original<typeof import("@/api/ops")>()),
+  fetchAudioCloneModels: async () => [
+    { id: "seed-audio-1.0", label: "Seed Audio", model: "seed-audio-1.0", requiresVoiceId: false },
+  ],
+}));
 
 function renderPanel(data: Partial<AudioNodeData>) {
   const queryClient = new QueryClient({

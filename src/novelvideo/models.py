@@ -1066,6 +1066,12 @@ class CharacterIdentity(BaseModel):
             value = ""
         super().__setattr__(name, value)
 
+    def is_age_variant(self, character_age_group: str) -> bool:
+        """Return whether this identity uses a different age from its character."""
+        identity_age = str(self.age_group or "").strip()
+        character_age = str(character_age_group or "").strip() or "youth"
+        return bool(identity_age and identity_age != character_age)
+
 
 class NovelCharacter(BaseModel):
     """小说角色实体。

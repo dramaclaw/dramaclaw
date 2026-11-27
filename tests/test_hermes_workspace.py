@@ -416,6 +416,29 @@ def test_freezone_profile_materializes_native_workflow_skills(
     assert manual_skill.exists()
 
 
+@pytest.mark.parametrize("profile", ["director", "freezone"])
+def test_unparseable_config_is_set_aside_and_rebuilt_once(
+    isolated_workspace, repo_skills, repo_plugins, caplog, profile
+):
+    home = hw.ensure_user_hermes_workspace("admin", profile=profile)
+    config_file = home / "config.yaml"
+    broken = "agent:\n  max_turns: [unterminated\n"
+    config_file.write_text(broken, encoding="utf-8")
+
+    with caplog.at_level("WARNING", logger=hw._log.name):
+        hw.ensure_user_hermes_workspace("admin", profile=profile)
+
+    rebuilt = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+    assert isinstance(rebuilt, dict) and rebuilt["enabled_toolsets"]
+    assert (home / "config.yaml.invalid").read_text(encoding="utf-8") == broken
+    assert len(caplog.records) == 1
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=hw._log.name):
+        hw.ensure_user_hermes_workspace("admin", profile=profile)
+    assert caplog.records == []
+
+
 def test_freezone_profile_preserves_tool_search_disable(
     isolated_workspace,
     repo_skills,
@@ -674,8 +697,7 @@ def test_hermes_preserves_tool_call_identity_across_lifecycle_updates():
     assert tool_completed.status == "completed"
 
 
-@pytest.mark.asyncio
-async def test_hermes_permission_request_round_trip_uses_selected_acp_option():
+def test_hermes_permission_request_is_immediately_cancelled():
     class _Writer:
         def __init__(self) -> None:
             self.data = bytearray()
@@ -683,16 +705,13 @@ async def test_hermes_permission_request_round_trip_uses_selected_acp_option():
         def write(self, value: bytes) -> None:
             self.data.extend(value)
 
-        async def drain(self) -> None:
-            return None
-
     thread = _hermes_thread()
     writer = _Writer()
     thread._proc = SimpleNamespace(stdin=writer)
     event = thread._translate_notification(
         {
             "jsonrpc": "2.0",
-            "id": 71,
+            "id": 7,
             "method": "session/request_permission",
             "params": {
                 "sessionId": "session-a",
@@ -709,84 +728,11 @@ async def test_hermes_permission_request_round_trip_uses_selected_acp_option():
         "turn-a",
     )
 
-    assert event is not None
-    assert event.type == "permission_requested"
-    assert event.request_id == 71
-    assert event.text == "运行媒体探测"
-    assert await thread.resolve_permission(71, "allow-1") is True
-    assert json.loads(writer.data.decode("utf-8")) == {
-        "jsonrpc": "2.0",
-        "id": 71,
-        "result": {"outcome": {"outcome": "selected", "optionId": "allow-1"}},
-    }
-    assert await thread.resolve_permission(71, "allow-1") is False
-
-
-@pytest.mark.asyncio
-async def test_hermes_rejects_expired_permission_response(monkeypatch):
-    class _Writer:
-        def __init__(self) -> None:
-            self.data = bytearray()
-
-        def write(self, value: bytes) -> None:
-            self.data.extend(value)
-
-        async def drain(self) -> None:
-            return None
-
-    now = [100.0]
-    monkeypatch.setattr(hermes_sdk.time, "monotonic", lambda: now[0])
-    thread = _hermes_thread()
-    writer = _Writer()
-    thread._proc = SimpleNamespace(stdin=writer)
-    event = thread._translate_notification(
-        {
-            "jsonrpc": "2.0",
-            "id": 72,
-            "method": "session/request_permission",
-            "params": {
-                "sessionId": "session-a",
-                "toolCall": {"title": "运行命令"},
-                "options": [
-                    {
-                        "optionId": "allow_once",
-                        "kind": "allow_once",
-                        "name": "Allow once",
-                    }
-                ],
-            },
-        },
-        "turn-expired",
+    assert writer.data.decode("utf-8") == (
+        '{"jsonrpc": "2.0", "id": 7, '
+        '"result": {"outcome": {"outcome": "cancelled"}}}\n'
     )
-
-    assert event is not None
-    now[0] += hermes_sdk.PERMISSION_REQUEST_TIMEOUT_SECONDS + 1
-    assert await thread.resolve_permission(72, "allow_once") is False
-    assert writer.data == b""
-    assert thread._pending_permissions == {}
-
-
-def test_hermes_clears_pending_permissions_for_completed_turn():
-    thread = _hermes_thread()
-    event = thread._translate_notification(
-        {
-            "jsonrpc": "2.0",
-            "id": 73,
-            "method": "session/request_permission",
-            "params": {
-                "sessionId": "session-a",
-                "toolCall": {"title": "运行命令"},
-                "options": [
-                    {"optionId": "deny", "kind": "reject_once", "name": "Deny"}
-                ],
-            },
-        },
-        "turn-complete",
-    )
-
-    assert event is not None
-    thread._clear_pending_permissions_for_turn("turn-complete")
-    assert thread._pending_permissions == {}
+    assert event is None
 
 
 def test_hermes_detects_content_filter_error_text():

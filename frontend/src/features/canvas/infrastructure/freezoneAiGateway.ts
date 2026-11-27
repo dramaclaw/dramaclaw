@@ -22,9 +22,9 @@ import {
   fetchFreezoneJobResult,
   submitFreezoneEdit,
   submitFreezoneGen,
-  type FreezoneProvider,
   type FreezoneJobRef,
 } from "@/api/ops";
+import type { FreezoneProvider } from '@/features/canvas/domain/modelCatalogPayload';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
 import { readUrl } from "@/lib/url-params";
 import {

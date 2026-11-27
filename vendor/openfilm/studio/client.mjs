@@ -270,6 +270,49 @@ function projectAround(from) {
   }
 }
 
+/** Programs between an agent and its command: shells, package runners, openfilm's own launchers. */
+const BETWEEN = /^(\S*\/)?-?(sh|bash|zsh|fish|dash|ksh|tcsh|csh|env|login|sudo)(\s|$)|(^|[/\s])(npm|npx|pnpm|pnpx|yarn|bunx?|corepack)(\s|$)|npm-cli\.js|npx-cli\.js|\/\.bin\/openfilm(\s|$)|\/bin\/openfilm(\.mjs)?(\s|$)/;
+
+/**
+ * The agent running this command, as Studio names agents to give each its notes once (studio/server/person-edits.mjs):
+ * the desktop app's by its chat conversation (OPENFILM_AGENT, which the app sets), else the program that ran the
+ * command, past the shells and package runners between: `pid:<its process id>`. On Windows, the process that started
+ * this one. A name that changes from command to command only means a note is given again.
+ */
+export function agentName() {
+  if (process.env.OPENFILM_AGENT) return process.env.OPENFILM_AGENT;
+  let pid = process.ppid;
+  if (process.platform === 'win32') return `pid:${pid}`;
+  for (let up = 0; up < 12 && pid > 1; up++) {
+    const said = /^\s*(\d+)\s+(.*)$/.exec(spawnSync('ps', ['-o', 'ppid=,args=', '-p', String(pid)], { encoding: 'utf8' }).stdout?.trim() ?? '');
+    if (!said || !BETWEEN.test(said[2])) break;
+    pid = Number(said[1]);
+  }
+  return `pid:${pid}`;
+}
+
+/**
+ * What the person changed in Studio while the agent worked that its writes would have undone, kept by Studio, in a
+ * line for the agent, and `said`, to call once the line is printed (only then is the agent told). Null when nothing:
+ * for the project around `from`, asked of a Studio already running only, and briefly, so a command never waits on it.
+ * @param {string} [from] @returns {Promise<{ line: string, said: () => Promise<void> } | null>}
+ */
+export async function keptNote(from = '.') {
+  const folder = projectAround(from);
+  const run = folder ? await running().catch(() => null) : null;
+  if (!folder || !run) return null;
+  try {
+    const query = new URLSearchParams({ folder, agent: agentName() });
+    const res = await fetch(`${run.origin}/api/kept?${query}`, { headers: { 'x-studio-key': run.key }, signal: AbortSignal.timeout(3000) });
+    const { id, line } = await res.json();
+    if (typeof line !== 'string' || !line) return null;
+    const said = () => fetch(`${run.origin}/api/kept/said`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-studio-key': run.key }, body: JSON.stringify({ id }), signal: AbortSignal.timeout(3000),
+    }).then(() => {}, () => {});
+    return { line, said };
+  } catch { return null; }
+}
+
 /**
  * `openfilm get [verb] [--option value …] [--yes]`: media for the project around the current folder, made by Studio
  * (started when needed). Without a verb (or with --help): what can be got here now. `--via <provider>` and

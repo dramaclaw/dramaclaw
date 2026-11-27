@@ -24,17 +24,24 @@
  *       mix: `<name> - mix`; stems: voice, music, sound effects and the footage's own sound, each its own file
  *       (`<name> - voice`…), a sound grouped by where it is (assets/audio/music/…, assets/audio/sfx/…, anything
  *       else is voice) and a video's sound as the footage's (nle.mjs soundStem)
- *   { kind: 'stills', format?: 'png' | 'jpg', frame?, fill?, shortEdge?, at?: number[] }
- *       one frame from the middle of each picture clip (or at the seconds `at`), zipped when there are several
+ *   { kind: 'stills', as?: 'files' | 'zip', format?: 'png' | 'jpg', frame?, fill?, shortEdge?, at?: number[] }
+ *       one frame from the middle of each picture clip (or at the seconds `at`, each named by the scene it is in), zipped
+ *       when there are several unless `as` explicitly asks for separate files or a zip (even for one frame)
  *   { kind: 'poster', format?, frame?, fill?, shortEdge?, at?: number }   one frame (default: the middle)
  *   { kind: 'subtitles', format?: 'srt' (default) | 'vtt' | 'txt' }   the film's subtitle cues as a file (txt: a
  *       plain transcript); refused when the film has none
  *   { kind: 'slides', format?: 'pptx' (default) | 'pdf', frame?, fill?, shortEdge? (default 1080), at?: number[] }
- *       the scene stills bound as a deck (the scene's name in the speaker notes) or a PDF, one page each
+ *       the stills (each scene's middle, or the seconds `at`) bound as a deck (the scene's name in the speaker notes) or a
+ *       PDF, one page each
  *   { kind: 'nle', format?: 'xml' (default) | 'fcpxml' | 'jianying' | 'capcut', fps? (snapped to 23.976, 24, 25, 29.97, 30, 50, 59.94 or 60;
- *     default 30), audio?: 'clips' (default) | 'stems', media?: 'copy' (default) | 'link', subtitles?: boolean (default true) }
+ *     default 30), audio?: 'clips' (default) | 'stems', media?: 'copy' (default) | 'link', subtitles?: boolean (default true),
+ *     alpha?: 'auto' | 'png' | 'prores' | 'prores4444' }
  *       a folder an editing program opens (see nle.mjs): `<name>.xml` (xmeml: Premiere Pro, DaVinci Resolve) or `<name>.fcpxml` (Final Cut Pro), each
- *       web page rendered to a ProRes 4444 with alpha in media/, footage, stills and sounds cloned there (`link`:
+ *       web page rendered with its alpha to a MOV in media/ (`alpha`, for a draft: `auto`, the default, a page with no
+ *       clear pixel in any frame as H.264 and the others as lossless PNG, each picture kept once for as long as it
+ *       shows; `png`, every page so; `prores`, 422 HQ and 4444 the same way. For xml ProRes 4444, the default, or PNG;
+ *       for fcpxml ProRes 4444. 剪映 shows a VP9 WebM's alpha black, and lossless H.264 off its colors),
+ *       footage, stills and sounds cloned there (`link`:
  *       pointed at where they are), the sound as clips or as mixed stems, `<name>.srt` when there are subtitles.
  *       FCPXML also includes subtitles as editable Basic Title clips above the picture tracks.
  *       `jianying`, `capcut`: the same timeline as a 剪映 or CapCut draft (see jianying.mjs), made in the app's drafts folder when this
@@ -49,8 +56,12 @@
  * none); those with a picture (not one clip alone) take `burnSubtitles: true`, the subtitles drawn into the picture as
  * the editor shows them (captions.mjs: the cues and the person's style). `folder`: an absolute path (or ~/…) to write
  * to instead of the exports folder.
+ * Time-based exports also accept `ranges: [[from, to], ...]` (1–100, seconds) to join the selections in their given
+ * order, with the picture, sound and subtitles on the joined clock. Choose either `range` or `ranges`.
  */
+import { cacheDir, TOOL_DIR, historyDir, hostDirs, mediaDir } from '../../src/film-dirs.mjs';
 import { execFile, fork, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
@@ -58,8 +69,10 @@ import { homedir, setPriority, tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FilmPage, launch } from '../../src/host.mjs';
-import { broken, encoders, hardwareEncoder, hardwareOptions, onTheChip, proresOptions } from '../../src/encoders.mjs';
-import { filmSound, kill as killProcess, mix, open } from '../../src/shared.mjs';
+import { broken, encoders, FRAMES_709, hardwareEncoder, hardwareOptions, onTheChip, prores709, proresOptions } from '../../src/encoders.mjs';
+import { COMMAND_ROOM, filmSound, filterScriptOption, kill as killProcess, mix, open } from '../../src/shared.mjs';
+import { defaultWorkers, machine } from '../../src/render.mjs';
+import { selectionClips } from '../../src/render-ranges.mjs';
 import { filmVideos } from '../../src/seekable.mjs';
 import { FILM_FILE, clipFade, filmHtml, fittedFade, kindOf, pictureRect, readFilmFile } from '../../src/film-doc.mjs';
 import { layerBlocks, rowBadges, trackKind } from './track-layout.mjs';
@@ -68,10 +81,13 @@ import { NLE_FPS, nleFps, planNleTimeline, probeSource, soundStem, xmemlDocument
 import { draftsRoot, jianyingDraft } from './jianying.mjs';
 import { slidesPdf, writePptx } from './slides.mjs';
 import { subtitlesForExport } from './captions.mjs';
-import { filmSubtitleCuesInRange, filmSubtitleShown, filmSubtitleSrt, filmSubtitleTranscript, filmSubtitleVtt } from './film-subtitle.mjs';
+import { burned, even, frameBox, frameRatio, stageOf } from '../../src/burn.mjs';
+export { frameBox, frameRatio };
+import { filmSubtitleCuesInRange, filmSubtitleCuesInRanges, filmSubtitleShown, filmSubtitleSrt, filmSubtitleTranscript, filmSubtitleVtt } from './film-subtitle.mjs';
 import { zipFiles } from './zip.mjs';
 import { inProject } from './files.mjs';
-import { PROJECT_PARTS, TOOL_DIR } from './projects.mjs';
+import { filmClosure, folderView } from './closure.mjs';
+import { PROJECT_PARTS } from './projects.mjs';
 import { exportsRoot } from '../../src/locations.mjs';
 import { recordProblem } from '../../src/problems.mjs';
 
@@ -87,15 +103,15 @@ export { exportsRoot };
  *   fps?: number, quality?: Quality, audio?: boolean, clip?: string, preset?: string, sidecar?: 'srt' | 'vtt', hardware?: boolean }} VideoAsk
  * @typedef {Framing & { kind: 'gif', width?: number, fps?: number }} GifAsk
  * @typedef {{ kind: 'audio', format?: 'wav' | 'm4a' | 'mp3', mix?: boolean, stems?: boolean }} AudioAsk
- * @typedef {Framing & { kind: 'stills', format?: 'png' | 'jpg', shortEdge?: number, at?: number[] }} StillsAsk
+ * @typedef {Framing & { kind: 'stills', as?: 'files' | 'zip', format?: 'png' | 'jpg', shortEdge?: number, at?: number[] }} StillsAsk
  * @typedef {Framing & { kind: 'poster', format?: 'png' | 'jpg', shortEdge?: number, at?: number }} PosterAsk
  * @typedef {{ kind: 'subtitles', format?: 'srt' | 'vtt' | 'txt' }} SubtitlesAsk
  * @typedef {Framing & { kind: 'slides', format?: 'pptx' | 'pdf', shortEdge?: number, at?: number[] }} SlidesAsk
- * @typedef {{ kind: 'nle', format?: 'xml' | 'fcpxml' | 'jianying' | 'capcut', fps?: number, audio?: 'clips' | 'stems', media?: 'copy' | 'link', subtitles?: boolean }} NleAsk
+ * @typedef {{ kind: 'nle', format?: 'xml' | 'fcpxml' | 'jianying' | 'capcut', fps?: number, audio?: 'clips' | 'stems', media?: 'copy' | 'link', subtitles?: boolean, alpha?: 'auto' | 'png' | 'prores' | 'prores4444' }} NleAsk
  * @typedef {{ kind: 'project', parts?: ProjectPart[], as?: 'zip' | 'folder' }} ProjectAsk
  * @typedef {typeof PROJECT_PARTS[number]} ProjectPart
  * @typedef {VideoAsk | GifAsk | AudioAsk | StillsAsk | PosterAsk | SubtitlesAsk | SlidesAsk | NleAsk | ProjectAsk} ExportSpec
- * @typedef {ExportSpec & { range?: [number, number], label?: string, name?: string }} ExportAsk
+ * @typedef {ExportSpec & { range?: [number, number], ranges?: [number, number][], label?: string, name?: string }} ExportAsk
  * @typedef {import('./film-subtitle.mjs').FilmSubtitleCue} Cue
  * @typedef {import('./film-subtitle.mjs').FilmSubtitleStyle} SubtitleStyle
  * @typedef {'preparing' | 'audio' | 'rendering' | 'encoding' | 'copying' | 'finishing'} ExportPhase
@@ -103,8 +119,12 @@ export { exportsRoot };
  *   status: 'waiting' | 'running' | 'done' | 'failed' | 'cancelled', progress: number, phase: ExportPhase | null,
  *   framesDone: number, framesTotal: number, rate: number, etaMs: number | null, encoder: string | null,
  *   out?: string, outputs: string[], bytes: number | null, alpha: { any: boolean } | null, error?: string, cancelling?: boolean,
- *   at: number, startedAt: number | null, finishedAt: number | null, draftsRefused?: string }} ExportJob
+ *   at: number, startedAt: number | null, finishedAt: number | null, draftsRefused?: string, diskFull?: boolean }} ExportJob
  */
+
+/** Whether an error is the disk being full, in ffmpeg's words or the system's (a Mac, Linux, Windows). @param {unknown} e */
+export const diskFull = (e) => /** @type {{ code?: unknown }} */ (e)?.code === 'ENOSPC'
+  || /no space left on device|not enough space on the disk|\bENOSPC\b/i.test(e instanceof Error ? e.message : String(e));
 
 export class ExportError extends Error {
   /** @param {string} message @param {number} status */
@@ -136,30 +156,8 @@ export const draftApps = () => ({ jianying: Boolean(defaultDrafts('jianying')), 
 
 /* ── delivery frames (the same arithmetic as the editor's lib/film-frame.ts) ── */
 
-/** A frame written `W:H` ("16:9", "2.39:1"), from 1:4 to 4:1: its width ÷ height, or null. @param {unknown} frame */
-export function frameRatio(frame) {
-  const m = typeof frame === 'string' ? /^(\d{1,4}(?:\.\d{1,3})?):(\d{1,4}(?:\.\d{1,3})?)$/.exec(frame) : null;
-  if (!m) return null;
-  const ratio = Number(m[1]) / Number(m[2]);
-  return Number.isFinite(ratio) && ratio >= 1 / 4 && ratio <= 4 ? ratio : null;
-}
 const MAX_DIM = 4096;
-const even = (/** @type {number} */ n) => Math.max(2, Math.round(n / 2) * 2);
 
-/**
- * The film (`stage`) fitted into a delivery frame: the frame's size (its long side follows the film's), its exact
- * shape (`ratio`: the frame's own, not its even-rounded pixels'), and the film's scale inside it (`contain`: whole,
- * with bars; `cover`: filling it, the overflow cut).
- * @param {{ w: number, h: number, ratio?: number }} stage @param {string} frame @param {'contain' | 'cover'} fill
- */
-export function frameBox(stage, frame, fill) {
-  const ratio = frame === 'native' ? null : frameRatio(frame);
-  /* native: the stage's own shape (a frame drawn as a page, with subtitles over it, keeps the frame's exact one) */
-  if (ratio == null) return { w: even(stage.w), h: even(stage.h), ratio: stage.ratio ?? stage.w / Math.max(1, stage.h), scale: 1 };
-  const box = stage.w / ratio >= stage.h ? { w: stage.w, h: stage.w / ratio } : { w: stage.h * ratio, h: stage.h };
-  const w = even(box.w), h = even(box.h);
-  return { w, h, ratio, scale: fill === 'cover' ? Math.max(w / stage.w, h / stage.h) : Math.min(w / stage.w, h / stage.h) };
-}
 
 /**
  * A box's size with its short side at `shortEdge` (even, no side over 4096), in the box's exact shape: a 16:9 frame
@@ -204,13 +202,78 @@ export function framing(stage, frame, fill, out, alpha) {
 
 /* ── names ──────────────────────────────────────────────────────────────── */
 
-const safeName = (/** @type {string} */ text) => text.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Dramaclaw';
+const safeName = (/** @type {string} */ text) => {
+  /* no dot or space at the end (Windows drops them, and the file is not found under the name it was made with) */
+  const name = text.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80).replace(/[. ]+$/, '') || 'Dramaclaw';
+  /* names Windows keeps for devices, whatever follows their first dot */
+  return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(name) ? name.replace(/^[^.]*/, (m) => `${m} film`) : name;
+};
 
 /** A name in `dir` that is free: `name.ext`, else `name 2.ext`… */
 function freeFile(/** @type {string} */ dir, /** @type {string} */ name, /** @type {string} */ ext) {
   let candidate = join(dir, `${name}${ext}`);
   for (let n = 2; existsSync(candidate); n++) candidate = join(dir, `${name} ${n}${ext}`);
   return candidate;
+}
+
+/**
+ * Where a file is written until it is whole: beside its name, hidden, and renamed to it once made, so a stop or a crash
+ * midway never leaves a file under the export's name that looks made. It names the process writing it (`sweep`).
+ * @param {string} out @param {string} id
+ */
+const partialOf = (out, id) => { const ext = extname(out); return join(dirname(out), `.${basename(out, ext)}.partial-${process.pid}-${id}${ext}`); };
+
+/**
+ * A rename that rides out Windows: a file that a virus scanner, the search indexer or an editor watching its folder holds
+ * for a moment refuses to move (EPERM, EACCES, EBUSY), and is let go a moment later. Tried again for a few seconds, as
+ * tools on Windows do; any other error, or a hold that lasts, is the error.
+ * @param {string} from @param {string} to
+ */
+export async function renameSafely(from, to) {
+  for (let i = 1; ; i++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (e) {
+      if (i >= 12 || !['EPERM', 'EACCES', 'EBUSY'].includes(/** @type {NodeJS.ErrnoException} */ (e).code ?? '')) throw e;
+      await new Promise((r) => setTimeout(r, i * 100));
+    }
+  }
+}
+
+/** Scratch removed if it can be: what something still holds is left behind, never failing an export that is made. @param {string} path */
+const tidy = (path) => rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+
+/* what an export makes on its way, each named with the process making it: a half-made file or draft beside the made
+   ones, a project's export scratch, a render's parts, a seek copy being written (src/seekable.mjs) */
+const LEFT = {
+  output: /^\..+\.partial-(\d+)-[0-9a-f]+/,
+  scratch: /^(?:clip|burn|nle)-(\d+)-[0-9a-f]+$/,
+  parts: /^\.parts-(\d+)(?:-[0-9a-f]+)?$/,
+  copy: /\.part-(\d+)-[0-9a-f]+\.\w+$/,
+};
+
+/** Whether a process is running (one this user may not signal is). @param {number} pid */
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return /** @type {NodeJS.ErrnoException} */ (e).code === 'EPERM';
+  }
+}
+
+/**
+ * What exports Studio could not finish left in `dir` (it was ended partway: forced to quit, crashed, the computer
+ * shut down): each entry `pattern` names whose process (its first group) has ended.
+ * @param {string} dir @param {RegExp} pattern
+ */
+export async function sweep(dir, pattern) {
+  const names = await readdir(dir).catch(() => /** @type {string[]} */ ([]));
+  await Promise.all(names.map((name) => {
+    const pid = Number(pattern.exec(name)?.[1]);
+    return pid && pid !== process.pid && !alive(pid) ? tidy(join(dir, name)) : undefined;
+  }));
 }
 
 const ALPHA_CODECS = new Set(['vp9', 'prores4444', 'hevc_alpha', 'png']);
@@ -224,7 +287,7 @@ function baseName(project, ask) {
      export apart (a platform, alpha, stills) and loses the ones that only describe the project (a size, a range) */
   const named = typeof ask.name === 'string' && ask.name.trim() ? safeName(ask.name) : null;
   const base = named ?? safeName(project);
-  const range = !named && ask.range ? ` ${ask.range[0]}-${ask.range[1]}s` : '';
+  const range = named ? '' : ask.range ? ` ${ask.range[0]}-${ask.range[1]}s` : ask.ranges ? ` ${ask.ranges.length} parts` : '';
   switch (ask.kind) {
     case 'video': {
       if (ask.preset) return `${base} · ${safeName(ask.preset)}${range}`;
@@ -256,6 +319,10 @@ function checked(/** @type {ExportAsk} */ ask) {
   if (ask.range !== undefined && !(Array.isArray(ask.range) && ask.range.length === 2 && isNum(ask.range[0]) && isNum(ask.range[1]) && ask.range[0] >= 0 && ask.range[1] > ask.range[0])) {
     throw new ExportError('a range is [from, to] in seconds, to after from');
   }
+  if (ask.ranges !== undefined) {
+    if (ask.range !== undefined || !['video', 'gif', 'audio', 'subtitles'].includes(ask.kind) || ('clip' in ask && ask.clip)) throw new ExportError('ranges: choose a whole-film video, GIF, audio or subtitle export without a single range');
+    if (!Array.isArray(ask.ranges) || !ask.ranges.length || ask.ranges.length > 100 || !ask.ranges.every((r) => Array.isArray(r) && r.length === 2 && r.every(isNum) && r[0] >= 0 && r[1] > r[0])) throw new ExportError('ranges: 1 to 100 [from, to] pairs in seconds, to after from');
+  }
   if (ask.label !== undefined && (typeof ask.label !== 'string' || ask.label.length > 120)) throw new ExportError('label: text, at most 120 characters');
   if (ask.name !== undefined && (typeof ask.name !== 'string' || ask.name.length > 120)) throw new ExportError('name: text, at most 120 characters');
   if ('frame' in ask && ask.frame !== undefined && ask.frame !== 'native' && frameRatio(ask.frame) == null) throw new ExportError('frame: native, or a ratio W:H from 1:4 to 4:1 (16:9, 2.39:1)');
@@ -284,6 +351,7 @@ function checked(/** @type {ExportAsk} */ ask) {
     case 'stills':
     case 'poster':
       if (ask.range !== undefined) throw new ExportError('a still is a moment: give `at`, not a range');
+      if (ask.kind === 'stills' && ask.as !== undefined && ask.as !== 'files' && ask.as !== 'zip') throw new ExportError('stills as files or zip');
       if (ask.format !== undefined && ask.format !== 'png' && ask.format !== 'jpg') throw new ExportError('format: png or jpg');
       if (ask.kind === 'stills' && ask.at !== undefined && !(Array.isArray(ask.at) && ask.at.length <= 500 && ask.at.every((t) => isNum(t) && t >= 0))) {
         throw new ExportError('at: a list of seconds');
@@ -305,6 +373,11 @@ function checked(/** @type {ExportAsk} */ ask) {
       if (ask.audio !== undefined && ask.audio !== 'clips' && ask.audio !== 'stems') throw new ExportError('audio: clips or stems');
       if (ask.media !== undefined && ask.media !== 'copy' && ask.media !== 'link') throw new ExportError('media: copy or link');
       if (ask.subtitles !== undefined && typeof ask.subtitles !== 'boolean') throw new ExportError('subtitles: true or false');
+      if (ask.alpha !== undefined) {
+        const draft = ask.format === 'jianying' || ask.format === 'capcut';
+        const can = ask.format === 'fcpxml' ? ['prores4444'] : draft ? ['auto', 'png', 'prores'] : ['prores4444', 'png'];
+        if (!can.includes(ask.alpha)) throw new ExportError(`alpha for ${ask.format ?? 'xml'}: ${can.join(', ')}`);
+      }
       break;
     case 'project':
       if (ask.range !== undefined) throw new ExportError('a project is exported whole: no range');
@@ -332,15 +405,19 @@ const NOT_THE_PROJECT = new Set(['.git', 'node_modules', '.DS_Store']);
 
 /**
  * The files of the project at `root` its export takes, with their names in it ('/' between folders): its work (every
- * file but those of `.film/` and NOT_THE_PROJECT; a link to a file is followed, so the export has the media itself, a
- * link to a folder is not) with the subtitles' style, and the parts of `.film/` asked. Never the project's id (a copy
- * gets its own) nor its cache. `skip`: a folder not to take (where the export is being written, when it is inside).
+ * file but those of `.film/` and NOT_THE_PROJECT; a link to a file is followed, so the export has the media itself)
+ * with the subtitles' style, and the parts of `.film/` asked. A link to a folder (a whole footage library, often) is
+ * not taken whole: only the files in it the film uses (closure.mjs: a clip's file, its subtitles and transcripts, what
+ * a page loads), as files at the same places, so the copy plays. Never the project's id (a copy gets its own) nor its
+ * cache. `skip`: a folder not to take (where the export is being written, when it is inside).
  * @param {string} root @param {readonly ProjectPart[]} parts @param {string} [skip]
  * @returns {Promise<{ name: string, file: string, size: number }[]>}
  */
 export async function projectFiles(root, parts, skip) {
   /** @type {{ name: string, file: string, size: number }[]} */
   const files = [];
+  /** @type {Promise<Map<string, number>> | undefined} */
+  let used;
   const walk = async (/** @type {string} */ dir, /** @type {string} */ rel) => {
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -349,7 +426,12 @@ export async function projectFiles(root, parts, skip) {
       if (NOT_THE_PROJECT.has(entry.name) || (!rel && entry.name === TOOL_DIR) || path === skip) continue;
       const info = await stat(path).catch(() => null);
       if (info?.isDirectory() && !entry.isSymbolicLink()) await walk(path, name);
-      else if (info?.isFile()) files.push({ name, file: path, size: info.size });
+      else if (info?.isDirectory()) {
+        used ??= filmClosure(folderView(root));
+        for (const [file, size] of [...await used].filter(([f]) => f.startsWith(`${name}/`)).sort(([a], [b]) => a.localeCompare(b))) {
+          files.push({ name: file, file: join(root, ...file.split('/')), size });
+        }
+      } else if (info?.isFile()) files.push({ name, file: path, size: info.size });
     }
   };
   await walk(root, '');
@@ -357,7 +439,12 @@ export async function projectFiles(root, parts, skip) {
   if (existsSync(style)) files.push({ name: `${TOOL_DIR}/subtitles.json`, file: style, size: statSync(style).size });
   const settings = join(root, TOOL_DIR, 'settings.json');
   if (existsSync(settings)) files.push({ name: `${TOOL_DIR}/settings.json`, file: settings, size: statSync(settings).size });
-  for (const part of parts) await walk(join(root, TOOL_DIR, part), `${TOOL_DIR}/${part}`);
+  for (const part of parts) {
+    await walk(part === 'history' ? historyDir(root) : join(root, TOOL_DIR, part), `${TOOL_DIR}/${part}`);
+    if (part === 'history' && hostDirs() && mediaDir(root) !== join(historyDir(root), 'media')) {
+      await walk(mediaDir(root), `${TOOL_DIR}/history/media`);
+    }
+  }
   return files;
 }
 
@@ -370,7 +457,7 @@ export async function projectSizes(root) {
   /** @type {{ work: number } & Record<ProjectPart, number | null>} */
   const sizes = { work: sum(await projectFiles(root, [])), history: null, chat: null, logs: null };
   for (const part of PROJECT_PARTS) {
-    if (!existsSync(join(root, TOOL_DIR, part))) continue;
+    if (!existsSync(part === 'history' ? historyDir(root) : join(root, TOOL_DIR, part)) && !(part === 'history' && hostDirs() && existsSync(mediaDir(root)))) continue;
     sizes[part] = sum((await projectFiles(root, [part])).filter((f) => f.name.startsWith(`${TOOL_DIR}/${part}/`)));
   }
   return sizes;
@@ -406,19 +493,11 @@ function run(args, signal, input) {
       else if (code === 0) done(undefined);
       else fail(new Error(`ffmpeg: ${err.trim() || `exit ${code}`}`));
     });
+    /* ffmpeg that stops before reading all of it (cancelled, or failing as it starts) closes its end: the write's
+       error is not one to throw (Studio would stop with it), its exit says what happened */
+    proc.stdin?.on('error', () => {});
     if (input) proc.stdin?.end(input);
   });
-}
-
-/** The film's stage, from film.html (or, for a single page, from the page). @param {string} root */
-async function stageOf(root) {
-  const file = join(root, FILM_FILE);
-  if (existsSync(file)) {
-    const { doc } = readFilmFile(readFileSync(file, 'utf8'));
-    if (doc) return doc.stage;
-  }
-  const probe = await open(root);
-  try { return { w: probe.film.meta.width, h: probe.film.meta.height }; } finally { await probe.close(); }
 }
 
 /** The project's film.html, read. @param {string} root */
@@ -448,7 +527,7 @@ function clipPath(root, src) {
  * @param {string} root @param {string} dir @param {import('./ops.mjs').FilmValue} value
  */
 async function filmElsewhere(root, dir, value) {
-  const up = relative(dir, root).split(sep).join('/');
+  const up = hostDirs() && !dir.startsWith(root + sep) ? '' : relative(dir, root).split(sep).join('/');
   const back = (/** @type {string} */ path) => (/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(path) ? path : `${up}/${path}`);
   const urls = (/** @type {string} */ css) => css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_, q, /** @type {string} */ path) => `url(${q}${back(path)}${q})`);
   const own = existsSync(join(root, FILM_FILE)) ? readFileSync(join(root, FILM_FILE), 'utf8') : '';
@@ -469,75 +548,12 @@ async function clipFilm(root, clipId, { change = {}, doc = filmDoc(root) } = {})
   const track = doc.tracks.find((t) => t.clips.some((c) => c.id === clipId));
   const clip = track?.clips.find((c) => c.id === clipId);
   if (!track || !clip) throw new ExportError(`${FILM_FILE} has no clip "${clipId}"`);
-  const dir = join(root, '.film', 'cache', 'export', `clip-${randomBytes(4).toString('hex')}`);
+  const dir = cacheDir(root, 'export', `clip-${process.pid}-${randomBytes(4).toString('hex')}`);
   await mkdir(dir, { recursive: true });
   await filmElsewhere(root, dir, { stage: doc.stage, tracks: [{ clips: [{ ...clip, ...change, at: 0 }], ...(track.muted ? { muted: true } : {}) }] });
-  return { dir, stage: doc.stage, remove: () => rm(dir, { recursive: true, force: true }) };
+  return { dir, stage: doc.stage, remove: () => tidy(dir) };
 }
 
-/**
- * The film inside its delivery frame with its subtitles drawn over it: a web page (SPEC.md: `window.film`) in the
- * project's .film showing the film (film.html's timeline, or the project's page) fitted into the frame, with bars or
- * cropped as asked, and over the whole frame each moment's subtitle line as the editor draws it (film-subtitle.mjs
- * `filmSubtitleFrameHtml`). It is rendered like the film itself, and its sound is the film's. `box` is the frame in the
- * film's pixels; `remove()` when done.
- * @param {string} root @param {{ w: number, h: number }} stage @param {string} frame @param {'contain' | 'cover'} fill
- * @param {Cue[]} cues @param {SubtitleStyle} style @param {boolean} [transparent] nothing behind the film (an alpha export)
- */
-async function burnFilm(root, stage, frame, fill, cues, style, transparent = false) {
-  const box = frameBox(stage, frame, fill);
-  const dir = join(root, '.film', 'cache', 'export', `burn-${randomBytes(4).toString('hex')}`);
-  await mkdir(dir, { recursive: true });
-  await copyFile(fileURLToPath(new URL('./film-subtitle.mjs', import.meta.url)), join(dir, 'film-subtitle.mjs'));
-  const entry = existsSync(join(root, FILM_FILE)) ? `/${FILM_FILE}` : '/index.html';
-  const x = (box.w - stage.w * box.scale) / 2, y = (box.h - stage.h * box.scale) / 2;
-  const json = (/** @type {unknown} */ v) => JSON.stringify(v).replace(/</g, '\\u003c');
-  await writeFile(join(dir, 'index.html'), `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-html,body{margin:0;width:${box.w}px;height:${box.h}px;overflow:hidden;background:${transparent ? 'transparent' : '#000'}}
-#film{position:absolute;left:${x}px;top:${y}px;width:${stage.w}px;height:${stage.h}px;border:0;transform:scale(${box.scale});transform-origin:0 0}
-#subs{position:absolute;left:0;top:0;width:${box.w}px;height:${box.h}px}
-</style></head><body><div id="subs"></div><script type="module">
-import { filmSubtitleFrameHtml } from './film-subtitle.mjs';
-const cues = ${json(cues)};
-const style = ${json({ ...style, on: true })};
-const size = { w: ${box.w}, h: ${box.h} };
-const subs = document.getElementById('subs');
-const el = document.createElement('iframe');
-el.id = 'film';
-let inner = null;
-const loaded = new Promise((ok) => el.addEventListener('load', ok, { once: true }));
-el.src = ${json(entry)};
-document.body.prepend(el);
-const ready = loaded.then(async () => {
-  const win = el.contentWindow;
-  const t0 = performance.now();
-  while (!(win.film && typeof win.film.frame === 'function')) {
-    if (performance.now() - t0 > 10000) throw new Error('the film did not set window.film');
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  await (typeof win.film.ready === 'function' ? win.film.ready() : win.film.ready);
-  ${transparent ? "const clear = win.document.createElement('style'); clear.textContent = 'html, body { background: transparent !important; }'; win.document.head.append(clear);" : ''}
-  inner = win;
-});
-window.film = {
-  get duration() { return inner ? inner.film.duration : 0.001; },
-  width: size.w, height: size.h,
-  ready,
-  async frame(t) {
-    inner.filmHost?.time?.(t);
-    await inner.film.frame(t);
-    inner.filmHost?.settle?.(t);
-    subs.innerHTML = filmSubtitleFrameHtml(cues, style, size, t * 1000);
-    await document.fonts?.ready;
-  },
-};
-window.__filmCuts = () => inner?.__filmCuts?.() ?? null;
-window.__filmSounds = () => inner?.__filmSounds?.() ?? [];
-</script></body></html>
-`);
-  return { dir, box, remove: () => rm(dir, { recursive: true, force: true }) };
-}
 
 const H264_CRF = { standard: 23, high: 18, master: 14 };
 const X265_CRF = { standard: 28, high: 23, master: 19 };
@@ -546,6 +562,12 @@ const VP9_CRF = { standard: 36, high: 30, master: 20 };
 const BPP = { standard: 0.07, high: 0.11, master: 0.2 };
 const BT709 = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
 const TO_709 = 'scale=out_color_matrix=bt709:out_range=tv';
+/** The browser's frames as YUV in `format` for an encoder: BT.709 limited range (swscale's own default is BT.601), said on the frames. */
+const YUV_709 = (/** @type {string} */ format) => `${TO_709},format=${format},${FRAMES_709}`;
+/* BT.709 written into the stream once it is encoded, whatever encoder wrote it (never into HEVC with alpha: its alpha
+   layer does not survive it) */
+const H264_709 = ['-bsf:v', 'h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0'];
+const HEVC_709 = ['-bsf:v', 'hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0'];
 
 /**
  * The graphics chip's encoder to try for a codec, or null: H.264 and HEVC below master, as editors do (several times
@@ -572,22 +594,22 @@ function encoding(codec, quality, size, fps, have, hw = null) {
       if (hw) return { encoder: hw, format: { video: [...hardwareOptions(hw, bits(1.5), { gop }), ...BT709] } };
       return { encoder: 'libx264', format: { video: ['-c:v', 'libx264', '-preset', quality === 'master' ? 'slow' : 'medium', '-crf', String(H264_CRF[quality]), ...BT709] } };
     case 'hevc':
-      if (hw) return { encoder: hw, format: { video: [...hardwareOptions(hw, bits(0.8), { gop }), ...BT709], tag: ['-tag:v', 'hvc1'] } };
+      if (hw) return { encoder: hw, format: { video: [...hardwareOptions(hw, bits(0.8), { gop }), ...BT709], tag: ['-tag:v', 'hvc1', ...HEVC_709] } };
       if (have.has('libx265')) {
-        return { encoder: 'libx265', format: { video: ['-c:v', 'libx265', '-preset', 'medium', '-crf', String(X265_CRF[quality]), '-x265-params', 'log-level=error', '-tag:v', 'hvc1', ...BT709], tag: ['-tag:v', 'hvc1'] } };
+        return { encoder: 'libx265', format: { video: ['-c:v', 'libx265', '-preset', 'medium', '-crf', String(X265_CRF[quality]), '-x265-params', 'log-level=error', '-tag:v', 'hvc1', ...BT709], tag: ['-tag:v', 'hvc1', ...HEVC_709] } };
       }
-      if (have.has('hevc_videotoolbox')) return { encoder: 'hevc_videotoolbox', format: { video: ['-c:v', 'hevc_videotoolbox', '-b:v', bitrate(0.8), '-g', String(gop), '-tag:v', 'hvc1', ...BT709], tag: ['-tag:v', 'hvc1'] } };
+      if (have.has('hevc_videotoolbox')) return { encoder: 'hevc_videotoolbox', format: { video: ['-c:v', 'hevc_videotoolbox', '-b:v', bitrate(0.8), '-g', String(gop), '-tag:v', 'hvc1', ...BT709], tag: ['-tag:v', 'hvc1', ...HEVC_709] } };
       throw new ExportError('this computer\'s ffmpeg has no HEVC encoder (libx265 or hevc_videotoolbox)');
     case 'vp9':
-      return { encoder: 'libvpx-vp9', format: { video: ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', String(VP9_CRF[quality]), '-row-mt', '1'] } };
+      return { encoder: 'libvpx-vp9', format: { video: ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', String(VP9_CRF[quality]), '-row-mt', '1', ...BT709] } };
     case 'prores422hq':
     case 'prores4444': {
       const encoder = hw ?? 'prores_ks';
-      return { encoder, format: proresOptions(encoder, codec === 'prores4444') };
+      return { encoder, format: prores709(encoder, codec === 'prores4444') };
     }
     case 'hevc_alpha':
       if (!have.has('hevc_videotoolbox')) throw new ExportError('HEVC with alpha needs macOS\'s hevc_videotoolbox encoder');
-      return { encoder: 'hevc_videotoolbox', format: { video: ['-c:v', 'hevc_videotoolbox', '-alpha_quality', '0.75', '-b:v', bitrate(0.8), '-tag:v', 'hvc1'], pix: 'format=bgra', tag: ['-tag:v', 'hvc1'] } };
+      return { encoder: 'hevc_videotoolbox', format: { video: ['-c:v', 'hevc_videotoolbox', '-alpha_quality', '0.75', '-b:v', bitrate(0.8), '-tag:v', 'hvc1'], pix: `format=bgra,${FRAMES_709}`, tag: ['-tag:v', 'hvc1'] } };
     case 'png':
       return { encoder: 'png', format: { video: ['-c:v', 'png'], pix: 'format=rgba' } };
   }
@@ -635,11 +657,13 @@ function tempo(speed) {
 }
 
 /**
- * A source an editor can't read, made into one it can: video → ProRes (4444 with its alpha, else 422 HQ), sound →
- * 48 kHz WAV (`segment`: only those source seconds, at that speed, exactly `seconds` long).
+ * A source an editor can't read, made into one it can: video → ProRes 422 HQ, or with its alpha the export's alpha
+ * codec (PNG, ProRes 4444 or HEVC with alpha); sound → 48 kHz WAV (`segment`: only those source seconds, at that
+ * speed, exactly `seconds` long). `video`: the picture's size and rate, which HEVC's bitrate follows.
  * @param {Extract<import('./nle.mjs').NleMediaJob, { kind: 'transcode' }>} make @param {string} out @param {AbortSignal} signal
+ * @param {{ w: number, h: number, fps?: number }} [video]
  */
-async function transcode(make, out, signal) {
+async function transcode(make, out, signal, video) {
   if (make.to === 'wav') {
     const seg = make.segment;
     /* the part is cut from the source before its speed changes, as the film's mix cuts it (after the -i, -ss and -t
@@ -650,18 +674,69 @@ async function transcode(make, out, signal) {
       '-c:a', 'pcm_s16le', '-ar', '48000', out], signal);
     return;
   }
-  const alpha = make.to === 'prores4444';
-  /* decoded on the graphics chip and written by the Mac's ProRes engine when it can, else by ffmpeg's own encoder */
-  const chip = await hardwareEncoder('prores', await encoders());
+  const alpha = make.to !== 'prores422hq';
+  const prores = make.to === 'prores422hq' || make.to === 'prores4444';
+  const have = await encoders();
+  /* decoded on the graphics chip and, ProRes, written by the Mac's ProRes engine when it can, else by ffmpeg's own encoder */
+  const chip = prores ? await hardwareEncoder('prores', have) : null;
   await onTheChip(chip, async (encoder, decoding) => {
-    const { video, pix } = proresOptions(encoder ?? 'prores_ks', alpha);
-    const tail = ['-map', '0:v:0', '-map', '0:a?', '-vf', pix, ...video, '-c:a', 'pcm_s16le', '-ar', '48000', out];
+    const own = prores ? null : encoding('png', 'master', video ?? { w: 1920, h: 1080 }, video?.fps ?? 30, have).format;
+    const { video: codec, pix } = own ? { video: own.video, pix: /** @type {{ pix: string }} */ (own).pix } : proresOptions(encoder ?? 'prores_ks', alpha);
+    const tail = ['-map', '0:v:0', '-map', '0:a?', '-vf', pix, ...codec, '-c:a', 'pcm_s16le', '-ar', '48000', out];
     /* VP9's alpha is a side channel ffmpeg's own decoder drops: libvpx reads it */
     if (alpha) {
       try { await run(['-c:v', 'libvpx-vp9', '-i', make.from, ...tail], signal); return; } catch (e) { if (signal.aborted) throw e; }
     }
     await run([...decoding, '-i', make.from, ...tail], signal);
   }, signal);
+}
+
+const execFileP = promisify(execFile);
+
+/**
+ * How a draft's page with alpha is drawn before its pictures are thinned (keepChanges writes them at ffmpeg's own PNG
+ * settings): PNG at zlib's fastest with each pixel kept as its difference from the one on its left. The same pixels for
+ * an eighth of the processor: ffmpeg's own PNG settings take about 0.4 s of processor time per 1080p frame, more than
+ * drawing it.
+ */
+const QUICK_PNG = { video: ['-c:v', 'png', '-compression_level', '1', '-pred', 'sub'], pix: 'format=rgba' };
+
+/**
+ * A PNG video with each picture kept once: a frame that repeats the one before is dropped and the one before lasts
+ * until the next (the timestamps say so), so a page that holds still is one picture, not a second's worth. A repeat is
+ * found by its bytes: one encoder at one setting writes the same picture the same way, so a frame a pixel apart is
+ * never taken for one; the frames kept are written again as PNG at ffmpeg's own settings, the same pixels. The last
+ * frame stays, so the length does too; a video that changes in most of its frames keeps every frame, written again the
+ * same way (it may have been drawn as a quick PNG).
+ * @param {string} file @param {AbortSignal} signal
+ */
+export async function keepChanges(file, signal) {
+  const { stdout } = await execFileP('ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'error', '-i', file, '-map', '0:v:0', '-c', 'copy', '-f', 'framemd5', '-'],
+    { maxBuffer: 256 << 20, signal, windowsHide: true });
+  const sums = String(stdout).split('\n').filter((l) => l && !l.startsWith('#')).map((l) => l.split(',').pop()?.trim());
+  const kept = sums.flatMap((sum, i) => (i === 0 || i === sums.length - 1 || sum !== sums[i - 1] ? [i] : []));
+  /* frames kept one after another are one term; the terms are added as a balanced tree, since ffmpeg parses no more
+     than 100 in a row */
+  /** @type {[number, number][]} */
+  const runs = [];
+  for (const i of kept) { const last = runs.at(-1); if (last && last[1] === i - 1) last[1] = i; else runs.push([i, i]); }
+  /** @type {(part: [number, number][]) => string} */
+  const sum = (part) => (part.length === 1 ? (part[0][0] === part[0][1] ? `eq(n,${part[0][0]})` : `between(n,${part[0][0]},${part[0][1]})`)
+    : `(${sum(part.slice(0, part.length >> 1))}+${sum(part.slice(part.length >> 1))})`);
+  const part = `${file}.part.mov`;
+  const all = kept.length > sums.length / 2;
+  const graph = all ? '' : `[0:v:0]select='${sum(runs)}'[v]`;
+  /* a long one goes in a file: Windows takes a command of no more than 32,767 characters, and a long page that steps
+     every few frames keeps thousands of runs */
+  const script = graph.length > COMMAND_ROOM ? `${part}.filter` : null;
+  if (script) await writeFile(script, graph, 'utf8');
+  try {
+    const select = all ? ['-map', '0:v:0'] : [...(script ? [await filterScriptOption(), script] : ['-filter_complex', graph]), '-map', '[v]', '-fps_mode', 'vfr'];
+    await run(['-i', file, ...select, '-c:v', 'png', part], signal);
+  } finally {
+    if (script) await tidy(script);
+  }
+  await renameSafely(part, file);
 }
 
 const IMAGE_TYPES = /** @type {Record<string, string>} */ ({ svg: 'image/svg+xml', webp: 'image/webp', avif: 'image/avif', gif: 'image/gif', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', bmp: 'image/bmp' });
@@ -701,6 +776,9 @@ export async function writableFolder(dir) {
   }
 }
 
+/** How long Studio's close waits for a stopped export to clean up after itself (the app waits ten seconds for Studio). */
+const STOP_WAIT_MS = 8000;
+
 /**
  * The export queue. `onChange(job)` is told every change of a job (its progress included), for the pages watching.
  * `captions(root)`: a film's subtitle cues and the person's style for them (captions.mjs by default).
@@ -714,6 +792,10 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
   /** @type {Map<string, { root: string, folder: string, abort: AbortController, twin?: string }>} */
   const work = new Map();
   let running = false;
+  /* Studio is closing: nothing new starts (stopAll) */
+  let closing = false;
+  /** settles when no export is running */
+  let idle = Promise.resolve();
 
   const update = (/** @type {ExportJob} */ job, /** @type {Partial<ExportJob>} */ change) => { Object.assign(job, change); onChange({ ...job, outputs: [...job.outputs] }); };
 
@@ -722,17 +804,8 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
     const { cues, style } = await captions(root);
     return { cues: filmSubtitleShown(cues, style).filter((c) => c.durMs > 0 && c.text.trim()), style };
   };
-  /**
-   * The film with its subtitles burned in, when the ask wants them and the film has some (else null): what to render
-   * instead of the project (see burnFilm).
-   * @param {string} root @param {Framing} ask @param {boolean} [transparent]
-   */
-  const burned = async (root, ask, transparent = false) => {
-    if (!ask.burnSubtitles) return null;
-    const { cues, style } = await subtitlesOf(root);
-    if (!cues.length) return null;
-    return burnFilm(root, await stageOf(root), ask.frame ?? 'native', ask.fill ?? 'contain', cues, style, transparent);
-  };
+  /** The film with its subtitles burned in, or null (burn.mjs). @param {string} root @param {Framing} ask @param {boolean} [transparent] */
+  const burnedOf = (root, ask, transparent = false) => burned(root, ask, captions, transparent);
 
   /**
    * render's frame count as the job's progress, its rate and what is left: `share` is the part of the whole job the
@@ -760,17 +833,17 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
   /** Render the film (or `target`) to `out`, with progress. @param {ExportJob} job @param {string} target @param {string} out @param {Record<string, unknown>} opts @param {AbortSignal} signal */
   const renderTo = (job, target, out, opts, signal, share = 0.96) => {
     const range = job.ask.range ? [`${num(job.ask.range[0])}-${num(job.ask.range[1])}`] : [];
-    return render([target, ...range], { ...opts, out, signal, onProgress: frames(job, share) });
+    return render([target, ...range], { ...opts, ...(job.ask.ranges ? { ranges: job.ask.ranges } : {}), out, signal, onProgress: frames(job, share) });
   };
 
   /** @param {ExportJob} job @param {string} root @param {string} dir @param {AbortSignal} signal */
   async function exportVideo(job, root, dir, signal) {
-    const ask = /** @type {VideoAsk & { range?: [number, number] }} */ (job.ask);
+    const ask = /** @type {VideoAsk & { range?: [number, number], ranges?: [number, number][] }} */ (job.ask);
     const codec = ask.codec ?? 'h264';
     const alpha = ALPHA_CODECS.has(codec);
     const clip = ask.clip ? await clipFilm(root, ask.clip) : null;
-    const burn = clip ? null : await burned(root, ask, alpha);
-    const scratch = codec === 'png' ? await mkdtemp(join(tmpdir(), 'openfilm-export-')) : null;
+    const burn = clip ? null : await burnedOf(root, ask, alpha);
+    const scratch = codec === 'png' || codec === 'hevc_alpha' ? await mkdtemp(join(tmpdir(), 'openfilm-export-')) : null;
     try {
       const stage = clip?.stage ?? await stageOf(root);
       let size, place;
@@ -796,7 +869,7 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       /** @param {string | null} chip */
       const how = (chip) => {
         const { encoder, format } = encoding(codec, quality, size, fps ?? 30, have, chip);
-        const container = /** @type {{ pix?: string }} */ (format).pix ?? (codec === 'h264' || codec === 'hevc' ? `${TO_709},format=yuv420p` : codec === 'vp9' ? 'format=yuva420p' : 'format=yuva444p10le');
+        const container = /** @type {{ pix?: string }} */ (format).pix ?? (codec === 'h264' || codec === 'hevc' ? YUV_709('yuv420p') : codec === 'vp9' ? YUV_709('yuva420p') : 'format=yuva444p10le');
         return { encoder, opts: { fps, scale: place.scale, alpha, silent: ask.audio === false || codec === 'png', format: { ...format, pix: `${place.vf},${container}` }, ...(clip || burn ? { root } : {}) } };
       };
       let { encoder, opts } = how(hw);
@@ -804,23 +877,43 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       const target = clip ? clip.dir : burn ? burn.dir : root;
       const out = freeFile(dir, baseName(job.name, ask), CODEC_EXT[codec]);
       if (codec !== 'png') {
-        update(job, { out, outputs: [out] });
+        const part = partialOf(out, job.id);
+        /** @type {[number, number][] | null} The ranges actually drawn, at the output's rate and within the film. */
+        let selectedRanges = null;
+        update(job, { out: part, outputs: [part] });
         try {
-          await renderTo(job, target, out, opts, signal);
+          if (codec === 'hevc_alpha') {
+            /* HEVC with alpha is encoded once, straight into its file: ffmpeg copying it (as render does, joining its
+               parts and adding the sound) drops its alpha layer's parameter sets, and no Apple app opens it then. Drawn
+               first as a quick PNG with its sound (the same frames, as many browsers as any render), then encoded */
+            const frames = join(/** @type {string} */ (scratch), 'frames.mov');
+            const rendered = await renderTo(job, target, frames, { ...opts, format: { ...QUICK_PNG, pix: `${place.vf},format=rgba` } }, signal, 0.85);
+            selectedRanges = rendered.ranges ?? null;
+            update(job, { phase: 'encoding', progress: 0.86, rate: 0, etaMs: null });
+            const { format } = encoding(codec, quality, size, fps ?? 30, have);
+            await run(['-i', frames, '-map', '0:v:0', '-map', '0:a?', '-vf', /** @type {{ pix: string }} */ (format).pix, ...format.video, '-c:a', 'copy', part], signal);
+          } else {
+            const rendered = await renderTo(job, target, part, opts, signal);
+            selectedRanges = rendered.ranges ?? null;
+          }
         } catch (e) {
-          /* the graphics chip's encoder gave up partway (a driver, a size it does not take): the rest of this launch
-             encodes without it, starting with this export again */
-          if (!hw || signal.aborted || !/^ffmpeg: /.test(e instanceof Error ? e.message : '')) throw e;
+          /* the graphics chip's encoder gave up partway (a driver, a size it does not take, sessions or memory it ran out
+             of): the rest of this launch encodes without it, starting with this export again */
+          if (!hw || signal.aborted || !/^ffmpeg[: ]/.test(e instanceof Error ? e.message : '')) throw e;
           broken(hw);
           ({ encoder, opts } = how(null));
           update(job, { encoder, framesDone: 0, progress: 0, etaMs: null });
-          await renderTo(job, target, out, opts, signal);
+          const rendered = await renderTo(job, target, part, opts, signal);
+          selectedRanges = rendered.ranges ?? null;
         }
+        await renameSafely(part, out);
+        update(job, { out, outputs: [out] });
         if (alpha) update(job, { alpha: await alphaOf(out, codec === 'vp9') });
         /* the subtitles as a file beside it, timed to the part exported */
         if (ask.sidecar) {
           const { cues } = await subtitlesOf(root);
-          const part = ask.range ? filmSubtitleCuesInRange(cues, ask.range[0] * 1000, ask.range[1] * 1000) : cues;
+          const selected = selectedRanges?.map(([from, to]) => /** @type {[number, number]} */ ([from * 1000, to * 1000]));
+          const part = selected ? filmSubtitleCuesInRanges(cues, selected) : ask.range ? filmSubtitleCuesInRange(cues, ask.range[0] * 1000, ask.range[1] * 1000) : cues;
           const text = ask.sidecar === 'vtt' ? filmSubtitleVtt(part) : filmSubtitleSrt(part);
           if (text) {
             const file = `${out.slice(0, -CODEC_EXT[codec].length)}.${ask.sidecar}`;
@@ -834,17 +927,20 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       const scratchDir = /** @type {string} */ (scratch);
       const movie = join(scratchDir, 'frames.mov');
       await renderTo(job, target, movie, opts, signal, 0.8);
-      update(job, { phase: 'encoding', progress: 0.82, out, outputs: [out] });
+      const part = partialOf(out, job.id);
+      update(job, { phase: 'encoding', progress: 0.82, out: part, outputs: [part] });
       const stem = baseName(job.name, ask);
       await mkdir(join(scratchDir, 'png'));
       await run(['-i', movie, '-c:v', 'copy', '-f', 'image2', '-start_number', '0', join(scratchDir, 'png', '%06d.png')], signal);
       const names = (await readdir(join(scratchDir, 'png'))).sort();
       update(job, { phase: 'finishing', progress: 0.9 });
-      await zipFiles(out, names.map((n) => ({ name: `${stem}_${n}`, file: join(scratchDir, 'png', n) })), signal);
+      await zipFiles(part, names.map((n) => ({ name: `${stem}_${n}`, file: join(scratchDir, 'png', n) })), signal);
+      await renameSafely(part, out);
+      update(job, { out, outputs: [out] });
     } finally {
       await clip?.remove();
       await burn?.remove();
-      if (scratch) await rm(scratch, { recursive: true, force: true, maxRetries: 5 });
+      if (scratch) await tidy(scratch);
     }
   }
 
@@ -852,7 +948,7 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
   async function exportGif(job, root, dir, signal) {
     const ask = /** @type {GifAsk} */ (job.ask);
     const scratch = await mkdtemp(join(tmpdir(), 'openfilm-export-'));
-    const burn = await burned(root, ask);
+    const burn = await burnedOf(root, ask);
     try {
       /* with subtitles, the frame is the page drawn */
       const stage = burn ? burn.box : await stageOf(root);
@@ -866,17 +962,20 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       await renderTo(job, burn ? burn.dir : root, movie, { fps, scale: place.scale, silent: true, ...(burn ? { root } : {}),
         format: { video: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '8', ...BT709], pix: `${place.vf},${TO_709},format=yuv420p` } }, signal, 0.8);
       const out = freeFile(dir, baseName(job.name, ask), '.gif');
-      update(job, { phase: 'encoding', progress: 0.85, out, outputs: [out] });
-      await run(['-i', movie, '-filter_complex', '[0:v]split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle', '-loop', '0', out], signal);
+      const part = partialOf(out, job.id);
+      update(job, { phase: 'encoding', progress: 0.85, out: part, outputs: [part] });
+      await run(['-i', movie, '-filter_complex', '[0:v]split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle', '-loop', '0', part], signal);
+      await renameSafely(part, out);
+      update(job, { out, outputs: [out] });
     } finally {
       await burn?.remove();
-      await rm(scratch, { recursive: true, force: true, maxRetries: 5 });
+      await tidy(scratch);
     }
   }
 
   /** @param {ExportJob} job @param {string} root @param {string} dir @param {AbortSignal} signal */
   async function exportSound(job, root, dir, signal) {
-    const ask = /** @type {AudioAsk & { range?: [number, number] }} */ (job.ask);
+    const ask = /** @type {AudioAsk & { range?: [number, number], ranges?: [number, number][] }} */ (job.ask);
     const format = ask.format ?? 'wav';
     const codec = SOUND_CODECS[format];
     if (format === 'mp3' && !(await encoders()).has('libmp3lame')) throw new ExportError('this computer\'s ffmpeg has no MP3 encoder (libmp3lame)');
@@ -886,8 +985,11 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       const meta = probe.film.meta;
       /* a page without a duration has no end (and no sound: a page has none) */
       const length = meta.duration ?? Infinity;
-      const [from, to] = ask.range ? [ask.range[0], Math.min(ask.range[1], length)] : [0, length];
-      const clips = await filmSound(probe, from);
+      const selected = ask.ranges?.map(([from, to]) => ({ from, to: Math.min(to, length) }));
+      if (selected?.some((part) => part.to <= part.from)) throw new ExportError('a selected range is outside the film');
+      const [from, to] = selected ? [0, selected.reduce((n, part) => n + part.to - part.from, 0)] : ask.range ? [ask.range[0], Math.min(ask.range[1], length)] : [0, length];
+      const allClips = await filmSound(probe, selected ? 0 : from);
+      const clips = selected ? selectionClips(allClips, selected) : allClips;
       if (!clips.length) throw new ExportError('this film has no sound');
       /** @type {{ suffix: string, clips: typeof clips }[]} */
       const plan = [];
@@ -905,9 +1007,13 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       for (const [i, step] of plan.entries()) {
         if (signal.aborted) throw new Error('cancelled');
         const out = freeFile(dir, `${base}${step.suffix}`, `.${format}`);
-        outputs.push(out);
-        update(job, { out: outputs[0], outputs, progress: Math.floor((i / plan.length) * 100) / 100 });
-        await mix(step.clips, to - from, out, codec);
+        const part = partialOf(out, job.id);
+        outputs.push(part);
+        update(job, { out: outputs[0], outputs: [...outputs], progress: Math.floor((i / plan.length) * 100) / 100 });
+        await mix(step.clips, to - from, part, codec);
+        await renameSafely(part, out);
+        outputs[i] = out;
+        update(job, { out: outputs[0], outputs: [...outputs] });
       }
     } finally {
       await probe.close();
@@ -921,7 +1027,7 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
    * @param {string} scratch @param {AbortSignal} signal
    */
   async function stillFrames(job, root, ask, ext, scratch, signal) {
-    const burn = await burned(root, ask);
+    const burn = await burnedOf(root, ask);
     /* footage the browser does not decode (ProRes; HEVC without a chip for it) drawn through a copy it plays: the film's
        video clips, the project's when the film is drawn inside a frame with its subtitles */
     const probe = await open(burn ? burn.dir : root, burn ? { root, playable: filmVideos(root, FILM_FILE) } : { playable: true }).catch(async (e) => { await burn?.remove(); throw e; });
@@ -938,15 +1044,20 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       if (meta.duration == null && !picked) throw new ExportError('this page has no duration, so it has no middle or end: say which moments to export');
       const length = meta.duration ?? Infinity;
       const end = Math.max(0, length - 1e-3);
+      /* the film's scenes: a still or a slide is named by the one it is in (a page's speaker notes) */
+      const cuts = ask.kind === 'poster' ? []
+        : [.../** @type {{ id: string, at: number, end: number }[] | null} */ (await probe.film.page.evaluate(() => /** @type {any} */ (window).__filmCuts?.() ?? null)) ?? []]
+          .sort((a, b) => a.at - b.at);
+      /** the scene showing at `t`: of those that do, the one that started last */
+      const sceneAt = (/** @type {number} */ t) => cuts.findLast((c) => c.at <= t && t < c.end)?.id ?? '';
       /** @type {{ t: number, label: string }[]} */
       let moments;
       if (ask.kind === 'poster') moments = [{ t: Math.min(end, ask.at ?? length / 2), label: '' }];
-      else if (ask.at?.length) moments = ask.at.map((t) => ({ t: Math.min(end, t), label: '' }));
+      else if (ask.at?.length) moments = ask.at.map((t) => ({ t: Math.min(end, t), label: sceneAt(Math.min(end, t)) }));
       else {
-        const cuts = /** @type {{ id: string, at: number, end: number }[] | null} */ (await probe.film.page.evaluate(() => /** @type {any} */ (window).__filmCuts?.() ?? null));
         moments = [];
         let lastAt = -Infinity;
-        for (const c of [...(cuts ?? [])].sort((a, b) => a.at - b.at)) {
+        for (const c of cuts) {
           if (!(c.end > c.at) || c.at >= length || c.at - lastAt < 0.4) continue;
           lastAt = c.at;
           moments.push({ t: Math.min(end, (c.at + Math.min(c.end, length)) / 2), label: c.id });
@@ -989,17 +1100,31 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       const { files } = await stillFrames(job, root, ask, ext, scratch, signal);
       update(job, { phase: 'finishing' });
       const base = baseName(job.name, ask);
-      if (files.length === 1) {
-        const out = freeFile(dir, ask.kind === 'stills' ? `${base} ${files[0].name.replace(/\.\w+$/, '')}` : base, ext);
-        await writeFile(out, readFileSync(files[0].file));
+      const archive = ask.kind === 'stills' && (ask.as === 'zip' || (ask.as !== 'files' && files.length > 1));
+      if (archive) {
+        const out = freeFile(dir, base, '.zip');
+        const part = partialOf(out, job.id);
+        update(job, { out: part, outputs: [part] });
+        await zipFiles(part, files, signal);
+        await renameSafely(part, out);
         update(job, { out, outputs: [out] });
       } else {
-        const out = freeFile(dir, base, '.zip');
-        update(job, { out, outputs: [out] });
-        await zipFiles(out, files, signal);
+        /** @type {string[]} */
+        const outputs = [];
+        for (const file of files) {
+          if (signal.aborted) throw new Error('cancelled');
+          const out = freeFile(dir, ask.kind === 'stills' ? `${base} ${file.name.replace(/\.\w+$/, '')}` : base, ext);
+          const part = partialOf(out, job.id);
+          outputs.push(part);
+          update(job, { out: outputs[0], outputs: [...outputs] });
+          await copyFile(file.file, part, fsConstants.COPYFILE_FICLONE);
+          await renameSafely(part, out);
+          outputs[outputs.length - 1] = out;
+          update(job, { out: outputs[0], outputs: [...outputs] });
+        }
       }
     } finally {
-      await rm(scratch, { recursive: true, force: true, maxRetries: 5 });
+      await tidy(scratch);
     }
   }
 
@@ -1015,19 +1140,22 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       update(job, { phase: 'encoding', progress: 0.92 });
       const pages = await Promise.all(files.map(async (f) => ({ jpeg: await readFile(f.file), w: size.w, h: size.h, label: f.label })));
       const out = freeFile(dir, baseName(job.name, ask), pdf ? '.pdf' : '.pptx');
+      const part = partialOf(out, job.id);
+      update(job, { out: part, outputs: [part] });
+      if (pdf) await writeFile(part, await slidesPdf(pages));
+      else await writePptx(part, pages, job.name, signal);
+      await renameSafely(part, out);
       update(job, { out, outputs: [out] });
-      if (pdf) await writeFile(out, await slidesPdf(pages));
-      else await writePptx(out, pages, job.name, signal);
     } finally {
-      await rm(scratch, { recursive: true, force: true, maxRetries: 5 });
+      await tidy(scratch);
     }
   }
 
   /** The film's subtitles as a file. @param {ExportJob} job @param {string} root @param {string} dir */
   async function exportSubtitles(job, root, dir) {
-    const ask = /** @type {SubtitlesAsk & { range?: [number, number] }} */ (job.ask);
+    const ask = /** @type {SubtitlesAsk & { range?: [number, number], ranges?: [number, number][] }} */ (job.ask);
     const { cues: all } = await subtitlesOf(root);
-    const cues = ask.range ? filmSubtitleCuesInRange(all, ask.range[0] * 1000, ask.range[1] * 1000) : all;
+    const cues = ask.ranges ? filmSubtitleCuesInRanges(all, ask.ranges.map(([from, to]) => [from * 1000, to * 1000])) : ask.range ? filmSubtitleCuesInRange(all, ask.range[0] * 1000, ask.range[1] * 1000) : all;
     const format = ask.format ?? 'srt';
     const text = format === 'vtt' ? filmSubtitleVtt(cues) : format === 'txt' ? filmSubtitleTranscript(cues) : filmSubtitleSrt(cues);
     if (!text) throw new ExportError('this film has no subtitles');
@@ -1052,22 +1180,32 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
     const draftsDir = app ? drafts(app) : null;
     const dir = draftsDir && await writableFolder(draftsDir) ? draftsDir : out;
     if (draftsDir && dir !== draftsDir) update(job, { draftsRefused: draftsDir });
+    if (dir !== out) await sweep(dir, LEFT.output);
     const fps = nleFps(ask.fps ?? 30);
     const mode = ask.audio ?? 'clips';
     const title = safeName(job.name);
-    update(job, { encoder: (await hardwareEncoder('prores', await encoders())) ?? 'prores_ks' });
+    /* how the pages are written: for a draft, `auto` (each page's alpha read in every frame as it is drawn, as Studio
+       shows it: an opaque page as H.264, one with any clear pixel as lossless PNG), all `png`, or `prores` (422 HQ and
+       4444 the same way); ProRes 4444 or PNG for the other editors */
+    const alpha = ask.alpha ?? (app ? 'auto' : 'prores4444');
+    const prores = alpha === 'prores' || alpha === 'prores4444';
+    const have = await encoders();
+    /** how a page with alpha is drawn: PNG (a draft's a quick one, its pictures thinned after; PNG's alpha is exact,
+        ProRes's comes back a little off full), or (null) ProRes 4444, whose encoder render picks */
+    const pngFormat = app ? QUICK_PNG : alpha === 'png' ? encoding('png', 'master', { w: 0, h: 0 }, fps, have).format : null;
     /* the edit with every track shown: a hidden track comes over disabled, one click from back on, so it is drawn too */
     const doc = existsSync(join(root, FILM_FILE)) ? filmDoc(root)
       : { stage: await stageOf(root), tracks: [{ clips: [{ src: 'index.html', id: title }] }] };
+    update(job, { encoder: prores && !app ? (await hardwareEncoder('prores', have)) ?? 'prores_ks' : 'png' });
     /* a source out of the project fails the export before anything is drawn */
     for (const track of doc.tracks) for (const row of track.clips) clipPath(root, row.src);
-    const { cues } = ask.subtitles === false ? { cues: [] } : await subtitlesOf(root).catch((error) => {
+    const { cues, style: shown } = ask.subtitles === false ? { cues: [], style: null } : await subtitlesOf(root).catch((error) => {
       if (fcp) throw error;
-      return { cues: [] };
+      return { cues: [], style: null };
     });
-    const scratch = join(root, '.film', 'cache', 'export', `nle-${randomBytes(4).toString('hex')}`);
+    const scratch = cacheDir(root, 'export', `nle-${process.pid}-${randomBytes(4).toString('hex')}`);
     const final = freeFile(dir, baseName(job.name, ask), '');
-    const staging = join(dir, `.${basename(final)}.partial-${job.id}`);
+    const staging = join(dir, `.${basename(final)}.partial-${process.pid}-${job.id}`);
     try {
       await mkdir(scratch, { recursive: true });
       await filmElsewhere(root, scratch, { stage: doc.stage, tracks: doc.tracks.map((t) => ({ clips: t.clips })) });
@@ -1160,43 +1298,127 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
 
       const timeline = planNleTimeline({ stage: doc.stage, duration: duration || 0.001, pictures, sounds },
         { title, fps, audio: mode, media: ask.media ?? 'copy', mediaDir: join(final, 'media'), stems: [...stems.keys()],
-          audioTracks: fcp ? 'source' : 'roles' });
+          audioTracks: fcp ? 'source' : 'roles', alpha: prores ? 'prores4444' : 'png' });
       const staged = (/** @type {import('./nle.mjs').NleFile} */ f) => join(staging, 'media', basename(f.path));
 
-      /* each web page (and each picture Basic Motion can't place) drawn alone, full frame, with alpha */
-      const renders = timeline.files.filter((f) => f.job.kind === 'render');
-      const totalFrames = renders.reduce((n, f) => n + (f.job.kind === 'render' ? f.job.frames : 0), 0);
+      /* each web page (and each picture Basic Motion can't place) drawn alone, full frame, with alpha. Several are drawn at
+         once, the longest first, with as many browsers in all as one render of every frame would get (render.mjs
+         defaultWorkers), shared by their frames (shareOf), kept from page to page in one process (drawer); a PNG page's
+         pictures are thinned while the next ones draw. One that fails stops the others */
+      const renders = timeline.files.filter((f) => f.job.kind === 'render').sort((a, b) => framesOf(b) - framesOf(a));
+      const totalFrames = renders.reduce((n, f) => n + framesOf(f), 0);
       const tick = frames(job, 0.88);
-      let framesBefore = 0;
+      /** @type {Map<string, number>} */
+      const drawnFrames = new Map();
+      const budget = machine();
+      /* Hosted exports share the same two-browser budget across all pages drawing at once. */
+      let free = Math.min(defaultWorkers(budget, totalFrames), process.env.OPENFILM_HOSTED_RENDER === '1' ? 2 : Infinity);
       /* the chip's ProRes until one of the pages has to do without it: the rest do without it too */
       let hardware = true;
-      for (const file of renders) {
-        if (file.job.kind !== 'render') continue;
-        const { clip: id, frames } = file.job;
+      const stop = new AbortController();
+      const quit = () => stop.abort();
+      signal.addEventListener('abort', quit, { once: true });
+      /* the pages' browsers, started once for all of them */
+      const pool = drawer();
+      /** @type {Set<Promise<void>>} */
+      const drawing = new Set();
+      /** @type {Promise<void>[]} */
+      const pages = [];
+      /** @type {unknown} */
+      let failed = null;
+      /**
+       * A draft's page written as it is drawn, as editors play it best: opaque in every frame, H.264 (the graphics
+       * chip's when it has one, else x264 at master quality, BT.709 like a video export) or ProRes 422 HQ; drawn again
+       * at the first pixel that shows through as quick PNG (its pictures thinned after) or ProRes 4444. The result
+       * says which (`clear`).
+       * @param {(how: Record<string, unknown>) => Promise<{ clear?: boolean }>} draw @param {'h264' | 'prores'} codec
+       */
+      const asEditorsPlay = async (draw, codec) => {
+        /** @param {string | null} encoder */
+        const formats = (encoder) => (codec === 'h264'
+          ? { format: { video: [...encoding('h264', 'master', doc.stage, timeline.rate.fps, have, encoder).format.video, ...H264_709], pix: YUV_709('yuv420p') }, clear: QUICK_PNG }
+          : { format: prores709(encoder ?? 'prores_ks', false), clear: prores709(encoder ?? 'prores_ks', true) });
+        const chip = await hardwareEncoder(codec, have);
+        try {
+          return await draw(formats(chip));
+        } catch (e) {
+          /* the chip's encoder gave up partway: the page again without it, and the rest of this launch does without it (a
+             full disk is no encoder's doing) */
+          if (!chip || stop.signal.aborted || diskFull(e) || !/^ffmpeg/.test(e instanceof Error ? e.message : '')) throw e;
+          broken(chip);
+          return draw(formats(null));
+        }
+      };
+      /** @param {import('./nle.mjs').NleFile} file @param {number} workers @param {() => void} drawn */
+      const page = async (file, workers, drawn) => {
+        const { clip: id, frames } = /** @type {Extract<import('./nle.mjs').NleMediaJob, { kind: 'render' }>} */ (file.job);
         const p = /** @type {import('./nle.mjs').NlePicture} */ (pictures.find((x) => x.id === id));
         const native = byId.get(id)?.native ?? Infinity;
         /* as long as its frames on the sequence: a page holds its last frame, a still lasts as long as it is told */
         const time = p.kind === 'video' ? [p.from, Math.min(native, p.from + (frames / timeline.rate.fps) * p.speed)] : [p.from, p.from + frames / timeline.rate.fps];
-        const one = await clipFilm(root, id, { change: { time }, doc });
-        const offset = framesBefore;
+        /* a draft's page with no clear pixel in any frame needs no alpha (each frame's alpha is read as it is drawn, so
+           it is what Studio shows): written opaque as it is drawn, nothing written twice. At the first pixel that shows
+           through it is drawn again with its alpha: as lossless PNG, or as ProRes 4444 (`prores`) */
+        let clear = true;
         try {
-          const drawn = await render([one.dir], {
-            root, alpha: true, silent: true, fps: timeline.rate.fps, out: staged(file), signal, hardware,
-            onProgress: (/** @type {number} */ done) => tick(offset + done, totalFrames),
-          });
-          if (drawn.encoder !== job.encoder) update(job, { encoder: drawn.encoder });
-          if (drawn.encoder === 'prores_ks') hardware = false;
+          const one = await clipFilm(root, id, { change: { time }, doc });
+          try {
+            /** @param {Record<string, unknown>} how */
+            const draw = async (how) => {
+              const result = await pool.render([one.dir], {
+                root, alpha: true, silent: true, fps: timeline.rate.fps, out: staged(file), signal: stop.signal, workers, ...how,
+                /* a page drawn again counts from where it was: it holds until the second drawing passes it */
+                onProgress: (/** @type {number} */ done) => {
+                  drawnFrames.set(file.id, Math.max(drawnFrames.get(file.id) ?? 0, done));
+                  tick([...drawnFrames.values()].reduce((n, d) => n + d, 0), totalFrames);
+                },
+              });
+              if (result.encoder !== job.encoder) update(job, { encoder: result.encoder });
+              return result;
+            };
+            if (app && alpha !== 'png') clear = (await asEditorsPlay(draw, alpha === 'prores' ? 'prores' : 'h264')).clear === true;
+            else if ((await draw(pngFormat ? { format: pngFormat } : { hardware })).encoder === 'prores_ks') hardware = false;
+          } finally {
+            await one.remove();
+          }
         } finally {
-          await one.remove();
+          drawn();
         }
-        framesBefore += frames;
         /* a source shorter than its place by a frame of rounding: the clip ends where its picture does */
         const made = await countFrames(staged(file));
         if (made > 0 && made !== frames) {
           file.durationFrames = made;
           for (const t of timeline.video) for (const c of t.clips) if (c.fileId === file.id) { c.out = made; c.end = c.start + made; }
         }
+        /* a draft's PNG page keeps each picture once, for as long as it shows (剪映 plays a picture's own length): a
+           fraction of the frames, the same pixels */
+        if (app && clear && alpha !== 'prores') await keepChanges(staged(file), stop.signal);
+      };
+      try {
+        let left = totalFrames;
+        for (const file of renders) {
+          while (!free && !failed) await Promise.race(drawing);
+          if (failed) break;
+          const workers = shareOf(free, framesOf(file), left, defaultWorkers(budget, framesOf(file)));
+          left -= framesOf(file);
+          free -= workers;
+          /* its browsers back for the next page once it is drawn, while its pictures are thinned (a PNG page) */
+          /** @type {() => void} */
+          let drawn = () => {};
+          const slot = new Promise((r) => { drawn = () => r(undefined); }).then(() => { drawing.delete(slot); free += workers; });
+          drawing.add(slot);
+          pages.push(page(file, workers, drawn).catch((e) => {
+            failed ??= e;
+            stop.abort();
+          }));
+        }
+        await Promise.all(pages);
+      } finally {
+        signal.removeEventListener('abort', quit);
+        await pool.close();
       }
+      if (signal.aborted) throw new Error('cancelled');
+      if (failed) throw failed;
 
       update(job, { phase: 'encoding', progress: 0.9, rate: 0, etaMs: null });
       const others = timeline.files.filter((f) => f.job.kind !== 'render' && f.job.kind !== 'link');
@@ -1213,7 +1435,11 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
           else if (make.kind === 'raster') {
             browser ??= await launch();
             await rasterize(browser, make.from, make.w, make.h, to);
-          } else if (make.kind === 'transcode') await transcode(make, to, signal);
+          } else if (make.kind === 'transcode') {
+            await transcode(make, to, signal, file.video);
+            // Full video conversions can retain timecode; use the produced file's metadata, not the original's.
+            if (!app && !fcp && file.video && !make.segment) file.timecode = (await probeSource(to)).timecode;
+          }
           update(job, { progress: Math.floor((0.9 + 0.08 * ((i + 1) / others.length)) * 100) / 100 });
         }
       } finally {
@@ -1223,7 +1449,8 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       update(job, { phase: 'finishing', progress: 0.98 });
       if (app) {
         /* the app on Windows reads draft_content.json, on a Mac draft_info.json: the same draft in both */
-        const draft = jianyingDraft(timeline, { app, name: basename(final), folder: final, root: dir, cues });
+        /* the subtitles' language: a translation shown alone is in its own; else told from the words (jianying.mjs) */
+        const draft = jianyingDraft(timeline, { app, name: basename(final), folder: final, root: dir, cues, language: shown?.bilingual ? null : shown?.language });
         const info = JSON.stringify(draft.info);
         await writeFile(join(staging, 'draft_info.json'), info, 'utf8');
         await writeFile(join(staging, 'draft_content.json'), info, 'utf8');
@@ -1236,7 +1463,7 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       }
       if (signal.aborted) throw new Error('cancelled');
       if (!(await readdir(join(staging, 'media'))).length) await rmdir(join(staging, 'media'));
-      await rename(staging, final);
+      await renameSafely(staging, final);
       const media = existsSync(join(final, 'media')) ? (await readdir(join(final, 'media'))).sort().map((n) => join(final, 'media', n)) : [];
       const first = app ? 'draft_info.json' : fcp ? '.fcpxml' : '.xml';
       const top = (await readdir(final)).filter((n) => n !== 'media').sort((a, b) => Number(!a.endsWith(first)) - Number(!b.endsWith(first)) || a.localeCompare(b));
@@ -1244,8 +1471,8 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       const outputs = [...top.map((n) => join(final, n)), ...media];
       update(job, { out: outputs[0], outputs });
     } finally {
-      await rm(scratch, { recursive: true, force: true, maxRetries: 5 });
-      await rm(staging, { recursive: true, force: true });
+      await tidy(scratch);
+      await tidy(staging);
     }
   }
 
@@ -1267,12 +1494,15 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
     };
     if ((ask.as ?? 'zip') === 'zip') {
       const out = freeFile(dir, title, '.zip');
+      const part = partialOf(out, job.id);
+      update(job, { out: part, outputs: [part] });
+      await zipFiles(part, files.map((f) => ({ name: `${title}/${f.name}`, file: f.file })), signal, copied);
+      await renameSafely(part, out);
       update(job, { out, outputs: [out] });
-      await zipFiles(out, files.map((f) => ({ name: `${title}/${f.name}`, file: f.file })), signal, copied);
       return;
     }
     const final = freeFile(dir, title, '');
-    const staging = join(dir, `.${basename(final)}.partial-${job.id}`);
+    const staging = join(dir, `.${basename(final)}.partial-${process.pid}-${job.id}`);
     try {
       let bytes = 0;
       for (const f of files) {
@@ -1283,10 +1513,10 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
         copied(bytes += f.size);
       }
       await mkdir(staging, { recursive: true });
-      await rename(staging, final);
+      await renameSafely(staging, final);
       update(job, { out: final, outputs: [final] });
     } finally {
-      await rm(staging, { recursive: true, force: true });
+      await tidy(staging);
     }
   }
 
@@ -1312,14 +1542,20 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
   }
 
   async function next() {
-    if (running) return;
+    if (running || closing) return;
     /* the oldest waiting: the list is newest first, and exports run in the order asked */
     const job = jobs.findLast((j) => j.status === 'waiting');
     if (!job) return;
     running = true;
+    /** @type {() => void} */
+    let finished = () => {};
+    idle = new Promise((r) => { finished = () => r(undefined); });
     const { root, folder, abort, twin } = /** @type {{ root: string, folder: string, abort: AbortController, twin?: string }} */ (work.get(job.id));
     try {
       await mkdir(folder, { recursive: true });
+      /* what an export Studio could not finish left behind, gone before this one starts */
+      await Promise.all([sweep(folder, LEFT.output), sweep(cacheDir(root, 'export'), LEFT.scratch),
+        sweep(cacheDir(root, 'render'), LEFT.parts), sweep(cacheDir(root, 'seek'), LEFT.copy)]);
       update(job, { status: 'running', phase: 'preparing', startedAt: Date.now() });
       const kind = job.ask.kind;
       /* the same export as one made just before it (asked together), but for its name: that one's files, cloned */
@@ -1340,12 +1576,16 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
       /* what a cancelled or failed export left half written is not an export */
       for (const f of job.outputs) await rm(f, { force: true }).catch(() => {});
       const ended = { phase: null, etaMs: null, outputs: [], out: undefined, finishedAt: Date.now() };
-      const error = e instanceof Error ? e.message : String(e);
-      update(job, abort.signal.aborted ? { ...ended, status: 'cancelled' } : { ...ended, status: 'failed', error });
-      if (!abort.signal.aborted) recordProblem({ area: 'export', step: job.ask.kind, what: error, project: root });
+      const said = e instanceof Error ? e.message : String(e);
+      /* a full disk is the person's to fix, said plainly (in ffmpeg's words it is lines of its own) */
+      const full = diskFull(e);
+      const error = full ? 'the disk is full: free up some space, then export again' : said;
+      update(job, abort.signal.aborted ? { ...ended, status: 'cancelled' } : { ...ended, status: 'failed', error, ...(full ? { diskFull: true } : {}) });
+      if (!abort.signal.aborted) recordProblem({ area: 'export', step: job.ask.kind, what: said, project: root });
     } finally {
       work.delete(job.id);
       running = false;
+      finished();
       next();
     }
   }
@@ -1377,7 +1617,8 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
      * @param {{ id: string, name: string, path: string }} project @param {{ jobs?: unknown, folder?: unknown }} body
      */
     startAll(project, body) {
-      if (!Array.isArray(body?.jobs) || !body.jobs.length || body.jobs.length > 24) throw new ExportError('jobs: a list of 1 to 24 exports');
+      /* Up to 100 selected stretches for each of the destinations a single export could already queue. */
+      if (!Array.isArray(body?.jobs) || !body.jobs.length || body.jobs.length > 2400) throw new ExportError('jobs: a list of 1 to 2400 exports');
       const asks = body.jobs.map((ask) => checked(/** @type {ExportAsk} */ (ask)));
       const folder = folderOf(body.folder);
       /* asks the same but for their name (platforms that take the same frame, size and rate: 抖音, 快手, 视频号) are
@@ -1413,8 +1654,16 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
     },
     /** Whether an export is waiting or running. */
     busy: () => work.size > 0 || jobs.some((j) => j.status === 'waiting'),
-    /** Stop everything (Studio is closing). */
-    stopAll() { for (const { abort } of work.values()) abort.abort(); },
+    /**
+     * Stop everything (Studio is closing): what waits is cancelled, what runs stops. Resolves once the running export has
+     * cleaned up after itself (its half-made files gone), or after STOP_WAIT_MS.
+     */
+    stopAll() {
+      closing = true;
+      for (const job of jobs) if (job.status === 'waiting') { work.delete(job.id); update(job, { status: 'cancelled', finishedAt: Date.now() }); }
+      for (const { abort } of work.values()) abort.abort();
+      return Promise.race([idle, new Promise((r) => { setTimeout(r, STOP_WAIT_MS).unref(); })]);
+    },
   };
 }
 
@@ -1422,7 +1671,7 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
  * render (src/render.mjs) in a process of its own (render-worker.mjs), as an editor's export runs apart from the editor:
  * what breaks in its browsers or encoders ends that export, said in its error, and never Studio. Same arguments and
  * result as render; `signal` asks it to stop, and it is ended if it has not after a few seconds.
- * @param {string[]} args @param {Record<string, any>} opts @returns {Promise<{ out: string, encoder: string, lines: string[] }>}
+ * @param {string[]} args @param {Record<string, any>} opts @returns {Promise<{ out: string, encoder: string, lines: string[], ranges?: [number, number][] }>}
  */
 function render(args, opts) {
   const { signal, onProgress, ...rest } = opts;
@@ -1438,7 +1687,8 @@ function render(args, opts) {
     const settle = (end) => { if (settled) return; settled = true; signal?.removeEventListener('abort', cancel); end(); };
     function cancel() {
       if (child.connected) child.send({ type: 'cancel' });
-      setTimeout(() => { if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL'); }, 5000).unref();
+      /* its browsers and encoders with it: on Windows ending a process leaves its children running */
+      setTimeout(() => killProcess(child), 5000).unref();
     }
     signal?.addEventListener('abort', cancel, { once: true });
     child.on('message', (/** @type {any} */ m) => {
@@ -1454,6 +1704,81 @@ function render(args, opts) {
     child.send({ args, opts: rest });
   });
 }
+
+/**
+ * Renders in one process of their own (render-worker.mjs `--pool`) that share its browsers: an editing project's
+ * pages, drawn several at once and page after page, start a browser once rather than for each page, and one whose
+ * browser crashed or stopped answering is drawn again in new ones. `render` takes render's arguments and gives its
+ * result, as the one-shot render does; `close` ends the process and every browser (after the last page, or on cancel).
+ * A process that dies fails every render still in it.
+ */
+function drawer() {
+  const child = fork(fileURLToPath(new URL('./render-worker.mjs', import.meta.url)), ['--pool'], { stdio: ['ignore', 'inherit', 'pipe', 'ipc'] });
+  below(child);
+  let said = '';
+  child.stderr?.on('data', (d) => { said = (said + d).slice(-4000); process.stderr.write(d); });
+  /** @type {Map<string, { onProgress?: (done: number, total: number) => void, done: (r: any) => void, fail: (e: Error) => void, signal?: AbortSignal }>} */
+  const jobs = new Map();
+  /** @type {Error | null} */
+  let gone = null;
+  let next = 0;
+  child.on('message', (/** @type {any} */ m) => {
+    const job = jobs.get(m?.id);
+    if (!job) return;
+    if (m.type === 'progress') job.onProgress?.(m.done, m.total);
+    else if (m.type === 'done' || m.type === 'failed') {
+      jobs.delete(m.id);
+      if (m.type === 'done') job.done(m.result);
+      else job.fail(new Error(job.signal?.aborted ? 'cancelled' : m.error));
+    }
+  });
+  const end = (/** @type {Error} */ e) => {
+    gone ??= e;
+    for (const [id, job] of jobs) { jobs.delete(id); job.fail(job.signal?.aborted ? new Error('cancelled') : e); }
+  };
+  child.on('error', end);
+  child.on('exit', (code, sig) => {
+    const last = said.trim().split('\n').filter((l) => l.trim() && !/^\s+at /.test(l) && !/drawn again in new browsers$/.test(l)).pop();
+    end(new Error(`the renderer stopped (${sig ?? `exit ${code}`})${last ? `: ${last.slice(0, 300)}` : ''}`));
+  });
+  return {
+    /** @param {string[]} args @param {Record<string, any>} opts @returns {Promise<{ out: string, encoder: string, clear?: boolean, lines: string[] }>} */
+    render(args, opts) {
+      const { signal, onProgress, ...rest } = opts;
+      return new Promise((done, fail) => {
+        if (signal?.aborted) return fail(new Error('cancelled'));
+        if (gone) return fail(gone);
+        const id = String(++next);
+        const cancel = () => { if (child.connected) child.send({ type: 'cancel', id }); };
+        signal?.addEventListener('abort', cancel, { once: true });
+        const off = () => signal?.removeEventListener('abort', cancel);
+        jobs.set(id, { onProgress, signal, done: (r) => { off(); done(r); }, fail: (e) => { off(); fail(e); } });
+        child.send({ type: 'render', id, args, opts: rest });
+      });
+    },
+    /** Ends the process: what still draws stops, the browsers close; ended outright if it has not after a few seconds. */
+    async close() {
+      if (child.exitCode != null || child.signalCode != null) return;
+      const exited = new Promise((r) => child.once('exit', r));
+      if (child.connected) child.send({ type: 'close' });
+      /* its browsers and encoders with it: on Windows ending a process leaves its children running */
+      const kill = setTimeout(() => killProcess(child), 6000);
+      await exited;
+      clearTimeout(kill);
+    },
+  };
+}
+
+/** How many frames a file of an editing project is drawn with: a page's or a still's, 0 for anything else. @param {import('./nle.mjs').NleFile} file */
+const framesOf = (file) => (file.job.kind === 'render' ? file.job.frames : 0);
+
+/**
+ * How many of the `free` browsers a page of `frames` draws with, when `left` frames are still to be drawn (its own
+ * included): its share by its frames, at least one, and no more than it would get alone (`alone`). Pages of a film each
+ * draw with one, several at once, so no browser is started for a few frames; a long page gets more.
+ * @param {number} free @param {number} frames @param {number} left @param {number} alone
+ */
+export const shareOf = (free, frames, left, alone) => Math.max(1, Math.min(free, alone, Math.ceil((free * frames) / Math.max(1, left))));
 
 /** A number as render's range takes it: plain digits, no exponent. @param {number} n */
 const num = (n) => String(Number(n.toFixed(3)));

@@ -1,17 +1,22 @@
 """Reference images a chat turn hands the agent model as image input.
 
 Canvas image nodes the user references in a message otherwise reach the agent
-only as a link, which it cannot open. Codex accepts image data URLs as turn
+only as a link, which it cannot open. Codex accepts local image paths as turn
 input, so the referenced images go along with the prompt and the agent can
 actually look at them (for example to block out a previz scene from a photo).
+
+Only file paths enter the Codex thread. A compacted copy is written under the
+project output and its path is sent; inline ``data:`` URLs never are, because
+they would be stored in the thread and come back with every history read.
 """
 
 from __future__ import annotations
 
-import base64
+import hashlib
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -23,7 +28,9 @@ logger = logging.getLogger(__name__)
 # image stays in the Codex thread history and would fail every later turn.
 CODEX_IMAGE_INPUT_ENV = "CODEX_IMAGE_INPUT"
 MAX_TURN_IMAGES = 4
-_CANVAS_NODE_REFERENCE_TYPE = "canvas_node_reference"
+# Compacted copies of turn images, under the project output directory.
+TURN_IMAGE_DIRNAME = ".chat-turn-images"
+CANVAS_NODE_REFERENCE_TYPE = "canvas_node_reference"
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 
 
@@ -39,7 +46,7 @@ def referenced_image_paths(
 
     paths: list[Path] = []
     for attachment in attachments:
-        if attachment.get("type") != _CANVAS_NODE_REFERENCE_TYPE:
+        if attachment.get("type") != CANVAS_NODE_REFERENCE_TYPE:
             continue
         try:
             payload = json.loads(str(attachment.get("content") or ""))
@@ -65,18 +72,34 @@ def referenced_image_paths(
     return paths
 
 
-async def image_data_urls(paths: Sequence[Path]) -> list[str]:
-    """Compact each image to a JPEG data URL; unreadable images are skipped."""
+async def turn_image_files(paths: Sequence[Path], project_dir: Path) -> list[Path]:
+    """Compact each image to a JPEG file under the output; unreadable ones are skipped.
+
+    Files are named by content hash, so the same image reuses one file.
+    """
 
     from novelvideo.freezone.vision_gateway import load_compact_vision_inputs
 
-    urls: list[str] = []
+    target_dir = Path(project_dir) / TURN_IMAGE_DIRNAME
+    files: list[Path] = []
     for path in paths:
         try:
             (image,) = await load_compact_vision_inputs([path])
         except Exception:
             logger.warning("skip unreadable agent turn image: %s", path, exc_info=True)
             continue
-        encoded = base64.b64encode(image.data).decode("ascii")
-        urls.append(f"data:{image.media_type};base64,{encoded}")
-    return urls
+        target = target_dir / f"{hashlib.sha256(image.data).hexdigest()[:32]}.jpg"
+        if not target.is_file():
+            target_dir.mkdir(parents=True, exist_ok=True)
+            fd, partial_name = tempfile.mkstemp(
+                dir=target_dir, prefix=target.name + ".", suffix=".part"
+            )
+            partial = Path(partial_name)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(image.data)
+                partial.replace(target)
+            finally:
+                partial.unlink(missing_ok=True)
+        files.append(target)
+    return files

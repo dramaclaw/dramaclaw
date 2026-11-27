@@ -1,3 +1,4 @@
+import { buildCanvasContextToolResultBody } from "./context/canvasContextResult";
 import { api } from "@/lib/api";
 
 export const FREEZONE_CANVAS_CONTEXT_TOOL_RESULT_EVENT = "freezone/canvas-context-tool-result";
@@ -97,24 +98,14 @@ export function reportCanvasContextToolResult({
   errors?: string[];
 }) {
   if (!bridgeKey) return;
-  const ok = errors.length === 0;
   const payload: CanvasContextToolResultPayload = {
     type: "canvas.context.result",
     turn_id: turnId ?? null,
     anchor_text_prefix: anchorTextPrefix ?? null,
     received_at: Date.now(),
     bridge_key: bridgeKey,
-    project_id: projectId ?? null,
-    canvas_id: canvasId ?? null,
     agent_id: agentId ?? null,
-    tool_call_status: ok ? "completed" : "failed",
-    canvas_context_status: ok ? "resolved" : "failed",
-    ok,
-    responses: responses ?? [],
-    errors,
-    message: ok
-      ? "Frontend returned requested canvas context."
-      : "Frontend failed to resolve requested canvas context.",
+    ...buildCanvasContextToolResultBody({ projectId, canvasId, responses, errors }),
   };
   window.dispatchEvent(new CustomEvent(FREEZONE_CANVAS_CONTEXT_TOOL_RESULT_EVENT, { detail: payload }));
   const { type: _type, ...body } = payload;

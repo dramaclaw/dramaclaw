@@ -940,12 +940,30 @@ async def get_generation_credit_cost(
     user: dict = Depends(get_api_user),
 ) -> dict:
     """Return display-ready credit cost for one generation action or model."""
+    return await quote_generation_credit_cost(
+        kind=kind, surface=surface, value=value, params=params, quantity=quantity,
+        mode_key=mode_key, image_role=image_role,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
+
+
+async def quote_generation_credit_cost(
+    *,
+    kind: GenerationCreditCostKind,
+    surface: GenerationCreditSurface,
+    value: str,
+    params: dict | str,
+    quantity: int,
+    user_id: str,
+    mode_key: str = "",
+    image_role: str = "",
+) -> dict:
     model = _generation_credit_cost_model(kind, value)
     if not model:
         raise HTTPException(
             status_code=400, detail="generation model is not configured"
         )
-    parsed_params = _parse_billing_params(params)
+    parsed_params = params if isinstance(params, dict) else _parse_billing_params(params)
     quote_args = {
         "kind": _generation_billing_kind(kind),
         "model": model,
@@ -965,8 +983,7 @@ async def get_generation_credit_cost(
     if kind == "feature" and value == "audio.voice_design":
         raise HTTPException(status_code=422, detail="voice design requires a project quote")
     quote = await get_credit_quote().generation_credit_quote(
-        **quote_args,
-        user_id=str(user.get("id") or user.get("user_id") or ""),
+        **quote_args, user_id=user_id,
     )
     original_cost = (
         quote.total_cost

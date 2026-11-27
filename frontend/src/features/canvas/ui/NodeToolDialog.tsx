@@ -222,8 +222,8 @@ export function NodeToolDialog() {
         // Upload each split frame so frame.imageUrl is a real backend URL.
         // previewImageUrl mirrors the uploaded URL so the canvas save payload
         // never serializes the local base64 (which would bloat PUT /default
-        // and the persisted canvas). Per-frame best-effort — a failed frame
-        // falls back to its local URL on both fields.
+        // and the persisted canvas). A failed frame upload is reported in
+        // the dialog without creating a result node.
         const uploadedFrames = await Promise.all(
           result.storyboardFrames.map(async (frame, index) => {
             if (!frame.imageUrl) {

@@ -18,10 +18,12 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +35,7 @@ from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports import get_usage_meter
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
 from novelvideo.task_backend.subprocesses import run_project_subprocess
+from novelvideo.utils.error_redaction import redact_secrets
 from novelvideo.utils.path_resolver import (
     compute_scene_master_path,
     compute_scene_reverse_master_path,
@@ -44,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 #: Gateway capability that meters the 360 panorama the builder subprocess produces.
 SCENE_360_EGRESS_CAPABILITY = "image.generate.pano_360"
+#: Gateway capabilities for the two optional master/reverse reference analyses.
+SCENE_OVERLAP_EGRESS_CAPABILITY = "vision.analyze.scene_overlap"
+SCENE_SPATIAL_CONTRACT_EGRESS_CAPABILITY = "vision.analyze.scene_spatial_contract"
 
 SPATIAL_CONTRACT_SCHEMA_VERSION = "scene_spatial_contract_v8_topology_only_locks"
 SPATIAL_CONTRACT_DEFAULT_MODEL = "DC-scene-spatial-contract-LLM"
@@ -1188,6 +1194,219 @@ def _compress_model_reference(
     return target_path
 
 
+def _egress_failure_code(exc: BaseException) -> str:
+    return str(getattr(exc, "code", "") or exc.__class__.__name__)
+
+
+_BARE_SECRET_PATTERN = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}")
+_TRACEBACK_FRAME_PREFIXES = (
+    "Traceback (most recent call last)",
+    "During handling of the above exception",
+    "The above exception was the direct cause",
+)
+_EXCEPTION_LINE_PATTERN = re.compile(
+    r"^[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt)\b"
+)
+
+
+def _summarize_child_failure(
+    output: str, *, cause_limit: int = 400, tail_limit: int = 600
+) -> str:
+    """Bounded, secret-redacted failure summary that leads with the cause.
+
+    A child's stderr usually ends in a traceback, so a raw tail starts mid-frame.
+    Lead with the final exception line (the last unindented line that is not a
+    traceback header), falling back to the last non-empty line, then append a
+    bounded tail for context.
+    """
+
+    text = _BARE_SECRET_PATTERN.sub("[redacted]", redact_secrets(output or "")).strip()
+    if not text:
+        return "(no output)"
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    candidates = [
+        line
+        for line in lines
+        if not line[:1].isspace() and not line.startswith(_TRACEBACK_FRAME_PREFIXES)
+    ]
+    exception_lines = [
+        line for line in candidates if _EXCEPTION_LINE_PATTERN.match(line)
+    ]
+    cause = (exception_lines or candidates or lines)[-1].strip()
+    if len(cause) > cause_limit:
+        cause = cause[: cause_limit - 3] + "..."
+    tail = text[-tail_limit:]
+    if tail.strip() == cause:
+        return cause
+    return f"{cause} | tail: {tail}"
+
+
+SCENE_REFERENCE_ANALYSIS_TIMEOUT_SECONDS = 240
+
+
+def _run_scene_reference_analysis(
+    cmd: list[str],
+    *,
+    label: str,
+    scene_id: str,
+    output_path: Path,
+    org_context: TrustedEgressContext | None,
+    capability: str,
+    egress_request: dict[str, Any],
+) -> None:
+    """Run one optional reference analysis child; its failure never stops the pano.
+
+    Organization projects get the same shape as the panorama itself: identity
+    cannot cross the process boundary, so the parent claims this analysis as its
+    own operation, resolves the organization credential, and hands only that
+    credential to the child. If the organization credential cannot be admitted
+    the analysis is skipped — never retried on the platform key.
+    """
+
+    from novelvideo.task_backend.subprocesses import build_model_child_env
+
+    egress_state = None
+    child_env: dict[str, str] | None = None
+    if org_context is not None:
+        from novelvideo.generators.nanobanana_grid import (
+            _prepare_organization_image_egress,
+        )
+        from novelvideo.model_gateway_runtime import (
+            next_model_gateway_business_task_id,
+        )
+        from novelvideo.ports.egress_operations import canonical_request_digest
+
+        try:
+            egress_state = _run_credit_coro(
+                lambda: _prepare_organization_image_egress(
+                    egress_context=org_context,
+                    provider="newapi",
+                    capability=capability,
+                    request=egress_request,
+                    business_task_id=next_model_gateway_business_task_id(
+                        capability,
+                        request_digest=canonical_request_digest(egress_request),
+                    ),
+                )
+            )
+            child_env = build_model_child_env(
+                os.environ.copy(),
+                egress_context=org_context,
+                gateway_credential=egress_state.credential,
+            )
+        except (TaskCancelled, TaskTimedOut):
+            raise
+        except Exception as exc:
+            if egress_state is not None:
+                # The credential never reached a child, so nothing was submitted.
+                state = egress_state
+                _run_credit_coro(
+                    lambda: state.operation_port.mark_rejected_before_submit(
+                        operation_id=state.claim.operation.operation_id,
+                        transition_token=state.claim.transition_token,
+                        expected_version=state.claim.operation.version,
+                    )
+                )
+            logger.warning(
+                "%s skipped for %s: organization model access was not admitted (%s); "
+                "the panorama continues without it and the platform key is not used",
+                label,
+                scene_id,
+                _egress_failure_code(exc),
+            )
+            return
+
+    def abandon() -> None:
+        if egress_state is None:
+            return
+        from novelvideo.generators.nanobanana_grid import (
+            _abandon_organization_image_egress,
+        )
+
+        # The credential is out of our hands: unknown, not rejected.
+        _run_credit_coro(lambda: _abandon_organization_image_egress(egress_state))
+
+    try:
+        proc = run_project_subprocess(
+            cmd,
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=SCENE_REFERENCE_ANALYSIS_TIMEOUT_SECONDS,
+        )
+    except TaskCancelled:
+        abandon()
+        raise
+    except TaskTimedOut:
+        abandon()
+        # run_project_subprocess folds this call's timeout into the task deadline,
+        # so TaskTimedOut alone does not say whose budget ran out. Only the task's
+        # own deadline stops the task; the child's budget is an analysis failure.
+        from novelvideo.task_backend.subprocesses import (
+            _deadline_for,
+            _scope_from_envelope,
+        )
+
+        task_deadline = _deadline_for(_scope_from_envelope(None), None)
+        if task_deadline is not None and time.monotonic() >= task_deadline:
+            raise
+        logger.warning(
+            "%s timed out for %s after %ss; the panorama continues without it",
+            label,
+            scene_id,
+            SCENE_REFERENCE_ANALYSIS_TIMEOUT_SECONDS,
+        )
+        return
+    except Exception as exc:
+        abandon()
+        logger.warning("%s failed for %s: %s", label, scene_id, exc)
+        return
+    if proc.returncode != 0:
+        abandon()
+        logger.warning(
+            "%s failed for %s: %s",
+            label,
+            scene_id,
+            _summarize_child_failure(proc.stderr or proc.stdout or ""),
+        )
+        return
+    if egress_state is None:
+        return
+    if not output_path.exists():
+        abandon()
+        logger.warning(
+            "%s failed for %s: child exited cleanly but wrote no %s",
+            label,
+            scene_id,
+            output_path.name,
+        )
+        return
+
+    from novelvideo.generators.nanobanana_grid import (
+        _complete_organization_image_egress,
+    )
+
+    state = egress_state
+    try:
+        _run_credit_coro(
+            lambda: _complete_organization_image_egress(
+                state,
+                trace={"request_id": f"sync-{state.claim.operation.operation_id}"},
+                result_ref=(
+                    f"sha256:{hashlib.sha256(output_path.read_bytes()).hexdigest()}"
+                ),
+            )
+        )
+    except Exception as exc:
+        logger.warning(
+            "%s for %s produced a result but its organization operation could not "
+            "be completed (%s)",
+            label,
+            scene_id,
+            _egress_failure_code(exc),
+        )
+
+
 def run_scene_360(
     project_dir: Path,
     scene_id: str,
@@ -1217,6 +1436,8 @@ def run_scene_360(
     )
 
     from novelvideo.director_world.scene_analysis_gateway import (
+        OVERLAP_MODEL,
+        OVERLAP_MODEL_ENV,
         scene_analysis_gateway_configured,
     )
 
@@ -1354,46 +1575,49 @@ def run_scene_360(
                     not analysis_path.exists()
                     or analysis_path.stat().st_mtime < latest_input_mtime
                 )
-                if (
-                    needs_analysis
-                    and not is_org
-                    and scene_analysis_gateway_configured()
-                ):
+                # Organizations run on their own claimed credential, so the
+                # platform gateway configuration does not gate them.
+                analyses_enabled = is_org or scene_analysis_gateway_configured()
+                reference_digests = (
+                    {
+                        "master_sha256": hashlib.sha256(
+                            Path(master_path).read_bytes()
+                        ).hexdigest(),
+                        "reverse_sha256": hashlib.sha256(
+                            Path(reverse_master_path).read_bytes()
+                        ).hexdigest(),
+                    }
+                    if is_org
+                    else {}
+                )
+                if needs_analysis and analyses_enabled:
                     report(0.12, "分析 master/reverse 侧边 overlap 和 continuation...")
-                    analyzer_cmd = [
-                        sys.executable,
-                        "-m",
-                        "novelvideo.director_world.scene_overlap_analyzer",
-                        "--scene-name",
-                        scene_id,
-                        "--master",
-                        master_path,
-                        "--reverse",
-                        reverse_master_path,
-                        "--output-dir",
-                        str(analysis_path.parent),
-                    ]
-                    try:
-                        analyzer_proc = run_project_subprocess(
-                            analyzer_cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=240,
-                        )
-                        if analyzer_proc.returncode != 0:
-                            logger.warning(
-                                "scene overlap analyzer failed for %s: %s",
-                                scene_id,
-                                (analyzer_proc.stderr or analyzer_proc.stdout or "")[
-                                    -800:
-                                ],
-                            )
-                    except (TaskCancelled, TaskTimedOut):
-                        raise
-                    except Exception as exc:
-                        logger.warning(
-                            "scene overlap analyzer failed for %s: %s", scene_id, exc
-                        )
+                    _run_scene_reference_analysis(
+                        [
+                            sys.executable,
+                            "-m",
+                            "novelvideo.director_world.scene_overlap_analyzer",
+                            "--scene-name",
+                            scene_id,
+                            "--master",
+                            master_path,
+                            "--reverse",
+                            reverse_master_path,
+                            "--output-dir",
+                            str(analysis_path.parent),
+                        ],
+                        label="scene overlap analysis",
+                        scene_id=scene_id,
+                        output_path=analysis_path,
+                        org_context=org_context,
+                        capability=SCENE_OVERLAP_EGRESS_CAPABILITY,
+                        egress_request={
+                            "analysis": "scene_overlap",
+                            "model": os.environ.get(OVERLAP_MODEL_ENV) or OVERLAP_MODEL,
+                            "scene_id": scene_id,
+                            **reference_digests,
+                        },
+                    )
                 contract_path = (
                     Path(master_path).parent
                     / "scene_spatial_contract"
@@ -1415,53 +1639,41 @@ def run_scene_360(
                         SPATIAL_CONTRACT_SCHEMA_VERSION,
                     )
                 )
-                if (
-                    needs_contract
-                    and not is_org
-                    and scene_analysis_gateway_configured()
-                ):
+                if needs_contract and analyses_enabled:
                     report(
                         0.14,
                         f"分析 master/reverse 空间合同 ({spatial_contract_model})...",
                     )
-                    contract_cmd = [
-                        sys.executable,
-                        "-m",
-                        "novelvideo.director_world.scene_spatial_contract",
-                        "--scene-name",
-                        scene_id,
-                        "--master",
-                        master_path,
-                        "--reverse",
-                        reverse_master_path,
-                        "--output-dir",
-                        str(contract_path.parent),
-                        "--overlap-analysis",
-                        str(analysis_path),
-                        "--model",
-                        spatial_contract_model,
-                    ]
-                    try:
-                        contract_proc = run_project_subprocess(
-                            contract_cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=240,
-                        )
-                        if contract_proc.returncode != 0:
-                            logger.warning(
-                                "scene spatial contract failed for %s: %s",
-                                scene_id,
-                                (contract_proc.stderr or contract_proc.stdout or "")[
-                                    -800:
-                                ],
-                            )
-                    except (TaskCancelled, TaskTimedOut):
-                        raise
-                    except Exception as exc:
-                        logger.warning(
-                            "scene spatial contract failed for %s: %s", scene_id, exc
-                        )
+                    _run_scene_reference_analysis(
+                        [
+                            sys.executable,
+                            "-m",
+                            "novelvideo.director_world.scene_spatial_contract",
+                            "--scene-name",
+                            scene_id,
+                            "--master",
+                            master_path,
+                            "--reverse",
+                            reverse_master_path,
+                            "--output-dir",
+                            str(contract_path.parent),
+                            "--overlap-analysis",
+                            str(analysis_path),
+                            "--model",
+                            spatial_contract_model,
+                        ],
+                        label="scene spatial contract",
+                        scene_id=scene_id,
+                        output_path=contract_path,
+                        org_context=org_context,
+                        capability=SCENE_SPATIAL_CONTRACT_EGRESS_CAPABILITY,
+                        egress_request={
+                            "analysis": "scene_spatial_contract",
+                            "model": spatial_contract_model,
+                            "scene_id": scene_id,
+                            **reference_digests,
+                        },
+                    )
             manifest_source = "uploaded_master"
     if source == "text":
         cmd.append("--text-only")
@@ -1487,7 +1699,6 @@ def run_scene_360(
         source == "text",
         timeout_seconds,
     )
-    logger.info("running scene 360 generator: %s", " ".join(cmd[:2] + ["..."]))
     reservation_id = ""
     if _manage_model_credit:
         reservation_id = _reserve_scene_360_model_call(
@@ -1540,6 +1751,8 @@ def run_scene_360(
             egress_context=org_context,
             gateway_credential=egress_state.credential,
         )
+    # Only after egress preparation succeeded: the generator really launches now.
+    logger.info("running scene 360 generator: %s", " ".join(cmd[:2] + ["..."]))
     try:
         proc = run_project_subprocess(
             cmd,

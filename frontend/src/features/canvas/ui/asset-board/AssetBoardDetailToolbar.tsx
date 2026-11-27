@@ -56,12 +56,8 @@ import {
   canRegenerateExportImageNode,
   regenerateExportImageNode,
 } from '@/features/canvas/application/regenerateExportNode';
-import {
-  createVideoUpscaleResultNode,
-  submitVideoUpscale,
-  VIDEO_UPSCALE_RESOLUTIONS,
-  VIDEO_UPSCALE_RESOLUTION_LABEL,
-} from '@/features/canvas/application/videoUpscale';
+import { VIDEO_UPSCALE_RESOLUTIONS, VIDEO_UPSCALE_RESOLUTION_LABEL } from '@/features/canvas/domain/videoUpscaleResolutions';
+import { createVideoUpscaleResultNode, submitVideoUpscale } from '@/features/canvas/application/videoUpscale';
 import {
   CANVAS_NODE_TYPES,
   isAudioNode,

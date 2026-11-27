@@ -26,6 +26,23 @@ def _result_payload(result):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("uri", [
+    "file:///tmp/workspace/.agents/skills/dramaclaw-workflows/SKILL.md",
+    "dramaclaw-workflow://unknown/x",
+])
+async def test_unsupported_resource_uri_names_valid_uris_and_is_not_retryable(uri):
+    with pytest.raises(ValueError) as exc:
+        await workflow_mcp.read_resource(uri)
+    assert str(exc.value) == (
+        "unsupported workflow resource URI; not retryable on this server. This server reads only "
+        "dramaclaw-workflow://skills/{skill_id}, dramaclaw-workflow://recipes/{recipe_id} and "
+        "dramaclaw-workflow://skills/{skill_id}/references/{reference}. Read file:// Agent Skill "
+        "files with the server and uri from the Skill locator (dramaclaw in the DramaClaw Codex "
+        "runtime)."
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("username", ["alice", "bob"])
 async def test_workflow_resources_real_stdio_protocol_and_private_isolation(
     tmp_path, username
@@ -50,7 +67,7 @@ async def test_workflow_resources_real_stdio_protocol_and_private_isolation(
         args=["-m", "novelvideo.chat.workflow_mcp"],
         cwd=str(workspace),
         env={
-            **os.environ,
+            **_workflow_env(),
             "PYTHONPATH": str(root / "src"),
             "ST_EDITION": "ce",
             "DRAMACLAW_USERNAME": username,
@@ -93,6 +110,18 @@ async def test_workflow_resources_real_stdio_protocol_and_private_isolation(
             assert (
                 json.loads(reference.contents[0].text)["status"]
                 == "workflow_reference_ready"
+            )
+            with pytest.raises(McpError) as exc:
+                await session.read_resource(
+                    "file:///tmp/workspace/.agents/skills/dramaclaw-workflows/SKILL.md"
+                )
+            assert exc.value.error.message == (
+                "unsupported workflow resource URI; not retryable on this server. "
+                "This server reads only dramaclaw-workflow://skills/{skill_id}, "
+                "dramaclaw-workflow://recipes/{recipe_id} and "
+                "dramaclaw-workflow://skills/{skill_id}/references/{reference}. "
+                "Read file:// Agent Skill files with the server and uri from the Skill locator "
+                "(dramaclaw in the DramaClaw Codex runtime)."
             )
 
 
@@ -175,37 +204,42 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
     assert intent_schema["properties"]["schema_version"]["enum"] == [
         "freezone_workflow_intent.v1"
     ]
+    assert next(
+        template.description for template in templates
+        if template.uriTemplate == "dramaclaw-workflow://skills/{skill_id}"
+    ) == (
+        "One Workflow catalog Skill selected by workflow_catalog_search; "
+        "not the dramaclaw-workflows Agent Skill file"
+    )
+
+
+def canonical_plan():
+    return {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": "video-tutorial", "version": 1},
+        "nodes": [
+            {
+                "id": "input",
+                "node_type": "textAnnotationNode",
+                "stage": "input",
+                "data": {"text": "用户提供的固定文案"},
+            },
+            {
+                "id": "image",
+                "node_type": "imageGenNode",
+                "data": {
+                    "prompt": "未来城市雨夜",
+                    "workflowCatalog": {"recipeId": "general-image"},
+                },
+            },
+        ],
+        "edges": [{"source": "input", "target": "image", "link_type": "prompt_for"}],
+    }
 
 
 @pytest.mark.asyncio
 async def test_graph_compile_accepts_canonical_plan_fields():
-    arguments = {
-        "plan": {
-            "schema_version": "freezone_workflow_plan.v1",
-            "skill": {"id": "video-tutorial", "version": 1},
-            "nodes": [
-                    {
-                        "id": "input",
-                        "node_type": "textAnnotationNode",
-                        "stage": "input",
-                        "data": {
-                            "text": "用户提供的固定文案",
-                        },
-                },
-                {
-                    "id": "image",
-                    "node_type": "imageGenNode",
-                    "data": {
-                        "prompt": "未来城市雨夜",
-                        "workflowCatalog": {"recipeId": "general-image"},
-                    },
-                },
-            ],
-            "edges": [
-                {"source": "input", "target": "image", "link_type": "prompt_for"}
-            ],
-        }
-    }
+    arguments = {"plan": canonical_plan()}
     graph_tool = next(
         tool
         for tool in await workflow_mcp.list_tools()
@@ -847,3 +881,414 @@ async def test_workflow_intent_schema_explains_compose_field_location():
     intent["planner"]["include_compose"] = intent.pop("include_compose")
     with pytest.raises(ValidationError):
         Draft202012Validator(schema).validate(intent)
+
+
+@pytest.mark.asyncio
+async def test_graph_compile_states_nothing_created_or_run_and_names_next_tool():
+    result = await workflow_mcp.call_tool(
+        "workflow_graph_compile", {"plan": canonical_plan(), "run_after_create": True},
+    )
+    payload = _result_payload(result)
+    assert payload["ok"] is True
+    assert payload["status"] == "workflow_graph_commands_created"
+    assert payload["run_after_create"] is True
+    assert {"schema_version", "workflow_instance_id", "commands", "skipped_edges", "warnings"} <= (
+        payload.keys()
+    )
+    assert payload["canvas_changed"] is False
+    assert payload["draft_created"] is False
+    assert payload["run_started"] is False
+    assert payload["next_tool"] == "freezone_prepare_workflow"
+    assert isinstance(payload["next_action"], str)
+    assert "freezone_prepare_workflow" in payload["next_action"]
+    assert isinstance(payload["agent_instruction"], str)
+    for phrase in (
+        "freezone_prepare_workflow", "operation_id", "run_after_create",
+        "freezone_confirm_workflow_draft", "未创建", "未运行",
+    ):
+        assert phrase in payload["agent_instruction"]
+    assert result.structuredContent == payload
+    tool = next(
+        tool for tool in await workflow_mcp.list_tools() if tool.name == "workflow_graph_compile"
+    )
+    Draft202012Validator(tool.outputSchema).validate(result.structuredContent)
+    success = next(
+        branch for branch in tool.outputSchema["oneOf"]
+        if branch["properties"]["ok"] == {"const": True}
+    )
+    assert {
+        "canvas_changed", "draft_created", "run_started", "next_tool", "next_action",
+        "agent_instruction",
+    } <= set(success["required"])
+    assert "freezone_prepare_workflow" in tool.description
+    assert "creates no canvas nodes or drafts and runs nothing" in tool.description
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_after_create", [None, False, True])
+async def test_graph_compile_real_result_matches_its_published_output_schema(run_after_create):
+    arguments = {"plan": canonical_plan()}
+    if run_after_create is not None:
+        arguments["run_after_create"] = run_after_create
+    tool = next(
+        tool for tool in await workflow_mcp.list_tools() if tool.name == "workflow_graph_compile"
+    )
+
+    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+
+    payload = _result_payload(result)
+    assert payload["ok"] is True, payload
+    assert result.structuredContent == payload
+    Draft202012Validator(tool.outputSchema).validate(payload)
+    runs = [command for command in payload["commands"] if command["type"] == "run_workflow"]
+    assert len(runs) == (1 if run_after_create else 0)
+
+
+@pytest.mark.asyncio
+async def test_failed_graph_compile_omits_success_next_step_fields():
+    plan = canonical_plan()
+    plan["edges"][0]["target"] = "unknown-node"
+    result = await workflow_mcp.call_tool(
+        "workflow_graph_compile", {"plan": plan, "run_after_create": True},
+    )
+    payload = _result_payload(result)
+    assert payload["ok"] is False
+    assert {"next_tool", "canvas_changed", "draft_created", "run_started"}.isdisjoint(payload)
+
+
+@pytest.fixture(scope="module")
+def workflow_contract_check():
+    import runpy
+
+    return runpy.run_path(
+        str(
+            Path(__file__).resolve().parents[1]
+            / "scripts/check_workflow_agent_contracts.py"
+        )
+    )
+
+
+async def test_workflow_contract_check_accepts_advertised_guidance(
+    workflow_contract_check,
+):
+    from types import SimpleNamespace
+
+    report = await workflow_contract_check["_run"](SimpleNamespace(username="local"))
+    assert report.errors == []
+
+
+@pytest.mark.parametrize(
+    "path,replacement",
+    [
+        (("properties", "value", "minimum"), -1),
+        (("required",), []),
+        (("additionalProperties",), True),
+        (("properties", "description", "type"), "number"),
+        (("properties", "literal", "const", "description"), "changed"),
+        (("properties", "literal", "enum", 0, "description"), "changed"),
+        (("properties", "literal", "default", "description"), "changed"),
+        (("properties", "value"), None),
+    ],
+)
+def test_workflow_schema_contract_preserves_constraints_and_literal_descriptions(
+    workflow_contract_check, path, replacement
+):
+    from copy import deepcopy
+
+    schema = {
+        "type": "object",
+        "description": "Tool documentation",
+        "required": ["value"],
+        "additionalProperties": False,
+        "properties": {
+            "value": {"type": "number", "minimum": 0},
+            "description": {"type": "string", "description": "A real input field"},
+            "literal": {
+                "const": {"description": "must"},
+                "enum": [{"description": "must"}],
+                "default": {"description": "must"},
+            },
+        },
+    }
+    altered = deepcopy(schema)
+    parent = altered
+    for key in path[:-1]:
+        parent = parent[key]
+    if replacement is None:
+        del parent[path[-1]]
+    else:
+        parent[path[-1]] = replacement
+    contract = workflow_contract_check["_schema_without_descriptions"]
+    assert contract(schema) != contract(altered)
+    assert contract(schema)["properties"]["description"] == {"type": "string"}
+    assert schema["properties"]["description"]["description"] == "A real input field"
+
+
+def test_workflow_schema_contract_ignores_nested_annotations_only(
+    workflow_contract_check,
+):
+    contract = workflow_contract_check["_schema_without_descriptions"]
+    schema = {
+        "allOf": [
+            {
+                "if": {"description": "condition", "required": ["value"]},
+                "then": {
+                    "description": "consequence",
+                    "properties": {
+                        "description": {"type": "string", "description": "field docs"}
+                    },
+                },
+            }
+        ]
+    }
+    expected = {
+        "allOf": [
+            {
+                "if": {"required": ["value"]},
+                "then": {"properties": {"description": {"type": "string"}}},
+            }
+        ]
+    }
+    assert contract(schema) == expected
+
+
+@pytest.fixture
+def workflow_catalog_api(tmp_path):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from types import SimpleNamespace
+    import time
+
+    builtin = Path(__file__).resolve().parents[1] / "src/novelvideo/freezone/agent_catalog/builtins"
+    catalogs = {user: {} for user in ("alice", "bob", "relay-user")}
+    output = tmp_path / "output"
+    for kind, source in (("skills", "text-to-image-video"), ("recipes", "general-image")):
+        builtins = [json.loads(path.read_text()) for path in sorted((builtin / kind).glob("*.json"))]
+        for user in catalogs:
+            item = json.loads((builtin / kind / f"{source}.json").read_text())
+            item.update(id=f"private-{user}", name=f"{user} private")
+            catalogs[user][kind] = [*builtins, item]
+            if user == "relay-user":
+                folder = output / user / "_account/freezone/agent_config" / kind
+                folder.mkdir(parents=True)
+                (folder / f"private-{user}.json").write_text(json.dumps(item))
+    api = SimpleNamespace(requests=[], fail=False, output=output, catalogs=catalogs)
+
+    class Handler(BaseHTTPRequestHandler):
+        def respond(self, status, payload):
+            encoded = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            user = next((user for user in ("alice", "bob")
+                         if self.headers.get("Authorization") in (
+                             f"Bearer test-key-{user}", f"Bearer session-{user}")), None)
+            api.requests.append(("POST", self.path, user))
+            if self.path != "/api/v1/agent/sessions":
+                self.respond(404, {"ok": False})
+            elif user is None:
+                self.respond(401, {"ok": False})
+            else:
+                self.respond(200, {"ok": True, "data": {
+                    "token": f"session-{user}", "expires_at": time.time() + 3600,
+                }})
+
+        def do_GET(self):
+            user = next((user for user in ("alice", "bob")
+                         if self.headers.get("Authorization") == f"Bearer session-{user}"), None)
+            api.requests.append(("GET", self.path, user))
+            kind = self.path.rsplit("/", 1)[-1]
+            if user is None:
+                self.respond(401, {"ok": False})
+            elif self.path != f"/api/v1/freezone/agent-config/{kind}" or kind not in ("skills", "recipes"):
+                self.respond(404, {"ok": False})
+            elif api.fail:
+                self.respond(500, {"ok": False})
+            else:
+                self.respond(200, {"ok": True, "data": catalogs[user][kind]})
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    api.url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        yield api
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def _workflow_env():
+    env = os.environ.copy()
+    for name in (
+        "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE", "DRAMACLAW_AGENT_TOKEN",
+        "DRAMACLAW_AGENT_TOKEN_FILE", "DRAMACLAW_PROJECT_ID", "DRAMACLAW_USERNAME",
+        "DRAMACLAW_USER",
+    ):
+        env.pop(name, None)
+    return env
+
+
+@pytest.fixture
+def workflow_session(workflow_catalog_api, tmp_path):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def connect(**overrides):
+        env = _workflow_env() | {
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "ST_EDITION": "ce", "PYTHONDONTWRITEBYTECODE": "1",
+            "DRAMACLAW_USERNAME": "relay-user",
+            "DRAMACLAW_API_URL": workflow_catalog_api.url,
+            "NOVELVIDEO_OUTPUT_DIR": str(workflow_catalog_api.output),
+        }
+        for name, value in overrides.items():
+            if value is None:
+                env.pop(name, None)
+            else:
+                env[name] = value
+        parameters = StdioServerParameters(
+            command=sys.executable, args=["-m", "novelvideo.chat.workflow_mcp"],
+            cwd=str(tmp_path), env=env,
+        )
+        async with stdio_client(parameters) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                yield session
+
+    return connect
+
+
+def _catalog_tool_payload(result):
+    for content in result.content:
+        if hasattr(content, "text"):
+            assert not any(secret in content.text for secret in (
+                "test-key-alice", "test-key-bob", "test-key-unknown",
+                "session-alice", "session-bob", "test-turn-token",
+            )), "Credential leaked in tool result"
+    return _result_payload(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["alice", "bob"])
+async def test_workflow_agent_key_owns_catalog(workflow_session, workflow_catalog_api, owner):
+    peer = "bob" if owner == "alice" else "alice"
+    async with workflow_session(DRAMACLAW_AGENT_KEY=f"test-key-{owner}") as session:
+        for kind in ("skills", "recipes"):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_catalog_search", {"kind": kind, "query": "private"},
+            ))
+            assert result["ok"] is True
+            assert {item["id"] for item in result["items"]} == {f"private-{owner}"}
+        for other in (peer, "relay-user"):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_recipe_get", {"recipe_id": f"private-{other}"},
+            ))
+            assert result["ok"] is False
+        resource = await session.read_resource(f"dramaclaw-workflow://recipes/private-{owner}")
+        assert json.loads(resource.contents[0].text)["recipe"]["id"] == f"private-{owner}"
+        with pytest.raises(McpError):
+            await session.read_resource(f"dramaclaw-workflow://recipes/private-{peer}")
+        for user, expected in ((owner, True), (peer, False)):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_skill_get", {"skill_id": f"private-{user}"},
+            ))
+            assert result["ok"] is expected
+    for kind in ("skills", "recipes"):
+        assert ("GET", f"/api/v1/freezone/agent-config/{kind}", owner) in workflow_catalog_api.requests
+    assert ("POST", "/api/v1/agent/sessions", owner) in workflow_catalog_api.requests
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("username", [None, "local", "relay-user", "bob"])
+@pytest.mark.parametrize("key_source", ["env", "file"])
+async def test_workflow_agent_key_ignores_username(workflow_session, tmp_path, username, key_source):
+    credentials = {"DRAMACLAW_AGENT_KEY": "test-key-alice"}
+    if key_source == "file":
+        key_file = tmp_path / "agent-key"
+        key_file.write_text("test-key-alice")
+        credentials = {"DRAMACLAW_AGENT_KEY_FILE": str(key_file)}
+    async with workflow_session(DRAMACLAW_USERNAME=username, **credentials) as session:
+        for kind in ("skills", "recipes"):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_catalog_search", {"kind": kind, "query": "private"},
+            ))
+            assert result["ok"] is True
+            assert {item["id"] for item in result["items"]} == {"private-alice"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["catalog-500", "exchange-401"])
+async def test_workflow_agent_key_catalog_fails_closed(workflow_session, workflow_catalog_api, failure):
+    workflow_catalog_api.fail = failure == "catalog-500"
+    key = "test-key-alice" if failure == "catalog-500" else "test-key-unknown"
+    async with workflow_session(DRAMACLAW_AGENT_KEY=key) as session:
+        for kind in ("skills", "recipes"):
+            response = await session.call_tool("workflow_catalog_search", {"kind": kind, "query": "private"})
+            result = _catalog_tool_payload(response)
+            assert result["ok"] is False
+            assert "private-relay-user" not in "".join(c.text for c in response.content if hasattr(c, "text"))
+        with pytest.raises(McpError):
+            await session.read_resource("dramaclaw-workflow://recipes/private-relay-user")
+    assert ("POST", "/api/v1/agent/sessions", "alice" if failure == "catalog-500" else None) in workflow_catalog_api.requests
+    if failure == "catalog-500":
+        assert any(method == "GET" for method, _, _ in workflow_catalog_api.requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [None, "test-key-alice"])
+async def test_workflow_model_cannot_choose_catalog_user(workflow_session, key):
+    async with workflow_session(DRAMACLAW_AGENT_KEY=key) as session:
+        for tool, arguments in (
+            ("workflow_catalog_search", {"kind": "recipes", "query": "private", "username": "bob"}),
+            ("workflow_skill_get", {"skill_id": "private-bob", "username": "bob"}),
+        ):
+            result = _catalog_tool_payload(await session.call_tool(tool, arguments))
+            assert result["ok"] is False
+            assert result["status"] == "tool_arguments_invalid"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["no-key", "token", "token-and-key", "token-file-and-key"])
+async def test_workflow_local_catalog_without_agent_key_mode(workflow_session, workflow_catalog_api, tmp_path, mode):
+    env = {}
+    if mode != "no-key":
+        env["DRAMACLAW_AGENT_TOKEN"] = "test-turn-token"
+    if mode in ("token-and-key", "token-file-and-key"):
+        env["DRAMACLAW_AGENT_KEY"] = "test-key-alice"
+    if mode == "token-file-and-key":
+        token_file = tmp_path / "turn-token"
+        token_file.write_text("test-turn-token")
+        env.pop("DRAMACLAW_AGENT_TOKEN")
+        env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(token_file)
+    async with workflow_session(**env) as session:
+        for kind in ("skills", "recipes"):
+            result = _catalog_tool_payload(await session.call_tool(
+                "workflow_catalog_search", {"kind": kind, "query": "private"},
+            ))
+            assert result["ok"] is True
+            assert {item["id"] for item in result["items"]} == {"private-relay-user"}
+    assert workflow_catalog_api.requests == []
+
+
+def test_skill_search_finds_recipe_membership(monkeypatch):
+    monkeypatch.setattr(
+        registry, "list_user_agent_config_items",
+        lambda *_: [
+            {"id": "text-to-image", "allowed_recipe_ids": ["general-image"]},
+            {"id": "pixar-ip-ad-video", "allowed_recipe_ids": ["ad-product-prop-anchor"]},
+        ],
+    )
+    results = registry.search_catalog(
+        username="agent-a", kind="skills", query="ad-product-prop-anchor", limit=10
+    )
+    assert [result["id"] for result in results] == ["pixar-ip-ad-video"]

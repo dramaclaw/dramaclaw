@@ -32,6 +32,35 @@ def _create(project_dir, *, key="stable-key", kind="workflow_result"):
     )
 
 
+def _workflow_tool_args(operation_id, *, exact_plan=False):
+    if exact_plan:
+        return {
+            "operation_id": operation_id,
+            "plan": {
+                "schema_version": "freezone_workflow_plan.v1",
+                "skill": {"id": "video-ad", "version": "1.0.0"},
+                "nodes": [{
+                    "id": "intro",
+                    "node_type": "textAnnotationNode",
+                    "data": {
+                        "displayName": "Intro",
+                        "content": "Intro",
+                        "workflowCatalog": {"recipeId": "intro"},
+                    },
+                }],
+                "edges": [],
+            },
+        }
+    return {
+        "operation_id": operation_id,
+        "intent": {
+            "schema_version": "freezone_workflow_intent.v1",
+            "skill_id": "video-ad",
+            "user_goal": "Create a clip",
+        },
+    }
+
+
 def test_agent_product_operation_is_durable_and_idempotent(tmp_path):
     first = _create(tmp_path)
     second = _create(tmp_path)
@@ -471,6 +500,81 @@ def test_generation_manifest_and_draft_survive_process_memory_loss(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_invalid_workflow_plan_does_not_claim_operation(tmp_path, monkeypatch):
+    from novelvideo.chat import dramaclaw_mcp, service
+
+    def unexpected_diagnostics(*args, **kwargs):
+        pytest.fail("the chat observer must not build tool diagnostics")
+
+    monkeypatch.setattr(dramaclaw_mcp, "_tool_validation_error", unexpected_diagnostics)
+    operation = _create(tmp_path)
+    operation_id = operation["operation_id"]
+    event = SimpleNamespace(
+        type="tool_started",
+        name="freezone_prepare_workflow",
+        turn_id="turn-a",
+        call_id="invalid-call",
+        input={"operation_id": operation_id, "plan": "a plain string"},
+    )
+    await service._bind_server_observed_agent_product_execution(
+        event, project_dir=tmp_path, project_state_dir=tmp_path
+    )
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["model_evidence"] == {}
+
+    event.call_id = "corrected-call"
+    event.input = _workflow_tool_args(operation_id, exact_plan=True)
+    await service._bind_server_observed_agent_product_execution(
+        event, project_dir=tmp_path, project_state_dir=tmp_path
+    )
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    )["model_evidence"]["tool_call_id"] == "corrected-call"
+
+
+def test_model_execution_replay_keeps_original_timestamp(tmp_path):
+    operation = _create(tmp_path)
+    binding = {
+        "project_dir": tmp_path,
+        "operation_id": operation["operation_id"],
+        "model_call_id": "agent-turn:a:tool:b",
+        "source": "server_observed_agent_turn",
+    }
+
+    first = bind_agent_product_model_execution(**binding, executed_at=1.0)
+    replay = bind_agent_product_model_execution(**binding, executed_at=2.0)
+
+    assert replay == first
+    assert replay["model_evidence"]["executed_at"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_workflow_observation_does_not_count_as_failure(tmp_path, monkeypatch):
+    from novelvideo.chat import evidence_metrics, service
+
+    metrics = []
+    monkeypatch.setattr(evidence_metrics, "observe", metrics.append)
+    operation_id = _create(tmp_path)["operation_id"]
+    cancelled = finish_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id, outcome="cancelled",
+        expected_task_id="",
+    )
+    await service._bind_server_observed_agent_product_execution(
+        SimpleNamespace(
+            type="tool_started", name="freezone_prepare_workflow_draft", turn_id="late",
+            call_id="late-call",
+            input=_workflow_tool_args(operation_id),
+        ),
+        project_dir=tmp_path, project_state_dir=tmp_path,
+    )
+    assert metrics == []
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation_id
+    ) == cancelled
+
+
+@pytest.mark.asyncio
 async def test_admission_tool_call_is_not_model_generation_evidence(tmp_path):
     from novelvideo.chat import service
 
@@ -543,7 +647,7 @@ async def test_admission_cannot_deliver_until_result_tool_binds_evidence(tmp_pat
             error=None,
             turn_id="turn-result",
             call_id="call-result",
-            input={"operation_id": operation["operation_id"], "intent": {"title": "A"}},
+            input=_workflow_tool_args(operation["operation_id"]),
             structured=None,
             output=None,
         ),
@@ -614,9 +718,24 @@ async def test_unsuccessful_result_update_does_not_bind_model_evidence(
     "freezone_prepare_workflow", "freezone_prepare_workflow_draft",
     "freezone_prepare_workflow_plan_draft",
 ])
-async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_path, tool_name):
-    from novelvideo.chat import service
+async def test_workflow_result_tool_binds_server_observed_model_execution(
+    tmp_path, tool_name, monkeypatch
+):
+    import threading
 
+    from novelvideo.chat import dramaclaw_mcp, service
+
+    loop_thread = threading.get_ident()
+    validation_threads = []
+    validate = dramaclaw_mcp.workflow_draft_arguments_are_valid
+
+    def record_validation_thread(name, arguments):
+        validation_threads.append(threading.get_ident())
+        return validate(name, arguments)
+
+    monkeypatch.setattr(
+        dramaclaw_mcp, "workflow_draft_arguments_are_valid", record_validation_thread
+    )
     operation = _create(tmp_path, key="observed-workflow-result")
     await service._bind_server_observed_agent_product_execution(
         SimpleNamespace(
@@ -626,7 +745,10 @@ async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_pa
             error=None,
             turn_id="turn-a",
             call_id="call-result",
-            input={"operation_id": operation["operation_id"], "intent": {"title": "A"}},
+            input=_workflow_tool_args(
+                operation["operation_id"],
+                exact_plan=tool_name == "freezone_prepare_workflow_plan_draft",
+            ),
             structured=None,
             output=None,
         ),
@@ -638,6 +760,8 @@ async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_pa
         project_dir=tmp_path,
         operation_id=operation["operation_id"],
     )
+    assert len(validation_threads) == 1
+    assert validation_threads[0] != loop_thread
     assert stored["model_evidence"] == {
         "model_call_id": "agent-turn:turn-a:tool:call-result",
         "executed_at": stored["model_evidence"]["executed_at"],
@@ -670,7 +794,7 @@ async def test_conflicting_model_evidence_binding_is_counted(tmp_path, monkeypat
             error=None,
             turn_id="turn-second",
             call_id="call-second",
-            input={"operation_id": operation["operation_id"]},
+            input=_workflow_tool_args(operation["operation_id"]),
             structured=None,
             output=None,
         ),
@@ -983,45 +1107,185 @@ async def test_recipe_waiter_does_not_hold_worker_slot_while_run_is_live(
     )["status"] == "reserved"
 
 
-def test_product_task_timeout_preserves_pending_operation(tmp_path, monkeypatch):
-    from novelvideo.task_backend.cancel import TaskTimedOut
+def _interrupt_product_task(monkeypatch, tmp_path, operation, exc):
+    """Run the product task entrypoint with its wait interrupted by ``exc``."""
     from novelvideo.task_backend.runners import freezone as freezone_runner
 
-    operation = _create(tmp_path, kind="recipe_result")
+    def interrupted(_envelope, coro, **_kwargs):
+        coro.close()
+        raise exc
+
+    monkeypatch.setattr(freezone_runner, "_run_cancellable", interrupted)
+    return freezone_runner.run_freezone_agent_product(
+        {
+            "task_type": operation["task_type"],
+            "__run_task_id": "task-a",
+            "payload": {
+                "operation_id": operation["operation_id"],
+                "product_kind": operation["product_kind"],
+            },
+        },
+        SimpleNamespace(state_dir=tmp_path),
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [
+        ("recipe_result", "submitted"),
+        ("recipe_result", "reserved"),
+        ("workflow_result", "reserved"),
+    ],
+)
+def test_product_task_timeout_preserves_pending_operation(
+    tmp_path, monkeypatch, kind, status
+):
+    # Result operations wait on an external provider: without model evidence
+    # they may still have incurred cost, so a timeout never refunds them.
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
     bind_agent_product_task(
         project_dir=tmp_path,
         operation_id=operation["operation_id"],
         task_id="task-a",
         root_task_id="task-a",
     )
-    finish_agent_product_operation(
-        project_dir=tmp_path,
-        operation_id=operation["operation_id"],
-        outcome="submitted",
-        expected_task_id="task-a",
-    )
-
-    def time_out(_envelope, coro, **_kwargs):
-        coro.close()
-        raise TaskTimedOut(timeout_seconds=1)
-
-    monkeypatch.setattr(freezone_runner, "_run_cancellable", time_out)
+    if status != "reserved":
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation["operation_id"],
+            outcome=status,
+            expected_task_id="task-a",
+        )
 
     with pytest.raises(AgentProductSettlementPending) as exc_info:
-        freezone_runner.run_freezone_agent_product(
-            {
-                "task_type": "freezone_agent_recipe_result",
-                "__run_task_id": "task-a",
-                "payload": {
-                    "operation_id": operation["operation_id"],
-                    "product_kind": "recipe_result",
-                },
-            },
-            SimpleNamespace(state_dir=tmp_path),
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
         )
 
     assert exc_info.value.operation_id == operation["operation_id"]
-    assert exc_info.value.status == "submitted"
+    assert exc_info.value.status == status
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == status
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_timeout_without_agent_work_fails_operation(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+
+    # The ordinary timeout reaches the generic failure path, which refunds once.
+    with pytest.raises(TaskTimedOut):
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
+        )
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )
+    assert stored["status"] == "failed"
+    assert stored["model_evidence"] == {}
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_timeout_with_agent_work_preserves_pending_operation(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.task_backend.cancel import TaskTimedOut
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="turn-a:call-a",
+        executed_at=1.0,
+        source="server_chat_turn",
+    )
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        _interrupt_product_task(
+            monkeypatch, tmp_path, operation, TaskTimedOut(timeout_seconds=1)
+        )
+
+    assert exc_info.value.status == "reserved"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_cancel_without_agent_work_cancels_operation(
+    tmp_path, monkeypatch, kind
+):
+    # Same rule as the timeout branch: no Agent work means nothing is owed, so
+    # the operation ends cancelled and the generic cancel path refunds once.
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+
+    with pytest.raises(TaskCancelled):
+        _interrupt_product_task(monkeypatch, tmp_path, operation, TaskCancelled())
+
+    stored = read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )
+    assert stored["status"] == "cancelled"
+    assert stored["model_evidence"] == {}
+
+
+@pytest.mark.parametrize("kind", ["workflow_generate", "recipe_generate"])
+def test_generate_cancel_with_agent_work_preserves_pending_operation(
+    tmp_path, monkeypatch, kind
+):
+    # Same rule as the timeout branch: observed Agent work means the outcome
+    # is not "no work done", so the reservation is kept for reconciliation.
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    operation = _create(tmp_path, kind=kind)
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="turn-a:call-a",
+        executed_at=1.0,
+        source="server_chat_turn",
+    )
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        _interrupt_product_task(monkeypatch, tmp_path, operation, TaskCancelled())
+
+    assert exc_info.value.status == "reserved"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
 
 
 @pytest.mark.asyncio
@@ -1055,3 +1319,104 @@ async def test_non_voice_waiter_rejects_delivery_without_model_evidence(tmp_path
             },
             SimpleNamespace(state_dir=tmp_path),
         )
+
+
+_GENERATE_KINDS = ["workflow_generate", "recipe_generate"]
+
+
+def _generate_waiter_fixture(tmp_path, monkeypatch, kind, *, deliver_after, running_after=None):
+    """Drive a generate waiter with a fake sleep; returns (envelope, delays)."""
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    operation = _create(tmp_path, kind=kind)
+    operation_id = operation["operation_id"]
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation_id,
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    delays: list[float] = []
+
+    async def fake_sleep(seconds):
+        delays.append(seconds)
+        if running_after is not None and len(delays) == running_after:
+            finish_agent_product_operation(
+                project_dir=tmp_path,
+                operation_id=operation_id,
+                outcome="running",
+                expected_task_id="task-a",
+            )
+        if len(delays) == deliver_after:
+            bind_agent_product_model_execution(
+                project_dir=tmp_path,
+                operation_id=operation_id,
+                model_call_id="response-a",
+                executed_at=1.0,
+                source="server_observed_agent_turn",
+            )
+            finish_agent_product_operation(
+                project_dir=tmp_path,
+                operation_id=operation_id,
+                outcome="delivered",
+                expected_task_id="task-a",
+                result_ref={"kind": kind, "id": "result-a"},
+            )
+        if len(delays) > deliver_after + 5:
+            raise AssertionError("generate waiter did not observe the delivery")
+
+    monkeypatch.setattr(freezone_runner.asyncio, "sleep", fake_sleep)
+    envelope = {
+        "task_type": operation["task_type"],
+        "__run_task_id": "task-a",
+        "payload": {"operation_id": operation_id, "product_kind": kind},
+    }
+    return envelope, delays
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", _GENERATE_KINDS)
+async def test_generate_waiter_logs_observed_only_when_state_changes(
+    tmp_path, monkeypatch, caplog, kind
+):
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    caplog.set_level("INFO", logger=freezone_runner.logger.name)
+    envelope, delays = _generate_waiter_fixture(
+        tmp_path, monkeypatch, kind, running_after=3, deliver_after=8
+    )
+
+    result = await freezone_runner._run_freezone_agent_product_async(
+        envelope, SimpleNamespace(state_dir=tmp_path)
+    )
+
+    assert result["delivery_status"] == "delivered"
+    assert len(delays) == 8  # nine polls
+    observed = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("agent_product_waiter.observed")
+    ]
+    assert len(observed) == 3
+    assert "operation_status=reserved" in observed[0]
+    assert "operation_status=running" in observed[1]
+    assert "operation_status=delivered" in observed[2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", _GENERATE_KINDS)
+async def test_generate_waiter_backs_off_poll_interval_to_cap(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    envelope, delays = _generate_waiter_fixture(
+        tmp_path, monkeypatch, kind, deliver_after=7
+    )
+
+    result = await freezone_runner._run_freezone_agent_product_async(
+        envelope, SimpleNamespace(state_dir=tmp_path)
+    )
+
+    assert result["delivery_status"] == "delivered"
+    assert delays == pytest.approx([0.2, 0.4, 0.8, 1.6, 2.0, 2.0, 2.0])

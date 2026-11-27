@@ -8,17 +8,11 @@ import type {
   ImageGenCameraSelection,
   ImageGenCount,
   ImageGenNodeData,
-  ImageQuality,
 } from '@/features/canvas/domain/canvasNodes';
 import {
   resolveImageDisplayUrl,
-  snapToAllowedAspectRatio,
 } from '@/features/canvas/application/imageData';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
-import {
-  IMAGE_ASPECT_OPTIONS,
-  IMAGE_SIZE_OPTIONS,
-} from '@/features/canvas/nodes/shared/imageGenerationOptions';
 import { isSystemManagedNodeData } from '@/features/canvas/domain/mainlineNodeFlags';
 import { setAlbumPendingTotal } from '@/features/canvas/nodes/shared/albumPendingTotals';
 import { resolveImageGenerationCompletionMode } from '@/features/canvas/nodes/imageGenCompletionMode';
@@ -28,45 +22,44 @@ import { imageGenerationResultUrls } from '@/features/canvas/application/imageGe
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
   fetchFreezoneJobResult,
-  submitFreezoneGen,
-  type FreezoneProvider,
+  ensureBackendImageUrls,
+  sendGenerationWireRequest,
+  type FreezoneJobRef,
 } from '@/api/ops';
 import { translateNodeText } from '@/features/canvas/application/translateText';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { awaitTaskCompletion } from '@/api/tasks';
-import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   BillingRuleNotConfiguredError,
-  backendErrorToastMessage,
 } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
-import { SHARED_MODELS } from '@/features/canvas/ui/ProviderModelPicker';
-import { extractRequestId } from '@/features/canvas/application/generationErrorReport';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { describeCameraSelection } from '@/features/canvas/nodes/CameraPickerPopover';
-import {
-  buildImageGenerationSuccessPatch,
-  hasGeneratedMedia,
-  isStaleGenerationTask,
-  isTaskCancelledError,
-  shouldWriteGenerationError,
-} from '@/features/canvas/application/generationTaskArbitration';
+import { isTaskCancelledError } from '@/features/canvas/application/generationTaskArbitration';
 import { useFreezoneCameraOptions } from '@/features/canvas/hooks/useFreezoneCameraOptions';
 import { describeStyleSelection } from '@/features/canvas/nodes/StylePickerPopover';
 import { useFreezoneStyleTemplates } from '@/features/canvas/hooks/useFreezoneStyleTemplates';
 import { extractUpstreamContent, joinUpstreamText } from '@/features/canvas/application/graphContentResolver';
-import { useUpstreamContents } from '@/features/canvas/application/useUpstreamGraph';
+import { useUpstreamNodes } from '@/features/canvas/application/useUpstreamGraph';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { type MentionCandidate } from '@/features/canvas/nodes/PromptMentionEditor';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { hasImageGenPromptOverride } from '@/features/canvas/nodes/imageGenPrompt';
-import { orderedReferenceUrlsWithOwnFirst, upstreamNodesInEdgeOrder } from '@/features/canvas/nodes/referenceOrdering';
-import { matchesReference, referenceIssueName, referenceIssues, type ReferenceIssue } from '@/features/canvas/nodes/shared/ReferenceValidationDialog';
+import { upstreamNodesInEdgeOrder } from '@/features/canvas/nodes/referenceOrdering';
+import { matchesReference, referenceIssueName, type ReferenceIssue } from '@/features/canvas/nodes/shared/ReferenceValidationDialog';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
 import { attachCompletedStoryAsset, attachCompletedStoryFrame } from '@/features/canvas/application/videoContinuity';
 import type { ImageGenerationFormProps } from '@/features/canvas/nodes/shared/ImageGenerationForm';
 
-const DEFAULT_IMAGE_QUALITY: ImageQuality = 'medium';
+import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
+import {
+  buildImageGenerationRequest, imagePromptCompileInput, imagePromptCompileMetadataPatch,
+  imageGenerationModel, imageGenerationOptions, imageGenerationReferenceUrls, imageGenerationMode,
+  imageGenerationCount, imageGenerationStartPatch, imageGenerationRunAccepted,
+  imageGenerationAcceptedPatch, imageGenerationOutcomePatch, imageGenerationBackgroundFailurePatch,
+  imageGenerationSettleOutcome, imageGenerationMissingUrlOutcome, describeGenerationError,
+  type ImageGenerationRequestContext, type ImageGenerationTaskRef, type ImageGenerationOutcome,
+} from '@/features/canvas/application/generationRequests';
 
 // 统一计费（#210）：图片生成走 feature 键询价，模型身份塞进 params。
 const IMAGE_GENERATE_FEATURE_KEY = 'freezone.image_generate';
@@ -178,18 +171,11 @@ export function useImageGenerationForm(
     setPromptDraft(externalPrompt);
   }, [externalPrompt]);
   const prompt = promptDraft;
-  const aspectRatio = typeof data.aspectRatio === 'string' && data.aspectRatio
-    ? data.aspectRatio
-    : '16:9';
-  // 目录可以给模型声明任意分辨率档位（不限于 1K/2K/4K），所以这里按裸字符串读。
-  const size = typeof data.size === 'string' && data.size.trim() ? data.size : '2K';
-  const quality = (data.quality ?? DEFAULT_IMAGE_QUALITY) as ImageQuality;
   const count = (data.count ?? 1) as ImageGenCount;
   const autoCommitOnGenerate = data.autoCommitOnGenerate === true;
   const canAutoCommitOnGenerate =
     autoCommitOnGenerate &&
     isSystemManagedNodeData(data);
-  const effectiveCount = canAutoCommitOnGenerate ? 1 : count;
   const { isGenerating } = useNodeGenerationTaskState(data);
   const cameraSelection = (data.cameraSelection ?? null) as ImageGenCameraSelection | null;
   const styleTemplateId =
@@ -210,64 +196,16 @@ export function useImageGenerationForm(
     isFallback: imageModelsFallback,
   } = useFreezoneImageModels();
 
-  // Resolve the model against the LIVE model list and derive BOTH the picker's
-  // displayed id and the submit apiModel from this one object, so they can
-  // never diverge.
-  //
-  // The node's default `data.model` is seeded to the static
-  // `DEFAULT_SHARED_MODEL_ID` (`huimeng/gpt-image-2`), which is normally NOT in
-  // the live `/freezone/image/models` list. Trusting it blindly is the bug:
-  // ProviderModelPicker silently falls back to showing `availableModels[0]`
-  // (e.g. LingShan-G2) when the id isn't found, while submit resolves the stale
-  // id through SHARED_MODELS to `huimeng_gpt_image2` — display ≠ value sent.
-  // Reconciling here keeps them in lockstep: an unknown persisted id falls back
-  // to the first live model (exactly what the picker shows).
-  const selectedModel = useMemo(() => {
-    const persisted =
-      typeof data.model === 'string' && data.model.length > 0 ? data.model : null;
-    return (
-      (persisted ? availableModels.find((m) => m.id === persisted) : undefined)
-      ?? availableModels[0]
-    );
-  }, [data.model, availableModels]);
+  const selectedModel = useMemo(() => imageGenerationModel(data, availableModels), [data, availableModels]);
   const modelId = selectedModel?.id ?? '';
-  // 分辨率/比例/画质三档一律由媒体目录（admin 后台可配）驱动，不再靠模型名正则猜。
-  // 目录没声明时退回内置常量，保证老模型与离线兜底列表照常可用。
-  const modelSizeOptions = useMemo(() => {
-    const configured = selectedModel?.resolutionOptions
-      ?.map((item) => item.trim())
-      .filter(Boolean);
-    return configured?.length ? configured : IMAGE_SIZE_OPTIONS;
-  }, [selectedModel]);
-  const modelAspectOptions = useMemo(() => {
-    const configured = (selectedModel?.ratioOptions ?? [])
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .map((value) => ({
-        value,
-        label: IMAGE_ASPECT_OPTIONS.find((item) => item.value === value)?.label ?? value,
-      }));
-    return configured.length ? configured : IMAGE_ASPECT_OPTIONS;
-  }, [selectedModel]);
-  const effectiveImageSize = modelSizeOptions.includes(size) ? size : modelSizeOptions[0];
-  const effectiveAspectRatio = snapToAllowedAspectRatio(
-    aspectRatio,
-    modelAspectOptions.map((item) => item.value),
-    modelAspectOptions[0]?.value ?? '1:1',
-  );
-  const qualityOptions = useMemo(
-    () => (selectedModel?.qualityOptions ?? []).map((item) => item.trim()).filter(Boolean),
-    [selectedModel],
-  );
+  const {
+    sizes: modelSizeOptions, aspectOptions: modelAspectOptions, qualities: qualityOptions,
+    aspectRatio, effectiveImageSize, effectiveQuality,
+  } = useMemo(() => imageGenerationOptions(data, selectedModel), [data, selectedModel]);
   const supportsImageQuality = qualityOptions.length > 0;
-  const effectiveQuality =
-    qualityOptions.find((option) => option.toLowerCase() === quality.toLowerCase())
-    ?? qualityOptions.find((option) => option.toLowerCase() === DEFAULT_IMAGE_QUALITY)
-    ?? qualityOptions[0]
-    ?? DEFAULT_IMAGE_QUALITY;
   const imageSelectionForCost =
     imageModelsLoading || imageModelsFallback ? null : selectedModel?.apiModel ?? null;
-  const imageQuantity = Math.min(Math.max(effectiveCount, 1), 4);
+  const imageQuantity = imageGenerationCount(data);
   // 统一计费（#210）：按 feature 键询价，模型身份走 buildImageFeatureBillingParams
   // 拼进 params。与 ImageGenNode 从前的写法必须逐字一致，否则同一个节点在工作流
   // 和故事板两个视图里会报出不同的价格。
@@ -309,7 +247,8 @@ export function useImageGenerationForm(
   const { templates: styleTemplates } = useFreezoneStyleTemplates();
   const selectedStyle = describeStyleSelection(styleTemplateId, styleTemplates);
 
-  const upstreamContents = useUpstreamContents(id);
+  const upstreamNodes = useUpstreamNodes(id);
+  const upstreamContents = useMemo(() => upstreamNodes.map(extractUpstreamContent), [upstreamNodes]);
   // ImageGen 上游只消费「文本 + 图片」，视频/音频内容被丢弃 ——
   // 即便 upload 节点带了视频 URL，也不进 OpsPanel 也不进 reference_urls。
   const upstreamImageContents = useMemo(() => {
@@ -342,27 +281,10 @@ export function useImageGenerationForm(
     : "";
   const shouldInlineUpstreamTextAsPrompt =
     sourceRole === "scene_master" || sourceRole === "scene_reverse_master";
-  const upstreamReferenceUrls = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          upstreamImageContents
-            .map((c) => (typeof c.imageUrl === 'string' ? c.imageUrl : ''))
-            .filter((url) => url.length > 0),
-        ),
-      ),
-    [upstreamImageContents],
-  );
-  // 提交给后端的参考图有序列表：自身参考图排第 1、上游图接在后面（URL 去重）。
-  // @图片N 编号、mention 重排基线、提交三处共用这一份 —— 后端按位置解释 图片N，
-  // 曾经编号只数上游图、提交却把自身参考图前置，节点自带参考图时所有 @图片N
-  // 到后端整体偏移 1（@图片1 实际指向自身参考图）。
   const orderedReferenceUrls = useMemo(
-    () => orderedReferenceUrlsWithOwnFirst(referenceImageUrl, upstreamReferenceUrls),
-    [referenceImageUrl, upstreamReferenceUrls],
+    () => imageGenerationReferenceUrls(data, upstreamNodes), [data, upstreamNodes],
   );
-  const generationMode =
-    orderedReferenceUrls.length > 0 ? 'image_to_image' : 'text_to_image';
+  const generationMode = imageGenerationMode(orderedReferenceUrls);
 
   // 候选按 orderedReferenceUrls 编号（自身参考图在场时就是图片1），保证 @ 出来的
   // 缩略图与后端解析到的 图片N 是同一张。key 优先用上游 nodeId；自身参考图没有
@@ -525,24 +447,16 @@ export function useImageGenerationForm(
 
     // Recipe 节点在真正提交图片任务前还要先编译提示词。编译可能需要数秒，必须
     // 从点击这一刻就给出反馈；编译失败由下方的窄 catch 恢复按钮并展示错误。
-    updateNodeData(id, {
-      isGenerating: true,
-      generationStartedAt: Date.now(),
-      generationError: null,
-      generationErrorDetails: null,
-      generationErrorRequestId: null,
-    });
-
-    // apiModel comes from the SAME reconciled model the picker displays, so the
-    // backend always receives the model the user actually sees.
-    const apiModel =
-      selectedModel?.apiModel
-      ?? SHARED_MODELS.find((m) => m.id === modelId)?.apiModel
-      ?? modelId;
-    // 自身参考图（用户手动上传） + 所有上游图片/视频 URL，去重 —— 与 @图片N
-    // 编号共用同一份有序列表（orderedReferenceUrls），后端按位置解释 图片N。
-    // 后端 reference_urls 接受 image / video 混合数组。
-    const referenceUrls = orderedReferenceUrls;
+    updateNodeData(id, imageGenerationStartPatch(Date.now()));
+    const renderCtx: ImageGenerationRequestContext = {
+      nodeId: id,
+      nodes: [{ id, type: CANVAS_NODE_TYPES.imageGen, position: { x: 0, y: 0 },
+        data: { ...data, prompt: promptDraft } }, ...upstreamNodes],
+      edges: upstreamNodes.map((node, index) => ({ id: `${id}-upstream-${index}`, source: node.id, target: id })),
+      projectId, canvasId: readUrl().canvas ?? 'default', imageModels: availableModels,
+      executionSource, productOperation: null, inlineMedia: 'forward',
+      promptDraft: { userEdited: hasUserEditedPromptRef.current },
+    };
     setReferenceErrors([]);
     setReferenceErrorsOpen(false);
     const canvas = useCanvasStore.getState();
@@ -550,42 +464,15 @@ export function useImageGenerationForm(
       ...upstreamNodesInEdgeOrder(canvas.nodes, canvas.edges, id),
       ...canvas.nodes.filter((node) => node.id === id),
     ];
-    const hasCamera = Boolean(
-      cameraSelection
-      && (cameraSelection.cameraBodyId
-        || cameraSelection.lensId
-        || cameraSelection.focalLengthMm
-        || cameraSelection.aperture),
-    );
-    const ownPrompt = prompt.trim();
-    const fallbackPrompt = shouldInlineUpstreamTextAsPrompt
-      ? (ownPrompt || (hasUserEditedPromptRef.current ? "" : upstreamTextJoined.trim()))
-      : [upstreamTextJoined, ownPrompt]
-        .filter((s) => s.length > 0)
-        .join('\n\n');
-    // 工作流配方节点用配方编译出的最终 prompt；非配方节点回落上面这段拼接。
     let effectivePrompt: string;
     try {
       effectivePrompt = await compileWorkflowNodePrompt({
         nodeId: id,
         nodeData: data,
-        nodeKind: 'image',
-        nodePrompt: ownPrompt,
-        upstreamText: upstreamTextJoined,
-        upstreamContents,
-        fallbackPrompt,
+        ...imagePromptCompileInput(renderCtx),
         executionSource,
-        referenceMedia: referenceUrls.map((_, index) => ({
-          kind: 'image',
-          label: `reference-${index + 1}`,
-        })),
-        onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
-          workflowRecipeCompileMode: mode,
-          workflowRecipeCompiledAt: new Date().toISOString(),
-          workflowRecipeCompiledPrompt: compiledPrompt,
-          prompt: compiledPrompt,
-          workflowRecipeIds: recipeIds,
-        }),
+        onCompileMetadata: (metadata) => updateNodeData(id,
+          imagePromptCompileMetadataPatch(metadata, new Date().toISOString())),
       });
     } catch (error) {
       console.error('[image-gen] image Recipe compilation failed', error);
@@ -593,53 +480,21 @@ export function useImageGenerationForm(
         error instanceof Error && error.message
           ? error.message
           : String(error || t('common.error'));
-      updateNodeData(id, {
-        isGenerating: false,
-        generationStartedAt: null,
-        generationTaskKey: null,
-        generationTaskType: null,
-        generationTaskJobId: null,
-        generationError: backendErrorToastMessage(error, t),
-        generationErrorDetails: rawErrorMessage,
-        generationErrorRequestId: extractRequestId(rawErrorMessage),
+      const outcome = imageGenerationOutcomePatch({
+        nodeId: id, nodeData: data, taskKey: null, firstAcceptedTask: null, runIndex: 0,
+        total: imageGenerationCount(data), completedUrls: [], attachStoryFrame: false, translate: t,
+        outcome: { kind: 'compile_failed', message: rawErrorMessage,
+          error: describeGenerationError(error, t, t('common.error')) },
       });
+      if (outcome.action === 'write') updateNodeData(id, outcome.patch);
       throw error;
     }
-    const genPayload = {
-      prompt: effectivePrompt,
-      // 后端只接受固定的几个比例；节点上的 aspectRatio 可能是图片自然尺寸约分出的
-      // 非标准值（如 "43:24"）或 "auto"，提交前吸附到最接近的合法比例（auto→1:1）。
-      aspectRatio: effectiveAspectRatio as typeof aspectRatio,
-      imageSize: effectiveImageSize,
-      // 画质仅在媒体目录声明 qualityOptions 时下发。
-      quality: supportsImageQuality ? effectiveQuality : null,
-      referenceUrls,
-      provider: selectedModel?.providerId as FreezoneProvider | undefined,
-      model: apiModel,
-      modelId: selectedModel?.catalogId ?? modelId,
-      genMode: generationMode,
-      modelParams: data.modelParams,
-      camera: hasCamera
-        ? {
-            cameraBodyId: cameraSelection?.cameraBodyId ?? null,
-            lensId: cameraSelection?.lensId ?? null,
-            focalLengthMm: cameraSelection?.focalLengthMm ?? null,
-            aperture: cameraSelection?.aperture ?? null,
-          }
-        : null,
-      style: styleTemplateId ? { templateId: styleTemplateId } : null,
-    };
-
-    // 后端不再支持一次出多张，改为按「生成数量」并发调用 N 次接口，每次出
-    // 1 张。N > 1 时不再复制兄弟节点，而是全部回填到当前节点的
-    // generationBatch（叠卡画册）：第 1 张完成的设为主图（imageUrl），其余
-    // 逐张追加进画册，收拢态渲染成叠起的卡片。
-    const total = Math.min(Math.max(effectiveCount, 1), 4);
-    // One admitted workflow attempt owns one batch task. Retrying its submission
-    // reuses the batch, while the backend generates each candidate separately.
-    const batchVariants = total > 1 && (
-      executionSource === 'workflow' || Boolean(workflowProductOperation(id)?.generationAttemptId)
-    );
+    const built = buildImageGenerationRequest({ ...renderCtx, prompt: effectivePrompt,
+      productOperation: workflowProductOperation(id) ?? null });
+    if (!built.ok) throw new Error(built.message);
+    const total = typeof built.requests[0]?.body.variant_count === 'number'
+      ? built.requests[0].body.variant_count : built.requests.length;
+    const batchVariants = typeof built.requests[0]?.body.variant_count === 'number';
     const resolvedCompletionMode = batchVariants ? 'completed'
       : resolveImageGenerationCompletionMode(completionMode, total);
     // Clear any prior failure / album on resubmit — the on-node error banner
@@ -648,44 +503,33 @@ export function useImageGenerationForm(
     // 先完成的图立即入册展示，未完成的在画册里渲染占位骨架。
     setAlbumPendingTotal(id, total > 1 ? total : 0);
 
-    const canvasId = readUrl().canvas ?? 'default';
-    // 各并发任务完成顺序不定，本地累积已完成的 URL，整组写回（避免读改写竞态）。
-    const completedUrls: string[] = [];
-    const submittedTaskKeys = new Set<string>();
-    const submittedRefs: Array<{
-      task_key: string;
-      task_type: string;
-      job_id: string;
-    }> = [];
+    let completedUrls: string[] = [];
+    let submittedRefs: ImageGenerationTaskRef[] = [];
+    const deriveOutcome = (runIndex: number, taskKey: string | null, outcome: ImageGenerationOutcome) =>
+      imageGenerationOutcomePatch({
+        nodeId: id, nodeData: useCanvasStore.getState().nodes.find((node) => node.id === id)?.data ?? {},
+        taskKey, firstAcceptedTask: submittedRefs[0] ?? null, runIndex, total, completedUrls,
+        attachStoryFrame: options.attachStoryFrame !== false, canAutoCommitOnGenerate,
+        outcome, translate: t,
+      });
     type GenerationRunOutcome = 'completed' | 'submitted' | 'ignored' | 'handled';
     let panelCollapsedAfterSubmit = false;
     const runOne = async (runIndex: number): Promise<GenerationRunOutcome> => {
       let taskKey: string | null = null;
       try {
-        const ref = await submitFreezoneGen(projectId, {
-          ...genPayload,
-          canvasId,
-          nodeId: id,
-          ...(batchVariants ? { variantCount: total as ImageGenCount } : {}),
-        });
+        const request = built.requests[runIndex];
+        const referenceUrls = await ensureBackendImageUrls(projectId, request.body.reference_urls);
+        const ref = await sendGenerationWireRequest<FreezoneJobRef>({ ...request,
+          body: { ...request.body, reference_urls: referenceUrls } });
         taskKey = ref.task_key;
-        if (submittedTaskKeys.has(ref.task_key)) return 'handled';
-        submittedTaskKeys.add(ref.task_key);
+        const accepted = imageGenerationRunAccepted({ runIndex, acceptedRefs: submittedRefs, task: ref });
+        if (accepted.action === 'handled') return 'handled';
         if (!panelCollapsedAfterSubmit && isCurrentGenerationAttempt()) {
           panelCollapsedAfterSubmit = true;
           optionsRef.current?.onTaskAccepted?.();
         }
-        // Persist the task handle so a page refresh can resume polling this
-        // job. With N concurrent runs on one node only one handle can persist —
-        // keep the first (main-image) run's.
-        if (runIndex === 0 || submittedRefs.length === 0) {
-          updateNodeData(id, generationTaskDescriptor(ref));
-        }
-        submittedRefs.push({
-          task_key: ref.task_key,
-          task_type: ref.task_type,
-          job_id: ref.job_id,
-        });
+        if (accepted.applyPatch) updateNodeData(id, imageGenerationAcceptedPatch(ref));
+        submittedRefs = accepted.acceptedRefs;
         const completeTask = async (): Promise<'completed' | 'ignored'> => {
           const completed = await awaitTaskCompletion(ref.task_key, projectId, {
             taskType: ref.task_type,
@@ -701,38 +545,27 @@ export function useImageGenerationForm(
           }
           if (urls.length > 0) {
             if (!isCurrentGenerationAttempt()) return 'ignored';
-            const isFirstCompleted = completedUrls.length === 0;
-            const freshUrls = urls.filter((url) => !completedUrls.includes(url));
-            if (freshUrls.length === 0) return 'completed';
-            completedUrls.push(...freshUrls);
-            const url = completedUrls[0];
-            updateNodeData(id, {
-              // 第 1 张完成的设为主图并结束 loading；后续只扩充画册。
-              ...(isFirstCompleted ? buildImageGenerationSuccessPatch(url) : {}),
-              ...(total > 1 ? { generationBatch: [...completedUrls] } : {}),
-            });
-            if (isFirstCompleted && options.attachStoryFrame !== false) {
-              const attachmentError = attachCompletedStoryFrame(id);
-              if (attachmentError) toast.warning(attachmentError);
-              const assetError = attachCompletedStoryAsset(id);
-              if (assetError) toast.warning(assetError);
-            }
-            if (canAutoCommitOnGenerate && isFirstCompleted) {
-              canvasEventBus.publish('freezone/commit-node', {
-                nodeId: id,
-                auto: true,
-              });
+            const outcome = deriveOutcome(runIndex, taskKey, { kind: 'completed', result: { output_urls: urls } });
+            if (outcome.action === 'write') {
+              completedUrls = outcome.completedUrls;
+              updateNodeData(id, outcome.patch);
+              for (const effect of outcome.effects) {
+                if (effect.kind === 'commit_node') {
+                  canvasEventBus.publish('freezone/commit-node', { nodeId: effect.nodeId, auto: effect.auto });
+                } else {
+                  const error = effect.kind === 'attach_story_frame'
+                    ? attachCompletedStoryFrame(effect.nodeId) : attachCompletedStoryAsset(effect.nodeId);
+                  if (error) toast.warning(error);
+                }
+              }
             }
             return 'completed';
           } else {
             if (!isCurrentGenerationAttempt()) return 'ignored';
             console.warn('[image-gen] generation completed without output url', completed);
-            // 只有 run 0（任务句柄的归属者）且尚无任何成功时才终结 loading——
-            // 非首个任务先「无 URL 完成」不能把还在跑的整体 loading 提前掐掉。
-            if (runIndex === 0 && completedUrls.length === 0) {
-              updateNodeData(id, { isGenerating: false, generationStartedAt: null });
-            }
-            throw new Error('图片生成完成但未返回图片地址');
+            const missing = imageGenerationMissingUrlOutcome(runIndex, completedUrls);
+            if (missing.patch) updateNodeData(id, missing.patch);
+            throw new Error(missing.message);
           }
         };
         // 'submitted'：提交即返回任务句柄，产物回填在后台继续（配方运行时按
@@ -744,15 +577,8 @@ export function useImageGenerationForm(
               error instanceof Error && error.message
                 ? error.message
                 : String(error || t('common.error'));
-            const displayErrorMessage = backendErrorToastMessage(error, t);
-            updateNodeData(id, {
-              ...(runIndex === 0
-                ? { isGenerating: false, generationStartedAt: null }
-                : {}),
-              generationError: displayErrorMessage,
-              generationErrorDetails: rawErrorMessage,
-              generationErrorRequestId: extractRequestId(rawErrorMessage),
-            });
+            updateNodeData(id, imageGenerationBackgroundFailurePatch({ runIndex,
+              message: rawErrorMessage, error: describeGenerationError(error, t, t('common.error')), translate: t }));
           });
           return 'submitted';
         }
@@ -763,7 +589,8 @@ export function useImageGenerationForm(
         // 已有同批其它图完成（主图已落）时不覆盖成功态为错误——部分失败只
         // 影响画册张数。
         if (completedUrls.length > 0) return 'handled';
-        const issues = referenceIssues(error);
+        const info = describeGenerationError(error, t, t('common.error'));
+        const issues = info.referenceIssues;
         if (issues.length > 0 && runIndex === 0) {
           setReferenceErrors(issues.map((issue) => {
             const matching = referenceSnapshot.filter((node) => {
@@ -783,73 +610,25 @@ export function useImageGenerationForm(
             };
           }));
           setReferenceErrorsOpen(true);
-          updateNodeData(id, {
-            isGenerating: false,
-            generationStartedAt: null,
-            generationError: t('referenceValidation.title'),
-            generationErrorDetails: null,
-            generationErrorRequestId: null,
-          });
+          const outcome = deriveOutcome(runIndex, taskKey, { kind: 'reference_invalid', message: info.message });
+          if (outcome.action === 'write') updateNodeData(id, outcome.patch);
           throw error;
         }
-        const latestNodeData = (useCanvasStore
-          .getState()
-          .nodes
-          .find((node) => node.id === id)?.data ?? {}) as Record<string, unknown>;
-        // 每个并发任务都要独立识别取消：节点已有旧图时，取消重生成不应给旧图
-        // 覆盖失败横幅。只有 run 0 代表节点的整体任务状态，非首任务不能结束
-        // loading 或改写节点上持久化的任务句柄。
-        if (
-          taskKey
-          && isTaskCancelledError(error)
-          && hasGeneratedMedia(latestNodeData)
-        ) {
-          if (runIndex === 0) {
-            updateNodeData(id, { isGenerating: false, generationStartedAt: null });
-          }
-          return 'ignored';
-        }
-        // 任务仲裁（stale / shouldWrite）只对 run 0 有意义：节点上只持久化了
-        // run 0 的任务句柄，其余 run 的 taskKey 必然对不上，套用仲裁会把
-        // 它们的失败全部误判为「过期任务」而静默吞掉。
-        if (runIndex === 0) {
-          if (
-            taskKey
-            && isStaleGenerationTask({ nodeData: latestNodeData, taskKey })
-          ) return 'ignored';
-          if (
-            taskKey
-            && !shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })
-          ) {
-            updateNodeData(id, { isGenerating: false, generationStartedAt: null });
-            return 'ignored';
-          }
-        }
-        // Persist the failure on the node so it stays visible until the next
-        // submit — the request id is the handle support uses to trace it.
-        // 只有 run 0 失败才终结 loading：非首 run 失败时 run 0 可能还在跑，
-        // 它的成功补丁会清掉这里写的错误横幅。
-        const rawErrorMessage =
-          error instanceof Error && error.message
-            ? error.message
-            : String(error || t('common.error'));
-        const displayErrorMessage = backendErrorToastMessage(error, t);
-        updateNodeData(id, {
-          ...(runIndex === 0
-            ? { isGenerating: false, generationStartedAt: null }
-            : {}),
-          generationError: displayErrorMessage,
-          generationErrorDetails: rawErrorMessage,
-          generationErrorRequestId: extractRequestId(rawErrorMessage),
+        const rawErrorMessage = error instanceof Error && error.message
+          ? error.message : String(error || t('common.error'));
+        const outcome = deriveOutcome(runIndex, taskKey, {
+          kind: isTaskCancelledError(error) ? 'cancelled' : 'failed',
+          message: rawErrorMessage, error: info,
         });
-        // Re-throw so the caller can surface a single error dialog after all
-        // concurrent attempts settle (rather than one dialog per failed image).
+        if (outcome.action === 'ignore') return 'ignored';
+        updateNodeData(id, outcome.patch);
+        if (!outcome.error) return 'ignored';
         throw error;
       }
     };
 
     const settledRuns = await Promise.allSettled(
-      Array.from({ length: batchVariants ? 1 : total }, (_, runIndex) => runOne(runIndex)),
+      built.requests.map((_, runIndex) => runOne(runIndex)),
     );
     // 全部尘埃落定后撤掉占位（失败的任务不留空槽，画册按实际完成数收口）。
     setAlbumPendingTotal(id, 0);
@@ -857,51 +636,23 @@ export function useImageGenerationForm(
     // Failures are surfaced directly on the failing node (request-id banner),
     // set per-target inside runOne's catch — no global modal.
     optionsRef.current?.onGenerationSettled?.();
-    if (completedUrls.length > 0) {
-      actionOutput = {
-        ...(submittedRefs[0] ? {
-          task_key: submittedRefs[0].task_key,
-          task_type: submittedRefs[0].task_type,
-          job_id: submittedRefs[0].job_id,
-        } : {}),
-        imageUrl: completedUrls[0],
-        imageUrls: completedUrls,
-      };
-      return actionOutput;
-    }
-    const firstFailure = settledRuns.find(
-      (result): result is PromiseRejectedResult => result.status === 'rejected',
-    );
-    if (firstFailure) throw firstFailure.reason;
-    if (resolvedCompletionMode === 'submitted' && submittedRefs.length > 0) {
-      const firstRef = submittedRefs[0]!;
-      actionOutput = {
-        submitted: true,
-        task_key: firstRef.task_key,
-        taskKey: firstRef.task_key,
-        task_type: firstRef.task_type,
-        taskType: firstRef.task_type,
-        job_id: firstRef.job_id,
-        jobId: firstRef.job_id,
-      };
-      return actionOutput;
-    }
-    const allRunsIgnored = settledRuns.length > 0 && settledRuns.every(
-      (result) => result.status === 'fulfilled' && result.value === 'ignored',
-    );
-    if (allRunsIgnored) return undefined;
-    const noResultError = new Error('图片生成未提交任务，也没有返回图片地址');
-    updateNodeData(id, {
-      isGenerating: false,
-      generationStartedAt: null,
-      generationTaskKey: null,
-      generationTaskType: null,
-      generationTaskJobId: null,
-      generationError: backendErrorToastMessage(noResultError, t),
-      generationErrorDetails: noResultError.message,
-      generationErrorRequestId: null,
+    const settlement = imageGenerationSettleOutcome({
+      settled: settledRuns.map((run) => run.status === 'fulfilled' ? run
+        : { status: 'rejected', message: run.reason instanceof Error ? run.reason.message : String(run.reason) }),
+      completedUrls, acceptedRefs: submittedRefs, completionMode: resolvedCompletionMode, translate: t,
     });
-    throw noResultError;
+    switch (settlement.kind) {
+      case 'output': actionOutput = settlement.output; return actionOutput;
+      case 'undefined': return undefined;
+      case 'rethrow': {
+        const failure = settledRuns[settlement.runIndex];
+        if (failure.status === 'rejected') throw failure.reason;
+        throw new Error('Expected rejected image run');
+      }
+      case 'no_result':
+        updateNodeData(id, settlement.patch);
+        throw new Error(settlement.error.message);
+    }
     } finally {
       submittingRef.current = false;
       const waiters = submitWaitersRef.current;
@@ -911,30 +662,8 @@ export function useImageGenerationForm(
       }
     }
   }, [
-    aspectRatio,
-    canAutoCommitOnGenerate,
-    selectedModel,
-    cameraSelection,
-    count,
-    data,
-    effectiveCount,
-    id,
-    modelId,
-    orderedReferenceUrls,
-    prompt,
-    effectiveAspectRatio,
-    effectiveImageSize,
-    effectiveQuality,
-    generationMode,
-    supportsImageQuality,
-    styleTemplateId,
-    billingRuleMissingSubmitMessage,
-    submitDisabled,
-    shouldInlineUpstreamTextAsPrompt,
-    updateNodeData,
-    upstreamContents,
-    upstreamTextJoined,
-    t,
+    availableModels, canAutoCommitOnGenerate, data, id, promptDraft, upstreamNodes,
+    billingRuleMissingSubmitMessage, submitDisabled, updateNodeData, t,
   ]);
 
   useEffect(() => {

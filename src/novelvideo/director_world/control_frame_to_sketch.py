@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.config import OUTPUT_DIR, STATE_DIR, get_sketch_generation_config
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.generators.nanobanana_grid import REGEN_MODE_CONFIGS, NanoBananaGridGenerator
@@ -625,7 +626,10 @@ async def convert_control_frame_to_sketch(
             director_control_frames_dir=str(effective_control_frames_root),
         )
         if not result.success:
-            raise RuntimeError(result.error or "director control sketch generation failed")
+            raise with_upstream_status(
+                RuntimeError(result.error or "director control sketch generation failed"),
+                result,
+            )
 
         save_result: dict[str, Any] = {}
         promoted_path: Path | None = None

@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS workflow_drafts (
     updated_at               REAL NOT NULL,
     expires_at               REAL NOT NULL,
     confirmation_started_at  REAL,
-    confirmed_at             REAL
+    confirmed_at             REAL,
+    revision_conflict_at     REAL
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_drafts_canvas_updated
 ON workflow_drafts(canvas_id, updated_at DESC);
@@ -94,6 +95,10 @@ def _connect(project_dir: Path):
                 if "root_task_id" not in columns:
                     conn.execute(
                         "ALTER TABLE workflow_drafts ADD COLUMN root_task_id TEXT NOT NULL DEFAULT ''"
+                    )
+                if "revision_conflict_at" not in columns:
+                    conn.execute(
+                        "ALTER TABLE workflow_drafts ADD COLUMN revision_conflict_at REAL"
                     )
                 conn.commit()
                 _SCHEMA_READY_PATHS.add(db_path)
@@ -536,6 +541,7 @@ def claim_workflow_draft_confirmation(
             return None, _unavailable("workflow draft expired")
         current_revision = int(payload["revision"])
         if revision != current_revision:
+            _record_revision_conflict(conn, payload, revision, claim_time)
             return None, {
                 "ok": False,
                 "status": "workflow_draft_revision_conflict",
@@ -617,7 +623,77 @@ def bind_workflow_draft_task(
         payload["root_task_id"] = clean_root_task_id
         payload["updated_at"] = time.time()
         _write_draft(conn, payload)
+        # The user confirmed a current revision on this canvas and its task exists.
+        conn.execute(
+            "UPDATE workflow_drafts SET revision_conflict_at = NULL "
+            "WHERE canvas_id = ? AND revision_conflict_at IS NOT NULL",
+            (canvas_id,),
+        )
         return deepcopy(payload)
+
+
+def _record_revision_conflict(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    revision: int,
+    now: float,
+) -> bool:
+    """Remember that a confirmation named a revision this draft has moved past.
+
+    Only an older revision of a draft still waiting for confirmation counts: a
+    revision that never existed, or a draft already settled, leaves nothing for
+    the user to confirm again.
+    """
+    if payload["status"] != "ready" or revision >= int(payload["revision"]):
+        return False
+    conn.execute(
+        "UPDATE workflow_drafts SET revision_conflict_at = ? WHERE draft_id = ?",
+        (now, payload["draft_id"]),
+    )
+    return True
+
+
+def record_workflow_draft_revision_conflict(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    draft_id: str,
+    revision: int,
+) -> bool:
+    """Record a stale confirmation seen before the claim itself was attempted."""
+    _validate_scope(canvas_id, draft_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
+        now = time.time()
+        if payload is None or float(payload.get("expires_at") or 0) < now:
+            return False
+        return _record_revision_conflict(conn, payload, revision, now)
+
+
+def workflow_draft_revision_conflict_pending(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    now: float | None = None,
+) -> dict[str, Any] | None:
+    """Return the canvas draft whose latest revision still awaits confirmation.
+
+    The record ends with the draft's wait: once it is confirmed, cancelled or
+    expired it no longer answers here.
+    """
+    _validate_scope(canvas_id)
+    with _connect(project_dir) as conn:
+        row = conn.execute(
+            "SELECT draft_id, revision FROM workflow_drafts "
+            "WHERE canvas_id = ? AND revision_conflict_at IS NOT NULL "
+            "AND status = 'ready' AND expires_at >= ? "
+            "ORDER BY revision_conflict_at DESC LIMIT 1",
+            (canvas_id, time.time() if now is None else float(now)),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"draft_id": row["draft_id"], "current_revision": int(row["revision"])}
 
 
 def finish_workflow_draft_confirmation(
@@ -670,6 +746,39 @@ def finish_workflow_draft_confirmation(
             payload["confirmed_at"] = now
         elif outcome == "ready":
             payload["confirmation_started_at"] = None
+        _write_draft(conn, payload)
+        return deepcopy(payload)
+
+
+def release_workflow_draft_confirmation(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    draft_id: str,
+    expected_task_id: str,
+    expected_revision: int,
+) -> dict[str, Any] | None:
+    """Make a draft confirmable again when its confirmation applied nothing.
+
+    Refused, expired, voided, or executed confirmations with nothing applied
+    will never reconcile the draft.
+    """
+    _validate_scope(canvas_id, draft_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
+        if payload is None:
+            return None
+        if (
+            payload.get("status") not in {"confirming", "submitted"}
+            or not expected_task_id
+            or payload.get("task_id") != expected_task_id
+            or payload["revision"] != expected_revision
+        ):
+            return deepcopy(payload)
+        payload["status"] = "ready"
+        payload["confirmation_started_at"] = None
+        payload["updated_at"] = time.time()
         _write_draft(conn, payload)
         return deepcopy(payload)
 

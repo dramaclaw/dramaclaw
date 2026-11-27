@@ -30,7 +30,7 @@ describe("runtime-config", () => {
       authRequired,
       isCeRuntime,
       loadRuntimeConfig,
-      mcpDirectCanvasApplyEnabled,
+      agentCanvasExecutorIsServer,
       openFilmStudioEnabled,
       phoneOtpEntryVisible,
     } = await import("@/lib/runtime-config");
@@ -38,9 +38,20 @@ describe("runtime-config", () => {
 
     expect(isCeRuntime()).toBe(true);
     expect(authRequired()).toBe(false);
-    expect(mcpDirectCanvasApplyEnabled()).toBe(false);
+    expect(agentCanvasExecutorIsServer()).toBe(false);
     expect(openFilmStudioEnabled()).toBe(false);
     expect(phoneOtpEntryVisible()).toBe(false);
+    expect(agentCanvasExecutorIsServer()).toBe(false);
+  });
+
+  it.each(["browser", "server"])("uses the %s canvas executor from the API", async (executor) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true, data: { edition: "ce", auth_required: false, agent_canvas_executor: executor },
+    }))));
+    const { loadRuntimeConfig, agentCanvasExecutorIsServer } = await import("@/lib/runtime-config");
+    expect(agentCanvasExecutorIsServer()).toBe(false);
+    await loadRuntimeConfig();
+    expect(agentCanvasExecutorIsServer()).toBe(executor === "server");
   });
 
   it("exposes OpenFilm Studio only after an explicit runtime opt-in", async () => {
@@ -71,26 +82,28 @@ describe("runtime-config", () => {
     delete (import.meta.env as Record<string, unknown>).VITE_EDITION;
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
 
-    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible } =
+    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible, agentCanvasExecutorIsServer } =
       await import("@/lib/runtime-config");
     await loadRuntimeConfig();
 
     expect(isCeRuntime()).toBe(false);
     expect(authRequired()).toBe(true);
     expect(phoneOtpEntryVisible()).toBe(false);
+    expect(agentCanvasExecutorIsServer()).toBe(false);
   });
 
   it("falls back to CE when VITE_EDITION=ce and the fetch fails", async () => {
     (import.meta.env as Record<string, unknown>).VITE_EDITION = "ce";
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
 
-    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible } =
+    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible, agentCanvasExecutorIsServer } =
       await import("@/lib/runtime-config");
     await loadRuntimeConfig();
 
     expect(isCeRuntime()).toBe(true);
     expect(authRequired()).toBe(false);
     expect(phoneOtpEntryVisible()).toBe(false);
+    expect(agentCanvasExecutorIsServer()).toBe(false);
   });
 
   it("ignores VITE_EDITION when /api/v1/config succeeds", async () => {
@@ -116,13 +129,14 @@ describe("runtime-config", () => {
         ),
     );
 
-    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible } =
+    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible, agentCanvasExecutorIsServer } =
       await import("@/lib/runtime-config");
     await loadRuntimeConfig();
 
     expect(isCeRuntime()).toBe(false);
     expect(authRequired()).toBe(true);
     expect(phoneOtpEntryVisible()).toBe(true);
+    expect(agentCanvasExecutorIsServer()).toBe(false);
   });
 
   it("keeps OTP hidden when the EE UI config cannot be loaded", async () => {
@@ -139,13 +153,14 @@ describe("runtime-config", () => {
         .mockRejectedValueOnce(new Error("UI config unavailable")),
     );
 
-    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible } =
+    const { authRequired, isCeRuntime, loadRuntimeConfig, phoneOtpEntryVisible, agentCanvasExecutorIsServer } =
       await import("@/lib/runtime-config");
     await loadRuntimeConfig();
 
     expect(isCeRuntime()).toBe(false);
     expect(authRequired()).toBe(true);
     expect(phoneOtpEntryVisible()).toBe(false);
+    expect(agentCanvasExecutorIsServer()).toBe(false);
   });
 
   it("exposes the browser model sources and treats missing ones as null", async () => {

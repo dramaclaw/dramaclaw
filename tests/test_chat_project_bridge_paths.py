@@ -1,5 +1,8 @@
 from types import SimpleNamespace
 from pathlib import Path
+
+import pytest
+
 from novelvideo.api.routes import chat as route
 from novelvideo.chat.store import ChatScope
 
@@ -178,3 +181,109 @@ async def test_live_watcher_reads_project_scoped_pending(monkeypatch, tmp_path):
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("entry", ["http", "ws"])
+async def test_skill_studio_receipt_is_written_where_project_worker_waits(
+    monkeypatch, tmp_path, entry
+):
+    """The pushed card must carry enough scope for its reply to reach the worker."""
+    from starlette.websockets import WebSocketDisconnect
+    from novelvideo.freezone.canvas_command_bridge import (
+        put_pending_skill_studio_event,
+        wait_skill_studio_result,
+    )
+
+    project_state = tmp_path / "project-a"
+
+    def workspace(username, *, profile, project_state_dir=None):
+        return (
+            (
+                tmp_path / "user-level"
+                if project_state_dir is None
+                else Path(project_state_dir)
+            )
+            / "agents"
+            / "hermes"
+            / profile
+        )
+
+    async def resolve(**kwargs):
+        assert kwargs["project_id"] == "project-a"
+        return SimpleNamespace(state_dir=project_state, is_home_node=True)
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(route, "ensure_user_hermes_workspace", workspace)
+    monkeypatch.setattr(route, "resolve_project_context", resolve)
+    worker_bridge = (
+        project_state
+        / "agents/hermes/freezone/tmp/supertale_canvas_command_bridge/freezone_main"
+    )
+    put_pending_skill_studio_event(
+        key="skill-receipt-test",
+        project_id="project-a",
+        canvas_id="default",
+        event={"type": "skill_studio.questions", "questions": []},
+        bridge_dir=worker_bridge,
+    )
+
+    class Socket:
+        def __init__(self, incoming=()):
+            self.sent = []
+            self.incoming = list(incoming)
+
+        async def send_json(self, value):
+            self.sent.append(value)
+            raise RuntimeError("stop watcher after first send")
+
+        async def receive_json(self):
+            if not self.incoming:
+                raise WebSocketDisconnect()
+            return self.incoming.pop(0)
+
+    pushed = Socket()
+    await route._watch_pending_skill_studio_events(
+        websocket=pushed,
+        username="local",
+        scope=ChatScope(
+            kind="project",
+            id="project-a",
+            surface="freezone",
+            canvas_id="default",
+            state_dir=str(project_state),
+        ),
+        turn_id="test-turn",
+        send_lock=None,
+        emitted_bridge_keys=set(),
+        started_at=0,
+    )
+    frame = pushed.sent[0]
+    # A client only knows what the frame told it.
+    reply = {
+        "turn_id": frame["turn_id"],
+        "bridge_key": frame["bridge_key"],
+        "project_id": frame.get("project_id"),
+        "canvas_id": frame.get("canvas_id"),
+        "agent_id": frame.get("agent_id"),
+        "skill_studio_status": "answered",
+        "action": "submit",
+        "selections": {},
+    }
+    user = {"username": "local"}
+    if entry == "http":
+        await route.resolve_skill_studio_tool_result(
+            route.SkillStudioToolResultIn(**reply), user=user
+        )
+    else:
+        await route._receive_bridge_results_during_turn(
+            websocket=Socket([{"type": "skill_studio.result", **reply}]),
+            user=user,
+            username="local",
+        )
+
+    received = wait_skill_studio_result(
+        "skill-receipt-test", timeout_seconds=0.1, bridge_dir=worker_bridge
+    )
+    assert received is not None
+    assert received["ok"] is True
+    assert received["action"] == "submit"

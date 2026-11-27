@@ -289,6 +289,11 @@ async def test_video_compose_overlap_uses_speed_adjusted_duration(
         fake_mix_audio_tracks,
     )
 
+    async def fake_probe_video_stream(_path: str) -> dict[str, int]:
+        return {"width": 1280, "height": 720}
+
+    monkeypatch.setattr("novelvideo.freezone.jobs.probe_video_stream", fake_probe_video_stream)
+
     output = await run_freezone_video_compose(
         project_dir=tmp_path,
         job_id="job-speed",
@@ -379,6 +384,7 @@ async def test_video_compose_runner_renders_a_hand_cut_film_through_studio(
         project_id="project-a",
         output_dir=str(output_dir),
         state_dir=str(state_dir),
+        runtime_dir=tmp_path / "runtime",
         requester_user_id="user-a",
     )
     envelope = {
@@ -389,14 +395,55 @@ async def test_video_compose_runner_renders_a_hand_cut_film_through_studio(
             "node_id": "compose-a",
             "fps": 24,
             "tracks": [],
-            "studio_film_dir": str(film_dir),
+            "studio_export": True,
         }
     }
 
     result = await freezone_runner._run_freezone_video_compose_async(envelope, ctx)
 
-    assert seen["film_dir"] == str(film_dir) and seen["fps"] == 24
+    assert seen["film"].root == film_dir and seen["fps"] == 24
+    assert seen["film"].state_dir == state_dir / "openfilm/canvas-a/compose-a"
+    assert seen["film"].runtime_dir == tmp_path / "runtime/openfilm/canvas-a/compose-a"
     assert result["output_url"].endswith("job-s.mp4")
     projected = canvas_store.read_canvas(state_dir, "canvas-a")
     assert projected["nodes"][0]["data"]["resultVideoUrl"].endswith("job-s.mp4")
     assert projected["nodes"][0]["data"]["isGenerating"] is False
+
+
+@pytest.mark.asyncio
+async def test_video_compose_rejects_output_without_video_stream(tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("requires ffmpeg and ffprobe")
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i",
+            "color=red:size=64x64:rate=30:duration=1", "-c:v", "libx264", str(source),
+        ],
+        check=True,
+    )
+
+    with pytest.raises(RuntimeError, match="video stream"):
+        await run_freezone_video_compose(
+            project_dir=tmp_path,
+            job_id="job-no-video",
+            resolution="720p",
+            tracks=[
+                {
+                    "kind": "video",
+                    "items": [
+                        {
+                            "source_path": str(source),
+                            "timeline_start": start,
+                            "source_end": 0.005,
+                        }
+                        for start in (0, 0.1)
+                    ],
+                }
+            ],
+        )
+
+    assert not list(tmp_path.rglob("job-no-video.mp4"))

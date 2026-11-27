@@ -11,8 +11,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { useCatalogImageModels } from "@/features/canvas/domain/catalogImageModels";
 import type { UseFreezoneImageModelsResult } from "@/features/canvas/hooks/useFreezoneImageModels";
-import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
-import { SHARED_MODELS } from "@/features/canvas/ui/ProviderModelPicker";
+import type { ModelOption } from "@/features/canvas/domain/modelOptions";
+import { SHARED_MODELS } from "@/features/canvas/domain/modelOptions";
 
 let hookState: UseFreezoneImageModelsResult;
 

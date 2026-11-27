@@ -9,7 +9,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { submitFreezoneGen } from "@/api/ops";
+import { sendGenerationWireRequest } from "@/api/ops";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { useImageGenerationForm } from "@/features/canvas/nodes/shared/useImageGenerationForm";
 import { InsufficientCreditsError } from "@/lib/api-errors";
@@ -54,7 +54,7 @@ vi.mock("@/api/ops", async (importOriginal) => ({
   listFreezoneStyleTemplates: vi.fn(async () => []),
   fetchFreezoneCameraOptions: vi.fn(async () => null),
   listFreezoneGenerationHistory: vi.fn(async () => []),
-  submitFreezoneGen: vi.fn(async () => {
+  sendGenerationWireRequest: vi.fn(async () => {
     throw new InsufficientCreditsError(RAW_BACKEND_ERROR, 402);
   }),
 }));
@@ -96,7 +96,7 @@ describe("ImageGen error notification contract", () => {
       media: "image", index: 1, name: "small.png", reference_key: "freezone/small.png",
       code: "minWidth", actual: 200, expected: 300,
     };
-    vi.mocked(submitFreezoneGen).mockRejectedValueOnce({
+    vi.mocked(sendGenerationWireRequest).mockRejectedValueOnce({
       body: { detail: { code: "REFERENCE_MEDIA_INVALID", errors: [issue] } },
     });
     const { result } = renderHook(() => useImageGenerationForm("img-1"));
@@ -134,7 +134,7 @@ describe("ImageGen error notification contract", () => {
 
   it("localizes storage failures while preserving their raw diagnostic details", async () => {
     const raw = "请求异常: MediaStorageUnavailable('MEDIA_STORAGE_ACCESS_DENIED: 媒体存储拒绝访问。')";
-    vi.mocked(submitFreezoneGen).mockRejectedValueOnce(new Error(raw));
+    vi.mocked(sendGenerationWireRequest).mockRejectedValueOnce(new Error(raw));
     const { result } = renderHook(() => useImageGenerationForm("img-1"));
     await waitFor(() => expect(result.current.submitDisabled).toBe(false));
     await result.current.submit().catch(() => undefined);

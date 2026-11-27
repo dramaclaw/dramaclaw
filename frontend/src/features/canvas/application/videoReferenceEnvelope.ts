@@ -2,11 +2,11 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import {
-  videoReferenceEnvelopeForModel,
+  videoReferenceEnvelopeInCatalog,
   type VideoReferenceEnvelope,
 } from '@/features/canvas/domain/videoReferenceLimits';
 import { readFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
-import type { ModelOption } from '@/features/canvas/ui/ProviderModelPicker';
+import type { ModelOption } from '@/features/canvas/domain/modelOptions';
 
 /**
  * 把一个视频节点解析成它**当前所选模型**的引用上限包络。
@@ -25,12 +25,5 @@ export function videoReferenceEnvelopeForNode(
   videoNode: CanvasNode,
   models: ModelOption[] = readFreezoneVideoModels(),
 ): VideoReferenceEnvelope {
-  const persisted =
-    typeof videoNode.data?.model === 'string' && videoNode.data.model.length > 0
-      ? videoNode.data.model
-      : null;
-  const model =
-    (persisted ? models.find((entry) => entry.id === persisted) : undefined) ??
-    models[0];
-  return videoReferenceEnvelopeForModel(model);
+  return videoReferenceEnvelopeInCatalog(videoNode, models);
 }

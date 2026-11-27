@@ -116,6 +116,65 @@ describe('VideoComposeWorkspace', () => {
     ]);
   });
 
+  it('stores clips added for a new upstream so the next open sends the same ids', async () => {
+    const compose: CanvasNode = {
+      id: 'compose',
+      type: CANVAS_NODE_TYPES.videoCompose,
+      position: { x: 0, y: 0 },
+      data: {},
+    };
+    useCanvasStore.setState({
+      nodes: [videoNode('video-a', 5_000), compose],
+      edges: [{ id: 'edge-a', source: 'video-a', target: 'compose' }],
+    });
+    const open = () =>
+      render(
+        <VideoComposeWorkspace
+          projectId="proj-demo"
+          canvasId="canvas-1"
+          nodeId="compose"
+          onExit={() => {}}
+        />,
+      );
+    const sentItemIds = (call: number) =>
+      (
+        openStudio.mock.calls[call][1] as unknown as {
+          tracks: { items: { itemId: string }[] }[];
+        }
+      ).tracks.flatMap((track) => track.items.map((item) => item.itemId));
+    const draftClipIds = () =>
+      (
+        useCanvasStore.getState().nodes.find((node) => node.id === 'compose')
+          ?.data.draftTimeline as { tracks: { clips: { id: string }[] }[] }
+      ).tracks.flatMap((track) => track.clips.map((clip) => clip.id));
+
+    const first = open();
+    await waitFor(() => expect(openStudio).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    // 上游多接了一条素材：草稿里已有 video-a 的片段，video-b 的片段要现补。
+    const state = useCanvasStore.getState();
+    useCanvasStore.setState({
+      nodes: [...state.nodes, videoNode('video-b', 4_000)],
+      edges: [
+        ...state.edges,
+        { id: 'edge-b', source: 'video-b', target: 'compose' },
+      ],
+    });
+
+    const second = open();
+    await waitFor(() => expect(openStudio).toHaveBeenCalledTimes(2));
+    second.unmount();
+    expect(sentItemIds(1)).toHaveLength(2);
+    // 补出来的片段 id 是随机的；不落草稿的话，每次重开都是一条「新时间线」，
+    // 在编辑器里改过的片会被后端拒绝复用（409），只能重新生成、丢掉手改。
+    expect(draftClipIds()).toEqual(sentItemIds(1));
+
+    open();
+    await waitFor(() => expect(openStudio).toHaveBeenCalledTimes(3));
+    expect(sentItemIds(2)).toEqual(sentItemIds(1));
+  });
+
   it('opens Studio once under StrictMode double effects', async () => {
     const nodes: CanvasNode[] = [
       videoNode('video-a', 5_000),

@@ -18,6 +18,7 @@ import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -152,7 +153,8 @@ def _projection_payload(fields: dict, *, version: int = CURRENT_PROJECTION_VERSI
 def _stub_tts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(audio_node, "IndexTTS2FalClient", FakeTTSGenerator)
     monkeypatch.setattr(
-        audio_node, "build_reference_audio_url", lambda path: f"data://{Path(path).name}"
+        "novelvideo.seedance2_i2v.voice_clone.build_reference_audio_url",
+        AsyncMock(side_effect=lambda path, **_: f"https://relay.example/{path.name}"),
     )
     FakeTTSGenerator.calls = []
 
@@ -193,7 +195,7 @@ async def test_generate_speech_consumes_projection_without_project_state(
 
     assert result.voice_source == "character_default"
     assert result.voice_sha256 == "sha-小明"
-    assert FakeTTSGenerator.calls[0]["audio_url"] == f"data://{voice_path.name}"
+    assert FakeTTSGenerator.calls[0]["audio_url"] == f"https://relay.example/{voice_path.name}"
 
 
 @pytest.mark.asyncio
@@ -231,7 +233,7 @@ async def test_generate_speech_resolves_the_narrator_main_from_the_projection(
     )
 
     assert result.voice_source == "protagonist_identity"
-    assert FakeTTSGenerator.calls[0]["audio_url"] == "data://旁白主角.wav"
+    assert FakeTTSGenerator.calls[0]["audio_url"] == "https://relay.example/旁白主角.wav"
 
 
 @pytest.mark.asyncio
@@ -518,7 +520,7 @@ async def test_audio_speech_runner_runs_with_every_project_data_entrypoint_disab
 
     assert touched == []
     assert result["voice_source"] == "protagonist_identity"
-    assert FakeTTSGenerator.calls[0]["audio_url"] == "data://旁白主角.wav"
+    assert FakeTTSGenerator.calls[0]["audio_url"] == "https://relay.example/旁白主角.wav"
 
 
 # --------------------------------------------------------------------------

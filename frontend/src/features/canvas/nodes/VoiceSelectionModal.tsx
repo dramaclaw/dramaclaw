@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import type { FreezoneAudioReferenceItem } from "@/features/canvas/domain/audioReferences";
 import {
   useCallback,
   useEffect,
@@ -19,8 +20,7 @@ import {
   createFreezoneAudioVoice,
   fetchFreezoneAudioReferences,
   saveGeneratedFreezoneAudioVoice,
-  type FreezoneAudioReferenceItem,
-} from '@/api/ops';
+} from "@/api/ops";
 import { VoiceDesignDialog } from '@/components/assets/voice-design-dialog';
 import { readUrl } from '@/lib/url-params';
 import { CANVAS_NODE_INPUT_PLACEHOLDER_CLASS } from '@/features/canvas/ui/nodeFrameStyles';

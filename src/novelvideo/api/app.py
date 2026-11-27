@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import threading
 import time
 from collections import Counter
@@ -13,6 +14,8 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.exceptions import HTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from novelvideo.api import OPENAPI_TAGS, api_router, register_verification_routes
 from novelvideo.api.auth import get_api_user
@@ -47,6 +50,7 @@ logger = logging.getLogger("novelvideo.api.app")
 # bigger is almost certainly a runaway client / DoS attempt.
 MAX_REQUEST_BODY_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_REQUEST_BODY_BYTES = MAX_PROJECT_UPLOAD_BYTES
+_FREEZONE_UPLOAD_PATH = re.compile(r"/api/v1/projects/[^/]+/freezone/upload")
 _RESOURCE_REQUEST_COUNTS: Counter[str] = Counter()
 _RESOURCE_REQUEST_TOTAL = 0
 _RESOURCE_REQUEST_LOCK = threading.Lock()
@@ -70,8 +74,43 @@ async def _resume_director_auto_best_effort(application: FastAPI) -> None:
         application.state.director_auto_startup_error = ""
 
 
+def _start_codex_turn_sweeper(application: FastAPI) -> None:
+    from novelvideo.chat.service import _configured_chat_backend, run_codex_turn_sweeper
+
+    if _configured_chat_backend() == "codex":
+        application.state.codex_turn_sweeper = asyncio.create_task(
+            run_codex_turn_sweeper(), name="codex-turn-sweeper"
+        )
+
+
+async def _stop_codex_turn_sweeper(application: FastAPI) -> None:
+    sweeper = getattr(application.state, "codex_turn_sweeper", None)
+    if sweeper is not None:
+        sweeper.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweeper
+
+
+def _start_server_workflow_sweeper(application: FastAPI) -> None:
+    from novelvideo.freezone.server_workflow_index import run_server_workflow_sweeper
+
+    application.state.server_workflow_sweeper = asyncio.create_task(
+        run_server_workflow_sweeper(), name="server-workflow-sweeper",
+    )
+
+
+async def _stop_server_workflow_sweeper(application: FastAPI) -> None:
+    sweeper = getattr(application.state, "server_workflow_sweeper", None)
+    if sweeper is not None:
+        sweeper.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweeper
+
+
 def _request_body_limit(request: Request) -> int:
     content_type = request.headers.get("content-type", "").lower()
+    if request.url.path == "/api/v1/chat/uploads" and "multipart/form-data" in content_type:
+        return MAX_UPLOAD_REQUEST_BODY_BYTES
     if (
         request.url.path.startswith("/api/v1/projects/")
         and (
@@ -82,6 +121,46 @@ def _request_body_limit(request: Request) -> int:
     ):
         return MAX_UPLOAD_REQUEST_BODY_BYTES
     return MAX_REQUEST_BODY_BYTES
+
+
+class _UploadBodyTooLarge(HTTPException, OSError):
+    # OSError triggers multipart spool cleanup. HTTPException preserves the
+    # status and detail through FastAPI's body parsing and exception handling.
+    def __init__(self, limit: int, received: int) -> None:
+        super().__init__(status_code=413, detail={
+            "code": "canvas_payload_too_large",
+            "field": "body",
+            "limit": limit,
+            "got": received,
+        })
+
+
+class _FreezoneUploadBodyLimit:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or not _FREEZONE_UPLOAD_PATH.fullmatch(scope["path"])
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        limit = _request_body_limit(Request(scope))
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise _UploadBodyTooLarge(limit, received)
+            return message
+
+        await self.app(scope, limited_receive, send)
 
 
 def _is_freezone_audio_voice_upload(request: Request) -> bool:
@@ -115,11 +194,26 @@ def _record_resource_request(resource_key: str) -> tuple[int, int]:
         return _RESOURCE_REQUEST_TOTAL, _RESOURCE_REQUEST_COUNTS[resource_key]
 
 
+async def _warm_canvas_core(pool) -> None:
+    from novelvideo.freezone.canvas_core_pool import CanvasCoreError
+
+    try:
+        await asyncio.to_thread(pool.warm)
+    except CanvasCoreError as exc:
+        logger.warning("canvas_core warm failed code=%s", exc.code)
+
+
 def create_app() -> FastAPI:
+    from novelvideo.freezone.agent_canvas_config import validate_agent_canvas_config
+
+    validate_agent_canvas_config()
     register_verification_routes()
 
     application = FastAPI(title="NovelVideo API", openapi_tags=OPENAPI_TAGS)
     mount_api_coverage_middleware(application)
+    # Later HTTP middleware wraps this limiter, so the routing exception
+    # handler converts the refusal before it reaches their task groups.
+    application.add_middleware(_FreezoneUploadBodyLimit)
 
     @application.exception_handler(ProjectTaskLimitExceeded)
     async def _project_task_limit_exceeded(
@@ -367,7 +461,7 @@ def create_app() -> FastAPI:
         duration_ms = (time.perf_counter() - started_at) * 1000
         total_count, same_resource_count = _record_resource_request(resource_key)
 
-        query = request.url.query
+        query = "[redacted]" if "upload_ticket" in request.query_params else request.url.query
         range_header = request.headers.get("range", "")
         content_length = response.headers.get("content-length", "")
         content_type = response.headers.get("content-type", "")
@@ -393,22 +487,29 @@ def create_app() -> FastAPI:
 
     @application.on_event("startup")
     async def startup() -> None:
+        from novelvideo.freezone.agent_canvas_config import agent_canvas_executor
+        from novelvideo.freezone.canvas_core_pool import (
+            canvas_core_unavailable_reason,
+            get_canvas_core_pool,
+        )
+        from novelvideo.freezone.canvas_links import warn_if_public_origin_invalid
+
+        warn_if_public_origin_invalid()
+        reason = canvas_core_unavailable_reason()
+        if reason:
+            logger.warning(
+                "canvas_core unavailable: %s Canvas creation and server canvas commands "
+                "will fail until this is fixed.", reason,
+            )
+        if agent_canvas_executor() == "server":
+            pool = get_canvas_core_pool()
+            application.state.canvas_core_pool = pool
+            application.state.canvas_core_warm_task = asyncio.create_task(_warm_canvas_core(pool))
         try:
             from novelvideo.ports.registry import ensure_bootstrap, get_port
 
             ensure_bootstrap()
             await get_port("lifecycle").on_startup(register_as_worker=True)
-
-            from novelvideo.sqlite_pragmas import litestream_enabled
-
-            if litestream_enabled():
-                from novelvideo.backup.wal_migrator import migrate_state_tree
-                from novelvideo.config import STATE_DIR
-
-                try:
-                    await asyncio.to_thread(migrate_state_tree, Path(STATE_DIR))
-                except Exception:
-                    logger.exception("WAL migration sweep failed (non-fatal)")
 
             from novelvideo.official_media_catalog_remote import (
                 run_official_media_catalog_updater,
@@ -434,10 +535,20 @@ def create_app() -> FastAPI:
         application.state.workflow_event_loop_observer = asyncio.create_task(
             observe_workflow_event_loop(), name="workflow-event-loop-observer"
         )
+        _start_codex_turn_sweeper(application)
+        _start_server_workflow_sweeper(application)
 
     @application.on_event("shutdown")
     async def shutdown() -> None:
         from novelvideo.ports.registry import PortNotRegistered, get_port
+
+        await _stop_server_workflow_sweeper(application)
+        await _stop_codex_turn_sweeper(application)
+
+        pool = getattr(application.state, "canvas_core_pool", None)
+        if pool is not None:
+            await asyncio.to_thread(pool.close)
+            await application.state.canvas_core_warm_task
 
         observer = getattr(application.state, "workflow_event_loop_observer", None)
         if observer is not None:
@@ -472,6 +583,10 @@ def create_app() -> FastAPI:
         await lifecycle.on_shutdown()
 
     application.include_router(api_router)
+
+    from novelvideo.api import remote_mcp
+
+    remote_mcp.mount(application)
 
     @application.get(
         "/static/projects/{project}/{file_path:path}", include_in_schema=False

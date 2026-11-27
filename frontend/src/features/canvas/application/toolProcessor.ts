@@ -9,11 +9,11 @@ import {
   type NodeToolType,
   type StoryboardFrameItem,
 } from '../domain/canvasNodes';
+import { parseAspectRatio } from '../domain/aspectRatio';
 import {
   canvasToDataUrl,
   detectAspectRatio,
   loadImageElement,
-  parseAspectRatio,
   persistImageLocally,
 } from './imageData';
 import { cropImageSource, readStoryboardImageMetadata } from '@/commands/image';

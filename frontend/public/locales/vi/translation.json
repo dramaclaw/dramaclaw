@@ -1,7 +1,16 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Không thể lưu lịch sử trò chuyện. Vui lòng thử lại sau; tin nhắn hiện tại vẫn được giữ trên máy.",
-    "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử."
+    "historyIncomplete": "Một phần lịch sử của cuộc trò chuyện này quá lớn để tải đầy đủ. Nội dung tin nhắn vẫn có thể xem. Vui lòng liên hệ quản trị viên để thu gọn lịch sử.",
+    "ceHistory": {
+      "title": "Một phần lịch sử trò chuyện chưa được tải đầy đủ",
+      "description": "Cuộc trò chuyện này có bản ghi lớn hoặc không hợp lệ nên một phần suy nghĩ và bản ghi công cụ chưa được tải. Nội dung tin nhắn vẫn có thể xem. Điều này không có nghĩa là lệnh gọi mô hình bị lỗi.",
+      "help": "Xem hướng dẫn xử lý",
+      "support": "Liên hệ hỗ trợ cộng đồng",
+      "continue": "Nếu vẫn gửi tin nhắn bình thường, bạn có thể tiếp tục cuộc trò chuyện này. Không cần xóa lịch sử trò chuyện hoặc dự án.",
+      "backup": "Để khôi phục toàn bộ lịch sử, trước tiên hãy dừng ứng dụng và các dịch vụ liên quan, sao lưu đầy đủ cơ sở dữ liệu trò chuyện (chat.db, bao gồm các tệp WAL nếu có), rồi làm theo hướng dẫn chi tiết để kiểm tra và thu gọn. Công cụ không thể sửa mọi bản ghi quá lớn hoặc không hợp lệ.",
+      "privacy": "Khi cần trợ giúp, hãy cung cấp phiên bản ứng dụng, hệ điều hành, ảnh chụp màn hình và nhật ký đã ẩn thông tin nhạy cảm. Cơ sở dữ liệu có thể chứa hội thoại riêng tư và dữ liệu nhạy cảm. Không tải trực tiếp lên issue công khai.",
+      "recoveryGuide": "Mở hướng dẫn khôi phục lịch sử chi tiết"
+    }
   },
   "referenceValidation": {
     "firstFrame": "Khung hình đầu",
@@ -510,7 +519,8 @@
         "error": "Tải ảnh đại diện thất bại, vui lòng thử lại"
       },
       "setPassword": "Đặt mật khẩu",
-      "languagePortuguese": "Português"
+      "languagePortuguese": "Português",
+      "languageBurmese": "မြန်မာဘာသာ"
     },
     "pikoHub": {
       "play": "Piko một chút",
@@ -770,6 +780,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Đang nén ngữ cảnh…",
+    "contextCompacted": "Đã nén ngữ cảnh để cuộc trò chuyện tiếp tục",
     "clearChat": {
       "title": "Xóa cuộc trò chuyện này?",
       "description": "Lịch sử trò chuyện này sẽ bị xóa. Tin nhắn tiếp theo sẽ bắt đầu ngữ cảnh Agent mới. Canvas, dự án và các cuộc trò chuyện khác không bị ảnh hưởng. Tác vụ tạo đang chạy sẽ tiếp tục.",
@@ -821,6 +833,8 @@
     "emptyTitle": "Bắt đầu trò chuyện",
     "emptyDescription": "Hỏi về tiến độ dự án, các tác vụ thất bại, hoặc nhờ trợ lý sắp xếp kế hoạch sáng tác của bạn.",
     "syncingHistoryTitle": "Đang khởi tạo cuộc trò chuyện",
+    "loadEarlierMessages": "Tải tin nhắn cũ hơn",
+    "loadingEarlierMessages": "Đang tải tin nhắn cũ hơn…",
     "syncingHistoryDescription": "Đang kết nối tới Xia Director và đồng bộ lịch sử chat. Vui lòng đợi.",
     "disclaimer": "Xia Director có thể mắc lỗi. Hãy kiểm tra lại các chi tiết quan trọng về cốt truyện, nhân vật và asset.",
     "placeholder": "Sau khi tải kịch bản lên, hãy nhờ Xia Director đẩy tiến độ tập phim, hình ảnh, âm thanh hoặc video hoàn chỉnh",
@@ -861,10 +875,6 @@
     "dropFiles": "Thả để tải file lên",
     "unsupportedDropFiles": "Chỉ hỗ trợ .txt, .md, .doc và .docx",
     "removeAttachment": "Xoá tệp đính kèm",
-    "approvalExpires": "Hết hạn sau {{seconds}}s",
-    "allowOnce": "Cho phép một lần",
-    "allowAlways": "Luôn cho phép",
-    "deny": "Từ chối",
     "instance": "Instance",
     "model": "Model",
     "noInstances": "Không có instance nào",
@@ -949,6 +959,20 @@
         "vocalsAllowed": "Cho phép có giọng hát",
         "continue": "Tiếp tục với giọng đã chọn"
       },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Xóa các nút",
+          "clear_canvas": "Xóa toàn bộ canvas",
+          "paid_generation": "Chạy quá trình tạo"
+        },
+        "separator": ", ",
+        "credits": "Việc xác nhận sẽ tiêu tốn điểm.",
+        "creditsAmount": "Việc xác nhận sẽ tiêu tốn {{credits}} điểm.",
+        "expiresIn": "Có hiệu lực trong {{minutes}} phút",
+        "confirm": "Xác nhận",
+        "refuse": "Hủy",
+        "failed": "Thao tác thất bại. Vui lòng thử lại."
+      },
       "canvasExecuting": "Đang thực hiện...",
       "currentSelection": "Đang chọn",
       "usedThisTurn": "Dùng trong lượt này",
@@ -1025,6 +1049,11 @@
         "audioOff": "Tắt tiếng"
       },
       "clarification": {
+        "adDirection": {
+          "question": "Bạn muốn xác định hướng sáng tạo cho quảng cáo tương tác này như thế nào?",
+          "describe": "Tôi sẽ mô tả ý tưởng",
+          "recommend": "Hãy đề xuất dựa trên các điểm nổi bật của sản phẩm"
+        },
         "submitFailed": "Không thể gửi thông tin bổ sung. Vui lòng thử lại.",
         "cancelled": "Đã hủy",
         "skipped": "Đã bỏ qua",
@@ -1498,6 +1527,8 @@
       "assetNamePlaceholder": "Nhập tên asset"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "Một nút bạn đã thay đổi đã bị xóa ở nơi khác. Phiên bản của bạn được giữ lại.",
+      "localDeletedRemoteChanged": "Một nút bạn đã xóa vừa được thay đổi ở nơi khác (ví dụ bởi Agent). Nút vẫn bị xóa.",
       "backupFailed": "Sao lưu lên đám mây thất bại. Vui lòng thử lại sau.",
       "backupPending": "Đã lưu trên máy; bản sao lưu đám mây sẽ thử lại.",
       "bodyOverLimit": "Dữ liệu canvas nặng {{actual}} KB, vượt giới hạn {{limit}} KB. Đã tạm dừng lưu.",
@@ -2695,7 +2726,7 @@
         "confirmDescription": "{{feature}} sẽ chạy ngay sau khi bạn xác nhận.",
         "confirmAction": "Xác nhận và chạy",
         "costLoading": "Đang tải mức giá hiện tại của tổ chức",
-        "costUnavailable": "Tạm thời chưa lấy được giá. Hãy thử lại sau.",
+        "costUnavailable": "Không lấy được giá.",
         "openWorld": "Mở Director World",
         "worldNotReady": "Director World chưa sẵn sàng"
       },
@@ -5743,7 +5774,7 @@
       "regenerateVideo": "Tạo lại video",
       "regenerateDescription": "Tạo lại video và chuyển sang GIF",
       "videoBilling": "Cố định khung hình đầu · 4 giây · 720P · Không âm thanh. Video được tính phí theo giá báo; chuyển đổi GIF miễn phí.",
-      "quoteUnavailable": "Chưa thể ước tính điểm sử dụng. Vui lòng thử lại sau.",
+      "quoteUnavailable": "Không thể ước tính điểm sử dụng.",
       "confirm": "Xác nhận tạo",
       "svgDescription": "Chuyển sang SVG trên thiết bị. Ảnh phức tạp có thể mất chi tiết.",
       "videoUnavailable": "Mô hình video không khả dụng",
@@ -5829,8 +5860,6 @@
         "conditionalBranch": "Nhánh điều kiện (else/tự động)",
         "unknownInitialValues": "Không rõ giá trị ban đầu của biến; mặc định là 0 (không có global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} vượt quá số lựa chọn nên đã bị bỏ qua.",
-        "agentRefreshConflict": "Agent đã cập nhật canvas nhưng bạn còn thay đổi cục bộ chưa lưu. Hãy lưu bản sao hoặc làm mới để tiếp tục.",
-        "refreshConflict": "Canvas đã được cập nhật trong nền nhưng bạn còn thay đổi cục bộ chưa lưu. Hãy lưu bản sao hoặc làm mới để tiếp tục.",
         "storyGroup": "Câu chuyện tương tác",
         "segmentTitle": "Đoạn {{index}}",
         "firstFrame": "khung hình đầu",
@@ -6435,6 +6464,7 @@
     }
   },
   "modelPicker": {
+    "details": "Chi tiết về {{model}}",
     "provider": "Nhà cung cấp",
     "model": "Model",
     "empty": "Không có model khả dụng"
@@ -6753,6 +6783,7 @@
         "submit": "Tạo video HD",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "claymoreModel": "Tăng cường video RelayClaw",
         "modelUnavailable": "Mô hình tăng cường đã lưu hiện không khả dụng. Hãy chọn mô hình khả dụng để tiếp tục."
       }
     },
@@ -7120,6 +7151,10 @@
       "voiceMissing": "Cấu hình hoặc chọn một giọng trước đã",
       "translate": "Dịch (Trung ⇄ Anh)",
       "voiceSettings": "Thiết lập giọng",
+      "cloneModel": "Mô hình giọng nói",
+      "noCloneModel": "Chọn mô hình giọng nói khả dụng",
+      "cloneModelsLoadFailed": "Không tải được mô hình giọng nói",
+      "cloneVoiceIdRequired": "Mô hình này cần ID giọng của nhà cung cấp, không thể sao chép trực tiếp từ âm thanh tham chiếu.",
       "advancedSettings": "Thiết lập nâng cao",
       "generate": "Tạo",
       "help": "Trợ giúp",
@@ -7848,7 +7883,63 @@
       "models": "Model & Kênh",
       "storage": "Lưu trữ media",
       "freezoneSkills": "Skill Xiahua",
-      "freezoneRecipes": "Recipe Freezone"
+      "freezoneRecipes": "Recipe Freezone",
+      "agentKeys": "Agent Key"
+    },
+    "agentKeys": {
+      "title": "Agent Key",
+      "intro": "Agent key cho phép các công cụ AI bên ngoài (MCP client) thay mặt bạn thao tác trên các dự án đã chọn và sử dụng tín dụng của bạn. Không chia sẻ key. Nếu key bị mất hoặc lộ, hãy thu hồi ngay.",
+      "create": {
+        "title": "Tạo key",
+        "label": "Tên",
+        "labelPlaceholder": "Ví dụ: MCP client của tôi",
+        "scope": "Phạm vi dự án",
+        "scopeSelected": "Dự án đã chọn",
+        "scopeAll": "Tất cả dự án",
+        "allWarning": "Key này có thể thao tác trên mọi dự án hiện có của bạn và cả các dự án bạn tạo sau này.",
+        "projectsLoading": "Đang tải dự án…",
+        "projectsError": "Không thể tải danh sách dự án.",
+        "noProjects": "Bạn chưa có dự án nào.",
+        "selectProject": "Hãy chọn ít nhất một dự án.",
+        "submit": "Tạo key",
+        "created": "Đã tạo agent key"
+      },
+      "reveal": {
+        "title": "Agent key mới của bạn",
+        "keyLabel": "Agent key",
+        "warning": "Key này chỉ hiển thị một lần. Hãy sao chép ngay và lưu ở nơi an toàn; bạn sẽ không thể xem lại.",
+        "usage": "Trong MCP client, dùng endpoint {{tools}} hoặc {{workflows}} và gửi HTTP header {{header}}.",
+        "copy": "Sao chép",
+        "copied": "Đã sao chép agent key",
+        "copyFailed": "Sao chép thất bại. Vui lòng sao chép thủ công.",
+        "done": "Xong"
+      },
+      "list": {
+        "title": "Key của bạn",
+        "loading": "Đang tải key…",
+        "empty": "Bạn chưa có agent key nào.",
+        "retry": "Thử lại",
+        "allProjects": "Tất cả dự án",
+        "projects": "Dự án: {{names}}",
+        "created": "Tạo lúc {{time}}",
+        "lastUsed": "Dùng lần cuối {{time}}",
+        "neverUsed": "Chưa từng dùng",
+        "expires": "Hết hạn {{time}}"
+      },
+      "status": {
+        "active": "Đang hoạt động",
+        "revoked": "Đã thu hồi",
+        "expired": "Đã hết hạn"
+      },
+      "revoke": {
+        "button": "Thu hồi",
+        "aria": "Thu hồi {{label}}",
+        "confirmTitle": "Thu hồi agent key",
+        "confirmDescription": "Thu hồi “{{label}}”? Các công cụ dùng key này sẽ ngừng hoạt động ngay lập tức. Không thể hoàn tác.",
+        "confirm": "Thu hồi",
+        "cancel": "Hủy",
+        "done": "Đã thu hồi agent key"
+      }
     },
     "modelConfig": {
       "title": "Cấu hình model",
@@ -8122,7 +8213,13 @@
       },
       "mediaModels": {
         "title": "Model tạo ảnh / video / âm thanh",
-        "description": "Danh sách model lấy từ cấu hình cục bộ tuỳ chỉnh hiện tại. Hãy thêm model ảnh hoặc video và cấu hình các năng lực hiển thị trong XiaHua.",
+        "description": "Quản lý mô hình ảnh, video, âm thanh và blockout cục bộ cùng các khả năng của chúng.",
+        "audioPurpose": "Công dụng âm thanh",
+        "speech": "Tổng hợp giọng nói",
+        "promptedSpeech": "Tạo giọng theo mô tả",
+        "voiceDesign": "Thiết kế giọng với mô hình đích",
+        "audioTarget": "Mô hình tổng hợp giọng đích",
+        "audioTargetRequired": "Hãy chọn mô hình tổng hợp giọng tương thích. Nếu bật mô hình thiết kế giọng, bạn cũng cần bật mô hình đích.",
         "addModel": "Thêm model",
         "addModelTitle": "Thêm model media",
         "editModelTitle": "Sửa model media",
@@ -8743,6 +8840,8 @@
       "hint": "Nối ít nhất {{min}} node video để mở được",
       "counts": "Video {{video}} · Âm thanh {{audio}}",
       "open": "Mở dựng & chỉnh video",
+      "exporting": "Đang xuất…",
+      "exportFailed": "Xuất thất bại",
       "reopen": "Mở lại",
       "resultName": "Video đã dựng"
     },
@@ -8966,6 +9065,7 @@
       "noMatches": "Không có nút phù hợp"
     },
     "runtime": {
+      "waitingForConfirmation": "Đang chờ bạn xác nhận",
       "waitingForGenerationParameters": "Đang chờ chọn thông số tạo",
       "clarificationPaused": "Đã tạm dừng chờ câu trả lời"
     }
@@ -9442,6 +9542,7 @@
     "restartTitle": "Bắt đầu lại với yêu cầu mới?",
     "restartHint": "Kết quả của yêu cầu ban đầu chưa xác định. Bắt đầu lại sẽ không thử lại yêu cầu đó. Tạo lại sẽ tạo yêu cầu mới và có thể phát sinh thêm phí. Tiếp tục?",
     "refreshTarget": "Làm mới vị trí lưu",
+    "gatewayPrice": "Chi phí phụ thuộc vào cổng dịch vụ bạn sử dụng",
     "price": "Lần tạo này: {{price}} tín dụng / lần",
     "quoteLoading": "Đang tải giá và trạng thái khả dụng…",
     "close": "Đóng",
@@ -10192,9 +10293,9 @@
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Đối chiếu với ảnh",
-      "pictureCheckHint": "Chiếu mô hình thô ngược lại ảnh tham chiếu để kiểm tra vị trí, kích thước và máy quay có khớp nhau; tốn thêm một hai vòng tạo nên chậm hơn",
+      "pictureCheckHint": "Căn vị trí và kích thước theo ảnh; thêm 1–2 vòng tạo",
       "renderCheck": "Đối chiếu bản dựng",
-      "renderCheckHint": "Dựng mô hình thô thành ảnh, để mô hình so với ảnh tham chiếu rồi sửa lại, hai vòng; tốn thêm hai vòng tạo nên chậm hơn",
+      "renderCheckHint": "Dựng ảnh rồi sửa theo ảnh tham chiếu; thêm 2 vòng tạo",
       "model": "Mô hình",
       "modelDefault": "{{name}} (mặc định)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
@@ -10209,13 +10310,7 @@
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
-      "guide": {
-        "title": "Images that work well",
-        "space": "A scene whose layout is readable: a room, a street, a courtyard",
-        "floor": "The floor is visible, along with at least one wall or clear boundary",
-        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
-        "occlusion": "People or foreground objects do not cover the main pieces"
-      },
+      "guide": "Hiệu quả nhất với ảnh toàn cảnh ngang tầm mắt, thấy rõ sàn và tường",
       "hint": {
         "title": "This image may affect the result; you can still continue",
         "small": "The image is small (short edge under 512 px), so details may be hard to read",
@@ -10252,6 +10347,7 @@
       "close": "Close model library",
       "categories": "Categories",
       "all": "All",
+      "recent": "Gần đây",
       "category": {
         "primitive": "Primitives",
         "furniture": "Furniture",

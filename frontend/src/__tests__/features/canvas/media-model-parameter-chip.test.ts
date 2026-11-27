@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from 'vitest';
 
-import type { MediaModelParameterDefinition } from '@/api/ops';
+import type { MediaModelParameterDefinition } from '@/features/canvas/domain/modelCatalogPayload';
 import {
   filterMediaModelParamsForMode,
   userSelectableMediaModelParameters,

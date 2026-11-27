@@ -3,7 +3,29 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { act, render, cleanup } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SkillNode } from '@/features/canvas/nodes/SkillNode';
+import { useCanvasStore } from '@/stores/canvasStore';
+import { useTaskCenterStore } from '@/task-center/store';
+import { CANVAS_NODE_TYPES, type SkillNodeData } from '@/features/canvas/domain/canvasNodes';
+
+vi.mock('@xyflow/react', async (original) => ({
+  ...await original<typeof import('@xyflow/react')>(),
+  Handle: () => null,
+  useUpdateNodeInternals: () => () => {},
+}));
+vi.mock('@/features/canvas/ui/NodeHeader', () => ({ NodeHeader: () => null, NODE_HEADER_FLOATING_POSITION_CLASS: '' }));
+vi.mock('@/features/viewer-kit/three-d/ThreeDDirectorDialog', () => ({ ThreeDDirectorDialog: () => null }));
+vi.mock('@/features/canvas/ui/BackgroundCropperDialog', () => ({ BackgroundCropperDialog: () => null }));
+vi.mock('@/api/skills', () => ({
+  getSkillRegistry: async () => [{ id: 'sample', provider: 'tool', display_name: 'Sample', description: '', inputs: [], outputs: [] }],
+  getSkillRunResult: async () => ({ status: 'completed', outputs: [] }),
+}));
+vi.mock('@/api/tasks', () => ({ awaitTaskCompletion: async () => undefined }));
+vi.mock('@/lib/url-params', () => ({ readUrl: () => ({ project: 'p', canvas: 'c' }) }));
+afterEach(cleanup);
+
 
 const source = readFileSync(
   resolve(process.cwd(), "src/features/canvas/nodes/SkillNode.tsx"),
@@ -110,4 +132,23 @@ describe("SkillNode director world entry", () => {
     expect(source).toContain("__NO_CHARACTER__");
     expect(source).toContain("__NO_PROP__");
   });
+});
+
+
+it('does not resume or enable submission for a server-owned persisted skill run', async () => {
+  const data: SkillNodeData = { skill_id: 'sample', isGenerating: true,
+    generationTaskKey: 'skill-task', skillRunId: 'run', generationOwner: 'server' };
+  useCanvasStore.getState().setCanvasData([{ id: 'skill', type: CANVAS_NODE_TYPES.skill,
+    position: { x: 0, y: 0 }, data }], []);
+  useTaskCenterStore.setState({ tasks: new Map(), isHydrated: true });
+  let container: HTMLElement;
+  await act(async () => {
+    ({ container } = render(<SkillNode id="skill" data={data} type={CANVAS_NODE_TYPES.skill}
+      selected={false} dragging={false} zIndex={0} isConnectable={true}
+      selectable={true} deletable={true} draggable={true} positionAbsoluteX={0} positionAbsoluteY={0} />));
+  });
+  expect(useCanvasStore.getState().nodes.find(node => node.id === 'skill')?.data)
+    .toMatchObject({ isGenerating: true, generationTaskKey: 'skill-task', generationOwner: 'server' });
+  expect(container!.querySelector('button.bg-cyan-300')?.hasAttribute('disabled')).toBe(true);
+  useTaskCenterStore.getState().reset();
 });

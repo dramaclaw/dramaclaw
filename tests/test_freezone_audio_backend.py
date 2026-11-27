@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import portalocker
@@ -590,9 +591,8 @@ async def test_freezone_audio_speech_drama_first_person_uses_project_narrator(
     monkeypatch.setattr("novelvideo.project_config.OUTPUT_DIR", tmp_path / "state")
     monkeypatch.setattr(audio_node, "IndexTTS2FalClient", FakeTTSGenerator)
     monkeypatch.setattr(
-        audio_node,
-        "build_reference_audio_url",
-        lambda path: f"data://{Path(path).name}",
+        "novelvideo.seedance2_i2v.voice_clone.build_reference_audio_url",
+        AsyncMock(return_value="https://relay.example/voice.wav"),
     )
     FakeTTSGenerator.calls = []
     set_narrator_reference_audio(
@@ -624,11 +624,132 @@ async def test_freezone_audio_speech_drama_first_person_uses_project_narrator(
     assert FakeTTSGenerator.calls == [
         {
             "prompt": "画外音响起。",
-            "audio_url": "data://voice.wav",
+            "audio_url": "https://relay.example/voice.wav",
             "output_path": freezone_audio_speech_output_path(project_dir, "job-1"),
             "emotion_prompt": "以第三人称旁白视角，用客观冷静的解说语气朗读",
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["seed-audio-1.0", "index-tts-2"])
+async def test_clone_worker_sends_selected_model_and_relay_url(tmp_path, monkeypatch, model):
+    from unittest.mock import AsyncMock, Mock
+    from novelvideo.storage import media_relay
+
+    url = "https://1.1.1.1/reference.wav?signature=fixture"
+    upload = Mock(return_value=url)
+    monkeypatch.setattr(media_relay, "upload_media_bytes", upload)
+    monkeypatch.setattr(media_relay, "media_relay_ttl_seconds", lambda *, minimum: minimum)
+
+    sample = tmp_path / "voice.wav"
+    sample.write_bytes(b"reference recording")
+    monkeypatch.setattr(audio_node, "resolve_speech_voice", AsyncMock(return_value=(
+        "third_person", audio_node.FreezoneVoiceRefResolution(sample, "sha", "user_custom")
+    )))
+    client = Mock(return_value=FakeTTSGenerator())
+    monkeypatch.setattr(audio_node, "IndexTTS2FalClient", client)
+    result = await audio_node.generate_freezone_audio_speech(
+        store=None, username="alice", project="demo", project_dir=tmp_path, job_id="clone",
+        text="Test.", clone_model=model,
+    )
+    client.assert_called_once_with(provider="newapi", model=model, egress_context=None)
+    assert result.model == model
+    assert FakeTTSGenerator.calls[-1]["audio_url"] == url
+    upload.assert_called_once_with(sample.read_bytes(), ext="wav", ttl=7200, resource_type="video")
+
+
+@pytest.mark.asyncio
+async def test_clone_without_gateway_key_never_uploads_reference(tmp_path, monkeypatch):
+    from novelvideo.generators import indextts2_fal
+
+    monkeypatch.setattr(config, "get_effective_newapi_gateway_config", lambda: SimpleNamespace(
+        api_key="", base_url="https://gateway.invalid"
+    ))
+    sample = tmp_path / "voice.wav"
+    sample.write_bytes(b"private reference")
+    monkeypatch.setattr(audio_node, "resolve_speech_voice", AsyncMock(return_value=(
+        "third_person", audio_node.FreezoneVoiceRefResolution(sample, "sha", "user_custom")
+    )))
+    relay = AsyncMock()
+    dispatch = AsyncMock()
+    reserve = AsyncMock()
+    monkeypatch.setattr("novelvideo.seedance2_i2v.voice_clone.build_reference_audio_url", relay)
+    monkeypatch.setattr(indextts2_fal.IndexTTS2FalClient, "_generate_via_newapi", dispatch)
+    monkeypatch.setattr(indextts2_fal, "_reserve_tts_model_call", reserve)
+    with pytest.raises(RuntimeError, match="API key not set"):
+        await audio_node.generate_freezone_audio_speech(
+            store=None, username="alice", project="demo", project_dir=tmp_path,
+            job_id="clone", text="Test.", clone_model="seed-audio-1.0",
+        )
+    relay.assert_not_called()
+    dispatch.assert_not_called()
+    reserve.assert_not_called()
+
+
+def test_failed_clone_relay_skips_model_and_refunds_task_reservation(tmp_path, monkeypatch):
+    import asyncio
+    from unittest.mock import Mock
+
+    from novelvideo.generators import indextts2_fal
+    from novelvideo.ports.usage import FeatureSettlementResolution
+    from novelvideo.storage import media_relay
+    from novelvideo.storage.media_errors import MediaStorageUnavailable
+    from novelvideo.task_backend import run_core
+    from test_task_timeout import _FakeTaskManager, _verified_delivery
+
+    monkeypatch.setattr(config, "get_effective_newapi_gateway_config", lambda: SimpleNamespace(
+        api_key="fixture", base_url="https://gateway.invalid"
+    ))
+
+    sample = tmp_path / "voice.wav"
+    sample.write_bytes(b"reference")
+    monkeypatch.setattr(audio_node, "resolve_speech_voice", AsyncMock(return_value=(
+        "third_person", audio_node.FreezoneVoiceRefResolution(sample, "sha", "user_custom")
+    )))
+    generate = AsyncMock()
+    reserve_model = AsyncMock()
+    monkeypatch.setattr(audio_node.IndexTTS2FalClient, "generate", generate)
+    monkeypatch.setattr(indextts2_fal, "_reserve_tts_model_call", reserve_model)
+    upload = Mock(side_effect=OSError("private signed URL must not be echoed"))
+    monkeypatch.setattr(media_relay, "upload_media_bytes", upload)
+    monkeypatch.setattr(media_relay, "media_relay_ttl_seconds", lambda **_: 7200)
+    meter = SimpleNamespace(
+        set_llm_usage_context=Mock(),
+        clear_llm_usage_context=Mock(),
+        resolve_feature_credit_reservation=AsyncMock(return_value=FeatureSettlementResolution(
+            outcome="resolved", reservation_id="audio-res", feature_key="freezone.audio_speech",
+            model_call_credit_policy="feature_included",
+        )),
+        settle_cancelled_feature_credit_reservation=AsyncMock(),
+        settle_feature_credit_reservation=AsyncMock(),
+    )
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: meter)
+    monkeypatch.setattr(run_core, "is_cancel_requested", AsyncMock(return_value=False))
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", AsyncMock())
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+
+    def run_clone(_envelope, _ctx):
+        return asyncio.run(audio_node.generate_freezone_audio_speech(
+            store=None, username="alice", project="demo", project_dir=tmp_path, job_id="clone",
+            text="Test.", clone_model="seed-audio-1.0",
+        ))
+
+    monkeypatch.setattr(run_core, "get_project_task_runner", lambda _task_type: run_clone)
+    manager = _FakeTaskManager()
+    with pytest.raises(MediaStorageUnavailable, match="MEDIA_RELAY_AUDIO_UNAVAILABLE"):
+        run_core.run_project_task_core_sync(
+            _verified_delivery(task_type="freezone_audio_speech"),
+            SimpleNamespace(project_id="proj_timeout", requester_user_id="usr_1", is_home_node=True),
+            manager, run_task_id="task_1",
+        )
+    assert manager.failed and "private signed URL" not in str(manager.failed)
+    upload.assert_called_once()
+    generate.assert_not_awaited()
+    reserve_model.assert_not_awaited()
+    meter.settle_cancelled_feature_credit_reservation.assert_awaited_once()
+    assert meter.settle_cancelled_feature_credit_reservation.await_args.args == ("audio-res",)
+    meter.settle_feature_credit_reservation.assert_not_awaited()
 
 
 @pytest.mark.asyncio

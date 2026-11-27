@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-import novelvideo.config as config
 import novelvideo.model_gateway_settings as gateway_settings
 from novelvideo.director_world import blockout
 from novelvideo.director_world.blockout.artifacts import (
@@ -72,9 +71,8 @@ class FakeModel:
 
 @pytest.fixture(autouse=True)
 def default_model_names(monkeypatch):
-    # 固定在自定义网关（Advanced）：没配环境变量时落到设置页给这一行的逻辑名，
-    # 不随跑测试的机器上网关设置是什么而变。
-    monkeypatch.setattr(config, "uses_local_ce_runtime", lambda: True)
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.setattr(
         gateway_settings,
         "get_effective_llm_config",
@@ -430,36 +428,35 @@ async def test_every_model_call_uses_the_configured_timeout(
     assert [call["timeout_seconds"] for call in fake.calls] == [900.0] * 3
 
 
-def test_the_model_has_its_own_settings_row(monkeypatch):
-    """白模在设置页「业务模型映射」里是独立一行，不再借用看图那行。"""
-    monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
-    monkeypatch.setenv("FREEZONE_VISION_MODEL", "self-hosted-vision-model")
-    assert resolve_blockout_model() == "DC-previz-blockout-LLM"
-
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "  ")
-    assert resolve_blockout_model() == "DC-previz-blockout-LLM"
-
-    # 网关是 BrainClaw 时跟其它业务模型一样走 brainclaw。
+@pytest.mark.parametrize(
+    ("local_ce", "is_brainclaw", "default_model"),
+    [
+        (True, False, "DC-previz-blockout-LLM"),
+        (True, True, "brainclaw"),
+        (False, True, "DC-previz-blockout-LLM"),
+    ],
+    ids=["ce-advanced", "ce-brainclaw", "ee"],
+)
+@pytest.mark.parametrize("legacy_override", [None, "retired-env-model"])
+def test_blockout_model_uses_the_gateway_default_or_explicit_selection(
+    monkeypatch, local_ce, is_brainclaw, default_model, legacy_override
+):
+    monkeypatch.setenv("ST_EDITION", "ce" if local_ce else "ee")
     monkeypatch.setattr(
         gateway_settings,
         "get_effective_llm_config",
-        lambda: SimpleNamespace(is_brainclaw=True),
+        lambda: SimpleNamespace(is_brainclaw=is_brainclaw),
     )
-    assert resolve_blockout_model() == "brainclaw"
+    monkeypatch.setenv("FREEZONE_VISION_MODEL", "self-hosted-vision-model")
+    if legacy_override is not None:
+        monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", legacy_override)
 
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "candidate-b")
-    assert resolve_blockout_model() == "candidate-b"
-
-
-def test_a_requested_model_wins_over_the_configured_one(monkeypatch):
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "candidate-b")
-    assert resolve_blockout_model("candidate-c") == "candidate-c"
-    assert resolve_blockout_model("  ") == "candidate-b"
-    assert resolve_blockout_model(None) == "candidate-b"
+    assert resolve_blockout_model() == default_model
+    assert resolve_blockout_model("  ") == default_model
+    assert resolve_blockout_model(" candidate-c ") == "candidate-c"
 
 
-async def test_the_requested_model_is_the_one_called(image_path, model, monkeypatch):
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "candidate-b")
+async def test_the_requested_model_is_the_one_called(image_path, model):
     fake = model(GOLDEN_PROGRAM)
 
     generation = await generate_blockout_from_image(image_path=image_path, model="candidate-c")
@@ -468,14 +465,13 @@ async def test_the_requested_model_is_the_one_called(image_path, model, monkeypa
     assert generation.model == "candidate-c"
 
 
-async def test_the_configured_model_is_the_one_called(image_path, model, monkeypatch):
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "candidate-b")
+async def test_the_default_model_is_the_one_called(image_path, model):
     fake = model(GOLDEN_PROGRAM)
 
     generation = await generate_blockout_from_image(image_path=image_path)
 
-    assert fake.calls[0]["model_override"] == "candidate-b"
-    assert generation.model == "candidate-b"
+    assert fake.calls[0]["model_override"] == "DC-previz-blockout-LLM"
+    assert generation.model == "DC-previz-blockout-LLM"
 
 
 class FakeEgress:

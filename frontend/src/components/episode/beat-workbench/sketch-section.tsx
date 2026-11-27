@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Accessibility, Box, Crop, Download, ExternalLink, ImageIcon, Loader2, Package, RefreshCw, Sparkles, Square, Upload } from "lucide-react";
 
-import { isNoReferenceMarker } from "@/lib/beat-markers";
+import { isNoReferenceMarker } from "@/features/canvas/domain/beatMarkers";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import {
   backendErrorToastMessage,

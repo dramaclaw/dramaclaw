@@ -23,7 +23,9 @@ from typing import Any
 
 import portalocker
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.freezone.paths import freezone_root
+from novelvideo.video_backend import RETIRED_SEEDANCE_MODELS
 from novelvideo.video_duration import (
     normalize_video_duration_for_backend as normalize_video_duration_for_backend,
     video_duration_bounds_for_backend,
@@ -120,8 +122,6 @@ FREEZONE_NEWAPI_VIDEO_BACKENDS = {
     "newapi_seedance-2.0-fast",
     "newapi_seedance-2.0-value",
     "newapi_seedance-2.0-fast-value",
-    "newapi_seedance-1.0-pro-fast",
-    "newapi_seedance-1.5-pro",
     "newapi_happyhorse-1.0",
 }
 FREEZONE_DISABLED_VIDEO_BACKENDS = {"newapi_grok-video-channel"}
@@ -202,6 +202,17 @@ def _freezone_video_model_from_backend(backend: str | None) -> str:
         if text.startswith(prefix):
             return text[len(prefix) :].strip()
     return text
+
+
+def is_retired_video_node_model(model: str | None) -> bool:
+    """Match the execution model, including IDs saved by older canvases."""
+    token = str(model or "").strip().casefold()
+    canonical = (
+        LEGACY_FREEZONE_VIDEO_BACKEND_ALIASES.get(token)
+        or LEGACY_FREEZONE_VIDEO_LABEL_ALIASES.get(token)
+        or token
+    )
+    return _freezone_video_model_from_backend(canonical) in RETIRED_SEEDANCE_MODELS
 
 
 def freezone_video_resolution_options(backend: str | None) -> tuple[str, ...]:
@@ -348,7 +359,7 @@ def resolve_freezone_video_backend(model: str | None) -> str:
         )
     if text in options:
         return text
-    if text in FREEZONE_DISABLED_VIDEO_BACKENDS:
+    if text in FREEZONE_DISABLED_VIDEO_BACKENDS or is_retired_video_node_model(text):
         raise ValueError(f"unknown video model: {text}")
 
     folded = text.casefold()
@@ -365,10 +376,8 @@ def resolve_freezone_video_backend(model: str | None) -> str:
 
     from novelvideo.generators.video_generator import parse_newapi_video_backend
 
-    if (
-        parse_newapi_video_backend(text)
-        and text not in FREEZONE_DISABLED_VIDEO_BACKENDS
-    ):
+    parsed = parse_newapi_video_backend(text)
+    if parsed and not is_retired_video_node_model(parsed):
         return text
     raise ValueError(f"unknown video model: {text}")
 
@@ -836,7 +845,10 @@ async def run_trusted_freezone_video_gen(
     result = await generator.generate(**generate_kwargs)
     if not result or result.status is not VideoGenStatus.DONE:
         error = result.error if result else "video generation failed"
-        raise RuntimeError(f"freezone video generation failed: {error}")
+        raise with_upstream_status(
+            RuntimeError(f"freezone video generation failed: {error}"),
+            result,
+        )
     if not output_path.exists():
         raise RuntimeError("video generation returned success without output")
     return output_path

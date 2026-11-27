@@ -9,11 +9,7 @@ final reply is plain text for the user; it never restates receipts or modes.
 from __future__ import annotations
 
 import json
-import logging
 import re
-from typing import Any
-
-logger = logging.getLogger(__name__)
 
 CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
     "Your final response is plain text or Markdown for the user, not a JSON object: "
@@ -31,23 +27,6 @@ CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
 )
 
 _LEGACY_ENVELOPE_KEYS = {"message", "mode", "canvas_receipts"}
-
-_UNVERIFIED_WRITE_REQUEST = "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
-_UNVERIFIED_WRITE_REQUEST_WITH_REPLY = (
-    "画布操作未完成：本轮没有可验证的画布写入回执。"
-    "以下是助手的说明，其中的完成表述不代表实际操作结果：\n\n"
-)
-
-
-def receipt_reference(payload: dict[str, Any]) -> tuple[str, int | None]:
-    """Identify a browser receipt or a direct saved revision, never tool status."""
-    key = str(payload.get("bridge_key") or "").strip()
-    revision = payload.get("revision")
-    if not isinstance(revision, int) or isinstance(revision, bool):
-        revision = None
-    if payload.get("canvas_apply_status") == "direct_applied":
-        return "", revision
-    return (key, None) if key else ("", revision)
 
 
 def unwrap_legacy_canvas_envelope(text: str) -> str:
@@ -81,62 +60,3 @@ def unwrap_legacy_canvas_envelope(text: str) -> str:
     except ValueError:
         return text
     return message if isinstance(message, str) else text
-
-
-def finalize_canvas_reply(
-    text: str,
-    *,
-    attempts: dict[str, str],
-    receipts: set[tuple[str, int | None]],
-    failure: str = "",
-    draft_ready: bool = False,
-    draft_updated: bool = False,
-    write_requested: bool = False,
-) -> str:
-    """Report the turn's outcome from recorded write attempts and receipts.
-
-    Every attempted write must succeed; one successful operation cannot mask
-    another failed operation. Catalog-only and read-only answers need no canvas
-    receipt unless the caller identified an explicit write request. A prepared
-    workflow remains a pending user approval, not a write. The model's prose is
-    never scanned for success claims: when a requested write produced no
-    attempt, the host states that first and keeps the reply only as unverified
-    explanation.
-    """
-    states = set(attempts.values())
-    if "failed" in states:
-        return "画布操作未完成：" + (
-            failure or "没有收到所有操作的成功画布写入回执，请重试。"
-        )
-    if "timeout" in states:
-        return "画布操作等待超时：未收到执行回执，请确认画布连接后重试。"
-    if "cancelled" in states:
-        return "画布操作已取消，未完成全部操作。"
-    if states - {"succeeded"}:
-        return "画布操作等待确认或执行回执，尚未完成。"
-    if draft_ready and not attempts:
-        if draft_updated:
-            return "工作流草稿已更新，等待你重新确认后创建画布节点；尚未执行生成。"
-        return "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
-
-    message = unwrap_legacy_canvas_envelope(text).strip()
-    if write_requested and not attempts:
-        if not message:
-            return _UNVERIFIED_WRITE_REQUEST
-        return _UNVERIFIED_WRITE_REQUEST_WITH_REPLY + message
-    if attempts and receipts and not message:
-        # Writes verifiably succeeded but the model sent nothing to show for
-        # them. Report host evidence; a bridge receipt proves admission, not
-        # completion of background generation.
-        logger.warning(
-            "canvas reply missing after verified writes: reporting status writes=%d receipts=%d",
-            len(attempts),
-            len(receipts),
-        )
-        parts = []
-        if any(not key for key, _ in receipts):
-            parts.append("本轮画布修改已保存。")
-        if any(key for key, _ in receipts):
-            parts.append("本轮画布执行请求已受理，生成进度请以画布任务状态为准。")
-        return "".join(parts) + "请查看画布结果，无需重复提交已成功的操作。"
-    return message

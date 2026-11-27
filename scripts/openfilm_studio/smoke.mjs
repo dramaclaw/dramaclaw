@@ -76,7 +76,17 @@ try {
         ...init,
         headers: { 'x-studio-key': key, 'content-type': 'application/json' },
       });
-    const created = await (await api('/api/projects', { method: 'POST', body: JSON.stringify({ path: join(home, 'film'), create: true }) })).json();
+    /* run.mjs always turns host directories on, so a film opens only with its state and runtime
+       folders named, outside the film — the same three paths studio.py registers per node. */
+    const created = await (await api('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify({
+        path: join(home, 'film'),
+        create: true,
+        stateDir: join(home, 'film-state'),
+        runtimeDir: join(home, 'film-runtime'),
+      }),
+    })).json();
     const film = created?.project?.id;
     check(film, `POST /api/projects created no film: ${JSON.stringify(created).slice(0, 200)}`);
     const folder = join(home, 'film');

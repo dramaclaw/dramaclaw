@@ -13,7 +13,7 @@ const completed: CanvasChatCommandApplyResult = {
 
 describe("background workflow completion questions", () => {
   it.each([false, true])("asks to verify unknown historical results instead of retrying (known failure=%s)", async (failed) => {
-    const appendNotification = vi.fn().mockResolvedValue(true);
+    const appendNotification = vi.fn().mockReturnValue(true);
     const { result } = renderHook(() => useBackgroundWorkflowNotifications({
       scopeKey: "canvas", busy: false, appendNotification,
     }));
@@ -31,7 +31,7 @@ describe("background workflow completion questions", () => {
   });
 
   it("waits for the active turn and deduplicates live/recovered completion", async () => {
-    const appendNotification = vi.fn().mockResolvedValue(true);
+    const appendNotification = vi.fn().mockReturnValue(true);
     const { result, rerender } = renderHook(({ busy }) => useBackgroundWorkflowNotifications({
       scopeKey: "project:canvas:agent", busy, appendNotification,
     }), { initialProps: { busy: true } });
@@ -51,7 +51,7 @@ describe("background workflow completion questions", () => {
   });
 
   it("does not report syncing results as complete or leak a notice into another canvas", async () => {
-    const appendNotification = vi.fn().mockResolvedValue(true);
+    const appendNotification = vi.fn().mockReturnValue(true);
     const { result, rerender } = renderHook(({ scopeKey, busy }) => useBackgroundWorkflowNotifications({
       scopeKey, busy, appendNotification,
     }), { initialProps: { scopeKey: "canvas-a", busy: true } });
@@ -67,7 +67,7 @@ describe("background workflow completion questions", () => {
   });
 
   it("asks to investigate a failure rather than confirming success", async () => {
-    const appendNotification = vi.fn().mockResolvedValue(true);
+    const appendNotification = vi.fn().mockReturnValue(true);
     const { result } = renderHook(() => useBackgroundWorkflowNotifications({
       scopeKey: "canvas", busy: false, appendNotification,
     }));

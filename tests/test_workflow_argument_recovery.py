@@ -591,3 +591,32 @@ async def test_missing_plan_identity_can_be_corrected_without_changing_admission
     assert result.structuredContent["status"] == "handler_reached"
     assert seen == [corrected]
     assert "skill" not in arguments["plan"]
+
+
+@pytest.mark.parametrize("builder", [None, {"recipeId": "r"}, {"userGoal": "original"}])
+def test_plan_normalizes_misplaced_user_goal_without_mutation(builder):
+    catalog = {"recipeId": "r", "userGoal": "original"}
+    if builder is not None:
+        catalog["promptBuilder"] = builder
+    node = {"id": "shot", "node_type": "textAnnotationNode", "data": {"workflowCatalog": catalog}}
+    arguments = {"plan": _plan_with(node)}
+    original = deepcopy(arguments)
+
+    result = normalize_workflow_tool_arguments("freezone_prepare_workflow_plan_draft", arguments)
+
+    assert result["plan"]["nodes"][0]["data"]["workflowCatalog"] == {
+        "recipeId": "r",
+        "promptBuilder": {**(builder or {}), "userGoal": "original"},
+    }
+    assert arguments == original
+
+
+@pytest.mark.parametrize("builder", [None, "invalid", {"userGoal": "different"}])
+def test_plan_preserves_malformed_or_conflicting_prompt_builder(builder):
+    node = {
+        "id": "shot",
+        "node_type": "textAnnotationNode",
+        "data": {"workflowCatalog": {"userGoal": "original", "promptBuilder": builder}},
+    }
+    arguments = {"plan": _plan_with(node)}
+    assert normalize_workflow_tool_arguments("freezone_prepare_workflow_plan_draft", arguments) == arguments

@@ -477,3 +477,256 @@ def test_bound_draft_requires_task_identity_and_claimed_state(tmp_path):
             **scope, outcome="confirmed", expected_task_id="task-1"
         )
     assert read_workflow_draft(**scope)[0]["status"] == "confirming"
+
+
+def _draft_for_confirmation_release(tmp_path, status):
+    scope = {"project_dir": tmp_path, "canvas_id": "default"}
+    draft = create_workflow_draft(
+        **scope,
+        project_id="project-a",
+        intent={"skill_id": "video-ad", "user_goal": "Create an ad"},
+        compiled=_compiled(),
+        run_after_create=True,
+    )
+    scope["draft_id"] = draft["draft_id"]
+    claimed, error = claim_workflow_draft_confirmation(**scope, revision=1)
+    assert error is None
+    assert claimed is not None
+    bind_workflow_draft_task(
+        **scope,
+        task_id="task-1",
+        root_task_id="task-1",
+        expected_confirmation_started_at=claimed["confirmation_started_at"],
+    )
+    if status != "confirming":
+        finish_workflow_draft_confirmation(
+            **scope,
+            outcome="ready" if status == "cancelled" else status,
+            expected_task_id="task-1",
+            expected_revision=1,
+        )
+    if status == "cancelled":
+        cancelled, error = cancel_workflow_draft(**scope, expected_revision=1)
+        assert error is None
+        assert cancelled is not None
+    stored, error = read_workflow_draft(**scope)
+    assert error is None
+    assert stored is not None and stored["status"] == status
+    return scope, stored
+
+
+@pytest.mark.parametrize("status", ["confirming", "submitted"])
+def test_release_workflow_draft_confirmation_allows_retry(tmp_path, monkeypatch, status):
+    from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+    scope, before = _draft_for_confirmation_release(tmp_path, status)
+    now = before["updated_at"] + 1
+    monkeypatch.setattr("novelvideo.freezone.workflow_drafts.time.time", lambda: now)
+
+    released = release_workflow_draft_confirmation(
+        **scope, expected_task_id="task-1", expected_revision=1,
+    )
+
+    assert released == {
+        **before, "status": "ready", "confirmation_started_at": None, "updated_at": now,
+    }
+    assert released["task_id"] == before["task_id"] == "task-1"
+    assert released["revision"] == before["revision"] == 1
+    assert read_workflow_draft(**scope) == (released, None)
+    claimed, error = claim_workflow_draft_confirmation(**scope, revision=1)
+    assert error is None
+    assert claimed is not None and claimed["status"] == "confirming"
+
+
+@pytest.mark.parametrize("task_id,revision", [("task-2", 1), ("task-1", 2)])
+def test_release_workflow_draft_confirmation_ignores_stale_identity(tmp_path, task_id, revision):
+    from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+    scope, before = _draft_for_confirmation_release(tmp_path, "submitted")
+
+    released = release_workflow_draft_confirmation(
+        **scope, expected_task_id=task_id, expected_revision=revision,
+    )
+
+    assert released == before
+    assert released["status"] == "submitted"
+    assert read_workflow_draft(**scope) == (before, None)
+
+
+@pytest.mark.parametrize("status", ["ready", "confirmed", "cancelled"])
+def test_release_workflow_draft_confirmation_preserves_settled_draft(tmp_path, status):
+    from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+    scope, before = _draft_for_confirmation_release(tmp_path, status)
+
+    released = release_workflow_draft_confirmation(
+        **scope, expected_task_id="task-1", expected_revision=1,
+    )
+
+    assert released == before
+    assert read_workflow_draft(**scope) == (before, None)
+
+
+def test_release_workflow_draft_confirmation_unknown_draft_returns_none(tmp_path):
+    from novelvideo.freezone.workflow_drafts import release_workflow_draft_confirmation
+
+    assert release_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id="workflow_draft_" + "a" * 32,
+        expected_task_id="task-1",
+        expected_revision=1,
+    ) is None
+
+
+def _revised_draft(tmp_path: Path, *, canvas_id: str = "default") -> dict:
+    """A ready draft at revision 2, so revision 1 is a stale confirmation."""
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id=canvas_id,
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    patched, error = patch_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id=canvas_id,
+        draft_id=draft["draft_id"],
+        expected_revision=1,
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(item_count=2),
+    )
+    assert error is None
+    return patched
+
+
+def _conflict_pending(tmp_path: Path, canvas_id: str = "default", **kwargs):
+    from novelvideo.freezone.workflow_drafts import (
+        workflow_draft_revision_conflict_pending,
+    )
+
+    return workflow_draft_revision_conflict_pending(
+        project_dir=tmp_path, canvas_id=canvas_id, **kwargs
+    )
+
+
+def test_stale_confirmation_is_recorded_until_the_latest_revision_is_confirmed(
+    tmp_path: Path,
+) -> None:
+    draft = _revised_draft(tmp_path)
+    scope = {"project_dir": tmp_path, "canvas_id": "default", "draft_id": draft["draft_id"]}
+    assert _conflict_pending(tmp_path) is None
+
+    claimed, error = claim_workflow_draft_confirmation(**scope, revision=1)
+
+    assert claimed is None
+    assert error["status"] == "workflow_draft_revision_conflict"
+    assert _conflict_pending(tmp_path) == {
+        "draft_id": draft["draft_id"], "current_revision": 2,
+    }
+    assert _conflict_pending(tmp_path, canvas_id="other-canvas") is None
+    # The record is not part of the draft the API and the model see.
+    stored, _ = read_workflow_draft(**scope)
+    assert stored == draft
+
+    claimed, error = claim_workflow_draft_confirmation(**scope, revision=2)
+    assert error is None
+    bind_workflow_draft_task(**scope, task_id="task-1", root_task_id="task-1")
+    assert _conflict_pending(tmp_path) is None
+    # A failed run that returns the draft to ready does not bring the record back.
+    finished = finish_workflow_draft_confirmation(
+        **scope, outcome="ready", expected_task_id="task-1",
+    )
+    assert finished["status"] == "ready"
+    assert _conflict_pending(tmp_path) is None
+
+
+def test_unknown_future_revision_is_not_a_recorded_conflict(tmp_path: Path) -> None:
+    draft = _revised_draft(tmp_path)
+
+    _, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path, canvas_id="default", draft_id=draft["draft_id"], revision=9,
+    )
+
+    assert error["status"] == "workflow_draft_revision_conflict"
+    assert _conflict_pending(tmp_path) is None
+
+
+def test_revision_conflict_survives_a_further_patch(tmp_path: Path) -> None:
+    draft = _revised_draft(tmp_path)
+    scope = {"project_dir": tmp_path, "canvas_id": "default", "draft_id": draft["draft_id"]}
+    claim_workflow_draft_confirmation(**scope, revision=1)
+
+    patch_workflow_draft(
+        **scope,
+        expected_revision=2,
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(item_count=3),
+    )
+
+    assert _conflict_pending(tmp_path) == {
+        "draft_id": draft["draft_id"], "current_revision": 3,
+    }
+
+
+def test_revision_conflict_ends_when_the_draft_is_cancelled(tmp_path: Path) -> None:
+    draft = _revised_draft(tmp_path)
+    scope = {"project_dir": tmp_path, "canvas_id": "default", "draft_id": draft["draft_id"]}
+    claim_workflow_draft_confirmation(**scope, revision=1)
+
+    cancelled, error = cancel_workflow_draft(**scope, expected_revision=2)
+
+    assert error is None and cancelled["status"] == "cancelled"
+    assert _conflict_pending(tmp_path) is None
+
+
+def test_revision_conflict_ends_when_the_draft_expires(tmp_path: Path) -> None:
+    draft = _revised_draft(tmp_path)
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path, canvas_id="default", draft_id=draft["draft_id"], revision=1,
+    )
+
+    assert _conflict_pending(tmp_path, now=draft["expires_at"] - 1) is not None
+    assert _conflict_pending(tmp_path, now=draft["expires_at"] + 1) is None
+    assert prune_expired_workflow_drafts(
+        project_dir=tmp_path, now=draft["expires_at"] + 1,
+    ) == 1
+    assert _conflict_pending(tmp_path) is None
+
+
+def test_database_created_before_the_conflict_record_still_works(tmp_path: Path) -> None:
+    import sqlite3
+
+    db_path = workflow_drafts_db_path(tmp_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE workflow_drafts (
+                draft_id TEXT PRIMARY KEY, schema_version TEXT NOT NULL,
+                project_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
+                revision INTEGER NOT NULL, status TEXT NOT NULL,
+                skill_id TEXT NOT NULL DEFAULT '',
+                run_after_create INTEGER NOT NULL DEFAULT 0,
+                intent_json TEXT NOT NULL, compiled_json TEXT NOT NULL,
+                preview_json TEXT NOT NULL,
+                last_changes_json TEXT NOT NULL DEFAULT '{}',
+                operation_id TEXT NOT NULL DEFAULT '',
+                task_id TEXT NOT NULL DEFAULT '',
+                root_task_id TEXT NOT NULL DEFAULT '',
+                plan_digest TEXT NOT NULL, created_at REAL NOT NULL,
+                updated_at REAL NOT NULL, expires_at REAL NOT NULL,
+                confirmation_started_at REAL, confirmed_at REAL
+            )
+            """
+        )
+    conn.close()
+
+    assert _conflict_pending(tmp_path) is None
+    draft = _revised_draft(tmp_path)
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path, canvas_id="default", draft_id=draft["draft_id"], revision=1,
+    )
+    assert _conflict_pending(tmp_path) == {
+        "draft_id": draft["draft_id"], "current_revision": 2,
+    }

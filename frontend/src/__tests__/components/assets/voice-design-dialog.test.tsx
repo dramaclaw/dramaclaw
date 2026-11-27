@@ -51,6 +51,7 @@ import {
 } from "@/components/assets/voice-design-dialog";
 import { VoiceDesignApiError } from "@/lib/queries/voice-design";
 import * as voiceDesignApi from "@/lib/queries/voice-design";
+import * as runtimeConfig from "@/lib/runtime-config";
 import zh from "../../../../public/locales/zh/translation.json";
 import { queryKeys } from "@/lib/query-keys";
 import { designModels } from "@/__tests__/voice-design-fixtures";
@@ -188,14 +189,35 @@ function mount(selected: VoiceDesignTarget = target) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <I18nextProvider i18n={i18n}>
         <Harness selected={selected} />
       </I18nextProvider>
     </QueryClientProvider>,
   );
+  return { ...view, qc };
 }
+it("keeps phonetic input local and restores only confirmed text in all voice fields", async () => {
+  const { qc } = mount({ kind: "account", key: "ime", label: "我的音色", saveLabel: "保存", onSave: save });
+  const key = queryKeys.voiceDesignDraft("demo", "supertale", "account:ime");
+  const fields = { description: "音色描述", previewText: "试听文本", name: "音色名称" };
+  for (const [prop, label] of Object.entries(fields)) {
+    const field = screen.getByLabelText(label);
+    fireEvent.compositionStart(field);
+    for (const value of ["n", "ni"]) fireEvent.change(field, { target: { value } });
+    expect(field).toHaveValue("ni");
+    expect(qc.getQueryData(key)).toHaveProperty(prop, "");
+    fireEvent.change(field, { target: { value: "你" } });
+    fireEvent.compositionEnd(field, { data: "你" });
+    expect(qc.getQueryData(key)).toHaveProperty(prop, "你");
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "打开" }));
+  for (const label of Object.values(fields)) expect(screen.getByLabelText(label)).toHaveValue("你");
+});
+
 async function fill() {
   fireEvent.change(screen.getByLabelText("音色描述"), {
     target: { value: "温柔" },
@@ -333,6 +355,24 @@ it("requires Unicode lengths and shows actual quote; retains draft on reopen", a
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   fireEvent.click(await screen.findByRole("button", { name: "打开" }));
   expect(screen.getByLabelText("音色描述")).toHaveValue("😀".repeat(500));
+});
+it("shows the gateway fee notice for a CE zero-credit quote", async () => {
+  const edition = vi.spyOn(runtimeConfig, "isCeRuntime").mockReturnValue(true);
+  try {
+    server.use(
+      http.get(`${base}/quote`, () =>
+        HttpResponse.json({
+          ok: true,
+          data: { cost: 0, display: "0", unit: "call", quantity: 1, model: designModels[0] },
+        }),
+      ),
+    );
+    mount();
+    expect(await screen.findByText("费用以所用网关为准")).toBeInTheDocument();
+    expect(screen.queryByText("本次生成：0 积分 / 次")).not.toBeInTheDocument();
+  } finally {
+    edition.mockRestore();
+  }
 });
 it("confirms occupied slot, cancel sends nothing, confirmed save uses snapshot", async () => {
   mount();

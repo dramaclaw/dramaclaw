@@ -1,8 +1,8 @@
 """celery/EE 僵尸回收:按 40 分钟 TTL,不按进程启动时间。
 
 celery worker 独立于 API 进程,被杀后任务永远停在 running,永久占住该
-task_key 的去重守卫与并发额度,既无回收也无告警。inline 那一轴(早于本进程
-启动即必然中断)对它不成立,所以另立一条 TTL 轴:
+task_key 的去重守卫与并发额度,既无回收也无告警。inline 的 owner 锁
+不适用于 celery,所以另立一条 TTL 轴:
 40min = task_time_limit 35min(EE celery_app.py:53)+ 5min 余量。
 
 inline 轴的行为在 test_task_state_restart_reconcile.py,本文件只钉 TTL 轴,
@@ -19,13 +19,10 @@ import threading
 import pytest
 from fastapi import HTTPException
 
-from novelvideo import task_state as task_state_module
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_state import TaskStateManager
 
 pytestmark = pytest.mark.m07
-
-_ANCIENT = "2000-01-01T00:00:00.000000Z"
 
 
 def _minutes_ago(minutes: int) -> str:
@@ -72,7 +69,7 @@ def _backdate(
 
 
 def _restarted() -> TaskStateManager:
-    """清扫按库记忆化在 manager 实例上;新实例 = 模拟新进程首次连接。"""
+    """新 manager 实例模拟新进程首次连接。"""
     return TaskStateManager()
 
 
@@ -115,6 +112,47 @@ def test_celery_running_task_within_ttl_is_untouched(tmp_path: Path) -> None:
     assert listed[0].status == "running"
 
 
+@pytest.mark.parametrize("change", ["replacement", "completed", "heartbeat"])
+def test_celery_sweep_compare_and_set(tmp_path: Path, monkeypatch, change: str) -> None:
+    manager = TaskStateManager()
+    ctx = _ctx(tmp_path)
+    task_id = _running_celery_task(manager, ctx, "job_race")
+    _backdate(manager, ctx, task_id, minutes=41)
+    original = manager._sweep_stale_tasks_on_connection
+
+    class ConcurrentUpdateConnection:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, *args):
+            if "UPDATE task_states" in sql and "= 'celery'" in sql:
+                with manager._connect_context(ctx, skip_auto_sweep=True) as writer:
+                    if change == "replacement":
+                        writer.execute("UPDATE task_states SET task_id = 'replacement'")
+                    elif change == "completed":
+                        writer.execute(
+                            "UPDATE task_states SET status = 'completed', error = 'done'"
+                        )
+                    else:
+                        writer.execute("UPDATE task_states SET updated_at = ?", (_minutes_ago(0),))
+            return self._conn.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    monkeypatch.setattr(
+        manager,
+        "_sweep_stale_tasks_on_connection",
+        lambda conn: original(ConcurrentUpdateConnection(conn)),
+    )
+
+    assert manager.sweep_stale_tasks_for_project(ctx) == 0
+    fetched = manager.get_task_for_project(ctx, "ingest_fast", 0, scope="job_race")
+    assert fetched.task_id == ("replacement" if change == "replacement" else task_id)
+    assert fetched.status == ("completed" if change == "completed" else "running")
+    assert fetched.error == ("done" if change == "completed" else None)
+
+
 def test_celery_zombie_no_longer_blocks_reservation(tmp_path: Path) -> None:
     """这就是现网症状:僵尸行占住去重守卫,该业务任务再也投不出去。"""
     manager = TaskStateManager()
@@ -131,19 +169,15 @@ def test_celery_zombie_no_longer_blocks_reservation(tmp_path: Path) -> None:
     assert state.task_id != task_id
 
 
-def test_ttl_axis_does_not_reach_inline_rows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """TTL 轴只认 celery。inline 仍只由进程启动时间那一轴判(不变量 10)。
+def test_ttl_axis_does_not_reach_inline_rows(tmp_path: Path) -> None:
+    """TTL 轴只认 celery，存活 inline owner 不受 40 分钟 TTL 影响。"""
+    from novelvideo.task_owner import current_owner
 
-    倒填进程启动时间,使 41 分钟前的 inline 行**晚于**进程启动 —— inline 轴
-    不该动它,若 TTL 轴漏写 backend 过滤就会把它扫掉。
-    """
-    monkeypatch.setattr(task_state_module, "_PROCESS_STARTED_AT", _ANCIENT)
     manager = TaskStateManager()
     ctx = _ctx(tmp_path)
     created = manager.create_task_for_project(
-        ctx, "ingest_fast", 0, scope="job_inline", metadata={"backend": "inline"}
+        ctx, "ingest_fast", 0, scope="job_inline",
+        metadata={"backend": "inline", "owner": current_owner()},
     )
     manager.update_progress_for_project(ctx, "ingest_fast", 0, progress=0.1, scope="job_inline")
     _backdate(manager, ctx, created.task_id, minutes=41)
@@ -174,7 +208,7 @@ def test_terminal_celery_row_past_ttl_is_untouched(tmp_path: Path) -> None:
     assert fetched.status == "completed"
 
 
-def test_ordinary_connections_still_auto_sweep_only_once(tmp_path: Path) -> None:
+def test_ordinary_connections_share_sweep_interval(tmp_path: Path) -> None:
     class TrackingManager(TaskStateManager):
         def __init__(self) -> None:
             super().__init__()
@@ -226,14 +260,12 @@ def test_explicit_sweep_rolls_back_partial_update_and_retries(
     original = manager._sweep_stale_tasks_on_connection
     attempts = 0
 
-    class OperationalErrorOnSecondExecuteConnection:
+    class OperationalErrorOnCeleryUpdateConnection:
         def __init__(self, conn) -> None:
             self._conn = conn
-            self._execute_calls = 0
 
         def execute(self, *args, **kwargs):
-            self._execute_calls += 1
-            if self._execute_calls == 2:
+            if "UPDATE task_states" in args[0] and "= 'celery'" in args[0]:
                 raise sqlite3.OperationalError("database is busy")
             return self._conn.execute(*args, **kwargs)
 
@@ -244,7 +276,7 @@ def test_explicit_sweep_rolls_back_partial_update_and_retries(
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            return original(OperationalErrorOnSecondExecuteConnection(conn))
+            return original(OperationalErrorOnCeleryUpdateConnection(conn))
         return original(conn)
 
     monkeypatch.setattr(manager, "_sweep_stale_tasks_on_connection", fail_once)

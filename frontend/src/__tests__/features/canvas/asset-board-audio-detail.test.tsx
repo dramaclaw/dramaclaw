@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { renderWithAudioCatalog as render } from '@/__tests__/helpers/render-with-audio-catalog';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   compileFreezoneRecipePrompt,
-  submitFreezoneAudioMusic,
-  submitFreezoneAudioSpeech,
+  sendGenerationWireRequest,
 } from '@/api/ops';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import {
@@ -42,9 +42,8 @@ vi.mock('react-i18next', async () => {
   return { useTranslation: () => ({ t: zhT }) };
 });
 
-vi.mock('@/lib/queries/generation-credit-cost', () => ({
-  useGenerationCreditCost: () => ({ data: undefined }),
-}));
+const quote = vi.hoisted(() => vi.fn(() => ({ data: undefined })));
+vi.mock('@/lib/queries/generation-credit-cost', () => ({ useGenerationCreditCost: quote }));
 
 // 提交要求 URL 里有 project（否则 useAudioGeneration.generate 直接早退）。
 vi.mock('@/lib/url-params', async (importOriginal) => ({
@@ -57,8 +56,7 @@ const NEVER = new Promise<never>(() => {});
 vi.mock('@/api/ops', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/ops')>()),
   compileFreezoneRecipePrompt: vi.fn(),
-  submitFreezoneAudioSpeech: vi.fn(() => NEVER),
-  submitFreezoneAudioMusic: vi.fn(() => NEVER),
+  sendGenerationWireRequest: vi.fn(() => NEVER),
 }));
 
 function seed(nodes: CanvasNode[]) {
@@ -139,10 +137,10 @@ describe('AssetBoard 音频进主从详情', () => {
 
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
-    await waitFor(() => expect(submitFreezoneAudioMusic).toHaveBeenCalled());
-    const [project, payload] = vi.mocked(submitFreezoneAudioMusic).mock.calls[0];
-    expect(project).toBe('demo-project');
-    expect(payload.prompt).toBe('你好');
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalled());
+    const [request] = vi.mocked(sendGenerationWireRequest).mock.calls[0];
+    expect(request.path).toBe('projects/demo-project/freezone/audio/eleven-music');
+    expect(request.body.input).toBe('你好');
     // 详情按 key=nodeId 重挂也不重复提交：在途态放模块级登记表。
     await waitFor(() => expect(inFlightAudioOps.get('audio-1')).toBe('generate'));
   });
@@ -161,8 +159,8 @@ describe('AssetBoard 音频进主从详情', () => {
 
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
-    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
-    const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalled());
+    const [{ body: payload }] = vi.mocked(sendGenerationWireRequest).mock.calls[0];
     expect(payload.text).toBe('真正的旁白。');
   });
 
@@ -191,9 +189,9 @@ describe('AssetBoard 音频进主从详情', () => {
 
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
-    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalled());
     expect(compileFreezoneRecipePrompt).toHaveBeenCalledTimes(1);
-    const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
+    const [{ body: payload }] = vi.mocked(sendGenerationWireRequest).mock.calls[0];
     expect(payload.text).toBe('真正的旁白。');
     expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('真正的旁白。');
   });
@@ -229,9 +227,9 @@ describe('AssetBoard 音频进主从详情', () => {
 
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
-    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalled());
     expect(compileFreezoneRecipePrompt).toHaveBeenCalledTimes(1);
-    const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
+    const [{ body: payload }] = vi.mocked(sendGenerationWireRequest).mock.calls[0];
     expect(payload.text).toBe('欢迎使用。\n\n他说：快跑。');
     expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('欢迎使用。\n\n他说：快跑。');
   });
@@ -245,9 +243,9 @@ describe('AssetBoard 音频进主从详情', () => {
     render(<AssetBoardView visible onLocateNode={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '旁白' }));
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
-    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(submitFreezoneAudioSpeech).mock.calls[0][1]).toMatchObject({
-      speechMode: 'preset', presetVoice: 'Serena', presetModel: 'edge-tts', text: '欢迎回来。',
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(sendGenerationWireRequest).mock.calls[0][0].body).toMatchObject({
+      speech_mode: 'preset', preset_voice: 'Serena', preset_model: 'edge-tts', text: '欢迎回来。',
     });
   });
 
@@ -258,10 +256,23 @@ describe('AssetBoard 音频进主从详情', () => {
     render(<AssetBoardView visible onLocateNode={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '旁白' }));
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
-    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(submitFreezoneAudioSpeech).mock.calls[0][1]).toMatchObject({
-      speechMode: 'clone', voiceRef: { scope: 'project_narrator' }, text: '欢迎回来。',
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(sendGenerationWireRequest).mock.calls[0][0].body).toMatchObject({
+      speech_mode: 'clone', clone_model_id: 'seed', voice_ref: { scope: 'project_narrator' }, text: '欢迎回来。',
     });
+  });
+
+  it('quotes the selected clone model and the same billable characters used for generation', async () => {
+    seed([audioNode({ displayName: '旁白', audioKind: 'speech', text: '早 🦐', cloneModelId: 'my-index' })]);
+    render(<AssetBoardView visible onLocateNode={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '旁白' }));
+    expect(quote).toHaveBeenCalledWith('feature', 'freezone.audio_speech', {
+      surface: 'canvas', quantity: 2, params: { operation: 'speech', pricing_kind: 'audio',
+        pricing_model: 'index-tts-2', catalog_id: 'my-index', billable_chars: 2, pricing_quantity: 2 },
+    });
+    fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(sendGenerationWireRequest).mock.calls[0][0].body.clone_model_id).toBe('my-index');
   });
 
   it('新建语音节点仍须先选音色，保存重载后也不会回退为旧节点', async () => {
@@ -277,7 +288,7 @@ describe('AssetBoard 音频进主从详情', () => {
     await waitFor(() => expect(
       useCanvasStore.getState().nodes.find(node => node.id === id)?.data.generationError,
     ).toBe('未选择自定义声线，已跳过生成'));
-    expect(submitFreezoneAudioSpeech).not.toHaveBeenCalled();
+    expect(sendGenerationWireRequest).not.toHaveBeenCalled();
   });
 
   it('drama-shot-voice 逐字提交一次自定义音色 TTS，且不编译 Recipe', async () => {
@@ -296,13 +307,13 @@ describe('AssetBoard 音频进主从详情', () => {
 
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
-    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalled());
     expect(compileFreezoneRecipePrompt).not.toHaveBeenCalled();
-    expect(submitFreezoneAudioSpeech).toHaveBeenCalledTimes(1);
-    const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
+    expect(sendGenerationWireRequest).toHaveBeenCalledTimes(1);
+    const [{ body: payload }] = vi.mocked(sendGenerationWireRequest).mock.calls[0];
     expect(payload.text).toBe('他说：快跑。');
-    expect(payload.speechMode).toBe('clone');
-    expect(payload.voiceRef).toEqual({ scope: 'user_custom', voiceId: 'voice-1' });
+    expect(payload.speech_mode).toBe('clone');
+    expect(payload.voice_ref).toEqual({ scope: 'user_custom', character_name: '', identity_id: '', slot: '', voice_id: 'voice-1' });
   });
 
   it('非精确 drama-shot-voice 绑定不得借用逐字直通', async () => {
@@ -321,9 +332,9 @@ describe('AssetBoard 音频进主从详情', () => {
 
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
-    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalled());
     expect(compileFreezoneRecipePrompt).toHaveBeenCalledTimes(1);
-    expect(submitFreezoneAudioSpeech).toHaveBeenCalledTimes(1);
+    expect(sendGenerationWireRequest).toHaveBeenCalledTimes(1);
   });
 
   it('故事板隐藏（visible=false）→ 命令波形播放器暂停内部 <audio>', () => {

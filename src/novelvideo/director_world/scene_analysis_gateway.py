@@ -23,7 +23,11 @@ def resolve_scene_analysis_model(
 
 
 def scene_analysis_gateway_configured() -> bool:
-    """Use the same effective LLM credentials as the unified gateway client."""
+    """Whether the platform LLM gateway can serve a platform/personal analysis.
+
+    Organization analyses do not depend on this: they run on the organization
+    credential the panorama runner claims for each analysis.
+    """
     from novelvideo.config import get_newapi_runtime_credentials
     from novelvideo.model_gateway_settings import get_effective_llm_config
 
@@ -49,8 +53,10 @@ async def analyze_scene_references(
 ) -> str:
     """Send a reference sheet through the edition's configured LLM gateway.
 
-    Organization analysis remains disabled at the panorama runner: these child
-    processes do not yet have their own admitted organization operation.
+    For an organization project this runs in a child process whose parent
+    (`stage_asset_tasks.run_scene_360`) already claimed the operation and handed
+    over the organization credential through the environment; that credential is
+    used explicitly and the platform key is never consulted.
     """
     from pydantic_ai import Agent, BinaryContent, PromptedOutput, StructuredDict
 
@@ -59,9 +65,14 @@ async def analyze_scene_references(
         get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
     )
-    from novelvideo.task_backend.subprocesses import require_direct_model_egress_allowed
+    from novelvideo.task_backend.subprocesses import (
+        organization_gateway_credential_from_env,
+        require_direct_model_egress_allowed,
+    )
 
-    require_direct_model_egress_allowed(None)
+    organization_credential = organization_gateway_credential_from_env()
+    if organization_credential is None:
+        require_direct_model_egress_allowed(None)
     transport = get_newapi_text_pydantic_model(
         model_env,
         default_model,
@@ -69,7 +80,11 @@ async def analyze_scene_references(
         timeout_seconds_override=timeout_seconds,
         brainclaw_profile=BrainClawProfile.FREEZONE_VISION_ANALYSIS,
         capability="vision.analyze",
+        credential_override=organization_credential,
     )
+    # One claimed organization operation covers exactly one organization
+    # gateway submit, so an output-validation failure must not re-submit.
+    retry_kwargs = {"retries": {"output": 0}} if organization_credential else {}
     agent = Agent(
         transport,
         output_type=PromptedOutput(
@@ -82,6 +97,7 @@ async def analyze_scene_references(
             "max_tokens": max_tokens,
             **get_newapi_structured_output_model_settings(),
         },
+        **retry_kwargs,
     )
     result = await asyncio.wait_for(
         agent.run(

@@ -161,8 +161,6 @@ def test_source_file_extends_release_and_builds_all_three() -> None:
         "dockerfile": "Dockerfile",
         "args": {
             "INSTALL_WORLD": "${INSTALL_WORLD:-0}",
-            "HERMES_REPO": "${HERMES_REPO:-https://github.com/dramaclaw/hermes-agent.git}",
-            "HERMES_REF": "${HERMES_REF:-brainclaw/evidence-plane}",
         },
     }
     assert services["newapi"]["build"] == {
@@ -188,16 +186,16 @@ def test_compose_runtime_matches_the_selected_image() -> None:
     source = _api(SOURCE_FILE)["environment"]
     release = _api(RELEASE_FILE)["environment"]
     assert source["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
-    assert source["HERMES_CLI_PATH"] == "/usr/local/bin/hermes"
+    assert "HERMES_CLI_PATH" not in source
     assert release["DRAMACLAW_CHAT_BACKEND"] == "${DRAMACLAW_CHAT_BACKEND:-codex}"
-    assert release["HERMES_CLI_PATH"] == "/usr/local/bin/hermes"
+    assert "HERMES_CLI_PATH" not in release
 
 
-def test_all_ce_compose_variants_keep_hermes_explicit_fallback_enabled() -> None:
+def test_all_ce_compose_variants_do_not_enable_retired_hermes_fallback() -> None:
     for relative_path in COMPOSE_FILES:
         api = _api(relative_path)
 
-        assert api["environment"]["SUPERTALE_ALLOW_UNSANDBOXED"] == "1"
+        assert "SUPERTALE_ALLOW_UNSANDBOXED" not in api["environment"]
         assert api["environment"]["ST_CONTROL_PLANE_DSN"] == ""
 
 
@@ -215,6 +213,7 @@ def test_env_example_configures_data_root_instead_of_individual_directories() ->
     assert "# NOVELVIDEO_DATA_ROOT=" in env_example
 
 
+CODEX_VERSION = "0.162.0"
 CODEX_REF_RE = re.compile(r'^ARG CODEX_REF="([0-9a-f]{40})"$', re.MULTILINE)
 CODEX_RUNTIME_IMAGE_RE = re.compile(
     r'^ARG CODEX_RUNTIME_IMAGE="docker\.io/claymorelab/codex-dramaclaw:'
@@ -240,7 +239,7 @@ def test_container_consumes_only_the_pinned_prebuilt_codex_runtime() -> None:
     assert dockerfile.index("ARG CODEX_RUNTIME_IMAGE=") < first_from
 
     assert tag_ref == codex_ref[:7]
-    assert 'ARG CODEX_VERSION="0.164.0"' in dockerfile
+    assert f'ARG CODEX_VERSION="{CODEX_VERSION}"' in dockerfile
 
     assert "FROM ${CODEX_RUNTIME_IMAGE} AS codex-runtime" in dockerfile
     assert (
@@ -299,12 +298,25 @@ def test_pinned_codex_runtime_verification(
     verifier = runpy.run_path(str(REPOSITORY_ROOT / "deploy/codex/verify_runtime.py"))
     ref = CODEX_REF_RE.findall((REPOSITORY_ROOT / "Dockerfile").read_text())[0]
     content = b"mock-codex-binary"
+    receipt_tests = [
+        "debug_redacts_responses_api_client_metadata_values",
+        "turn_metadata_extracts_dramaclaw_gateway_key_without_serializing_it",
+        "turn_scoped_responses_auth_replaces_the_provider_placeholder",
+        "detail_policies_apply_the_expected_budgets",
+        "preparation_reports_tool_output_item_id",
+        "resize_notices_count_file_backed_images_and_skip_failed_images",
+        "preparation_replaces_only_failed_tool_images_and_preserves_metadata",
+        "tool_output_and_message_images_use_separate_cache_entries",
+        "large_tool_output_png_uses_first_jpeg_quality_that_fits",
+        "large_tool_output_png_flattens_alpha_onto_white",
+        "tool_output_jpeg_over_budget_keeps_dimensions_and_warns_once",
+    ]
     manifest = {
         "repo": "https://github.com/claymorelab/codex",
         "commit": ref,
-        "upstream_version": "0.164.0",
+        "upstream_version": CODEX_VERSION,
         "target": verifier["TARGETS"][arch],
-        "tests": sorted(verifier["REQUIRED_TESTS"]),
+        "tests": receipt_tests,
         "bytes": len(content),
         "sha256": hashlib.sha256(content).hexdigest(),
     }
@@ -314,16 +326,16 @@ def test_pinned_codex_runtime_verification(
     binary.write_bytes(content)
     ref_file.write_text("wrong" if corrupt == "ref_file" else ref)
     if corrupt and corrupt != "ref_file":
-        manifest[corrupt] = [] if corrupt == "tests" else "wrong"
+        manifest[corrupt] = receipt_tests[1:] if corrupt == "tests" else "wrong"
     metadata.write_text(json.dumps(manifest))
     if corrupt:
         with pytest.raises(ValueError):
             verifier["verify_runtime"](
-                binary, metadata, ref_file, ref=ref, version="0.164.0", arch=arch
+                binary, metadata, ref_file, ref=ref, version=CODEX_VERSION, arch=arch
             )
     else:
         verifier["verify_runtime"](
-            binary, metadata, ref_file, ref=ref, version="0.164.0", arch=arch
+            binary, metadata, ref_file, ref=ref, version=CODEX_VERSION, arch=arch
         )
 
 
@@ -345,3 +357,33 @@ def test_env_example_documents_image_variables() -> None:
         "DRAMACLAW_GATEWAY_VERSION",
     ):
         assert re.search(rf"^# {key}=", env_example, re.MULTILINE), key
+
+
+def test_release_image_does_not_install_the_retired_hermes_runtime() -> None:
+    dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text()
+    assert "DRAMACLAW_CHAT_BACKEND=codex" in dockerfile
+    for obsolete in (
+        "ARG HERMES_",
+        "HERMES_CLI_PATH=",
+        "uv pip install --system -e",
+        "hermes --version",
+        "deploy/verify_hermes_fork.py",
+    ):
+        assert obsolete not in dockerfile
+    assert "RUN ! command -v hermes" in dockerfile
+    # MCP and Freezone still load shared tool definitions from this legacy path.
+    assert "COPY .hermes ./.hermes" in dockerfile
+    assert "bubblewrap" in dockerfile
+    assert "codex-linux-sandbox --help" in dockerfile
+
+
+def test_evidence_compose_uses_codex_and_the_image_api_port() -> None:
+    evidence = yaml.safe_load(
+        (REPOSITORY_ROOT / "docker-compose.brainclaw-evidence.yml").read_text()
+    )
+    service = evidence["services"]["dramaclaw"]
+    assert "args" not in service["build"]
+    assert "DRAMACLAW_CHAT_BACKEND=codex" in service["environment"]
+    assert service["ports"] == [
+        "${DRAMACLAW_BIND_ADDRESS:-127.0.0.1}:${DRAMACLAW_PORT:-8000}:8780"
+    ]

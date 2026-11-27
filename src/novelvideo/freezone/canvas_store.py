@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from novelvideo.freezone.canvas_changes import clear_canvas_changes, publish_canvas_change
 from novelvideo.freezone.paths import canvas_path, canvases_dir
 from novelvideo.ports import get_canvas_write_mutex
 from novelvideo.utils.async_ops import call_blocking
@@ -233,6 +234,9 @@ def ensure_default_canvas(
             return CanvasEnsureResult(payload=deleted, created=False)
         payload = default_canvas_payload(project_id=project_id, actor_id=actor_id)
         atomic_write_json(path, payload, fence=guard.reassert)
+        publish_canvas_change(
+            project_dir, "default", None, payload, save_source="system_default"
+        )
         return CanvasEnsureResult(payload=payload, created=True)
 
 
@@ -642,14 +646,16 @@ def check_dangerous_empty_overwrite(
 ) -> None:
     old_nodes = _node_count(existing)
     new_nodes = _node_count(payload)
-    # The only legal way to shrink a non-empty canvas to empty is an
-    # explicit ``manual_clear`` with ``allow_empty_overwrite=true``. Any
-    # other combination (autosave + flag, manual_save with/without flag,
-    # manual_clear without flag) is rejected as defense-in-depth — a
-    # buggy / refactored / malicious client cannot wipe user data by
-    # mislabeling its request.
+    # A non-empty canvas may only shrink to empty through an explicit
+    # ``manual_clear`` (user), ``projection_remove`` or ``agent_confirmed``
+    # (an Agent write the user confirmed) together with
+    # ``allow_empty_overwrite=true``. Any other combination is rejected as
+    # defense-in-depth: a buggy or malicious client cannot wipe user data by
+    # mislabeling its request (the client PUT route also refuses the
+    # server-only sources).
     if old_nodes > 0 and new_nodes == 0 and not (
-        save_source in {"manual_clear", "projection_remove"} and allow_empty_overwrite
+        save_source in {"manual_clear", "projection_remove", "agent_confirmed"}
+        and allow_empty_overwrite
     ):
         raise DangerousEmptyCanvasOverwrite(
             old_nodes=old_nodes,
@@ -780,6 +786,14 @@ def save_canvas(
         backup_path = backup_canvas_snapshot(path, existing)
         atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)
+        publish_canvas_change(
+            project_dir,
+            canvas_id,
+            existing,
+            payload,
+            save_source=save_source,
+            client_save_id=normalized_client_save_id or None,
+        )
         response_cache = {
             "saved": True,
             "revision": payload.get("revision"),
@@ -839,12 +853,53 @@ def restore_canvas_version(
         backup_path = backup_canvas_snapshot(path, existing)
         atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)
+        publish_canvas_change(
+            project_dir,
+            canvas_id,
+            existing,
+            payload,
+            save_source=str(payload.get("save_source") or "restore"),
+        )
         return CanvasRestoreResult(
             payload=payload,
             existing=existing,
             history_payload=history_payload,
             backup_path=backup_path,
         )
+
+
+# Soft deletes keep this many archived snapshots per canvas id; older ones are
+# removed on the next delete. The canvas's _history is left alone.
+DELETED_ARCHIVES_KEPT = 3
+
+
+def canvas_deletion_count(project_dir: Path, canvas_id: str) -> int:
+    """How many times this canvas id was soft-deleted.
+
+    Only ever grows: pending agent confirmations compare it to detect a canvas
+    deleted (and maybe recreated) since they were recorded. The tombstone holds
+    the count, since old archives are pruned; tombstones written before the
+    count existed fall back to counting the archives, one per deletion.
+    """
+    path = canvas_path(project_dir, canvas_id)
+    try:
+        tombstone = load_canvas_json(path.with_name(f"{path.stem}.deleted.json"))
+    except CanvasStoreError:
+        tombstone = None
+    count = tombstone.get("deletion_count") if isinstance(tombstone, dict) else None
+    if isinstance(count, int) and not isinstance(count, bool):
+        return count
+    deleted_dir = canvas_deleted_dir_for_path(path)
+    if not deleted_dir.is_dir():
+        return 0
+    return sum(1 for _ in deleted_dir.glob("*.json"))
+
+
+def _prune_deleted_archives(deleted_dir: Path, *, keep: int = DELETED_ARCHIVES_KEPT) -> None:
+    # Names start with the deletion time (CANVAS_HISTORY_TS_FORMAT), so they sort by age.
+    archives = sorted(deleted_dir.glob("*.json"), reverse=True)
+    for stale in archives[keep:]:
+        stale.unlink(missing_ok=True)
 
 
 def soft_delete_canvas(
@@ -858,6 +913,7 @@ def soft_delete_canvas(
         existing = load_canvas_json(path)
         if not path.exists():
             return CanvasDeleteResult(existing=existing, deleted_path=None)
+        deletion_count = canvas_deletion_count(project_dir, canvas_id) + 1
         deleted_dir = canvas_deleted_dir_for_path(path)
         deleted_dir.mkdir(parents=True, exist_ok=True)
         target = deleted_dir / canvas_deleted_filename(existing)
@@ -879,8 +935,10 @@ def soft_delete_canvas(
                 "deleted_by": deleted_by,
                 "revision": revision if isinstance(revision, int) else None,
                 "deleted_snapshot": relative_project_path(project_dir, target),
+                "deletion_count": deletion_count,
             },
         )
+        _prune_deleted_archives(deleted_dir)
         # Drop the idempotency cache for this canvas. Once the canvas is
         # tombstoned, any future save that reuses a stale client_save_id from
         # the cached entries would either replay a now-meaningless response or
@@ -892,6 +950,7 @@ def soft_delete_canvas(
                 idem_path.unlink()
             except FileNotFoundError:
                 pass
+        clear_canvas_changes(project_dir, canvas_id)
         return CanvasDeleteResult(existing=existing, deleted_path=target)
 
 

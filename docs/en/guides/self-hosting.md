@@ -38,7 +38,7 @@ Key points shared by both (defined once in `docker-compose.release.yml`, reused 
 |---|---|---|
 | Services | `api` + `newapi` + `web` | No PG/Redis; `newapi` is the bundled gateway |
 | Images (release) | `${DRAMACLAW_IMAGE_PREFIX:-claymorelab}/...` | Pulled from Docker Hub; set `DRAMACLAW_IMAGE_PREFIX` in `.env` to use the ACR mirror (pinned tags only) |
-| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | For this release, explicitly set `2.1.1` / `v1.0.0-rc.24-dramaclaw.3` in `.env` |
+| Versions (release) | `DRAMACLAW_VERSION` (api/web), `DRAMACLAW_GATEWAY_VERSION` | For this release, explicitly set `2.2.0` / `v1.0.0-rc.24-dramaclaw.5` in `.env` |
 | Agent backend | `DRAMACLAW_CHAT_BACKEND` | Both source and release Compose default to `codex` |
 | Port | `8780:8780` | REST API |
 | Gateway admin port | `${ST_NEWAPI_BIND:-127.0.0.1}:${ST_NEWAPI_PORT:-3000}:3000` | Bound to `127.0.0.1` by default; set `ST_NEWAPI_BIND=0.0.0.0` in `.env` to widen it |
@@ -53,11 +53,11 @@ Groups (each item is commented inline in `.env.example`): local NewAPI provision
 
 ### Release versions and Agent backend
 
-For the **v2.1.1 published images**, add or update these entries in `.env`:
+For the **v2.2.0 published images**, add or update these entries in `.env`:
 
 ```dotenv
-DRAMACLAW_VERSION=2.1.1
-DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+DRAMACLAW_VERSION=2.2.0
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5
 ```
 
 These are also the current release Compose defaults. Explicit pins make the selected
@@ -67,8 +67,8 @@ version clear. Check the resolved images without starting anything:
 docker compose -f docker-compose.release.yml config --images
 ```
 
-Both release and source Compose select the bundled credential-safe Codex 0.164.0 runtime
-at v2.1.1 by default. An explicit `DRAMACLAW_CHAT_BACKEND` value in your shell or `.env`
+Both release and source Compose select the bundled credential-safe Codex 0.162.0 runtime
+at v2.2.0 by default. An explicit `DRAMACLAW_CHAT_BACKEND` value in your shell or `.env`
 overrides the Compose default; use `codex` if an older configuration selects another backend.
 Agent backend selection
 does not select your Official/Custom/Hybrid model gateway mode; configure that in the UI.
@@ -148,6 +148,8 @@ docker run --rm -v dramaclaw-ce_newapi-data:/data -v "$PWD":/backup alpine \
 
 ## 6. Upgrades
 
+**Voice design costs.** If you used the old environment variables to control voice design costs, review your gateway's model access and budget before upgrading. After the upgrade, `VOICE_DESIGN_ENABLED=0` no longer disables voice design, and `VOICE_DESIGN_DAILY_LIMIT` and `VOICE_DESIGN_CHANNEL_DAILY_LIMIT` no longer limit calls. Generation can incur charges when the active catalog has an available voice design model and your gateway allows the request.
+
 Source build (both checkouts):
 
 ```bash
@@ -161,7 +163,7 @@ docker compose up -d --build
 Image mode:
 
 ```bash
-# edit .env: DRAMACLAW_VERSION=2.1.1 (and DRAMACLAW_GATEWAY_VERSION if the release notes say so)
+# edit .env: DRAMACLAW_VERSION=2.2.0 (and DRAMACLAW_GATEWAY_VERSION if the release notes say so)
 docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```

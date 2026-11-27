@@ -491,6 +491,23 @@ def validate_media_model_catalog_config(
     if not isinstance(config, dict):
         raise MediaModelSchemaError("media model config must be an object")
     expected_endpoint = media_model_request_endpoint(media_type)
+    if "pickerGuide" in config:
+        guide = config["pickerGuide"]
+        if not isinstance(guide, dict) or set(guide) - {"zh", "en", "pt", "vi", "my"}:
+            raise MediaModelSchemaError("pickerGuide must be keyed by supported language")
+        for localized in guide.values():
+            if not isinstance(localized, dict) or set(localized) - {"summary", "detail", "tags"}:
+                raise MediaModelSchemaError("invalid pickerGuide fields")
+            for field, limit in (("summary", 100), ("detail", 320)):
+                if field in localized and (
+                    not isinstance(localized[field], str) or len(localized[field]) > limit
+                ):
+                    raise MediaModelSchemaError(f"pickerGuide.{field} exceeds its text limit")
+            tags = localized.get("tags", [])
+            if not isinstance(tags, list) or len(tags) > 2 or any(
+                not isinstance(tag, str) or not tag.strip() or len(tag) > 24 for tag in tags
+            ):
+                raise MediaModelSchemaError("pickerGuide.tags accepts up to two short labels")
     reserved_fields = sorted(RESERVED_CATALOG_CONFIG_FIELDS.intersection(config))
     if reserved_fields:
         raise MediaModelSchemaError(

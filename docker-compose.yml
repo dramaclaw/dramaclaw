@@ -12,10 +12,9 @@ services:
       file: docker-compose.release.yml
       service: api
     image: dramaclaw-local/api
-    # Source images include the pinned Codex runtime and the reviewed Hermes fork.
+    # Source images use the pinned, credential-safe Codex runtime.
     environment:
       DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-codex}"
-      HERMES_CLI_PATH: /usr/local/bin/hermes
     build:
       context: .
       dockerfile: Dockerfile
@@ -24,9 +23,6 @@ services:
       # 注：权重运行时下载不入镜像；slim base 为 CPU，GPU 加速需 CUDA base；Mac Docker 无 GPU。
       args:
         INSTALL_WORLD: "${INSTALL_WORLD:-0}"
-        # Keep the reviewed Hermes fork available for explicit fallback.
-        HERMES_REPO: "${HERMES_REPO:-https://github.com/dramaclaw/hermes-agent.git}"
-        HERMES_REF: "${HERMES_REF:-brainclaw/evidence-plane}"
   newapi:
     extends:
       file: docker-compose.release.yml

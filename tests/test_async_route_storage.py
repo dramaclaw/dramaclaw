@@ -10,30 +10,6 @@ import pytest
 
 
 @pytest.mark.anyio
-async def test_chat_notification_uses_async_storage(monkeypatch) -> None:
-    from novelvideo.api.routes import chat
-
-    seen: list[tuple] = []
-
-    async def fake_append_message(*args, **kwargs):
-        seen.append((args, kwargs))
-        return {"id": "message-1", "content": "通知"}
-
-    monkeypatch.setattr(chat.chat_store, "append_message_async", fake_append_message)
-
-    response = await chat.append_chat_notification(
-        chat.ChatNotificationIn(
-            scope=chat.ChatScopePayload(kind="home"),
-            text="通知",
-        ),
-        user={"username": "alice"},
-    )
-
-    assert response["data"]["id"] == "message-1"
-    assert seen
-
-
-@pytest.mark.anyio
 async def test_chat_assistant_turn_is_idempotent(monkeypatch, tmp_path) -> None:
     from novelvideo.chat.store import ChatScope, ChatStore
 

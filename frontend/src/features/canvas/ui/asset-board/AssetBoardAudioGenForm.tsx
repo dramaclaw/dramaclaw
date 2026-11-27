@@ -12,9 +12,8 @@ import type {
   CanvasNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import {
-  DEFAULT_MUSIC_LENGTH_MS,
   MUSIC_LENGTH_PRESETS,
-  musicBillingSecondsFromMs,
+  useCanvasAudioQuote,
 } from '@/features/canvas/nodes/AudioOperationsPanel';
 import { deriveAudioText, useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
 import { requiresCustomVoiceSelection } from '@/features/canvas/nodes/audioVoicePolicy';
@@ -28,7 +27,7 @@ import {
   NODE_INLINE_ICON_BUTTON_CLASS,
 } from '@/features/canvas/ui/nodeControlStyles';
 import { CANVAS_NODE_OPS_PANEL_CLASS } from '@/features/canvas/ui/nodeFrameStyles';
-import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 import { createAssetBoardOpsRegistry } from './assetBoardOpsState';
@@ -124,21 +123,11 @@ export function AssetBoardAudioGenForm({
 
   const text = useMemo(() => deriveAudioText(data), [data]);
   const emotionPrompt = data.emotionPrompt ?? '';
-  const musicLengthMs =
-    typeof data.musicLengthMs === 'number' ? data.musicLengthMs : DEFAULT_MUSIC_LENGTH_MS;
+  const { choice, catalog, isClone, musicLengthMs, audioCost } = useCanvasAudioQuote(data, effectivePrompt, isMusic);
   const currentVoiceRef: AudioVoiceRef = data.voiceRef ?? { scope: 'project_narrator' };
   const voiceMissing = requiresCustomVoiceSelection(data);
   // 已有产物 → 提交键语义是「重新生成」（与图片/视频详情口径一致）。
   const hasAudio = typeof data.audioUrl === 'string' && data.audioUrl.length > 0;
-
-  // 算力询价：与工作流 AudioOperationsPanel 同一口径（music 按计费秒数，speech 按次）。
-  const audioCost = useGenerationCreditCost(
-    isMusic ? 'freezone_audio_music' : 'beat_tts',
-    null,
-    isMusic
-      ? { surface: 'canvas', quantity: musicBillingSecondsFromMs(musicLengthMs) }
-      : {},
-  );
 
   const patch = useCallback(
     (next: Partial<AudioNodeData>) => {
@@ -151,13 +140,16 @@ export function AssetBoardAudioGenForm({
     if (audioOpsRegistry.inFlight.get(nodeId)) return;
     audioOpsRegistry.markOpStart(nodeId, 'generate');
     try {
+      if (isClone && choice && !data.cloneModelId) patch({ cloneModelId: choice.id });
       await generate();
     } finally {
       audioOpsRegistry.markOpSettled(nodeId);
     }
-  }, [generate, nodeId]);
+  }, [generate, nodeId, choice, data.cloneModelId, isClone, patch]);
 
-  const submitDisabled = isGenerating || busyOp !== null || effectivePrompt.length === 0;
+  const submitDisabled = isGenerating || busyOp !== null || effectivePrompt.length === 0 ||
+    audioCost.error instanceof BillingRuleNotConfiguredError ||
+    (isClone && (!choice || choice.requiresVoiceId || catalog.isError));
 
   return (
     // 外框与图片/视频生成条同款（CANVAS_NODE_OPS_PANEL_CLASS + 节点圆角）：三种

@@ -1233,21 +1233,6 @@ class HermesPool:
             await self._close_slot(slot)
             return True
 
-    async def resolve_permission(
-        self,
-        username: str,
-        agent_profile: str,
-        request_id: str | int,
-        option_id: str,
-    ) -> bool:
-        """Resolve an ACP permission request on an existing worker profile."""
-        profile = (agent_profile or "main").strip() or "main"
-        async with self._lock:
-            slot = self._slots.get(self._slot_key(username, profile))
-            if slot is None:
-                return False
-            return await slot.thread.resolve_permission(request_id, option_id)
-
     async def drain_user(self, username: str) -> bool:
         """Reject new turns and close after the current turn boundary."""
         async with self._lock:

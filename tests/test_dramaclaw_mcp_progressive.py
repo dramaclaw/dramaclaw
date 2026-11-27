@@ -14,6 +14,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from novelvideo.chat import dramaclaw_mcp
+from novelvideo.chat.mcp_schema_guidance import schema_with_guidance
 from novelvideo.interactive_story.models import StoryDraftV2, StoryPatchV2
 
 CE_ROOT = Path(__file__).resolve().parents[1]
@@ -116,38 +117,30 @@ def _confirmed_canvas_receipt():
         "canvas_id": "canvas-a", "bridge_key": "bridge-a",
         "tool_call_status": "completed", "canvas_apply_status": "applied",
         "applied": True, "cancelled": False, "errors": [],
-        "message": "Frontend executor reported the canvas command result.",
+        "message": "Canvas command finished; see canvas_apply_status for the outcome.",
     }
 
 
-@pytest.mark.parametrize("direct", [False, True])
-def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monkeypatch, direct):
-    from types import SimpleNamespace
-    from novelvideo.chat.service import _codex_freezone_write_result_succeeded
-
+@pytest.mark.parametrize("server", [False, True])
+def test_workflow_confirmation_receipt_survives_mcp_and_chat_postcondition(monkeypatch, server):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     payload = _confirmed_canvas_receipt()
-    if direct:
+    if server:
         payload.pop("bridge_key")
-        payload.update(canvas_apply_status="direct_applied", revision=3)
+        payload["revision"] = 3
     result = dramaclaw_mcp._structured_tool_result(
         "freezone_confirm_workflow_draft", json.dumps(payload)
     )
     assert result.isError is False
     assert result.structuredContent["applied"] is True
-    event = SimpleNamespace(name="dramaclaw.freezone_confirm_workflow_draft",
-                            status="completed", error=None,
-                            structured=result.structuredContent,
-                            output=result.model_dump())
-    assert _codex_freezone_write_result_succeeded(event)
 
 
 @pytest.mark.parametrize("change", [
     {"bridge_key": ""}, {"project_id": ""}, {"canvas_id": ""},
     {"applied": False}, {"cancelled": True}, {"errors": ["write failed"]},
     {"canvas_apply_status": "pending"},
-    {"canvas_apply_status": "direct_applied", "revision": True},
+    {"bridge_key": "", "revision": True},
 ])
 def test_confirmation_rejects_incomplete_or_contradictory_receipts(monkeypatch, change):
     from jsonschema.exceptions import ValidationError
@@ -759,6 +752,8 @@ async def test_real_clarification_results_preserve_frontend_answers_and_retry_fi
     assert timed_out.structuredContent["clarification_status"] == "pending_user_input"
     assert timed_out.structuredContent["bridge_key"] == "clarify-1"
 
+    # In-app Codex: an external MCP server inside a product chat turn.
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-1")
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
     rejected = await dramaclaw_mcp.call_tool(
         "freezone_request_user_clarification",
@@ -783,7 +778,7 @@ async def test_real_skill_studio_results_match_mcp_contract(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     freezone_plugin = dramaclaw_mcp._plugin("freezone")
-    freezone_plugin._PENDING_SKILL_STUDIO_DRAFTS.clear()
+    freezone_plugin._OFFLINE_SKILL_STUDIO_DRAFTS.clear()
     bridge_counter = iter(range(20))
     monkeypatch.setattr(
         freezone_plugin,
@@ -959,11 +954,19 @@ async def test_plan_tool_publication_preserves_registry_and_other_tools(monkeypa
 
     tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
     target = "freezone_prepare_workflow_plan_draft"
+    canvas_tools = {"freezone_emit_canvas_command", "freezone_validate_canvas_commands"}
     for name, schema in original.items():
-        expected = deepcopy(schema["parameters"])
+        expected = schema_with_guidance(schema["parameters"])
+        published = tools[name].inputSchema
         if name == target:
             del expected["properties"]["plan"]["anyOf"]
-        assert tools[name].inputSchema == expected
+        if name in canvas_tools:
+            # commands[] items are a flat projection of the registry; see
+            # test_canvas_command_schema_publication.py for its own guards.
+            published = deepcopy(published)
+            assert "oneOf" not in published["properties"]["commands"].pop("items")
+            del expected["properties"]["commands"]["items"]
+        assert published == expected
         assert registry[name][0] == schema
     assert tools[target].inputSchema["properties"]["plan"]["required"] == [
         "schema_version", "skill", "nodes", "edges"
@@ -976,6 +979,11 @@ async def test_plan_tool_publication_preserves_registry_and_other_tools(monkeypa
     # MCP clients must not be able to alter the server's execution contract.
     tools[target].inputSchema["properties"]["plan"]["required"].clear()
     assert registry[target][0] == original[target]
+    for name in canvas_tools:
+        items = tools[name].inputSchema["properties"]["commands"]["items"]
+        for field in items["properties"].values():
+            field.clear()
+        assert registry[name][0] == original[name]
 
 
 @pytest.mark.asyncio
@@ -1281,7 +1289,8 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
     assert invalid_payload["ok"] is False
     assert invalid_payload["error"] == "tool_arguments_invalid"
     assert invalid.structuredContent["tool_name"] == "dramaclaw_render_first_frames"
-    assert invalid.structuredContent["path"] == "arguments"
+    assert invalid.structuredContent["path"] == "episode"
+    assert invalid.structuredContent["message"] == "episode: field is required"
     assert invalid.structuredContent["phase"] == "tool_validation"
     assert "details" not in invalid.structuredContent
     assert calls == []
@@ -1681,3 +1690,157 @@ def test_successful_canvas_tool_instructs_plain_text_final_response():
     assert instruction.startswith(CANVAS_FINAL_RESPONSE_INSTRUCTIONS)
     assert instruction.endswith("Report success briefly.")
     assert "message field" not in instruction
+
+
+@pytest.fixture
+def external_unbound_freezone_env(monkeypatch):
+    for name in (
+        "DRAMACLAW_EXTERNAL_MCP", "DRAMACLAW_AGENT_KEY", "DRAMACLAW_AGENT_KEY_FILE",
+        "DRAMACLAW_AGENT_TOKEN", "DRAMACLAW_AGENT_TOKEN_FILE", "DRAMACLAW_PROJECT_ID",
+        "DRAMACLAW_CANVAS_ID", "DRAMACLAW_TOOL_MODE", "DRAMACLAW_CHAT_SURFACE",
+        "DRAMACLAW_AGENT_PROFILE", "DRAMACLAW_LOCAL_AGENT_TRUST",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setenv("DRAMACLAW_AGENT_KEY", "test-key-placeholder")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    monkeypatch.setenv("DRAMACLAW_CHAT_SURFACE", "freezone")
+    monkeypatch.setenv("DRAMACLAW_AGENT_PROFILE", "freezone:main")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key_source", ["env", "file"])
+async def test_external_unbound_freezone_lists_all_tools(
+    external_unbound_freezone_env, monkeypatch, tmp_path, key_source,
+):
+    if key_source == "file":
+        key_file = tmp_path / "agent-key"
+        key_file.write_text("test-key-placeholder")
+        monkeypatch.delenv("DRAMACLAW_AGENT_KEY")
+        monkeypatch.setenv("DRAMACLAW_AGENT_KEY_FILE", str(key_file))
+    plugin_names = set(dramaclaw_mcp._plugin_tools("freezone"))
+    assert "freezone_list_projects" not in plugin_names
+    assert {tool.name for tool in await dramaclaw_mcp.list_tools()} == (
+        plugin_names | {"freezone_list_projects"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_external_unbound_freezone_project_discovery_schema(external_unbound_freezone_env):
+    tools = {tool.name: tool for tool in await dramaclaw_mcp.list_tools()}
+    assert "freezone_list_projects" in tools
+    tool = tools["freezone_list_projects"]
+    schema = tool.inputSchema
+    assert schema["type"] == "object"
+    assert not schema.get("required")
+    assert schema["additionalProperties"] is False
+    assert len(json.dumps(schema)) < 5000
+    description = (tool.description or "").lower()
+    assert "first" in description
+    assert "project_id" in description
+    assert "every" in description
+    assert tool.annotations is not None
+    assert tool.annotations.readOnlyHint is True
+
+
+@pytest.mark.asyncio
+async def test_external_unbound_freezone_project_discovery_result(
+    external_unbound_freezone_env, monkeypatch,
+):
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        return {"ok": True, "data": [
+            {"id": "project-a", "name": "First project", "updated_at": "2026-01-01"},
+            {"id": "project-b", "name": "Second project"},
+        ]}
+
+    monkeypatch.setattr(dramaclaw_mcp._plugin("freezone"), "_request", request)
+    result = await dramaclaw_mcp.call_tool("freezone_list_projects", {})
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload["ok"] is True
+    assert payload["count"] == 2
+    assert [(p["project_id"], p["name"]) for p in payload["projects"]] == [
+        ("project-a", "First project"), ("project-b", "Second project"),
+    ]
+    assert isinstance(payload["agent_instruction"], str)
+    assert "project_id" in payload["agent_instruction"]
+    assert calls == [("GET", "/api/v1/projects")]
+
+
+@pytest.mark.asyncio
+async def test_external_unbound_freezone_project_discovery_reader_error(
+    external_unbound_freezone_env, monkeypatch,
+):
+    error = {"ok": False, "error": "projects unavailable"}
+    monkeypatch.setattr(
+        dramaclaw_mcp._plugin("freezone"), "_project_candidates", lambda: ([], error),
+    )
+    result = await dramaclaw_mcp.call_tool("freezone_list_projects", {})
+    assert result.isError is True
+    assert result.structuredContent == error
+
+
+@pytest.mark.asyncio
+async def test_external_unbound_freezone_missing_project_guidance(external_unbound_freezone_env):
+    result = await dramaclaw_mcp.call_tool("freezone_list_canvases", {})
+    assert result.isError is True
+    text = "\n".join(block.text for block in result.content if block.type == "text")
+    assert "project_id is required and no current project context is configured" in text
+    assert "freezone_list_projects" in text
+    assert "pass" in text.lower()
+
+
+def test_external_unbound_freezone_server_instructions(external_unbound_freezone_env):
+    # Public helper contract for the instructions supplied during MCP initialization.
+    instructions = dramaclaw_mcp.server_instructions()
+    assert "freezone_list_projects" in instructions
+    assert "project_id" in instructions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outside_gate", [
+    "token", "token_file", "external_unset", "external_zero", "no_key",
+    "default_plugin", "bound_project",
+])
+async def test_external_freezone_outside_gate_preserves_tools_and_instructions(
+    external_unbound_freezone_env, monkeypatch, tmp_path, outside_gate,
+):
+    expected = set()
+    if outside_gate == "token":
+        monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN", "test-token-placeholder")
+    elif outside_gate == "token_file":
+        token_file = tmp_path / "agent-token"
+        token_file.write_text("test-token-placeholder")
+        monkeypatch.setenv("DRAMACLAW_AGENT_TOKEN_FILE", str(token_file))
+    elif outside_gate == "external_unset":
+        monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP")
+    elif outside_gate == "external_zero":
+        monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "0")
+    elif outside_gate == "no_key":
+        monkeypatch.delenv("DRAMACLAW_AGENT_KEY")
+    elif outside_gate == "default_plugin":
+        monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
+        monkeypatch.delenv("DRAMACLAW_CHAT_SURFACE")
+        monkeypatch.delenv("DRAMACLAW_AGENT_PROFILE")
+        expected = set(dramaclaw_mcp.HOME_TOOL_NAMES)
+    elif outside_gate == "bound_project":
+        monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+        expected = set(dramaclaw_mcp._plugin_tools("freezone"))
+
+    names = {tool.name for tool in await dramaclaw_mcp.list_tools()}
+    assert names == expected
+    assert "freezone_list_projects" not in names
+    assert dramaclaw_mcp.SERVER.create_initialization_options().instructions is None
+
+
+@pytest.mark.asyncio
+async def test_project_required_external_canvas_write(external_unbound_freezone_env, monkeypatch):
+    plugin = dramaclaw_mcp._plugin("freezone")
+    monkeypatch.setattr(plugin, "_request", lambda *a, **kw: pytest.fail("unexpected HTTP call"))
+    result = await dramaclaw_mcp.call_tool("freezone_run_workflow", {"scope": "canvas"})
+    assert result.isError is True
+    text = "\n".join(block.text for block in result.content if block.type == "text")
+    assert "freezone_list_projects" in text

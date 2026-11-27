@@ -12,7 +12,7 @@ DramaClaw 是社区版(CE),单机运行、无需 PostgreSQL / Redis。默认 `do
 - Docker(Desktop 或 Engine),支持 `docker compose`。
 - 一个 **DC key** —— 到 <https://relayclaw.cdnfg.com> 注册 / 购买；也可以改用 CE 随附的本地 NewAPI。
 
-## 方式 A：使用 v2.1.1 官方镜像（免构建）
+## 方式 A：使用 v2.2.0 官方镜像（免构建）
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
@@ -23,11 +23,11 @@ cp .env.example .env
 编辑 `.env`：将 `PROMPT_EXPORT_PASSWORD` 改成非默认值，并添加或更新：
 
 ```dotenv
-DRAMACLAW_VERSION=2.1.1
-DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3
+DRAMACLAW_VERSION=2.2.0
+DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5
 ```
 
-发布版 Compose 默认使用镜像内置的凭据保护版 Codex 0.164.0 虾导。
+发布版 Compose 默认使用镜像内置的凭据保护版 Codex 0.162.0 虾导。
 如果终端环境或 `.env` 已指定其他后端，请改为 `DRAMACLAW_CHAT_BACKEND=codex`。
 虾导后端的选择与「官方／自定义／混合」模型网关模式是两回事。
 

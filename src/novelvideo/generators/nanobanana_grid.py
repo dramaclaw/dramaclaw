@@ -49,6 +49,11 @@ from novelvideo.ports.egress_operations import (
 )
 from novelvideo.ports.model_credentials import ModelCredentialError, RequestCredential
 from novelvideo.shared.billing_errors import is_fatal_billing_error
+from novelvideo.shared.failure_signals import (
+    upstream_error_text,
+    upstream_status_of,
+    with_upstream_status,
+)
 from novelvideo.shared.provider_costs import is_definite_no_cost_http_rejection
 from novelvideo.generators.huimengi import (
     HuimengTaskFailed,
@@ -79,10 +84,18 @@ from novelvideo.image_request_usage import (
     record_image_request,
     update_image_request_status,
 )
+from novelvideo.utils.reference_image import (
+    PreparedReference,
+    ReferenceImageTooLarge,
+    fit_reference_image,
+    normalize_reference_inputs,
+    prepare_reference_image,
+)
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
     media_relay_ttl_seconds,
     relay_tenant_image_bytes_from_context,
+    transform_image_bytes,
     upload_image_bytes,
 )
 
@@ -356,6 +369,40 @@ class _InlineImagePart:
 
     def __init__(self, data: bytes, mime_type: str = "image/png"):
         self.inline_data = SimpleNamespace(data=data, mime_type=mime_type)
+
+
+def _load_reference_image_bytes(
+    image_path: str,
+    *,
+    compress_quality: int | None = 60,
+    min_short_side: int = 0,
+) -> tuple[PreparedReference, str]:
+    """Read a reference image file and return bounded ``(bytes, mime_type)``.
+
+    ``compress_quality`` > 0 re-encodes to JPEG at that quality; 0/None keeps
+    the image lossless and only resizes when the bound requires it. The bytes
+    are a ``PreparedReference``, so transports keep this encoding. Raises
+    ``ValueError`` when the file is not a decodable image.
+    """
+    source = Path(image_path)
+    data = source.read_bytes()
+    lossless = not (compress_quality and compress_quality > 0)
+    prepared = prepare_reference_image(
+        data,
+        ext=source.suffix.lstrip(".") or "png",
+        quality=int(compress_quality) if not lossless else 95,
+        lossless=lossless,
+        min_short_side=min_short_side,
+    )
+    if prepared is None:
+        raise ValueError(f"{source.name} is not a decodable image")
+    if bytes(prepared) != data:
+        print(
+            f"[参考图] {source.name}: {len(data) / 1024:.0f}KB → "
+            f"{prepared.size[0]}x{prepared.size[1]} {prepared.mime_type} "
+            f"{len(prepared) / 1024:.0f}KB"
+        )
+    return prepared, prepared.mime_type
 
 
 def _infer_project_dir(*paths: str | None) -> Optional[Path]:
@@ -1836,6 +1883,7 @@ class GridGenerationResult(BaseModel):
     beat_count: Optional[int] = None  # 该网格实际的 beat 数量（不含填充）
     grid_rows: Optional[int] = None  # 网格行数
     grid_cols: Optional[int] = None  # 网格列数
+    upstream_status: Optional[int] = None
 
 
 def filter_character_map_for_beats(
@@ -2904,6 +2952,7 @@ async def generate_text_to_image(
     config: Optional[dict] = None,
     egress_context: TrustedEgressContext | None = None,
     egress_capability: str = "image.generate",
+    egress_business_task_id: str | None = None,
 ) -> Path:
     """Generate one image from a prompt only — no reference images.
 
@@ -2922,6 +2971,7 @@ async def generate_text_to_image(
         config=config,
         egress_context=egress_context,
         egress_capability=egress_capability,
+        egress_business_task_id=egress_business_task_id,
     )
 
 
@@ -2937,6 +2987,7 @@ async def generate_reference_edit_image(
     config: Optional[dict] = None,
     egress_context: TrustedEgressContext | None = None,
     egress_capability: str = "image.edit",
+    egress_business_task_id: str | None = None,
 ) -> Path:
     """Generate one edited image from reference images plus a free-form edit prompt.
 
@@ -2958,6 +3009,7 @@ async def generate_reference_edit_image(
         config=config,
         egress_context=egress_context,
         egress_capability=egress_capability,
+        egress_business_task_id=egress_business_task_id,
     )
 
 
@@ -2973,6 +3025,7 @@ async def _generate_image(
     config: Optional[dict],
     egress_context: TrustedEgressContext | None,
     egress_capability: str,
+    egress_business_task_id: str | None = None,
 ) -> Path:
     """Shared body for text-only and image-edit single-image generation."""
     ref_paths = list(reference_image_paths or [])
@@ -3001,6 +3054,7 @@ async def _generate_image(
         provider=configured_provider,
         capability=egress_capability,
         request=request,
+        business_task_id=egress_business_task_id,
     )
     effective_config = config
     effective_api_key = api_key
@@ -3028,8 +3082,11 @@ async def _generate_image(
             image_config={"aspect_ratio": aspect_ratio, "image_size": image_size},
         )
         if not image_bytes:
-            raise ValueError(
-                f"OpenRouter edit image generation failed: {error_detail or 'empty image'}"
+            raise with_upstream_status(
+                ValueError(
+                    f"OpenRouter edit image generation failed: {error_detail or 'empty image'}"
+                ),
+                error_detail,
             )
     elif generator.provider == "huimeng":
         ref_bytes = [Path(path).read_bytes() for path in ref_paths]
@@ -3046,8 +3103,11 @@ async def _generate_image(
             },
         )
         if not image_bytes:
-            raise ValueError(
-                f"HuiMeng edit image generation failed: {error_detail or 'empty image'}"
+            raise with_upstream_status(
+                ValueError(
+                    f"HuiMeng edit image generation failed: {error_detail or 'empty image'}"
+                ),
+                error_detail,
             )
     elif generator.provider == "openai":
         ref_bytes = [Path(path).read_bytes() for path in ref_paths]
@@ -3064,8 +3124,11 @@ async def _generate_image(
             },
         )
         if not image_bytes:
-            raise ValueError(
-                f"OpenAI edit image generation failed: {error_detail or 'empty image'}"
+            raise with_upstream_status(
+                ValueError(
+                    f"OpenAI edit image generation failed: {error_detail or 'empty image'}"
+                ),
+                error_detail,
             )
     elif generator.provider == "newapi":
         ref_bytes = [(Path(path).read_bytes(), path) for path in ref_paths]
@@ -3091,8 +3154,11 @@ async def _generate_image(
             read_copied_bytes=False,
         )
         if not image_bytes and not delivery_state.get("copied"):
-            raise ValueError(
-                f"DramaClawAPI image generation failed: {error_detail or 'empty image'}"
+            raise with_upstream_status(
+                ValueError(
+                    f"DramaClawAPI image generation failed: {error_detail or 'empty image'}"
+                ),
+                error_detail,
             )
     else:
         from google import genai
@@ -3290,10 +3356,10 @@ async def _call_openrouter_image_api(
 
     # 再添加参考图（如果有）
     if reference_images:
-        for img_bytes in reference_images:
+        for _filename, img_bytes, mime_type in normalize_reference_inputs(reference_images):
             img_b64 = base64.b64encode(img_bytes).decode("utf-8")
             content.append(
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{img_b64}"}}
             )
 
     payload = {
@@ -3396,14 +3462,17 @@ async def _call_openrouter_image_api(
         return (
             None,
             "",
-            f"HTTP {e.response.status_code}: {body}" if body else f"HTTP {e.response.status_code}",
+            upstream_error_text(
+                f"HTTP {e.response.status_code}: {body}" if body else f"HTTP {e.response.status_code}",
+                e,
+            ),
         )
     except Exception as e:
         if is_fatal_billing_error(e):
             raise
         detail = f"{type(e).__name__}: {e!r}"
         print(f"[OpenRouter] 请求异常: {detail}")
-        return None, "", f"请求异常: {detail}"
+        return None, "", upstream_error_text(f"请求异常: {detail}", e)
 
 
 async def _call_openai_image_api(
@@ -3499,27 +3568,13 @@ async def _call_openai_image_api(
         reservation_id = await _reserve("openai_image_api")
 
         client = AsyncOpenAI(api_key=api_key, timeout=300.0, max_retries=0)
+        # Normalize once, outside the retry loop.
+        normalized_reference_files = normalize_reference_inputs(reference_images)
         result = None
         for _attempt in range(4):
             try:
                 if reference_images:
-                    image_files = []
-                    for idx, image_ref in enumerate(reference_images):
-                        filename = f"reference_{idx + 1}.png"
-                        mime_type = "image/png"
-                        image_bytes: bytes
-                        if isinstance(image_ref, tuple):
-                            if len(image_ref) == 3:
-                                filename, image_bytes, mime_type = image_ref
-                            elif len(image_ref) == 2:
-                                image_bytes, mime_type = image_ref
-                                ext = "jpg" if mime_type == "image/jpeg" else "png"
-                                filename = f"reference_{idx + 1}.{ext}"
-                            else:
-                                image_bytes = bytes(image_ref[0])
-                        else:
-                            image_bytes = bytes(image_ref)
-                        image_files.append((filename, bytes(image_bytes), mime_type))
+                    image_files = normalized_reference_files
                     result = await client.images.edit(
                         model=model,
                         image=image_files,
@@ -3595,7 +3650,7 @@ async def _call_openai_image_api(
             raise
         detail = f"{type(exc).__name__}: {exc!r}"
         print(f"[OpenAI Image] 请求异常: {detail}")
-        return None, "", f"请求异常: {detail}"
+        return None, "", upstream_error_text(f"请求异常: {detail}", exc)
 
 
 async def _call_newapi_image_api(
@@ -4006,7 +4061,10 @@ async def _call_newapi_image_api(
         return (
             None,
             "",
-            f"HTTP {exc.response.status_code}: {header_context}{error_context}; body={body}",
+            upstream_error_text(
+                f"HTTP {exc.response.status_code}: {header_context}{error_context}; body={body}",
+                exc,
+            ),
         )
     except Exception as exc:
         await update_current_model_call_log(
@@ -4023,20 +4081,21 @@ async def _call_newapi_image_api(
         error_context = _newapi_context_for_error(request_context)
         detail = f"{type(exc).__name__}: {exc!r}; {error_context}"
         logger.warning("DramaClawAPI image request exception: %s", detail)
-        return None, "", f"请求异常: {detail}"
+        return None, "", upstream_error_text(f"请求异常: {detail}", exc)
 
 
 def _reference_image_bytes(
     image_ref: bytes | tuple[bytes, str] | tuple[str, bytes, str],
 ) -> bytes:
-    """Unpack the three reference-image shapes the newAPI path accepts."""
+    """Unpack the three reference-image shapes the newAPI path accepts.
+
+    ``PreparedReference`` keeps its type so the relay sends it unchanged.
+    """
     if isinstance(image_ref, tuple):
-        if len(image_ref) == 3:
-            return bytes(image_ref[1])
-        if len(image_ref) == 2:
-            return bytes(image_ref[0])
-        return bytes(image_ref[0])
-    return bytes(image_ref)
+        data = image_ref[1] if len(image_ref) == 3 else image_ref[0]
+    else:
+        data = image_ref
+    return data if isinstance(data, PreparedReference) else bytes(data)
 
 
 async def _call_newapi_image_api_with_egress(
@@ -4191,7 +4250,14 @@ async def _relay_reference_images_for_newapi(
     if context is not None and context.is_organization:
         urls: list[str] = []
         for index, image_ref in enumerate(reference_images):
-            data = _reference_image_bytes(image_ref)
+            # Same normalization as the personal path below; re-encoding a large
+            # reference is CPU-bound, so keep it off the event loop.
+            data, ext = await asyncio.to_thread(
+                transform_image_bytes,
+                _reference_image_bytes(image_ref),
+                ext=_image_ext(image_ref),
+                image_transform=IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+            )
             content_digest = hashlib.sha256(data).hexdigest()
             object_id = (
                 f"{context.envelope_id}:{context.project_id}:{index}:{content_digest}"
@@ -4201,7 +4267,7 @@ async def _relay_reference_images_for_newapi(
                     data,
                     object_id=object_id,
                     context=context,
-                    ext=_image_ext(image_ref),
+                    ext=ext,
                     ttl=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
                 )
             )
@@ -4259,18 +4325,12 @@ async def _call_huimeng_image_api(
         )
         params["quality"] = quality if quality in {"low", "medium", "high"} else "medium"
     if reference_images:
-        ref_urls = []
-        for image_ref in reference_images[:9]:
-            if isinstance(image_ref, tuple):
-                if len(image_ref) == 3:
-                    image_bytes = image_ref[1]
-                elif len(image_ref) == 2:
-                    image_bytes = image_ref[0]
-                else:
-                    image_bytes = bytes(image_ref[0])
-            else:
-                image_bytes = bytes(image_ref)
-            ref_urls.append(bytes_to_data_url(bytes(image_bytes)))
+        ref_urls = [
+            bytes_to_data_url(image_bytes)
+            for _filename, image_bytes, _mime in normalize_reference_inputs(
+                reference_images[:9]
+            )
+        ]
         params["image"] = ref_urls[0] if len(ref_urls) == 1 else ref_urls
 
     request_context = f"model={model}, ratio={ratio}, refs={len(reference_images or [])}"
@@ -4301,11 +4361,15 @@ async def _call_huimeng_image_api(
         return response.content, "", ""
     except httpx.HTTPStatusError as exc:
         body = (exc.response.text or "")[:500]
-        return None, "", f"{request_context} | HTTP {exc.response.status_code}: {body}"
+        return (
+            None,
+            "",
+            upstream_error_text(f"{request_context} | HTTP {exc.response.status_code}: {body}", exc),
+        )
     except HuimengTaskFailed as exc:
-        return None, "", f"{request_context} | HuiMeng task failed: {exc}"
+        return None, "", upstream_error_text(f"{request_context} | HuiMeng task failed: {exc}", exc)
     except Exception as exc:
-        return None, "", f"{request_context} | request failed: {exc}"
+        return None, "", upstream_error_text(f"{request_context} | request failed: {exc}", exc)
 
 
 class NanoBananaGridGenerator:
@@ -4845,7 +4909,7 @@ class NanoBananaGridGenerator:
             task_type = "sketch_grid" if sketch else "render_grid"
             scope = f"{task_type}:{mode_key or f'{rows}x{cols}'}:{'-'.join(str(b) for b in scope_beat_numbers)}"
 
-            def _usage_fail(error_message: str) -> GridGenerationResult:
+            def _usage_fail(error_message: str, source: object = None) -> GridGenerationResult:
                 if usage_recorded and project_output_dir:
                     update_image_request_status(
                         project_output_dir=project_output_dir,
@@ -4856,6 +4920,7 @@ class NanoBananaGridGenerator:
                 return GridGenerationResult(
                     success=False,
                     error=error_message,
+                    upstream_status=upstream_status_of(source),
                     generation_time=time.time() - start_time,
                 )
 
@@ -5043,7 +5108,7 @@ class NanoBananaGridGenerator:
                     message = "OpenRouter API 未返回图像数据"
                     if or_error:
                         message = f"{message}: {or_error}"
-                    return _usage_fail(message)
+                    return _usage_fail(message, or_error)
             elif self.provider == "huimeng":
                 print(
                     f"[HuiMeng Images] 调用 {self.model} 生成网格图 (比例: {aspect_ratio})..."
@@ -5064,7 +5129,7 @@ class NanoBananaGridGenerator:
                     message = "HuiMeng Images 未返回图像数据"
                     if huimeng_error:
                         message = f"{message}: {huimeng_error}"
-                    return _usage_fail(message)
+                    return _usage_fail(message, huimeng_error)
             elif self.provider == "openai":
                 # ===== OpenAI Image API 分支 =====
                 openai_image_size = "1K" if sketch else image_size
@@ -5097,7 +5162,7 @@ class NanoBananaGridGenerator:
                     message = "OpenAI Image API 未返回图像数据"
                     if openai_error:
                         message = f"{message}: {openai_error}"
-                    return _usage_fail(message)
+                    return _usage_fail(message, openai_error)
             elif self.provider == "newapi":
                 effective_image_size = normalize_image_size(
                     image_size, provider="newapi"
@@ -5135,7 +5200,7 @@ class NanoBananaGridGenerator:
                     message = "DramaClawAPI Images 未返回图像数据"
                     if newapi_error:
                         message = f"{message}: {newapi_error}"
-                    return _usage_fail(message)
+                    return _usage_fail(message, newapi_error)
             else:
                 # ===== Google 直连分支 =====
                 # 根据模型选择配置：gemini-3 支持 image_size，gemini-2.5 不支持
@@ -5292,6 +5357,7 @@ class NanoBananaGridGenerator:
             return GridGenerationResult(
                 success=False,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -5401,6 +5467,7 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=f"OpenRouter API 未返回图片: {error_detail or ''}".strip(),
+                        upstream_status=upstream_status_of(error_detail),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "huimeng":
@@ -5416,6 +5483,7 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=f"HuiMeng Images 未返回图片: {error_detail or ''}".strip(),
+                        upstream_status=upstream_status_of(error_detail),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "openai":
@@ -5439,6 +5507,7 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=f"OpenAI Image API 未返回图片: {error_detail or ''}".strip(),
+                        upstream_status=upstream_status_of(error_detail),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "newapi":
@@ -5465,6 +5534,7 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=f"DramaClawAPI Images 未返回图片: {error_detail or ''}".strip(),
+                        upstream_status=upstream_status_of(error_detail),
                         generation_time=time.time() - start_time,
                     )
             else:
@@ -5535,6 +5605,7 @@ class NanoBananaGridGenerator:
             return GridGenerationResult(
                 success=False,
                 error=str(e),
+                upstream_status=upstream_status_of(e),
                 generation_time=time.time() - start_time,
             )
 
@@ -6640,9 +6711,6 @@ class NanoBananaGridGenerator:
             Gemini Part 对象
         """
         try:
-            from PIL import Image
-            import io
-
             # OpenAI director refs are line-art geometry anchors. JPEG compression can erase
             # subtle table/window/stool lines, so keep those references lossless.
             if self.provider == "openai" and Path(image_path).name in {
@@ -6651,62 +6719,11 @@ class NanoBananaGridGenerator:
             }:
                 compress_quality = 0
 
-            # 加载图片
-            img = Image.open(image_path)
-            original_size = os.path.getsize(image_path)
-            original_dimensions = img.size
-
-            if min_short_side > 0:
-                short_side = min(img.size)
-                if 0 < short_side < min_short_side:
-                    scale = min_short_side / short_side
-                    new_size = (
-                        max(1, int(round(img.size[0] * scale))),
-                        max(1, int(round(img.size[1] * scale))),
-                    )
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-                    print(
-                        f"[参考图放大] {os.path.basename(image_path)}: "
-                        f"{original_dimensions[0]}x{original_dimensions[1]} → "
-                        f"{new_size[0]}x{new_size[1]}"
-                    )
-
-            # 压缩为 JPEG（如果启用）
-            if compress_quality and compress_quality > 0:
-                # 转为 RGB（JPEG 不支持 alpha）
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-
-                # 压缩到内存
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=compress_quality, optimize=True)
-                image_data = buffer.getvalue()
-                mime_type = "image/jpeg"
-
-                compressed_size = len(image_data)
-                ratio = (1 - compressed_size / original_size) * 100
-                print(
-                    f"[压缩] {os.path.basename(image_path)}: "
-                    f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-                    f"({ratio:.0f}% 压缩)"
-                )
-            else:
-                if img.size != original_dimensions:
-                    buffer = io.BytesIO()
-                    img.save(buffer, format="PNG")
-                    image_data = buffer.getvalue()
-                    mime_type = "image/png"
-                else:
-                    # 不压缩，直接读取原文件
-                    with open(image_path, "rb") as f:
-                        image_data = f.read()
-
-                    if image_path.lower().endswith(".png"):
-                        mime_type = "image/png"
-                    elif image_path.lower().endswith(".webp"):
-                        mime_type = "image/webp"
-                    else:
-                        mime_type = "image/jpeg"
+            image_data, mime_type = _load_reference_image_bytes(
+                image_path,
+                compress_quality=compress_quality,
+                min_short_side=min_short_side,
+            )
 
             if self.provider != "google":
                 return _InlineImagePart(image_data, mime_type)
@@ -6715,14 +6732,16 @@ class NanoBananaGridGenerator:
 
             try:
                 return types.Part.from_bytes(
-                    data=image_data,
+                    data=bytes(image_data),
                     mime_type=mime_type,
                     media_resolution=types.MediaResolution.MEDIA_RESOLUTION_HIGH,
                 )
             except (TypeError, AttributeError):
                 # Gemini 2.x SDK 不支持 media_resolution
-                return types.Part.from_bytes(data=image_data, mime_type=mime_type)
+                return types.Part.from_bytes(data=bytes(image_data), mime_type=mime_type)
 
+        except ReferenceImageTooLarge:
+            raise
         except Exception as e:
             print(f"[NanoBananaPro] 加载参考图失败: {image_path}, {e}")
             return None
@@ -6911,17 +6930,21 @@ class NanoBananaGridGenerator:
             merged.paste(p, (x_offset, 0))
             x_offset += p.size[0]
 
-        # JPEG 压缩。
+        # 拼接图同样受参考图长边上限约束，再 JPEG 压缩。
+        merged = fit_reference_image(merged)
         buffer = io.BytesIO()
         merged.save(buffer, format="JPEG", quality=compress_quality, optimize=True)
         image_data = buffer.getvalue()
         print(
             f"[NanoBananaPro] 合并参考图: {len(panels)} 角色, "
-            f"{total_w}x{max_h}px, {len(image_data)/1024:.0f}KB"
+            f"{merged.size[0]}x{merged.size[1]}px, {len(image_data)/1024:.0f}KB"
         )
 
         if self.provider != "google":
-            return _InlineImagePart(image_data, "image/jpeg")
+            return _InlineImagePart(
+                PreparedReference(image_data, mime_type="image/jpeg", size=merged.size),
+                "image/jpeg",
+            )
 
         from google.genai import types
 
@@ -7384,10 +7407,13 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                     image_config={"aspect_ratio": "9:16", "image_size": "1K"},
                 )
                 if not image_bytes:
-                    raise ValueError(
-                        f"OpenRouter API 未返回图像数据: {or_error}"
-                        if or_error
-                        else "OpenRouter API 未返回图像数据"
+                    raise with_upstream_status(
+                        ValueError(
+                            f"OpenRouter API 未返回图像数据: {or_error}"
+                            if or_error
+                            else "OpenRouter API 未返回图像数据"
+                        ),
+                        or_error,
                     )
 
                 # 保存为临时文件并缩放
@@ -7412,10 +7438,13 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                     image_config={"aspect_ratio": "9:16", "image_size": "1K"},
                 )
                 if not image_bytes:
-                    raise ValueError(
-                        f"HuiMeng Images 未返回图像数据: {huimeng_error}"
-                        if huimeng_error
-                        else "HuiMeng Images 未返回图像数据"
+                    raise with_upstream_status(
+                        ValueError(
+                            f"HuiMeng Images 未返回图像数据: {huimeng_error}"
+                            if huimeng_error
+                            else "HuiMeng Images 未返回图像数据"
+                        ),
+                        huimeng_error,
                     )
 
                 temp_path = output_path + ".tmp.png"
@@ -7448,10 +7477,13 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                     },
                 )
                 if not image_bytes:
-                    raise ValueError(
-                        f"OpenAI Image API 未返回图像数据: {openai_error}"
-                        if openai_error
-                        else "OpenAI Image API 未返回图像数据"
+                    raise with_upstream_status(
+                        ValueError(
+                            f"OpenAI Image API 未返回图像数据: {openai_error}"
+                            if openai_error
+                            else "OpenAI Image API 未返回图像数据"
+                        ),
+                        openai_error,
                     )
 
                 temp_path = output_path + ".tmp.png"
@@ -7489,10 +7521,13 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                     read_copied_bytes=False,
                 )
                 if not image_bytes and not image_delivery_state.get("copied"):
-                    raise ValueError(
-                        f"DramaClawAPI Images 未返回图像数据: {newapi_error}"
-                        if newapi_error
-                        else "DramaClawAPI Images 未返回图像数据"
+                    raise with_upstream_status(
+                        ValueError(
+                            f"DramaClawAPI Images 未返回图像数据: {newapi_error}"
+                            if newapi_error
+                            else "DramaClawAPI Images 未返回图像数据"
+                        ),
+                        newapi_error,
                     )
 
                 temp_path = output_path + ".tmp.png"

@@ -40,6 +40,8 @@ export interface ComposeClip {
   trimEndMs: number;
   /** 0..1 音量。 */
   volume: number;
+  /** Fade out over the last N milliseconds of the rendered audio clip. */
+  fadeOutMs?: number;
   muted: boolean;
   /**
    * 播放倍速（变速）。1 = 原速。时间线上占用长度 = 源裁剪长度 / speed。
@@ -298,6 +300,7 @@ export function buildComposePayload(
         sourceStart: clip.trimStartMs / 1000,
         sourceEnd: clampedSourceEndMs(clip) / 1000,
         volume: clip.volume,
+        fadeOut: (clip.fadeOutMs ?? 0) / 1000,
         muted: clip.muted,
         // ⚠️ 后端需支持该字段才会真正变速；否则被忽略（导出按原速）。
         speed: clip.speed > 0 ? clip.speed : 1,

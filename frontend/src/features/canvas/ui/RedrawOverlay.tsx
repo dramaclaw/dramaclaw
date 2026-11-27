@@ -50,10 +50,8 @@ import {
   resolveModelSizeOptions,
 } from '@/features/canvas/domain/mediaModelOptions';
 import { readUrl } from '@/lib/url-params';
-import {
-  DEFAULT_SHARED_MODEL_ID,
-  ProviderModelPicker,
-} from '@/features/canvas/ui/ProviderModelPicker';
+import { DEFAULT_SHARED_MODEL_ID } from '@/features/canvas/domain/defaultModelIds';
+import { ProviderModelPicker } from '@/features/canvas/ui/ProviderModelPicker';
 import {
   CANVAS_NODE_INPUT_PLACEHOLDER_CLASS,
 } from '@/features/canvas/ui/nodeFrameStyles';

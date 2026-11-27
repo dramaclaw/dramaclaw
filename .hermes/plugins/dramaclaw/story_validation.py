@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from typing import Any
@@ -365,21 +366,60 @@ def _schema_validation_diagnostic(
     if isinstance(exc, ValidationError) and exc.validator in {"oneOf", "anyOf"}:
         instance = exc.instance
         variants = exc.validator_value
-        if (
-            isinstance(instance, dict)
-            and "type" not in instance
-            and isinstance(variants, list)
-            and variants
-            and all(
-                isinstance(variant, dict) and "type" in variant.get("required", [])
-                for variant in variants
-            )
-        ):
-            path = _format_schema_path([*parts, "type"])
+        if isinstance(instance, dict) and isinstance(variants, list):
+            candidates = list(range(len(variants)))
+            discriminated = False
+            for discriminator in ("op", "kind", "type", "node_type"):
+                if discriminator not in instance:
+                    continue
+                matches = []
+                for index in candidates:
+                    variant = variants[index]
+                    prop = (
+                        variant.get("properties", {}).get(discriminator, {})
+                        if isinstance(variant, dict)
+                        else {}
+                    )
+                    if not isinstance(prop, dict) or (
+                        "const" not in prop and "enum" not in prop
+                    ):
+                        break
+                    if instance[discriminator] in prop.get("enum", [prop.get("const")]):
+                        matches.append(index)
+                else:
+                    candidates = matches
+                    discriminated = True
+            if discriminated and len(candidates) == 1:
+                children = [
+                    child
+                    for child in exc.context
+                    if child.schema_path and child.schema_path[0] == candidates[0]
+                ]
+                if children:
+                    return _schema_validation_diagnostic(children[0])
+            if (
+                "type" not in instance
+                and variants
+                and all(
+                    isinstance(variant, dict) and "type" in variant.get("required", [])
+                    for variant in variants
+                )
+            ):
+                path = _format_schema_path([*parts, "type"])
+                return path, f"{path}: field is required"
+    if isinstance(exc, ValidationError) and exc.validator == "required":
+        missing = [key for key in exc.validator_value if key not in exc.instance]
+        if missing:
+            path = _format_schema_path([*parts, missing[0]])
             return path, f"{path}: field is required"
-
     path = _format_schema_path(parts)
-    return path, getattr(exc, "message", str(exc))
+    if isinstance(exc, ValidationError):
+        # Describe the rule, never the rejected input (which may contain secrets).
+        rule = json.dumps({exc.validator: exc.validator_value}, ensure_ascii=False)
+        if exc.validator in {"oneOf", "anyOf", "additionalProperties"}:
+            return path, f"{path}: does not satisfy {exc.validator}"
+        return path, f"{path}: must satisfy {rule}"
+    return path, "Invalid tool argument schema"
 
 
 def base_validation_error_payload(

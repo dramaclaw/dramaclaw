@@ -1083,14 +1083,17 @@ async def test_save_failure_recovers_file_and_metadata(generated_api, monkeypatc
     assert (env.ctx.output_dir / child["path"]).read_bytes() == b"child"
 
 
-async def test_save_disabled_generation_and_candidate_errors(
+async def test_save_uses_existing_candidate_without_generation(
     generated_api, monkeypatch
 ):
     env = generated_api
     cid = env.candidate()
-    def disabled():
-        raise AssertionError("saving must not call generation configuration or provider")
-    monkeypatch.setattr("novelvideo.audio.voice_design_service.ensure_voice_design_enabled", disabled)
+    async def unexpected_generation(**kwargs):
+        raise AssertionError("saving must not call the provider")
+
+    monkeypatch.setattr(
+        "novelvideo.audio.voice_design_service.generate_voice_design", unexpected_generation
+    )
     assert (await env.client.post(voice_url(), json=save_body(cid))).status_code == 200
     from uuid import uuid4
 

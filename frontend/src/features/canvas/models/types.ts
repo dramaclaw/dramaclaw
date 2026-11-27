@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { MediaModelParameterDefinition } from '@/api/ops';
+import type { MediaModelParameterDefinition } from '@/features/canvas/domain/modelCatalogPayload';
 import type { ModelPricingDefinition } from '@/features/canvas/pricing/types';
 
 export type MediaModelType = 'image' | 'video' | 'audio';
@@ -42,6 +42,7 @@ export interface ExtraParamDefinition {
 }
 
 export interface ImageModelDefinition {
+  guideData?: import('@/lib/media-model-catalog-types').ModelGuideData;
   id: string;
   mediaType: 'image';
   displayName: string;

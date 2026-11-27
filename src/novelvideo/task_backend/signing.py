@@ -14,6 +14,8 @@ import secrets
 from types import MappingProxyType
 from typing import Mapping
 
+from novelvideo.shared.failure_signals import CONFIGURATION
+
 logger = logging.getLogger("novelvideo.task_backend.signing")
 
 _ACTIVE_KEY_ID_ENV = "ST_TASK_ENVELOPE_ACTIVE_KEY_ID"
@@ -26,6 +28,7 @@ _LOCAL_KEY_BYTES = 32
 
 
 class TaskEnvelopeSigningConfigError(RuntimeError):
+    failure_kind = CONFIGURATION
     code = "TASK_ENVELOPE_CONFIG_INVALID"
 
     def __init__(self) -> None:

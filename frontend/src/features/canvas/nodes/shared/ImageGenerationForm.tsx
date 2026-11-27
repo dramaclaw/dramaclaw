@@ -41,12 +41,10 @@ import {
   contextPromptPaletteInsertionText,
   type ContextPromptPaletteEntry,
 } from '@/features/canvas/nodes/contextPromptPalette';
-import {
-  ProviderModelPicker,
-  type ModelOption,
-} from '@/features/canvas/ui/ProviderModelPicker';
+import { ProviderModelPicker } from '@/features/canvas/ui/ProviderModelPicker';
+import { type ModelOption } from '@/features/canvas/domain/modelOptions';
 import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
-import type { MediaModelParameterDefinition } from '@/api/ops';
+import type { MediaModelParameterDefinition } from '@/features/canvas/domain/modelCatalogPayload';
 import {
   CreditCostPill,
   type CreditPromotionDisplay,

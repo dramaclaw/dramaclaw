@@ -8,20 +8,26 @@ export interface LaunchOptions { headed?: boolean; channel?: string | null; args
 export declare function launch(opts?: LaunchOptions): Promise<Browser>;
 /** A renderer string that is not a GPU: WebGL drawn on the CPU. */
 export declare const SOFTWARE_GL: RegExp;
-/** Windows: open with Vulkan once, and keep it only when its renderer is a GPU; otherwise Chromium's default. */
-export declare function vulkanFirst(renderer?: (browser: Browser) => Promise<string>): (open: (angle: string[]) => Promise<Browser>) => Promise<Browser>;
+/** Windows: open with Vulkan once, and keep it only when its renderer is a GPU and it shows videos; otherwise the GPU another way, or Chromium's default. */
+export declare function vulkanFirst(renderer?: (browser: Browser) => Promise<string>, presents?: (browser: Browser) => Promise<boolean>): ((open: (angle: string[]) => Promise<Browser>) => Promise<Browser>) & { videoNotShown(): Promise<boolean> };
+/** Whether the browser shows the frame a paused video is sought to, for H.264 and HEVC (some Windows computers with Vulkan do not). */
+export declare function presentsVideo(browser: Browser): Promise<boolean>;
 /** Close every browser launch() opened that is still open: what waits on one fails at once instead of never answering. */
 export declare function closeBrowsers(): Promise<void>;
 /** With `offline`: the origins still open to a page, and optionally who answers them (a cache). */
 export interface PageNetwork { allow?: readonly string[]; fetch?(url: string, headers: Record<string, string>): Promise<{ status: number; headers: Record<string, string>; body: Buffer }> }
 export declare class FrameError extends Error {}
+/** A film whose video frames this browser never showed, drawn again in browsers that show video another way. */
+export declare class VideoNotShown extends FrameError {}
+/** A film's video frames were never seen: on Windows, browsers opened from now on show video another way. Whether they will. */
+export declare function videoNotShown(): Promise<boolean>;
 /** A page's facts once ready: its length (null: it has no end), and its viewport (its own size, or 1920 × 1080 when it says none). */
 /** `sized`: the page sets its own width and height (without, it is laid out at its clip's size or the stage's). */
 export interface FilmMeta { duration: number | null; width: number; height: number; sized: boolean; sounds: FilmSound[] }
 /** One sound of the film as the built-in timeline plays it: `src` a path on the film's origin, placed at film second `at`, its source seconds [from, to). */
 export interface FilmSound { clip: string; src: string; at: number; from: number; to?: number; volume: number; speed: number }
 export declare class FilmPage {
-  static open(browser: Browser, origin: string, entry: string, opts?: { scale?: number; size?: { w: number; h: number } | null; transparent?: boolean; black?: boolean; readyMs?: number; offline?: boolean; network?: PageNetwork; waitMs?: number }): Promise<FilmPage>;
+  static open(browser: Browser, origin: string, entry: string, opts?: { scale?: number; size?: { w: number; h: number } | null; transparent?: boolean; black?: boolean; readyMs?: number; offline?: boolean; network?: PageNetwork; waitMs?: number; onVideoNotShown?: () => Promise<boolean> }): Promise<FilmPage>;
   page: Page;
   meta: FilmMeta;
   problems: Array<{ kind: string; message: string }>;

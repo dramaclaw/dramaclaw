@@ -30,7 +30,6 @@ vi.mock("@/features/canvas/ui/NodeHeader", () => ({
 }));
 vi.mock("@/features/canvas/ui/NodeResizeHandle", () => ({ NodeResizeHandle: () => <div /> }));
 vi.mock("@/features/canvas/ui/ProviderModelPicker", () => ({
-  DEFAULT_SHARED_MODEL_ID: "test-model",
   ProviderModelPicker: () => <div />,
 }));
 vi.mock("@/lib/queries/generation-credit-cost", () => ({

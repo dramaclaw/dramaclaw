@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiCall } from "@/api/client";
 import {
+  submitFreezoneVideoCompose,
   compileFreezoneRecipePrompt,
-  generateFreezoneRecipeText,
+  sendGenerationWireRequest,
+  fetchFreezoneImageModels,
+  fetchFreezoneVideoModels,
   listFreezoneStyleTemplates,
-  submitFreezoneAudioSpeech,
   submitFreezoneGen,
   submitFreezoneVideoGen,
 } from "@/api/ops";
@@ -20,6 +22,21 @@ vi.mock("@/api/client", () => ({
   apiCall: vi.fn(),
   apiClient: vi.fn(),
 }));
+
+it.each([fetchFreezoneImageModels, fetchFreezoneVideoModels])("retains localized model guides and accepts legacy catalog rows", async (load) => {
+  const guide = {
+    zh: { summary: "草图", detail: "先确定构图", tags: ["推荐"] },
+    my: { summary: "ပုံကြမ်း", detail: "ဖွဲ့စည်းပုံကို အရင်သတ်မှတ်ပါ", tags: ["အကြံပြု"] },
+  };
+  vi.mocked(apiCall).mockResolvedValueOnce([
+    { id: "guided", apiModel: "guided", pickerGuide: guide },
+    { id: "legacy", apiModel: "legacy" },
+  ]);
+  const [guided, legacy] = await load("project-1");
+  expect(guided.pickerGuide).toEqual(guide);
+  expect(legacy.id).toBe("legacy");
+  expect(legacy.pickerGuide).toBeUndefined();
+});
 
 it("forces text-to-video human review off even for stale enabled node data", async () => {
   vi.mocked(apiCall).mockResolvedValueOnce({ task_key: "video-1", job_id: "video-1" });
@@ -36,27 +53,21 @@ describe("workflow media task association", () => {
   beforeEach(() => {
     vi.mocked(apiCall).mockReset();
     clearWorkflowProductOperation("image-1");
-    clearWorkflowProductOperation("audio-1");
   });
 
-  it("sends the admitted attempt with image and audio submissions", async () => {
+  it("sends the admitted attempt with image submission", async () => {
     vi.mocked(apiCall).mockResolvedValue({ task_key: "task-1", job_id: "job-1" });
     bindWorkflowProductOperation("image-1", {
       projectId: "project-1", operationId: "operation-image",
       generationAttemptId: "attempt-image",
     });
-    bindWorkflowProductOperation("audio-1", {
-      projectId: "project-1", operationId: "operation-audio",
-      generationAttemptId: "attempt-audio",
-    });
+
 
     await submitFreezoneGen("project-1", {
       prompt: "frame", referenceUrls: [], canvasId: "default", nodeId: "image-1",
       variantCount: 4,
     });
-    await submitFreezoneAudioSpeech("project-1", {
-      text: "voice", canvasId: "default", nodeId: "audio-1",
-    });
+
 
     expect(vi.mocked(apiCall).mock.calls[0][1]).toEqual(expect.objectContaining({
       json: expect.objectContaining({
@@ -65,12 +76,7 @@ describe("workflow media task association", () => {
         variant_count: 4,
       }),
     }));
-    expect(vi.mocked(apiCall).mock.calls[1][1]).toEqual(expect.objectContaining({
-      json: expect.objectContaining({
-        product_operation_id: "operation-audio",
-        generation_attempt_id: "attempt-audio",
-      }),
-    }));
+
   });
 });
 
@@ -128,20 +134,15 @@ describe("freezone recipe API", () => {
   it("allows long-running text generation requests", async () => {
     vi.mocked(apiCall).mockResolvedValueOnce({ content: "创意大纲" });
 
-    const content = await generateFreezoneRecipeText({
-      recipeId: "video-creative-outline",
-      nodePrompt: "生成广告创意大纲",
-      userGoal: "制作运动相机广告",
-    });
+    const request = { method: 'POST', path: 'freezone/recipes/generate-text', body: {
+      recipe_id: 'video-creative-outline', node_prompt: '生成广告创意大纲', user_goal: '制作运动相机广告',
+    } } as const;
+    const data = await sendGenerationWireRequest<{ content: string }>(request, { timeout: 600000 });
 
-    expect(content).toBe("创意大纲");
-    expect(apiCall).toHaveBeenCalledWith(
-      "freezone/recipes/generate-text",
-      expect.objectContaining({
-        method: "POST",
-        timeout: 10 * 60 * 1000,
-      }),
-    );
+    expect(data).toStrictEqual({ content: '创意大纲' });
+    expect(apiCall).toHaveBeenCalledWith(request.path, {
+      method: 'POST', json: request.body, timeout: 600000,
+    });
   });
 
   it("allows long-running prompt compilation before media submission", async () => {
@@ -336,4 +337,16 @@ describe("freezone recipe API", () => {
       "freezone/recipes/compile",
     ]);
   });
+});
+
+
+it("serializes audio gain and fade to the compose HTTP request", async () => {
+  vi.mocked(apiCall).mockResolvedValueOnce({ task_key: "compose", job_id: "compose" });
+  await submitFreezoneVideoCompose("project-1", { tracks: [{ trackId: "music", kind: "audio", items: [{
+    itemId: "bgm", sourceUrl: "/bgm.wav", sourceEnd: 8, volume: .7, fadeOut: 2,
+  }] }] });
+  expect(apiCall).toHaveBeenLastCalledWith("projects/project-1/freezone/video/compose",
+    expect.objectContaining({ json: expect.objectContaining({ tracks: [expect.objectContaining({
+      items: [expect.objectContaining({ volume: .7, fade_out: 2 })],
+    })] }) }));
 });

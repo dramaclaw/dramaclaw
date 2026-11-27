@@ -19,13 +19,13 @@
  * Translations: `name.<language>.vtt` beside the transcript, the same lines at the same times; each line carries them
  * (`alt`), cut to follow the original's pieces, and the person's style picks one.
  */
+import { TOOL_DIR } from '../../src/film-dirs.mjs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { clipKind, clipSpan, kindOf, soundRole } from '../../src/film-doc.mjs';
 import { probe } from './derived.mjs';
 import { readProjectFilm } from './film.mjs';
 import { HttpError, json, readJson } from './http.mjs';
-import { TOOL_DIR } from './projects.mjs';
 import { filmSubtitleLanguageOf, filmSubtitleLanguagesIn, isFilmSubtitleLanguage, parseFilmSubtitleStyle, sameFilmSubtitleLanguage } from './film-subtitle.mjs';
 import { writeAtomic } from './atomic.mjs';
 import { inProject } from './files.mjs';

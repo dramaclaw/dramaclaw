@@ -30,6 +30,62 @@ function start(getAgentIds = () => ["main"]) {
 }
 
 describe("canvas command stream", () => {
+  it("reads the revision and locale again on reconnect", async () => {
+    let revision = 4;
+    let locale = "en";
+    dispose = startCanvasCommandStream({
+      projectId: "p", canvasId: "c", getAgentIds: () => ["main"],
+      getLastRevision: () => revision,
+      getLocale: () => locale,
+      onFrame: vi.fn(), poll: vi.fn().mockResolvedValue([]),
+    });
+    const first = new URL(Source.instances[0].url).searchParams;
+    expect(first.get("last_revision")).toBe("4");
+    expect(first.get("locale")).toBe("en");
+
+    revision = 7;
+    locale = "zh";
+    Source.instances[0].onerror?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const reconnected = new URL(Source.instances[1].url).searchParams;
+    expect(reconnected.get("last_revision")).toBe("7");
+    expect(reconnected.get("locale")).toBe("zh");
+  });
+
+  it.each([null, undefined, -1, 1.5, NaN, Infinity])(
+    "omits invalid revision %s and an empty locale",
+    (revision) => {
+      dispose = startCanvasCommandStream({
+        projectId: "p", canvasId: "c", getAgentIds: () => ["main"],
+        getLastRevision: () => revision,
+        getLocale: () => "",
+        onFrame: vi.fn(), poll: vi.fn().mockResolvedValue([]),
+      });
+      const params = new URL(Source.instances[0].url).searchParams;
+      expect(params.has("last_revision")).toBe(false);
+      expect(params.has("locale")).toBe(false);
+    },
+  );
+
+  it.each([null, undefined])("includes revision zero and omits locale %s", (locale) => {
+    dispose = startCanvasCommandStream({
+      projectId: "p", canvasId: "c", getAgentIds: () => ["main"],
+      getLastRevision: () => 0,
+      getLocale: () => locale,
+      onFrame: vi.fn(), poll: vi.fn().mockResolvedValue([]),
+    });
+    const params = new URL(Source.instances[0].url).searchParams;
+    expect(params.get("last_revision")).toBe("0");
+    expect(params.has("locale")).toBe(false);
+  });
+
+  it("forwards a canvas patch without a bridge key", () => {
+    const { onFrame } = start();
+    const frame = { type: "canvas.patch", canvas_id: "c", revision: 5, client_save_id: null };
+    Source.instances[0].onmessage?.({ data: JSON.stringify(frame) });
+    expect(onFrame).toHaveBeenCalledWith(frame);
+  });
+
   it("uses cookies, forwards frames and does not poll a healthy connection", async () => {
     const { onFrame, poll } = start();
     const source = Source.instances[0];

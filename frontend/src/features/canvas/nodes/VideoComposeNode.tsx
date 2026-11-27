@@ -7,7 +7,7 @@ import {
   useUpdateNodeInternals,
   type NodeProps,
 } from "@xyflow/react";
-import { Film } from "lucide-react";
+import { AlertTriangle, Film } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useCanvasStore } from "@/stores/canvasStore";
@@ -98,6 +98,8 @@ export const VideoComposeNode = memo(
     const canOpen = videoCount >= MIN_UPSTREAM_VIDEOS;
     const canAutoCompose =
       videoCount >= MIN_AUTO_COMPOSE_VIDEOS && seedNodeIds.length >= MIN_AUTO_COMPOSE_MEDIA;
+    const generationError =
+      typeof data.generationError === "string" ? data.generationError.trim() : "";
 
     const resolvedTitle = useMemo(
       () => localizeNodeDisplayName(CANVAS_NODE_TYPES.videoCompose, data, t),
@@ -312,6 +314,24 @@ export const VideoComposeNode = memo(
             <span className="text-[12px] leading-5 text-text-muted/90">
               {t("videoCompose.node.hint", { min: MIN_UPSTREAM_VIDEOS })}
             </span>
+            {data.isGenerating ? (
+              <div role="status" className="text-[12px] leading-5 text-text-muted/90">
+                {t("videoCompose.node.exporting")}
+              </div>
+            ) : generationError ? (
+              <div role="alert" className="nodrag nowheel flex w-full min-h-0 flex-col items-center text-center">
+                <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-red-200">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-300/90" />
+                  <span>{t("videoCompose.node.exportFailed")}</span>
+                </div>
+                <div
+                  className="mt-1 max-h-12 max-w-full overflow-y-auto break-words text-[12px] leading-4 text-red-100/76 [overflow-wrap:anywhere]"
+                  title={generationError}
+                >
+                  {generationError}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 

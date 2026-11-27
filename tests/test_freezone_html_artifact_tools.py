@@ -4,12 +4,11 @@ from test_freezone_plugin import _restore_tools_registry_modules as _restore_too
 
 def test_html_artifact_is_not_exposed_as_a_standalone_agent_tool():
     plugin = _load_plugin_module()
-    from novelvideo.chat import hermes_sdk, service
+    from novelvideo.chat import hermes_sdk
 
     tool_names = {name for name, _schema, _handler in plugin.TOOLS}
     assert 'freezone_html_artifact' not in tool_names
     assert not hermes_sdk._is_freezone_canvas_write_tool('freezone_html_artifact')
-    assert 'freezone_html_artifact' not in service._FREEZONE_CANVAS_WRITE_TOOLS
 
 
 def test_html_node_actions_keep_correct_read_write_classification():
@@ -26,14 +25,15 @@ def test_html_node_actions_keep_correct_read_write_classification():
         )
 
 
-def test_direct_mcp_mode_routes_html_through_frontend(monkeypatch):
+def test_server_executor_routes_html_through_frontend(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.setattr(plugin, '_resolve_canvas_scope_for_write', lambda p,c: (p,c,None))
     monkeypatch.setattr(plugin, '_external_generation_parameter_preflight', lambda *a: None)
     monkeypatch.setattr(plugin, '_external_mcp_agent_enabled', lambda: True)
-    monkeypatch.setattr(plugin, '_mcp_direct_canvas_apply_enabled', lambda: True)
-    monkeypatch.setattr(plugin, '_mcp_canvas_approval_enabled', lambda: False)
-    monkeypatch.setattr(plugin, '_direct_apply_canvas_commands', lambda *a,**k: (_ for _ in ()).throw(AssertionError('HTML must never use server direct apply')))
+    monkeypatch.setattr(plugin, '_agent_canvas_executor', lambda: 'server')
+    monkeypatch.setattr(plugin, '_request', lambda method, path: {
+        'ok': True, 'data': {'browser_open': True},
+    })
     dispatched = []
     monkeypatch.setattr(plugin, '_dispatch_mcp_approved_frontend_commands', lambda **k: dispatched.append(k) or {'ok':True})
     plugin._emit_canvas_commands('p','c',[{'type':'html_artifact','action':'create','title':'Hello','html':'hello'}])
@@ -130,7 +130,6 @@ def test_compiled_workflow_prepare_is_gated_from_public_html_writes(monkeypatch)
     monkeypatch.setattr(plugin, '_resolve_canvas_scope_for_write', lambda p, c: (p, c, None))
     monkeypatch.setattr(plugin, '_external_generation_parameter_preflight', lambda *a: None)
     monkeypatch.setattr(plugin, '_external_mcp_agent_enabled', lambda: False)
-    monkeypatch.setattr(plugin, '_mcp_direct_canvas_apply_enabled', lambda: False)
     dispatched = []
     monkeypatch.setattr(plugin, '_dispatch_frontend_canvas_commands', lambda **kwargs: dispatched.append(kwargs) or {'ok': True})
     assert plugin._emit_canvas_commands('p', 'c', [command])['status'] == 'invalid_command_schema'

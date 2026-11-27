@@ -14,7 +14,6 @@ from novelvideo.chat import (
     display_fallback,
     hermes_sdk,
     presentation_mapping,
-    runtime_event_evidence,
     service,
     tool_policy,
 )
@@ -136,13 +135,6 @@ def test_policy_sets_are_internally_consistent() -> None:
 
 def test_consumers_share_the_policy_objects_instead_of_copies() -> None:
     assert service._AGENT_PRODUCT_RESULT_TOOLS is tool_policy.AGENT_PRODUCT_RESULT_TOOLS
-    assert (
-        service._FREEZONE_CANVAS_WRITE_TOOLS is tool_policy.FREEZONE_CANVAS_WRITE_TOOLS
-    )
-    assert (
-        runtime_event_evidence._FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS
-        is tool_policy.FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS
-    )
     assert hermes_sdk._DRAMACLAW_WRITE_TOOLS is tool_policy.DRAMACLAW_WRITE_TOOLS
     assert (
         hermes_sdk._FREEZONE_CANVAS_WRITE_TOOLS

@@ -1,0 +1,1367 @@
+diff --git a/packages/openfilm/src/burn.mjs b/packages/openfilm/src/burn.mjs
+index 29cf7f9..023941b 100644
+--- a/packages/openfilm/src/burn.mjs
++++ b/packages/openfilm/src/burn.mjs
+@@ -1,5 +1,6 @@
+ /* The film with its subtitles burned in: a page drawn around the film, the subtitles over it (Studio's export and
+    render --subtitles). */
++import { cacheDir } from './film-dirs.mjs';
+ import { randomBytes } from 'node:crypto';
+ import { existsSync, readFileSync } from 'node:fs';
+ import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
+@@ -46,7 +47,7 @@ export function frameBox(stage, frame, fill) {
+  */
+ export async function burnFilm(root, stage, frame, fill, cues, style, transparent = false) {
+   const box = frameBox(stage, frame, fill);
+-  const dir = join(root, '.film', 'cache', 'export', `burn-${process.pid}-${randomBytes(4).toString('hex')}`);
++  const dir = cacheDir(root, 'export', `burn-${process.pid}-${randomBytes(4).toString('hex')}`);
+   await mkdir(dir, { recursive: true });
+   try {
+     await copyFile(fileURLToPath(new URL('../studio/server/film-subtitle.mjs', import.meta.url)), join(dir, 'film-subtitle.mjs'));
+diff --git a/packages/openfilm/src/film-dirs.mjs b/packages/openfilm/src/film-dirs.mjs
+new file mode 100644
+index 0000000..74c8047
+--- /dev/null
++++ b/packages/openfilm/src/film-dirs.mjs
+@@ -0,0 +1,73 @@
++// @ts-check
++/** Per-film output, persistent host state and disposable runtime directories. */
++import { realpathSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
++import { HttpError } from '../studio/server/http.mjs';
++
++export const TOOL_DIR = '.film';
++export const hostDirs = () => process.env.OPENFILM_HOST_DIRS === '1';
++
++/** @typedef {{ stateDir: string, runtimeDir: string }} HostDirs */
++/** @type {Map<string, HostDirs>} */
++const registered = new Map();
++
++/** Resolve existing ancestors too, so a not-yet-created directory cannot hide under a symlink. @returns {string} */
++function realPath(/** @type {string} */ path) {
++  try { return realpathSync(path); } catch (e) {
++    if (!['ENOENT', 'ENOTDIR'].includes(/** @type {NodeJS.ErrnoException} */ (e).code ?? '')) throw e;
++    const parent = dirname(path);
++    if (parent === path) return path;
++    return join(realPath(parent), path.slice(parent.length));
++  }
++}
++
++const within = (/** @type {string} */ path, /** @type {string} */ root) => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
++
++/** @param {string} root @param {{ stateDir?: string, runtimeDir?: string }} dirs */
++export function registerFilmDirs(root, { stateDir, runtimeDir }) {
++  const key = resolve(root);
++  const real = realPath(key);
++  const outside = (/** @type {string} */ name, /** @type {string | undefined} */ path) => {
++    if (typeof path !== 'string' || !isAbsolute(path)) throw new HttpError(400, `${name} must be an absolute path; stateDir and runtimeDir are required`);
++    const absolute = resolve(path);
++    if (within(absolute, key) || within(realPath(absolute), real)) throw new HttpError(400, `${name} must be outside the film root`);
++    return absolute;
++  };
++  const dirs = { stateDir: outside('stateDir', stateDir), runtimeDir: outside('runtimeDir', runtimeDir) };
++  /* Replace every spelling of the same root, including earlier symlink registrations. */
++  const prior = registered.get(key) ?? registered.get(real);
++  if (prior) for (const [alias, value] of registered) if (value === prior) registered.set(alias, dirs);
++  registered.set(key, dirs);
++  registered.set(real, dirs);
++}
++
++/** The registered film containing a file (the root itself never counts). */
++export function registeredFilmRoot(/** @type {string} */ path) {
++  const real = realPath(resolve(path));
++  return [...registered.keys()].filter((root) => real !== root && within(real, root)).sort((a, b) => b.length - a.length)[0];
++}
++
++/** Clear process-local registrations to exercise Studio restart recovery. */
++export function clearFilmDirsForTests() { registered.clear(); }
++
++/** @param {string} root */
++export function filmDirs(root) {
++  const key = resolve(root);
++  const dirs = hostDirs() ? registered.get(key) ?? registered.get(realPath(key)) : undefined;
++  const tool = join(key, TOOL_DIR);
++  if (dirs) return {
++    history: join(dirs.stateDir, 'history'), commits: join(dirs.stateDir, 'commits'),
++    media: join(tool, 'media'), cache: join(dirs.runtimeDir, 'cache'), removed: join(tool, 'removed'),
++  };
++  if (hostDirs() && !within(realPath(key), realPath(resolve(tmpdir())))) throw new HttpError(409, `film dirs not registered: ${root}`);
++  return {
++    history: join(tool, 'history'), commits: join(tool, 'cache', 'commits'),
++    media: join(tool, 'history', 'media'), cache: join(tool, 'cache'), removed: null,
++  };
++}
++
++/** @param {string} root @param {...string} sub */
++export const cacheDir = (root, ...sub) => join(filmDirs(root).cache, ...sub);
++export const historyDir = (/** @type {string} */ root) => filmDirs(root).history;
++export const mediaDir = (/** @type {string} */ root) => filmDirs(root).media;
+diff --git a/packages/openfilm/src/host.mjs b/packages/openfilm/src/host.mjs
+index 7f4bb3c..7640fb5 100644
+--- a/packages/openfilm/src/host.mjs
++++ b/packages/openfilm/src/host.mjs
+@@ -63,11 +63,18 @@ const TYPES = {
+  * `root`, or leads out of it through a link.
+  * `swap(file)` may name another file to serve in a file's place (a render's fast-seeking copy of a video, seekable.mjs;
+  * the preview's proxy of heavy footage, studio/server/proxies.mjs); not for `?film-facts`, which asks what the file is.
+- * @param {string} root @param {{ inject?: string, timelineInject?: string, headers?: Record<string, string>, swap?: (file: string) => string | null }} [options]
++ * @param {string} root @param {{ inject?: string, timelineInject?: string, headers?: Record<string, string>, swap?: (file: string) => string | null, runtime?: string }} [options]
+  */
+-export function folderFiles(root, { inject = `<script>${HOST_FLAG}</script>`, timelineInject = inject, headers: extraHeaders = {}, swap } = {}) {
++export function folderFiles(root, { inject = `<script>${HOST_FLAG}</script>`, timelineInject = inject, headers: extraHeaders = {}, swap, runtime } = {}) {
+   root = resolve(root);
++  /* A hosted render's scratch lives outside the film; expose only that directory at a private mount. */
++  const scratch = runtime ? folderFiles(runtime, { inject, timelineInject, headers: extraHeaders, swap }) : null;
+   return (req, res, path, query) => {
++    if (scratch && path.startsWith('/__film/runtime/')) {
++      const mounted = path.slice('/__film/runtime'.length);
++      if (!mounted.startsWith('/__film/')) return scratch(req, res, mounted, query);
++      path = mounted;
++    }
+     /* beside any film, wherever in the folder it is (its page asks for them relative to itself) */
+     if (path.endsWith('/__film/timeline.mjs')) {
+       // the built-in timeline: plays a film.html (see timeline.mjs)
+@@ -218,9 +225,10 @@ export function mediaFacts(file) {
+ /**
+  * Serve `root`. HTML gets the host flag injected before any page script;
+  * ?film-host=0 serves the page untouched, as a visitor would see it.
++ * @param {string} root @param {{ port?: number, swap?: (file: string) => string | null, runtime?: string }} [options]
+  */
+-export function serve(root, { port = 0, swap } = {}) {
+-  const files = folderFiles(root, { swap });
++export function serve(root, { port = 0, swap, runtime = undefined } = {}) {
++  const files = folderFiles(root, { swap, runtime });
+   const server = createServer((req, res) => {
+     const url = new URL(req.url, 'http://x');
+     if (!files(req, res, url.pathname, url.searchParams)) res.writeHead(403).end();
+diff --git a/packages/openfilm/src/locations.mjs b/packages/openfilm/src/locations.mjs
+index 093d4a7..f4361ad 100644
+--- a/packages/openfilm/src/locations.mjs
++++ b/packages/openfilm/src/locations.mjs
+@@ -11,6 +11,7 @@
+  *
+  * Reads no Studio module, so the command can use it.
+  */
++import { TOOL_DIR } from './film-dirs.mjs';
+ import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statfsSync, writeFileSync } from 'node:fs';
+ import { homedir } from 'node:os';
+ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+@@ -93,7 +94,7 @@ export const libraryRoot = () => chosenFolder('projectsFolder') ?? libraryDefaul
+ export function libraryProjects(root = libraryRoot()) {
+   try {
+     return readdirSync(root, { withFileTypes: true })
+-      .filter((d) => d.isDirectory() && !d.name.startsWith('.') && (existsSync(join(root, d.name, 'film.html')) || existsSync(join(root, d.name, '.film', 'id'))))
++      .filter((d) => d.isDirectory() && !d.name.startsWith('.') && (existsSync(join(root, d.name, 'film.html')) || existsSync(join(root, d.name, TOOL_DIR, 'id'))))
+       .map((d) => join(root, d.name));
+   } catch {
+     return [];
+diff --git a/packages/openfilm/src/render.mjs b/packages/openfilm/src/render.mjs
+index 3cc3333..81a4cab 100644
+--- a/packages/openfilm/src/render.mjs
++++ b/packages/openfilm/src/render.mjs
+@@ -1,5 +1,7 @@
+ // film render: the deliverable. Frames are rendered in parallel page instances, averaged
+ // over the shutter for motion blur, encoded with tagged BT.709 color, and muxed with the mix of the film's sounds.
++import { hostDirs } from './film-dirs.mjs';
++import { randomBytes } from 'node:crypto';
+ import { spawn, spawnSync } from 'node:child_process';
+ import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+ import { availableParallelism, freemem, totalmem } from 'node:os';
+@@ -148,7 +150,7 @@ export async function render(args, opts = {}) {
+   const alpha = !!opts.alpha;
+   /* the whole film is the person's, beside film.html; a stretch rendered to check something stays in the tool's folder */
+   const out = resolve(opts.out ?? (range
+-    ? join(outDir(dir, 'render'), `${name}-${from}-${to}${alpha ? '.webm' : '.mp4'}`)
++    ? join(outDir(hostDirs() ? root : dir, 'render'), `${name}-${from}-${to}${alpha ? '.webm' : '.mp4'}`)
+     : join(dir, `${name}${alpha ? '.webm' : '.mp4'}`)));
+   mkdirSync(dirname(out), { recursive: true });
+   const container = FORMATS[extname(out).toLowerCase()];
+@@ -176,7 +178,7 @@ export async function render(args, opts = {}) {
+      subtitle export is, reads the project's); a page's own videos are the ones it asked for */
+   if (opts.seekable !== false) {
+     const film = isFilm ? entry : opts.root ? FILM_FILE : null;
+-    const files = [...new Set([...videos, ...(film ? filmVideos(root, film) : [])])];
++    const files = [...new Set([...videos, ...(film ? filmVideos(root, film, isFilm && probe.runtime ? join(probe.runtime, FILM_FILE) : undefined) : [])])];
+     /* one the browser does not decode then fails its first frame, by its clip (timeline.mjs): never drawn black */
+     const failed = (/** @type {string} */ file) => {
+       uncopied.push(file);
+@@ -193,7 +195,7 @@ export async function render(args, opts = {}) {
+ 
+   if (!process.stderr.isTTY && !opts.onProgress) process.stderr.write(`  rendering ${total} frames with ${workers} browser${workers > 1 ? 's' : ''}…\n`);
+   /* a pool's process draws several renders at once, each of its own film folder (Studio's export makes one per page) */
+-  const work = join(outDir(dir, 'render'), `.parts-${process.pid}`);
++  const work = join(outDir(hostDirs() ? root : dir, 'render'), `.parts-${process.pid}${hostDirs() ? `-${randomBytes(4).toString('hex')}` : ''}`);
+   mkdirSync(work, { recursive: true });
+   let done = 0;
+   /* a terminal gets a live counter; an agent's shell (no TTY) a line every tenth, so a long render never looks hung */
+diff --git a/packages/openfilm/src/seekable.mjs b/packages/openfilm/src/seekable.mjs
+index 26704bc..8c13a26 100644
+--- a/packages/openfilm/src/seekable.mjs
++++ b/packages/openfilm/src/seekable.mjs
+@@ -4,6 +4,7 @@
+ // HEVC on a machine without a chip for it. Before rendering, such a video gets a copy the browser plays, with a key
+ // frame every quarter second, all but lossless (with its alpha, when it has one), made once and kept in the project's
+ // cache; the render's pages are served the copy, and the sound is still mixed from the original.
++import { cacheDir } from './film-dirs.mjs';
+ import { execFile } from 'node:child_process';
+ import { randomBytes } from 'node:crypto';
+ import { existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+@@ -121,7 +122,7 @@ export async function copyNeed(file, { plays, slow = true } = {}) {
+ 
+ /** Where `file`'s copy is kept in `root`'s cache, by the file's version: the path without its extension. */
+ const copyBase = (/** @type {string} */ file, /** @type {string} */ root, /** @type {import('node:fs').Stats} */ stat) =>
+-  join(root, '.film', 'cache', 'seek', hash(Buffer.from(`${VERSION}\0${file}\0${stat.size}\0${stat.mtimeMs}`)));
++  cacheDir(root, 'seek', hash(Buffer.from(`${VERSION}\0${file}\0${stat.size}\0${stat.mtimeMs}`)));
+ 
+ /** @type {Map<string, { copy: string | null, at: number }>} what madeCopy found, by file and version */
+ const found = new Map();
+@@ -145,11 +146,11 @@ export function madeCopy(file, root) {
+ /**
+  * The files of a film's video clips: film.html at `film` (a path in `root`, as a URL says it), as a render, a look or
+  * a still of it plays them.
+- * @param {string} root @param {string} film
++ * @param {string} root @param {string} film @param {string} [source]
+  */
+-export function filmVideos(root, film) {
++export function filmVideos(root, film, source = join(root, decodeURI(film))) {
+   let doc;
+-  try { doc = readFilmFile(readFileSync(join(root, decodeURI(film)), 'utf8')).doc; } catch { return []; }
++  try { doc = readFilmFile(readFileSync(source, 'utf8')).doc; } catch { return []; }
+   const files = new Set();
+   for (const track of doc?.tracks ?? []) {
+     for (const clip of track.clips) {
+diff --git a/packages/openfilm/src/shared.mjs b/packages/openfilm/src/shared.mjs
+index 73097c8..b913d1f 100644
+--- a/packages/openfilm/src/shared.mjs
++++ b/packages/openfilm/src/shared.mjs
+@@ -1,3 +1,4 @@
++import { cacheDir, hostDirs } from './film-dirs.mjs';
+ import { spawn, spawnSync } from 'node:child_process';
+ import { createHash } from 'node:crypto';
+ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+@@ -29,10 +30,11 @@ export function locate(target = '.', base = undefined) {
+   }
+   if (!existsSync(file)) throw new Error(`${target}: no ${FILM_FILE} here or above, and no index.html ('openfilm open' makes a project)`);
+   const dir = dirname(file);
+-  const root = base !== undefined && file.startsWith(resolve(base) + sep) ? resolve(base) : projectOf(dir);
+-  const entry = relative(root, file).split(sep).join('/');
++  const runtime = hostDirs() && base !== undefined && file.startsWith(cacheDir(base) + sep) && !file.startsWith(resolve(base) + sep) ? dir : undefined;
++  const root = base !== undefined && (runtime || file.startsWith(resolve(base) + sep)) ? resolve(base) : projectOf(dir);
++  const entry = runtime ? `__film/runtime/${basename(file)}` : relative(root, file).split(sep).join('/');
+   const name = basename(file) === 'index.html' || basename(file) === FILM_FILE ? basename(dir) : basename(file).replace(/\.html?$/i, '');
+-  return { root, entry: encodeURI(entry), dir, name, isFilm: basename(file) === FILM_FILE };
++  return { root, entry: encodeURI(entry), dir, name, isFilm: basename(file) === FILM_FILE, ...(runtime ? { runtime } : {}) };
+ }
+ 
+ /** The nearest folder with film.html from `dir` up to the current folder, else `dir`. */
+@@ -76,7 +78,7 @@ export async function open(target, opts = {}) {
+   }
+   /** @type {Map<string, string>} */
+   const copies = new Map();
+-  const site = await serve(loc.root, { swap: (file) => opts.swap?.(file) ?? copies.get(file) ?? null });
++  const site = await serve(loc.root, { runtime: loc.runtime, swap: (file) => opts.swap?.(file) ?? copies.get(file) ?? null });
+   const lent = opts.browser ?? null;
+   let browser;
+   try { browser = lent ?? await launch(opts.launch); }
+@@ -84,7 +86,7 @@ export async function open(target, opts = {}) {
+   if (opts.playable) {
+     try {
+       const { browserCopies, filmVideos } = await import('./seekable.mjs');
+-      const files = Array.isArray(opts.playable) ? opts.playable : loc.isFilm ? filmVideos(loc.root, loc.entry) : [];
++      const files = Array.isArray(opts.playable) ? opts.playable : loc.isFilm ? filmVideos(loc.root, loc.entry, loc.runtime ? join(loc.runtime, FILM_FILE) : undefined) : [];
+       for (const [file, copy] of await browserCopies(browser, site.url, loc.root, files, { signal: opts.signal })) copies.set(file, copy);
+     } catch { /* the footage as it is */ }
+   }
+@@ -109,7 +111,7 @@ export function homeFor(start) {
+ }
+ 
+ export function outDir(root, sub) {
+-  const dir = join(root, '.film', 'cache', sub);
++  const dir = cacheDir(root, sub);
+   mkdirSync(dir, { recursive: true });
+   return dir;
+ }
+diff --git a/packages/openfilm/studio/server/captions.mjs b/packages/openfilm/studio/server/captions.mjs
+index f0426d0..c7c6a2b 100644
+--- a/packages/openfilm/studio/server/captions.mjs
++++ b/packages/openfilm/studio/server/captions.mjs
+@@ -19,13 +19,13 @@
+  * Translations: `name.<language>.vtt` beside the transcript, the same lines at the same times; each line carries them
+  * (`alt`), cut to follow the original's pieces, and the person's style picks one.
+  */
++import { TOOL_DIR } from '../../src/film-dirs.mjs';
+ import { mkdir, readFile } from 'node:fs/promises';
+ import { dirname, join } from 'node:path';
+ import { clipKind, clipSpan, kindOf, soundRole } from '../../src/film-doc.mjs';
+ import { probe } from './derived.mjs';
+ import { readProjectFilm } from './film.mjs';
+ import { HttpError, json, readJson } from './http.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ import { filmSubtitleLanguageOf, filmSubtitleLanguagesIn, isFilmSubtitleLanguage, parseFilmSubtitleStyle, sameFilmSubtitleLanguage } from './film-subtitle.mjs';
+ import { writeAtomic } from './atomic.mjs';
+ import { inProject } from './files.mjs';
+diff --git a/packages/openfilm/studio/server/closure.mjs b/packages/openfilm/studio/server/closure.mjs
+index c15c58c..c240cd3 100644
+--- a/packages/openfilm/studio/server/closure.mjs
++++ b/packages/openfilm/studio/server/closure.mjs
+@@ -20,10 +20,10 @@
+  *
+  * It reads through a `View`, so the same rule reads the folder now (`folderView`) or a version kept in history.
+  */
++import { TOOL_DIR } from '../../src/film-dirs.mjs';
+ import { readdir, readFile, stat } from 'node:fs/promises';
+ import { posix } from 'node:path';
+ import { FILM_FILE, readFilmFile } from '../../src/film-doc.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ 
+ /**
+  * A project's files as the closure reads them, by folder-relative path with `/`. `size`: a file's bytes, or null
+@@ -56,7 +56,7 @@ export const isMediaFile = (/** @type {string} */ path) => {
+ };
+ 
+ /** Folders that are never part of a film, wherever a reference points: version control, Studio's own. */
+-const NEVER = /^(\.git|\.film)(\/|$)/;
++const NEVER = new RegExp(`^(\\.git|${TOOL_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(/|$)`);
+ 
+ /**
+  * A reference as it is written (`../a b.png?x#t=2`) made a project path (`a b.png`), from the folder `base` it is
+diff --git a/packages/openfilm/studio/server/cover.mjs b/packages/openfilm/studio/server/cover.mjs
+index f18100c..93fc7a0 100644
+--- a/packages/openfilm/studio/server/cover.mjs
++++ b/packages/openfilm/studio/server/cover.mjs
+@@ -4,6 +4,7 @@
+  * person (a picture from this computer, a picture of the project, or the film at a moment). It is Studio's, kept in
+  * `.film/cover.<ext>` as a copy; without one, the card shows the film's poster (pageframes.mjs filmPoster).
+  */
++import { TOOL_DIR } from '../../src/film-dirs.mjs';
+ import { statSync } from 'node:fs';
+ import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+ import { join } from 'node:path';
+@@ -34,8 +35,7 @@ export function pictureType(/** @type {Buffer} */ bytes) {
+   return null;
+ }
+ 
+-/* `.film/` (projects.mjs TOOL_DIR, not imported: projects.mjs lists each project's cover with coverAt) */
+-const coverPath = (/** @type {string} */ root, /** @type {string} */ ext) => join(root, '.film', `cover.${ext}`);
++const coverPath = (/** @type {string} */ root, /** @type {string} */ ext) => join(root, TOOL_DIR, `cover.${ext}`);
+ 
+ /** When the project's cover was set (ms), for its card to ask for the new picture; null when it has none. */
+ export function coverAt(/** @type {string} */ root) {
+diff --git a/packages/openfilm/studio/server/derived.mjs b/packages/openfilm/studio/server/derived.mjs
+index 992779e..cdba2c1 100644
+--- a/packages/openfilm/studio/server/derived.mjs
++++ b/packages/openfilm/studio/server/derived.mjs
+@@ -7,13 +7,13 @@
+  * ffmpeg runs a few at a time: a project opened with fifty clips must not start fifty decoders. The editor's sound of
+  * each file (soundOf) is made a few at a time of its own, so a long recording's does not hold up the thumbnails.
+  */
++import { cacheDir } from '../../src/film-dirs.mjs';
+ import { execFile } from 'node:child_process';
+ import { createHash } from 'node:crypto';
+ import { existsSync } from 'node:fs';
+ import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+ import { join } from 'node:path';
+ import { readable } from './files.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ import { writeAtomic } from './atomic.mjs';
+ 
+ export class MediaError extends Error {
+@@ -60,7 +60,7 @@ async function source(/** @type {string} */ root, /** @type {string} */ rel) {
+ 
+ /** A cached result: the file in `.film/cache/<kind>/`, made by `make` (written whole, through a temporary name). */
+ async function cached(/** @type {string} */ root, /** @type {string} */ kind, /** @type {string} */ name, /** @type {() => Promise<Buffer>} */ make) {
+-  const dir = join(root, TOOL_DIR, 'cache', kind);
++  const dir = cacheDir(root, kind);
+   const file = join(dir, name);
+   if (existsSync(file)) return readFile(file);
+   const bytes = await make();
+@@ -169,7 +169,7 @@ const makingSound = new Map();
+ export async function soundOf(root, rel) {
+   const { abs, key } = await source(root, rel);
+   if (COMPACT.test(rel) && (await stat(abs)).size <= COMPACT_BYTES) return abs;
+-  const out = join(root, TOOL_DIR, 'cache', 'audio', `${key}.m4a`);
++  const out = cacheDir(root, 'audio', `${key}.m4a`);
+   if (existsSync(out)) return out;
+   let made = makingSound.get(out);
+   if (!made) {
+@@ -180,7 +180,7 @@ export async function soundOf(root, rel) {
+       const channels = Number(stream.channels) || 2;
+       /* AAC is what a browser decodes everywhere: kept as it is when it is that already (no loss, no time) */
+       const codec = stream.codec_name === 'aac' && channels <= 2 ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-b:a', '128k', '-ac', String(Math.min(2, channels))];
+-      await mkdir(join(root, TOOL_DIR, 'cache', 'audio'), { recursive: true });
++      await mkdir(cacheDir(root, 'audio'), { recursive: true });
+       const part = `${out}.part`;
+       try {
+         await tool('ffmpeg', ['-v', 'error', '-nostdin', '-y', '-i', abs, '-map', '0:a:0', '-vn', '-sn', '-dn', ...codec, '-f', 'mp4', part], SOUND_SLOTS);
+diff --git a/packages/openfilm/studio/server/exports.mjs b/packages/openfilm/studio/server/exports.mjs
+index 76d0e8f..b66f6d4 100644
+--- a/packages/openfilm/studio/server/exports.mjs
++++ b/packages/openfilm/studio/server/exports.mjs
+@@ -59,6 +59,7 @@
+  * Time-based exports also accept `ranges: [[from, to], ...]` (1–100, seconds) to join the selections in their given
+  * order, with the picture, sound and subtitles on the joined clock. Choose either `range` or `ranges`.
+  */
++import { cacheDir, TOOL_DIR, historyDir, hostDirs, mediaDir } from '../../src/film-dirs.mjs';
+ import { execFile, fork, spawn } from 'node:child_process';
+ import { promisify } from 'node:util';
+ import { randomBytes } from 'node:crypto';
+@@ -86,7 +87,7 @@ import { filmSubtitleCuesInRange, filmSubtitleCuesInRanges, filmSubtitleShown, f
+ import { zipFiles } from './zip.mjs';
+ import { inProject } from './files.mjs';
+ import { filmClosure, folderView } from './closure.mjs';
+-import { PROJECT_PARTS, TOOL_DIR } from './projects.mjs';
++import { PROJECT_PARTS } from './projects.mjs';
+ import { exportsRoot } from '../../src/locations.mjs';
+ import { recordProblem } from '../../src/problems.mjs';
+ 
+@@ -248,7 +249,7 @@ const tidy = (path) => rm(path, { recursive: true, force: true, maxRetries: 5, r
+ const LEFT = {
+   output: /^\..+\.partial-(\d+)-[0-9a-f]+/,
+   scratch: /^(?:clip|burn|nle)-(\d+)-[0-9a-f]+$/,
+-  parts: /^\.parts-(\d+)$/,
++  parts: /^\.parts-(\d+)(?:-[0-9a-f]+)?$/,
+   copy: /\.part-(\d+)-[0-9a-f]+\.\w+$/,
+ };
+ 
+@@ -438,7 +439,12 @@ export async function projectFiles(root, parts, skip) {
+   if (existsSync(style)) files.push({ name: `${TOOL_DIR}/subtitles.json`, file: style, size: statSync(style).size });
+   const settings = join(root, TOOL_DIR, 'settings.json');
+   if (existsSync(settings)) files.push({ name: `${TOOL_DIR}/settings.json`, file: settings, size: statSync(settings).size });
+-  for (const part of parts) await walk(join(root, TOOL_DIR, part), `${TOOL_DIR}/${part}`);
++  for (const part of parts) {
++    await walk(part === 'history' ? historyDir(root) : join(root, TOOL_DIR, part), `${TOOL_DIR}/${part}`);
++    if (part === 'history' && hostDirs() && mediaDir(root) !== join(historyDir(root), 'media')) {
++      await walk(mediaDir(root), `${TOOL_DIR}/history/media`);
++    }
++  }
+   return files;
+ }
+ 
+@@ -451,7 +457,7 @@ export async function projectSizes(root) {
+   /** @type {{ work: number } & Record<ProjectPart, number | null>} */
+   const sizes = { work: sum(await projectFiles(root, [])), history: null, chat: null, logs: null };
+   for (const part of PROJECT_PARTS) {
+-    if (!existsSync(join(root, TOOL_DIR, part))) continue;
++    if (!existsSync(part === 'history' ? historyDir(root) : join(root, TOOL_DIR, part)) && !(part === 'history' && hostDirs() && existsSync(mediaDir(root)))) continue;
+     sizes[part] = sum((await projectFiles(root, [part])).filter((f) => f.name.startsWith(`${TOOL_DIR}/${part}/`)));
+   }
+   return sizes;
+@@ -521,7 +527,7 @@ function clipPath(root, src) {
+  * @param {string} root @param {string} dir @param {import('./ops.mjs').FilmValue} value
+  */
+ async function filmElsewhere(root, dir, value) {
+-  const up = relative(dir, root).split(sep).join('/');
++  const up = hostDirs() && !dir.startsWith(root + sep) ? '' : relative(dir, root).split(sep).join('/');
+   const back = (/** @type {string} */ path) => (/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(path) ? path : `${up}/${path}`);
+   const urls = (/** @type {string} */ css) => css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_, q, /** @type {string} */ path) => `url(${q}${back(path)}${q})`);
+   const own = existsSync(join(root, FILM_FILE)) ? readFileSync(join(root, FILM_FILE), 'utf8') : '';
+@@ -542,7 +548,7 @@ async function clipFilm(root, clipId, { change = {}, doc = filmDoc(root) } = {})
+   const track = doc.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+   const clip = track?.clips.find((c) => c.id === clipId);
+   if (!track || !clip) throw new ExportError(`${FILM_FILE} has no clip "${clipId}"`);
+-  const dir = join(root, '.film', 'cache', 'export', `clip-${process.pid}-${randomBytes(4).toString('hex')}`);
++  const dir = cacheDir(root, 'export', `clip-${process.pid}-${randomBytes(4).toString('hex')}`);
+   await mkdir(dir, { recursive: true });
+   await filmElsewhere(root, dir, { stage: doc.stage, tracks: [{ clips: [{ ...clip, ...change, at: 0 }], ...(track.muted ? { muted: true } : {}) }] });
+   return { dir, stage: doc.stage, remove: () => tidy(dir) };
+@@ -1197,7 +1203,7 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
+       if (fcp) throw error;
+       return { cues: [], style: null };
+     });
+-    const scratch = join(root, '.film', 'cache', 'export', `nle-${process.pid}-${randomBytes(4).toString('hex')}`);
++    const scratch = cacheDir(root, 'export', `nle-${process.pid}-${randomBytes(4).toString('hex')}`);
+     const final = freeFile(dir, baseName(job.name, ask), '');
+     const staging = join(dir, `.${basename(final)}.partial-${process.pid}-${job.id}`);
+     try {
+@@ -1548,8 +1554,8 @@ export function createExports({ onChange = () => {}, captions = subtitlesForExpo
+     try {
+       await mkdir(folder, { recursive: true });
+       /* what an export Studio could not finish left behind, gone before this one starts */
+-      await Promise.all([sweep(folder, LEFT.output), sweep(join(root, '.film', 'cache', 'export'), LEFT.scratch),
+-        sweep(join(root, '.film', 'cache', 'render'), LEFT.parts), sweep(join(root, '.film', 'cache', 'seek'), LEFT.copy)]);
++      await Promise.all([sweep(folder, LEFT.output), sweep(cacheDir(root, 'export'), LEFT.scratch),
++        sweep(cacheDir(root, 'render'), LEFT.parts), sweep(cacheDir(root, 'seek'), LEFT.copy)]);
+       update(job, { status: 'running', phase: 'preparing', startedAt: Date.now() });
+       const kind = job.ask.kind;
+       /* the same export as one made just before it (asked together), but for its name: that one's files, cloned */
+diff --git a/packages/openfilm/studio/server/files.mjs b/packages/openfilm/studio/server/files.mjs
+index 5c8e8b1..89bf596 100644
+--- a/packages/openfilm/studio/server/files.mjs
++++ b/packages/openfilm/studio/server/files.mjs
+@@ -8,6 +8,7 @@
+  * in Studio's own `.film/`, can be written through here, by its name or through a link in the folder; outside it, only
+  * what the person linked can be read.
+  */
++import { TOOL_DIR } from '../../src/film-dirs.mjs';
+ import { execFile } from 'node:child_process';
+ import { createHash } from 'node:crypto';
+ import { constants, createReadStream, createWriteStream, existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
+@@ -19,7 +20,6 @@ import { FILM_FILE, clipKind } from '../../src/film-doc.mjs';
+ import { addLinkedPlaces, readableLink } from '../../src/media-links.mjs';
+ import { changeProjectFilm, readProjectFilm } from './film.mjs';
+ import { filesWritten } from './person-edits.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ import { moveToTrash } from './trash.mjs';
+ import { linkKind, rewriteLinks } from './page-links.mjs';
+ import { ffmpeg } from '../../src/shared.mjs';
+diff --git a/packages/openfilm/studio/server/film-dirs.test.mjs b/packages/openfilm/studio/server/film-dirs.test.mjs
+new file mode 100644
+index 0000000..d500110
+--- /dev/null
++++ b/packages/openfilm/studio/server/film-dirs.test.mjs
+@@ -0,0 +1,235 @@
++import { test, beforeEach, afterEach } from 'node:test';
++import assert from 'node:assert/strict';
++import { execFileSync } from 'node:child_process';
++import { createHash } from 'node:crypto';
++import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { dirname, join } from 'node:path';
++import { cacheDir, clearFilmDirsForTests, filmDirs, registerFilmDirs } from '../../src/film-dirs.mjs';
++import { folderFiles } from '../../src/host.mjs';
++import { locate, outDir } from '../../src/shared.mjs';
++import { burnFilm } from '../../src/burn.mjs';
++import { openProject, readState } from './projects.mjs';
++import { checkoutVersion, copyVersion, discardChanges, log, saveVersion } from './history.mjs';
++import { moveToTrash } from './trash.mjs';
++import { probe } from './derived.mjs';
++import { projectFiles, projectSizes } from './exports.mjs';
++
++const envKeys = ['OPENFILM_HOST_DIRS', 'OPENFILM_HOME', 'OPENFILM_LIBRARY', 'HOME', 'XDG_DATA_HOME', 'OPENFILM_TRASH_DIR'];
++let scratch, root, stateDir, runtimeDir, kept;
++beforeEach(() => {
++  kept = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
++  scratch = realpathSync(mkdtempSync(join(tmpdir(), 'of-host-dirs-')));
++  root = join(scratch, 'film');
++  stateDir = join(scratch, 'state');
++  runtimeDir = join(scratch, 'runtime');
++  process.env.OPENFILM_HOST_DIRS = '1';
++  process.env.OPENFILM_HOME = join(scratch, 'studio');
++  process.env.OPENFILM_LIBRARY = join(scratch, 'library');
++  process.env.HOME = join(scratch, 'home');
++  process.env.XDG_DATA_HOME = join(scratch, 'xdg');
++  delete process.env.OPENFILM_TRASH_DIR;
++  clearFilmDirsForTests();
++});
++afterEach(() => {
++  clearFilmDirsForTests();
++  for (const [key, value] of Object.entries(kept)) {
++    if (value === undefined) delete process.env[key]; else process.env[key] = value;
++  }
++  rmSync(scratch, { recursive: true, force: true });
++});
++const open = () => openProject(root, { stateDir, runtimeDir });
++const film = (text = '') => `<!doctype html><html><head><meta name="viewport" content="width=1920, height=1080"></head><body><section><video src="take.mp4" at="0"></video></section><!-- ${text} --></body></html>`;
++const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
++const snapshot = (dir) => readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => {
++  const path = join(e.parentPath, e.name);
++  return [path.slice(dir.length), readFileSync(path).toString('hex')];
++}).sort(([a], [b]) => a.localeCompare(b));
++
++test('hosted history and retained media use host state and output, including checkout, copy and export', async () => {
++  await open();
++  const media = Buffer.alloc((1 << 20) + 1, 41);
++  writeFileSync(join(root, 'film.html'), film());
++  writeFileSync(join(root, 'take.mp4'), media);
++  const v1 = await saveVersion(root);
++  assert.equal(existsSync(join(scratch, 'state/history/HEAD')), true);
++  assert.equal(existsSync(join(root, '.film/media', sha(media))), true);
++  assert.equal(existsSync(join(root, '.film/history')), false);
++  assert.equal(existsSync(join(root, '.film/cache')), false);
++  assert.equal(existsSync(join(scratch, 'runtime/cache/history-files.json')), true);
++  writeFileSync(join(root, 'film.html'), film('v2'));
++  writeFileSync(join(root, 'take.mp4'), Buffer.alloc(media.length, 42));
++  await saveVersion(root);
++  await checkoutVersion(root, v1);
++  assert.deepEqual(readFileSync(join(root, 'take.mp4')), media);
++  const into = join(scratch, 'copy');
++  mkdirSync(into);
++  await copyVersion(root, v1, into);
++  assert.deepEqual(readFileSync(join(into, 'take.mp4')), media);
++  const files = await projectFiles(root, ['history']);
++  assert.equal(files.find((f) => f.name === '.film/history/HEAD')?.file, join(scratch, 'state/history/HEAD'));
++  assert.equal(files.find((f) => f.name === `.film/history/media/${sha(media)}`)?.file, join(root, '.film/media', sha(media)));
++  assert.ok((await projectSizes(root)).history > media.length);
++});
++
++test('hosted opening requires absolute host dirs outside the film', async () => {
++  for (const [options, message] of [
++    [{}, /stateDir.*runtimeDir/],
++    [{ stateDir: 'state', runtimeDir }, /stateDir.*absolute/],
++    [{ stateDir: join(root, 'state'), runtimeDir }, /stateDir.*outside/],
++    [{ stateDir: root, runtimeDir }, /stateDir.*outside/],
++    [{ stateDir, runtimeDir: 'runtime' }, /runtimeDir.*absolute/],
++    [{ stateDir, runtimeDir: join(root, 'cache') }, /runtimeDir.*outside/],
++  ]) await assert.rejects(openProject(root, options), (e) => e.status === 400 && message.test(e.message));
++  assert.equal(existsSync(root), false, 'invalid registration writes nothing');
++});
++
++test('hosted ignores old output history without moving or changing a byte', async () => {
++  mkdirSync(root);
++  writeFileSync(join(root, 'film.html'), film());
++  const gitDir = join(root, '.film/history');
++  mkdirSync(join(root, '.film'));
++  const git = (args, input) => execFileSync('git', [`--git-dir=${gitDir}`, ...args], { cwd: root, input, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.com' }, encoding: 'utf8' }).trim();
++  git(['init', '--bare', '--quiet', '--template=', '--initial-branch=main']);
++  const tree = git(['mktree'], '');
++  const commit = git(['commit-tree', tree, '-m', 'old']);
++  git(['update-ref', 'refs/heads/main', commit]);
++  const before = snapshot(gitDir);
++  await open();
++  assert.deepEqual((await log(root)).versions, []);
++  assert.deepEqual(snapshot(gitDir), before);
++  assert.deepEqual(readdirSync(join(root, '.film')).filter((name) => name.startsWith('history')), ['history']);
++});
++
++test('hosted rejects an unsupported host history without upgrading or renaming', async () => {
++  await open();
++  await saveVersion(root);
++  rmSync(join(stateDir, 'history/openfilm.json'));
++  const before = snapshot(join(stateDir, 'history'));
++  await assert.rejects(log(root), (e) => e.status === 409 && e.message === 'version history format is not supported');
++  assert.deepEqual(snapshot(join(stateDir, 'history')), before);
++  writeFileSync(join(stateDir, 'history/config'), '[include]\npath = /never-read\n');
++  await assert.rejects(log(root), (e) => e.status === 409 && e.message === 'version history format is not supported');
++});
++
++test('hosted discard keeps replaced files in output removed, never in system trash', async () => {
++  await open();
++  writeFileSync(join(root, 'notes.txt'), 'v1');
++  await saveVersion(root);
++  writeFileSync(join(root, 'notes.txt'), 'v2');
++  await discardChanges(root);
++  assert.equal(readFileSync(join(root, 'notes.txt'), 'utf8'), 'v1');
++  assert.equal(readFileSync(join(root, '.film/removed/notes.txt'), 'utf8'), 'v2');
++  writeFileSync(join(root, 'notes.txt'), 'v3');
++  await discardChanges(root);
++  assert.equal(readFileSync(join(root, '.film/removed/notes 2.txt'), 'utf8'), 'v3');
++  assert.equal(existsSync(join(process.env.HOME, '.Trash')), false);
++  assert.equal(existsSync(join(process.env.XDG_DATA_HOME, 'Trash')), false);
++  const outside = join(scratch, 'outside.txt');
++  writeFileSync(outside, 'keep');
++  await assert.rejects(moveToTrash(outside), (e) => e.status === 409 && e.message === 'no trash in the hosted Studio');
++  await assert.rejects(moveToTrash(root), (e) => e.status === 409);
++  process.env.OPENFILM_TRASH_DIR = join(scratch, 'override');
++  await moveToTrash(join(root, 'notes.txt'));
++  assert.equal(existsSync(join(scratch, 'override')), false);
++});
++
++test('registration persists and recovers on load, and re-registration replaces it', async () => {
++  await open();
++  const recent = JSON.parse(readFileSync(join(scratch, 'studio/studio.json'), 'utf8')).recent[0];
++  assert.equal(recent.stateDir, join(scratch, 'state'));
++  assert.equal(recent.runtimeDir, join(scratch, 'runtime'));
++  clearFilmDirsForTests();
++  await readState();
++  assert.equal(filmDirs(root).history, join(scratch, 'state/history'));
++  await openProject(root, { stateDir: join(scratch, 'state2'), runtimeDir: join(scratch, 'runtime2') });
++  assert.equal(filmDirs(root).history, join(scratch, 'state2/history'));
++  assert.equal(JSON.parse(readFileSync(join(scratch, 'studio/studio.json'), 'utf8')).recent[0].runtimeDir, join(scratch, 'runtime2'));
++  await saveVersion(root);
++  assert.equal(existsSync(join(scratch, 'runtime2/cache/history-files.json')), true);
++});
++
++test('real derived cache, output tools and burn scratch use runtime cache', async () => {
++  await open();
++  execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.1', join(root, 'tone.wav')]);
++  assert.equal((await probe(root, 'tone.wav')).audio, true);
++  assert.equal(readdirSync(join(scratch, 'runtime/cache/probe')).length, 1);
++  assert.equal(cacheDir(root, 'seek'), join(scratch, 'runtime/cache/seek'));
++  assert.equal(outDir(root, 'look'), join(scratch, 'runtime/cache/look'));
++  const burned = await burnFilm(root, { w: 1920, h: 1080 }, 'native', 'contain', [], {});
++  assert.equal(dirname(burned.dir), join(scratch, 'runtime/cache/export'));
++  assert.equal(existsSync(join(burned.dir, 'index.html')), true);
++  await burned.remove();
++  assert.equal(existsSync(join(root, '.film/cache')), false);
++});
++
++test('unregistered hosted roots fail outside tmp; scratch films keep upstream layout', () => {
++  const outside = '/openfilm-unregistered';
++  assert.throws(() => filmDirs(outside), (e) => e.status === 409 && e.message === `film dirs not registered: ${outside}`);
++  assert.deepEqual(filmDirs(root), {
++    history: join(root, '.film/history'), commits: join(root, '.film/cache/commits'),
++    media: join(root, '.film/history/media'), cache: join(root, '.film/cache'), removed: null,
++  });
++});
++
++test('registration follows symlinks and refuses host dirs aliased inside the root', async () => {
++  await open();
++  const alias = join(scratch, 'alias');
++  symlinkSync(root, alias);
++  assert.equal(filmDirs(alias).history, join(scratch, 'state/history'));
++  clearFilmDirsForTests();
++  registerFilmDirs(alias, { stateDir, runtimeDir });
++  assert.equal(filmDirs(root).history, join(scratch, 'state/history'));
++  assert.throws(() => registerFilmDirs(root, { stateDir: join(alias, 'state'), runtimeDir }), (e) => e.status === 400);
++});
++
++test('without hosted mode all five paths retain upstream behavior', () => {
++  delete process.env.OPENFILM_HOST_DIRS;
++  registerFilmDirs(root, { stateDir, runtimeDir });
++  assert.deepEqual(filmDirs(root), {
++    history: join(root, '.film/history'), commits: join(root, '.film/cache/commits'),
++    media: join(root, '.film/history/media'), cache: join(root, '.film/cache'), removed: null,
++  });
++});
++
++
++test('hosted burn scratch is served beside the source film without exposing its parent', async () => {
++  await open();
++  writeFileSync(join(root, 'film.html'), film('mounted-source'));
++  const burned = await burnFilm(root, { w: 1920, h: 1080 }, 'native', 'contain', [], {});
++  const location = locate(burned.dir, root);
++  assert.equal(location.root, root);
++  assert.equal(location.entry, '__film/runtime/index.html');
++  assert.equal(location.runtime, burned.dir);
++  const files = folderFiles(root, { runtime: location.runtime });
++  const get = (path) => {
++    const response = { status: null, body: null, writeHead(status) { this.status = status; return this; }, end(body) { this.body = body; } };
++    const served = files({ method: 'GET', headers: {} }, response, path, new URLSearchParams());
++    return { served, ...response };
++  };
++  assert.ok(get('/__film/runtime/index.html').body.includes('el.src = "/film.html";'));
++  assert.match(get('/film.html').body, /mounted-source/);
++  assert.equal(get('/__film/runtime/%2e%2e/secret.html').served, false);
++  await burned.remove();
++});
++
++
++test('hosted initializes an empty history directory supplied by the host', async () => {
++  await open();
++  mkdirSync(join(stateDir, 'history'), { recursive: true });
++  await saveVersion(root);
++  assert.equal(existsSync(join(scratch, 'state/history/HEAD')), true);
++});
++
++test('concurrent hosted trash moves preserve colliding files', async () => {
++  await open();
++  const paths = ['one', 'two'].map((name) => {
++    mkdirSync(join(root, name));
++    const path = join(root, name, 'take.txt');
++    writeFileSync(path, name);
++    return path;
++  });
++  await Promise.all(paths.map(moveToTrash));
++  assert.deepEqual(readdirSync(join(root, '.film/removed')).sort(), ['take 2.txt', 'take.txt']);
++  assert.deepEqual(readdirSync(join(root, '.film/removed')).map((name) => readFileSync(join(root, '.film/removed', name), 'utf8')).sort(), ['one', 'two']);
++});
+diff --git a/packages/openfilm/studio/server/history-migrate.mjs b/packages/openfilm/studio/server/history-migrate.mjs
+index 241e40c..7b55aef 100644
+--- a/packages/openfilm/studio/server/history-migrate.mjs
++++ b/packages/openfilm/studio/server/history-migrate.mjs
+@@ -14,6 +14,7 @@
+  * person's files are never written. A version's film.html, pages and code come back exactly as they were; so does its
+  * media where the old history had it.
+  */
++import { filmDirs, mediaDir } from '../../src/film-dirs.mjs';
+ import { spawn } from 'node:child_process';
+ import { createHash } from 'node:crypto';
+ import { createWriteStream, existsSync, readFileSync } from 'node:fs';
+@@ -24,7 +25,6 @@ import { filmClosure, folderView } from './closure.mjs';
+ import {
+   HistoryError, gitRun, isMedia, keepFiles, keepMedia, openRepo, pointerId, pointerText, readVersion, versionView, writeTree,
+ } from './history-store.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ import { moveToTrash } from './trash.mjs';
+ 
+ /** The format of a history Studio made: 2 kept the film's files only, media outside git; 3 keeps the project's files. */
+@@ -61,7 +61,7 @@ async function addToVersion(repo, headRef, head, base, paths) {
+  * @param {string} root @param {string} gitDir @param {(root: string) => Promise<Map<string, number>>} files
+  */
+ export async function upgradeHistory(root, gitDir, files) {
+-  const repo = openRepo(root, gitDir);
++  const repo = openRepo(root, gitDir, mediaDir(root));
+   const head = (await repo.git(['rev-parse', '--verify', '--quiet', 'HEAD']).catch(() => '')).trim();
+   const headRef = (await repo.git(['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim();
+   if (head && headRef) {
+@@ -121,7 +121,7 @@ function rewriteCommit(/** @type {string} */ raw, /** @type {string} */ tree, /*
+  * @param {import('./history-store.mjs').Progress} [progress]
+  */
+ export async function migrateHistory(root, gitDir, files, progress) {
+-  const old = openRepo(root, gitDir);
++  const old = openRepo(root, gitDir, mediaDir(root));
+   const refLines = (await old.git(['for-each-ref', '--format=%(objectname)%1f%(*objectname)%1f%(refname)', 'refs/heads', 'refs/tags'])).split('\n').filter(Boolean);
+   const stashList = await old.git(['stash', 'list', '--format=%H%x1f%gs']).catch(() => '');
+   /** @type {{ sha: string, branch: string }[]} */
+@@ -144,7 +144,7 @@ export async function migrateHistory(root, gitDir, files, progress) {
+   await writeFile(join(next, 'info', 'exclude'), '*\n');
+   await mkdir(join(next, 'objects', 'info'), { recursive: true });
+   await writeFile(join(next, 'objects', 'info', 'alternates'), `${join(gitDir, 'objects')}\n`);
+-  const neu = openRepo(root, next);
++  const neu = openRepo(root, next, join(next, 'media'));
+   const storeDir = join(next, 'media');
+   await mkdir(storeDir, { recursive: true });
+ 
+@@ -245,7 +245,7 @@ export async function migrateHistory(root, gitDir, files, progress) {
+   progress?.({ phase: 'migrate', done: ++done, total });
+ 
+   /* the pictures of the commits, under their new names (the old stay: they are a cache) */
+-  const posters = join(root, TOOL_DIR, 'cache', 'commits');
++  const posters = filmDirs(root).commits;
+   const shots = new Set(await readdir(posters).catch(() => []));
+   for (const [from, to] of mapped) {
+     if (shots.has(`${from}.jpg`) && !shots.has(`${to}.jpg`)) await copyFile(join(posters, `${from}.jpg`), join(posters, `${to}.jpg`)).catch(() => {});
+diff --git a/packages/openfilm/studio/server/history-store.mjs b/packages/openfilm/studio/server/history-store.mjs
+index e9a47d2..eaeef6f 100644
+--- a/packages/openfilm/studio/server/history-store.mjs
++++ b/packages/openfilm/studio/server/history-store.mjs
+@@ -14,6 +14,8 @@
+  * here, so nothing outside a version's files is ever looked at or touched. Set NODE_DEBUG=openfilm-history to see
+  * every git command and how long it took.
+  */
++import { hostDirs, cacheDir } from '../../src/film-dirs.mjs';
++import { moveToTrash } from './trash.mjs';
+ import { execFile, spawn } from 'node:child_process';
+ import { createHash, randomBytes } from 'node:crypto';
+ import { constants, createReadStream, existsSync, readFileSync } from 'node:fs';
+@@ -22,7 +24,6 @@ import { dirname, join } from 'node:path';
+ import { debuglog, promisify } from 'node:util';
+ import { replaceFile, tempPath, writeAtomic } from './atomic.mjs';
+ import { isMediaFile } from './closure.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ 
+ const run = promisify(execFile);
+ const debug = debuglog('openfilm-history');
+@@ -135,17 +136,17 @@ export function readBlobs(repo, oids) {
+ /* ── a project's history, open ───────────────────────────────────────────── */
+ 
+ /**
+- * @typedef {{ root: string, gitDir: string, algo: 'sha1' | 'sha256', hashes: Hashes,
++ * @typedef {{ root: string, gitDir: string, mediaDir: string, algo: 'sha1' | 'sha256', hashes: Hashes,
+  *   git: (args: string[], o?: { input?: string | Buffer, env?: Record<string, string> }) => Promise<string> }} Repo
+  */
+ 
+ /** The history in `gitDir` for the folder `root`, to read and write. */
+-export function openRepo(/** @type {string} */ root, /** @type {string} */ gitDir) {
++export function openRepo(/** @type {string} */ root, /** @type {string} */ gitDir, /** @type {string} */ mediaDir) {
+   let algo = /** @type {'sha1' | 'sha256'} */ ('sha1');
+   try { if (/objectformat\s*=\s*sha256/i.test(readFileSync(join(gitDir, 'config'), 'utf8'))) algo = 'sha256'; } catch { /* none yet */ }
+   /** @type {Repo} */
+   const repo = {
+-    root, gitDir, algo, hashes: hashesOf(root, algo),
++    root, gitDir, mediaDir, algo, hashes: hashesOf(root, algo),
+     git: (args, o) => gitRun(root, gitDir, args, o),
+   };
+   return repo;
+@@ -179,10 +180,10 @@ const allHashes = new Map();
+ 
+ /** @returns {Hashes} */
+ function hashesOf(/** @type {string} */ root, /** @type {'sha1' | 'sha256'} */ algo) {
+-  const id = `${root}\0${algo}`;
++  const file = cacheDir(root, 'history-files.json');
++  const id = `${root}\0${algo}\0${file}`;
+   const known = allHashes.get(id);
+   if (known) return known;
+-  const file = join(root, TOOL_DIR, 'cache', 'history-files.json');
+   /** @type {Map<string, { key: string, sha256?: string, blob?: string }>} */
+   let map = new Map();
+   try {
+@@ -258,7 +259,7 @@ const POINTER = /^openfilm-media 1\nsha256 ([0-9a-f]{64})\nsize (\d+)\n$/;
+ export const pointerId = (/** @type {Repo} */ repo, /** @type {string} */ sha256, /** @type {number} */ size) => blobId(repo.algo, Buffer.from(pointerText(sha256, size)));
+ 
+ /** Where the store keeps a media file. */
+-export const mediaPath = (/** @type {string} */ gitDir, /** @type {string} */ sha256) => join(gitDir, 'media', sha256);
++export const mediaPath = (/** @type {Repo} */ repo, /** @type {string} */ sha256) => join(repo.mediaDir, sha256);
+ 
+ /** Whether a file of this path and size is kept outside git. */
+ export const isMedia = (/** @type {string} */ rel, /** @type {number} */ size) => size > BIG || isMediaFile(rel);
+@@ -359,7 +360,7 @@ export async function cloneFile(/** @type {string} */ from, /** @type {string} *
+ 
+ /** A media file of the folder put in the store, unless it is there: a clone where the disk can, else a copy. */
+ export async function keepMedia(/** @type {Repo} */ repo, /** @type {string} */ rel, /** @type {{ sha256: string, size: number }} */ media) {
+-  const target = mediaPath(repo.gitDir, media.sha256);
++  const target = mediaPath(repo, media.sha256);
+   if (existsSync(target)) return;
+   await mkdir(dirname(target), { recursive: true });
+   const before = await repo.hashes.stat(rel);
+@@ -454,13 +455,14 @@ export async function writeFiles(repo, version, { paths, progress } = {}) {
+     await mkdir(dirname(target), { recursive: true });
+     const mode = entry.mode === '100755' ? 0o755 : 0o644;
+     if (entry.media) {
+-      const sources = [mediaPath(repo.gitDir, entry.media.sha256), ...repo.hashes.withSha256(entry.media.sha256).filter((r) => r !== rel).map((r) => join(repo.root, r))];
++      const sources = [mediaPath(repo, entry.media.sha256), ...repo.hashes.withSha256(entry.media.sha256).filter((r) => r !== rel).map((r) => join(repo.root, r))];
+       const from = sources.find((p) => existsSync(p));
+       if (!from) { missing.push(rel); continue; }
+       const tmp = tempPath(target);
+       try {
+         await cloneFile(from, tmp);
+         await chmod(tmp, mode);
++        if (hostDirs() && existsSync(target)) await moveToTrash(target);
+         await replaceFile(tmp, target);
+       } catch (e) {
+         await rm(tmp, { force: true });
+@@ -471,6 +473,7 @@ export async function writeFiles(repo, version, { paths, progress } = {}) {
+     } else {
+       const bytes = blobs.get(entry.oid);
+       if (!bytes) { missing.push(rel); continue; }
++      if (hostDirs() && existsSync(target)) await moveToTrash(target);
+       await writeAtomic(target, bytes, { mode });
+       const st = await repo.hashes.stat(rel);
+       if (st) repo.hashes.know(rel, st, { blob: entry.oid });
+diff --git a/packages/openfilm/studio/server/history.mjs b/packages/openfilm/studio/server/history.mjs
+index e6a1162..8dd8410 100644
+--- a/packages/openfilm/studio/server/history.mjs
++++ b/packages/openfilm/studio/server/history.mjs
+@@ -25,6 +25,7 @@
+  * Every action takes an optional `onProgress` (history-store.mjs Progress) to say how far it is; a history an earlier
+  * Studio made is brought up to date on first use (history-migrate.mjs).
+  */
++import { TOOL_DIR, historyDir, hostDirs, mediaDir } from '../../src/film-dirs.mjs';
+ import { existsSync, readFileSync, statSync } from 'node:fs';
+ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+ import { join } from 'node:path';
+@@ -34,7 +35,6 @@ import { FORMAT, formatOf, markFormat, migrateHistory, upgradeHistory } from './
+ import {
+   HistoryError, gitRun, keepFiles, openRepo, readVersion, sameAs, writeFiles, writeTree,
+ } from './history-store.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ import { moveToTrash } from './trash.mjs';
+ import { readDeletedVersions, writeDeletedVersions } from './history-deleted.mjs';
+ 
+@@ -43,8 +43,6 @@ export { HistoryError };
+ /** @typedef {import('./history-store.mjs').Progress} Progress */
+ /** @typedef {{ onProgress?: Progress }} Options */
+ 
+-const historyDir = (/** @type {string} */ root) => join(root, TOOL_DIR, 'history');
+-
+ /**
+  * git, run on the project's history only, on the folder where the project is now: both named on every call, never
+  * taken from the history's settings (its `core.worktree` is where the folder was when the history was made, and a
+@@ -106,7 +104,11 @@ async function followMove(/** @type {string} */ root, /** @type {string} */ gitD
+ async function ready(root, progress) {
+   if (!existsSync(root)) throw new HistoryError('the project\'s folder is not there', 404, 'none');
+   const gitDir = historyDir(root);
+-  if (existsSync(gitDir) && !ownHistory(gitDir)) await rename(gitDir, `${gitDir}-from-elsewhere-${Date.now()}`);
++  if (hostDirs() && existsSync(join(gitDir, 'HEAD')) && formatOf(gitDir) < FORMAT) throw new HistoryError('version history format is not supported', 409);
++  if (existsSync(gitDir) && !ownHistory(gitDir)) {
++    if (hostDirs()) throw new HistoryError('this project\'s version history was not made by Studio, so Studio does not use it', 409);
++    await rename(gitDir, `${gitDir}-from-elsewhere-${Date.now()}`);
++  }
+   /* git takes a folder for a history only with these in it, empty as they are until the first version: a copy or a
+      sync that leaves out empty folders would have every call fail ("not in a git directory") */
+   if (existsSync(join(gitDir, 'HEAD'))) {
+@@ -123,10 +125,10 @@ async function ready(root, progress) {
+   } else {
+     await followMove(root, gitDir);
+     const format = formatOf(gitDir);
+-    if (format < 2) await migrateHistory(root, gitDir, versionFiles, progress);
+-    else if (format < FORMAT) await upgradeHistory(root, gitDir, versionFiles);
++    if (!hostDirs() && format < 2) await migrateHistory(root, gitDir, versionFiles, progress);
++    else if (!hostDirs() && format < FORMAT) await upgradeHistory(root, gitDir, versionFiles);
+   }
+-  return openRepo(root, gitDir);
++  return openRepo(root, gitDir, mediaDir(root));
+ }
+ 
+ /** Tidy the history now and then, after the answer (git decides when it is worth it; it never blocks anything). */
+@@ -349,7 +351,7 @@ const ALL_VERSIONS = ['HEAD', '--branches', '--glob=refs/openfilm/kept/*', '--gl
+ export function log(root, { limit = 50, deleted = false, includeDeletedCount = false, onProgress } = {}) {
+   return queued(root, async () => {
+     const gitDir = historyDir(root);
+-    if (!existsSync(join(gitDir, 'HEAD')) || !ownHistory(gitDir)) return { versions: [], more: false, ...(includeDeletedCount ? { deletedCount: 0 } : {}) };
++    if (!existsSync(join(gitDir, 'HEAD')) || (!hostDirs() && !ownHistory(gitDir))) return { versions: [], more: false, ...(includeDeletedCount ? { deletedCount: 0 } : {}) };
+     await ready(root, throttled(onProgress));
+     const head = await headOf(root);
+     if (!head) return { versions: [], more: false, ...(includeDeletedCount ? { deletedCount: 0 } : {}) };
+@@ -669,7 +671,7 @@ export function copyVersion(root, commit, into, { onProgress } = {}) {
+     const progress = throttled(onProgress);
+     const repo = await ready(root, progress);
+     const version = await readVersion(repo, await resolveCommit(root, commit));
+-    const { missing } = await writeFiles(openRepo(into, repo.gitDir), version, { progress });
++    const { missing } = await writeFiles(openRepo(into, repo.gitDir, repo.mediaDir), version, { progress });
+     return { missing };
+   });
+ }
+diff --git a/packages/openfilm/studio/server/markers.mjs b/packages/openfilm/studio/server/markers.mjs
+index 3188d0a..9a751ea 100644
+--- a/packages/openfilm/studio/server/markers.mjs
++++ b/packages/openfilm/studio/server/markers.mjs
+@@ -8,11 +8,11 @@
+  *   GET markers               → { markers }
+  *   PUT markers { markers }   → { markers }: the whole list, as kept
+  */
++import { TOOL_DIR } from '../../src/film-dirs.mjs';
+ import { mkdir, readFile } from 'node:fs/promises';
+ import { dirname, join } from 'node:path';
+ import { writeAtomic } from './atomic.mjs';
+ import { HttpError, json, readJson } from './http.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ 
+ export const MARKERS_FILE = `${TOOL_DIR}/markers.json`;
+ const COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
+diff --git a/packages/openfilm/studio/server/pageframes.mjs b/packages/openfilm/studio/server/pageframes.mjs
+index 0cecedb..b312630 100644
+--- a/packages/openfilm/studio/server/pageframes.mjs
++++ b/packages/openfilm/studio/server/pageframes.mjs
+@@ -7,6 +7,7 @@
+  * time, so thumbnails never compete with the person's own preview for long. Cached in .film/cache by the page file's
+  * version, the moment and the width.
+  */
++import { cacheDir } from '../../src/film-dirs.mjs';
+ import { createHash } from 'node:crypto';
+ import { existsSync } from 'node:fs';
+ import { mkdir, readFile, stat } from 'node:fs/promises';
+@@ -14,7 +15,6 @@ import { join } from 'node:path';
+ import { FilmPage, launch } from '../../src/host.mjs';
+ import { FILM_FILE, clipKind } from '../../src/film-doc.mjs';
+ import { browserCopies, filmVideos, madeCopy } from '../../src/seekable.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ import { writeAtomic } from './atomic.mjs';
+ import { inProject } from './files.mjs';
+ 
+@@ -72,7 +72,7 @@ export async function pageFrame(root, base, rel, ms, width, overrides = null, si
+   const tweaks = overrides?.some((o) => o && typeof o === 'object' && 'at' in o) ? JSON.stringify(overrides) : '';
+   const laid = size ? `${Math.round(size.w)}x${Math.round(size.h)}` : '';
+   const key = createHash('sha256').update(`black\0${rel}\0${Math.round(ms)}\0${w}${tweaks ? `\0${tweaks}` : ''}${laid ? `\0${laid}` : ''}`).digest('hex').slice(0, 24);
+-  const dir = join(root, TOOL_DIR, 'cache', 'pageframes');
++  const dir = cacheDir(root, 'pageframes');
+   const file = join(dir, `${key}.jpg`);
+   /* a frame is good while every file the page loaded to draw it is as it was then: the page, and its styles, code,
+      fonts, pictures (a page's look changes with a stylesheet it shares as much as with itself) */
+@@ -110,9 +110,9 @@ export async function pageFrame(root, base, rel, ms, width, overrides = null, si
+     await writeAtomic(join(dir, `${key}.json`), JSON.stringify({ files: deps }));
+     if (rel === FILM_PAGE) {
+       /* the whole film's length, learnt on the way: the projects list shows it (projects.mjs filmDuration) */
+-      if (Number.isFinite(duration)) await writeAtomic(join(root, TOOL_DIR, 'cache', FILM_DURATION), JSON.stringify({ film: `${info.mtimeMs}:${info.size}`, duration }));
++      if (Number.isFinite(duration)) await writeAtomic(cacheDir(root, FILM_DURATION), JSON.stringify({ film: `${info.mtimeMs}:${info.size}`, duration }));
+       /* the film's poster, kept as its last whatever film.html becomes (filmPoster) */
+-      if (ms < 0 && w === POSTER_W) await writeAtomic(join(root, TOOL_DIR, 'cache', FILM_POSTER), jpeg);
++      if (ms < 0 && w === POSTER_W) await writeAtomic(cacheDir(root, FILM_POSTER), jpeg);
+     }
+     /* the stamp last: a request that finds it takes the frame as made, the film's length and poster written too */
+     await writeAtomic(join(dir, `${key}.stamp`), await stampOf(root, deps));
+@@ -179,7 +179,7 @@ export async function filmPoster(root, base) {
+   fresh.catch(() => {});
+   const soon = await within(fresh.catch(() => null), STALE_AFTER_MS);
+   if (soon) return soon;
+-  const last = await readFile(join(root, TOOL_DIR, 'cache', FILM_POSTER)).catch(() => null);
++  const last = await readFile(cacheDir(root, FILM_POSTER)).catch(() => null);
+   if (last) return last;
+   return within(fresh, FIRST_WAIT_MS - STALE_AFTER_MS);
+ }
+@@ -201,10 +201,10 @@ async function within(promise, ms) {
+  * @param {string} root @param {string} base
+  */
+ export function warmFilmPoster(root, base) {
+-  if (warming.has(root) || existsSync(join(root, TOOL_DIR, 'cache', FILM_POSTER))) return;
++  if (warming.has(root) || existsSync(cacheDir(root, FILM_POSTER))) return;
+   warming.set(root, setTimeout(() => {
+     warming.delete(root);
+-    if (!existsSync(join(root, TOOL_DIR, 'cache', FILM_POSTER))) pageFrame(root, base, FILM_PAGE, -1, POSTER_W).catch(() => {});
++    if (!existsSync(cacheDir(root, FILM_POSTER))) pageFrame(root, base, FILM_PAGE, -1, POSTER_W).catch(() => {});
+   }, WARM_MS).unref());
+ }
+ 
+diff --git a/packages/openfilm/studio/server/pages.mjs b/packages/openfilm/studio/server/pages.mjs
+index 62961a9..208bee5 100644
+--- a/packages/openfilm/studio/server/pages.mjs
++++ b/packages/openfilm/studio/server/pages.mjs
+@@ -18,6 +18,7 @@
+  * fetches the media), which frames the pages. A media file asked for with `?film-sound` is its sound,
+  * small (derived.mjs soundOf): what the mixer plays, never the whole of a video; 204 when it has none.
+  */
++import { cacheDir } from '../../src/film-dirs.mjs';
+ import { execFile } from 'node:child_process';
+ import { createHash, createHmac } from 'node:crypto';
+ import { readFileSync, realpathSync, statSync } from 'node:fs';
+@@ -37,7 +38,6 @@ const BRIDGE = readFileSync(new URL('./bridge.js', import.meta.url), 'utf8');
+ 
+ /* sounds a browser cannot play (AIFF, which macOS's `say` writes): the preview gets a WAV of each, made once */
+ const UNPLAYABLE = /\.(aif|aiff|aifc)$/i;
+-const PLAYABLE_DIR = join('.film', 'cache', 'playable');
+ /** @type {Map<string, Promise<string | null>>} copies being made, by where they go */
+ const making = new Map();
+ 
+@@ -55,12 +55,12 @@ async function playableCopy(root, rel) {
+     if (!realpathSync(file).startsWith(realpathSync(root) + sep) && !readableLink(root, file)) return null;
+   } catch { return null; }
+   const name = `${createHash('sha1').update(`${rel}\0${info.size}\0${info.mtimeMs}`).digest('hex').slice(0, 20)}.wav`;
+-  const out = join(root, PLAYABLE_DIR, name);
++  const out = cacheDir(root, 'playable', name);
+   try { statSync(out); return name; } catch { /* not made yet */ }
+   let made = making.get(out);
+   if (!made) {
+     made = (async () => {
+-      await mkdir(join(root, PLAYABLE_DIR), { recursive: true });
++      await mkdir(cacheDir(root, 'playable'), { recursive: true });
+       const part = `${out}.part.wav`;
+       const ok = await new Promise((done) => execFile('ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'error', '-y', '-i', file, '-vn', '-c:a', 'pcm_s16le', part], { windowsHide: true }, (e) => done(!e)));
+       if (!ok) return null;
+@@ -144,7 +144,7 @@ export async function startPages({ port, editorOrigin, secret, projects }) {
+   });
+ 
+   /** a project's playable copies (UNPLAYABLE), served as its files are */
+-  const copiesOf = (/** @type {string} */ root) => folderFiles(join(root, PLAYABLE_DIR), { headers: policy() });
++  const copiesOf = (/** @type {string} */ root) => folderFiles(cacheDir(root, 'playable'), { headers: policy() });
+ 
+   /** @type {Map<string, { root: string, files: ReturnType<typeof folderFiles> }>} */
+   const byToken = new Map();
+diff --git a/packages/openfilm/studio/server/preview-cache.mjs b/packages/openfilm/studio/server/preview-cache.mjs
+index 381b7b2..8c90afc 100644
+--- a/packages/openfilm/studio/server/preview-cache.mjs
++++ b/packages/openfilm/studio/server/preview-cache.mjs
+@@ -11,6 +11,7 @@
+  * stretch, the rate and the size. Any change makes another name, so a stale render is never played; renders asked for
+  * under names no longer current are let go.
+  */
++import { cacheDir } from '../../src/film-dirs.mjs';
+ import { fork } from 'node:child_process';
+ import { createHash } from 'node:crypto';
+ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+@@ -19,7 +20,6 @@ import { extname, join } from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import { DEFAULT_STAGE, FILM_FILE, readFilmFile } from '../../src/film-doc.mjs';
+ import { writeAtomic } from './atomic.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ 
+ /** Changing how renders are made names them anew. */
+ const VERSION = 1;
+@@ -29,7 +29,7 @@ const SOUNDS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.opus',
+ const MOST_FILES = 20_000;
+ 
+ /** Where a project's preview renders are kept. @param {string} root */
+-export const previewDir = (root) => join(root, TOOL_DIR, 'cache', 'preview');
++export const previewDir = (root) => cacheDir(root, 'preview');
+ 
+ /** A render's name is 20 hex digits: anything else asked for is not one. @param {string} key */
+ export const isPreviewKey = (key) => /^[0-9a-f]{20}$/.test(key);
+diff --git a/packages/openfilm/studio/server/project-settings.mjs b/packages/openfilm/studio/server/project-settings.mjs
+index 0073b6f..baff8b3 100644
+--- a/packages/openfilm/studio/server/project-settings.mjs
++++ b/packages/openfilm/studio/server/project-settings.mjs
+@@ -14,11 +14,11 @@
+  *   GET   settings            → { settings }
+  *   PATCH settings  { fps?, trackNames?, trackHeights? } → { settings } (null takes a setting away)
+  */
++import { TOOL_DIR } from '../../src/film-dirs.mjs';
+ import { mkdir, readFile } from 'node:fs/promises';
+ import { dirname, join } from 'node:path';
+ import { writeAtomic } from './atomic.mjs';
+ import { HttpError, json, readJson } from './http.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ 
+ export const PROJECT_SETTINGS_FILE = `${TOOL_DIR}/settings.json`;
+ 
+diff --git a/packages/openfilm/studio/server/projects.mjs b/packages/openfilm/studio/server/projects.mjs
+index 8925f0b..9b34524 100644
+--- a/packages/openfilm/studio/server/projects.mjs
++++ b/packages/openfilm/studio/server/projects.mjs
+@@ -14,6 +14,7 @@
+  *
+  * Each part is a folder of its own, so the project's export (exports.mjs, kind 'project') takes or leaves it.
+  */
++import { TOOL_DIR, cacheDir, hostDirs, registerFilmDirs } from '../../src/film-dirs.mjs';
+ import { moveToTrash } from './trash.mjs';
+ import { randomBytes } from 'node:crypto';
+ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+@@ -27,7 +28,7 @@ import { coverAt } from './cover.mjs';
+ import { libraryProjects, libraryRoot } from '../../src/locations.mjs';
+ import { projectMissing } from './project-presence.mjs';
+ 
+-export const TOOL_DIR = '.film';
++export { TOOL_DIR } from '../../src/film-dirs.mjs';
+ 
+ /** What an export of the project may take besides the work, each a folder in `.film/` (see above); never the cache. */
+ export const PROJECT_PARTS = /** @type {const} */ (['history', 'chat', 'logs']);
+@@ -64,7 +65,7 @@ export function studioKey() {
+ export { libraryRoot };
+ 
+ /**
+- * @typedef {{ id: string, path: string, openedAt: number, folderId?: string }} Recent
++ * @typedef {{ id: string, path: string, openedAt: number, stateDir?: string, runtimeDir?: string, folderId?: string }} Recent
+  * @typedef {{ id: string, name: string, createdAt: number, parentId?: string }} ProjectFolder   a folder of the Projects
+  *   list (not on disk); `parentId` the folder it is in (none: the top level)
+  * @typedef {{ recent: Recent[], folders: ProjectFolder[] }} StudioState
+@@ -82,13 +83,15 @@ function exclusive(change) {
+ 
+ /** The list of projects and the person's preferences, read fresh each time (another Studio command may have written). */
+ export async function readState() {
+-  try {
+-    const raw = JSON.parse(await readFile(join(studioHome(), 'studio.json'), 'utf8'));
+-    return /** @type {StudioState} */ ({
+-      recent: Array.isArray(raw.recent) ? raw.recent : [],
+-      folders: Array.isArray(raw.folders) ? raw.folders.filter((/** @type {any} */ f) => f && typeof f.id === 'string' && typeof f.name === 'string') : [],
+-    });
+-  } catch { return /** @type {StudioState} */ ({ recent: [], folders: [] }); }
++  const raw = await readFile(join(studioHome(), 'studio.json'), 'utf8').then(JSON.parse).catch(() => null);
++  const state = /** @type {StudioState} */ ({
++    recent: Array.isArray(raw?.recent) ? raw.recent : [],
++    folders: Array.isArray(raw?.folders) ? raw.folders.filter((/** @type {any} */ f) => f && typeof f.id === 'string' && typeof f.name === 'string') : [],
++  });
++  for (const entry of state.recent) {
++    if (entry.stateDir && entry.runtimeDir) registerFilmDirs(entry.path, { stateDir: entry.stateDir, runtimeDir: entry.runtimeDir });
++  }
++  return state;
+ }
+ 
+ /* the file is shared with every OpenFilm on this computer (`npx openfilm`, the app), older or newer: what this one does
+@@ -141,11 +144,14 @@ async function folderId(/** @type {string} */ folder, /** @type {StudioState} */
+  * is never touched); `.film/` keeps itself out of the folder's own git. Returns the project and puts it first in the list.
+  * `create` false: only a folder that is there and holds a film opens (else 'not-found' or 'no-film', and nothing is
+  * written), so the editor can ask before it starts a film in a folder.
+- * @param {string} path @param {{ create?: boolean }} [options]
++ * @param {string} path @param {{ create?: boolean, stateDir?: string, runtimeDir?: string }} [options]
+  */
+-export async function openProject(path, { create = true } = {}) {
++export async function openProject(path, { create = true, stateDir, runtimeDir } = {}) {
+   const asked = resolve(path);
+   refuse(asked);
++  if (hostDirs() || stateDir !== undefined || runtimeDir !== undefined) {
++    registerFilmDirs(asked, { stateDir, runtimeDir });
++  }
+   if (existsSync(asked) && !statSync(asked).isDirectory()) throw new ProjectError(`${asked} is a file; a project is a folder`);
+   if (!create && !existsSync(asked)) throw new ProjectError('That folder does not exist.', 404, 'not-found');
+   if (!create && !existsSync(join(asked, FILM_FILE))) throw new ProjectError('There is no film.html in that folder.', 409, 'no-film');
+@@ -160,7 +166,8 @@ export async function openProject(path, { create = true } = {}) {
+     const id = await folderId(folder, state);
+     /* reopened: it stays in its folder of the list */
+     const listed = state.recent.find((r) => r.id === id)?.folderId;
+-    const entry = { id, path: folder, openedAt: Date.now(), ...(listed ? { folderId: listed } : {}) };
++    if (stateDir && runtimeDir) registerFilmDirs(asked, { stateDir, runtimeDir });
++    const entry = { id, path: folder, openedAt: Date.now(), ...(stateDir && runtimeDir ? { stateDir, runtimeDir } : {}), ...(listed ? { folderId: listed } : {}) };
+     state.recent = [entry, ...state.recent.filter((r) => r.id !== id && r.path !== folder)];
+     await writeState(state);
+     return describe(entry);
+@@ -168,13 +175,14 @@ export async function openProject(path, { create = true } = {}) {
+ }
+ 
+ /** A new project in the library: "Untitled", "Untitled 2", … never an existing folder. */
+-export async function createProject(name = 'Untitled') {
++/** @param {string} [name] @param {{ stateDir?: string, runtimeDir?: string }} [dirs] */
++export async function createProject(name = 'Untitled', dirs = {}) {
+   const clean = folderName(name);
+   const root = libraryRoot();
+   await mkdir(root, { recursive: true });
+   let candidate = join(root, clean);
+   for (let n = 2; existsSync(candidate); n++) candidate = join(root, `${clean} ${n}`);
+-  return openProject(candidate);
++  return openProject(candidate, dirs);
+ }
+ 
+ /**
+@@ -224,7 +232,7 @@ function filmTitle(/** @type {string} */ folder) {
+ function filmDuration(/** @type {string} */ folder) {
+   try {
+     const film = statSync(join(folder, FILM_FILE));
+-    const known = JSON.parse(readFileSync(join(folder, TOOL_DIR, 'cache', 'film-duration.json'), 'utf8'));
++    const known = JSON.parse(readFileSync(cacheDir(folder, 'film-duration.json'), 'utf8'));
+     return known.film === `${film.mtimeMs}:${film.size}` && Number.isFinite(known.duration) ? Number(known.duration) : null;
+   } catch { return null; }
+ }
+diff --git a/packages/openfilm/studio/server/proxies.mjs b/packages/openfilm/studio/server/proxies.mjs
+index b44add7..53c8c98 100644
+--- a/packages/openfilm/studio/server/proxies.mjs
++++ b/packages/openfilm/studio/server/proxies.mjs
+@@ -14,6 +14,7 @@
+  * Only the preview plays them (pages.mjs swaps a file for its proxy): the film's sound is mixed from the original, and
+  * an export or a render reads the originals. Nothing in film.html changes.
+  */
++import { cacheDir } from '../../src/film-dirs.mjs';
+ import { spawn } from 'node:child_process';
+ import { createHash } from 'node:crypto';
+ import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
+@@ -23,7 +24,6 @@ import { colorTagsOf, encoders, h264ColorTags, hardwareEncoder, hardwareOptions,
+ import { decodedAnywhere } from '../../src/seekable.mjs';
+ import { probe } from './derived.mjs';
+ import { readable } from './files.mjs';
+-import { TOOL_DIR } from './projects.mjs';
+ 
+ /** Changing how proxies are made makes new ones. */
+ const VERSION = 1;
+@@ -81,7 +81,7 @@ function proxyFile(/** @type {string} */ root, /** @type {string} */ rel, /** @t
+   const abs = readable(root, rel);
+   const info = statSync(abs);
+   const name = createHash('sha1').update(`${VERSION}\0${info.dev}:${info.ino}\0${info.size}\0${Math.round(info.mtimeMs)}\0${height}`).digest('hex').slice(0, 20);
+-  return { abs, out: join(root, TOOL_DIR, 'cache', 'proxies', `${name}.mp4`) };
++  return { abs, out: cacheDir(root, 'proxies', `${name}.mp4`) };
+ }
+ 
+ /** The proxy of `rel` at `height`, when it is made; else null. */
+diff --git a/packages/openfilm/studio/server/render-worker.mjs b/packages/openfilm/studio/server/render-worker.mjs
+index 84f2b0b..e0eb94a 100644
+--- a/packages/openfilm/studio/server/render-worker.mjs
++++ b/packages/openfilm/studio/server/render-worker.mjs
+@@ -12,6 +12,8 @@
+  * and `failed` with the render's id. Its renders share one BrowserPool, so a browser is started once for many pages;
+  * a render whose browser crashed or stopped answering is drawn once more in new browsers.
+  */
++import { hostDirs } from '../../src/film-dirs.mjs';
++import { readState } from './projects.mjs';
+ import { render } from '../../src/render.mjs';
+ import { BrowserPool, browserFailed } from '../../src/browser-pool.mjs';
+ 
+@@ -28,6 +30,7 @@ if (process.argv.includes('--pool')) {
+   /** @param {string} id @param {string[]} args @param {Record<string, unknown>} opts @param {AbortSignal} signal */
+   const draw = async (id, args, opts, signal) => {
+     try {
++      if (hostDirs()) await readState();
+       for (let tries = 1; ; tries++) {
+         try {
+           const result = await render(args, {
+@@ -65,6 +68,7 @@ if (process.argv.includes('--pool')) {
+     const abort = new AbortController();
+     process.on('message', (/** @type {{ type?: string }} */ m) => { if (m?.type === 'cancel') abort.abort(); });
+     try {
++      if (hostDirs()) await readState();
+       let result;
+       for (let tries = 1; ; tries++) {
+         try {
+diff --git a/packages/openfilm/studio/server/server.mjs b/packages/openfilm/studio/server/server.mjs
+index 8601b1a..2d76fad 100644
+--- a/packages/openfilm/studio/server/server.mjs
++++ b/packages/openfilm/studio/server/server.mjs
+@@ -35,7 +35,7 @@ import { HttpError, cookie, json, readJson } from './http.mjs';
+ import { acceptWebSocket } from './websocket.mjs';
+ import {
+   ProjectError, createFolder, createProject, deleteFolder, deleteProject, libraryRoot, listFolders, listProjects, locateProject, markOpened, moveFolder, moveLibrary,
+-  moveProjectToFolder, openProject, projectById, renameFolder, renameProject, studioHome, studioKey, TOOL_DIR,
++  moveProjectToFolder, openProject, projectById, renameFolder, renameProject, studioHome, studioKey,
+ } from './projects.mjs';
+ import { FetchError, createFetches, fetchFilm, parseRepoUrl } from './fetch-repo.mjs';
+ import { BrowseError, browseFolder, browsePlaces } from './browse.mjs';
+@@ -549,9 +549,9 @@ export async function startStudio({ port = 4747, key, openBrowser = systemBrowse
+       if (req.method === 'GET') return json(res, 200, { projects: (await listProjects()).map((p) => (agentIn(p.path) ? { ...p, working: true } : p)) });
+       /* `create` false: only a folder holding a film opens (the editor asks before starting one in a folder) */
+       if (req.method === 'POST') {
+-        const body = /** @type {{ path?: string, name?: string, create?: boolean, subtitleStyle?: unknown }} */ (await readJson(req));
+-        if (body.path) return json(res, 200, { project: await openProject(body.path, { create: body.create !== false }) });
+-        const project = await createProject(body.name);
++        const body = /** @type {{ path?: string, name?: string, create?: boolean, subtitleStyle?: unknown, stateDir?: string, runtimeDir?: string }} */ (await readJson(req));
++        if (body.path) return json(res, 200, { project: await openProject(body.path, { create: body.create !== false, stateDir: body.stateDir, runtimeDir: body.runtimeDir }) });
++        const project = await createProject(body.name, { stateDir: body.stateDir, runtimeDir: body.runtimeDir });
+         /* a new film starts in the subtitle look this person used last (Studio remembers it): written before its first
+            version, so the project, its exports and Studio agree. An opened project keeps its own, or the default (#286). */
+         if (body.subtitleStyle && typeof body.subtitleStyle === 'object') {
+diff --git a/packages/openfilm/studio/server/trash.mjs b/packages/openfilm/studio/server/trash.mjs
+index 13013f5..53ed8ba 100644
+--- a/packages/openfilm/studio/server/trash.mjs
++++ b/packages/openfilm/studio/server/trash.mjs
+@@ -9,8 +9,10 @@
+  *   Linux    the freedesktop trash: ~/.local/share/Trash/{files,info}, with the .trashinfo that lets it be restored
+  *   Windows  the Recycle Bin, through PowerShell
+  */
++import { filmDirs, hostDirs, registeredFilmRoot } from '../../src/film-dirs.mjs';
++import { HttpError } from './http.mjs';
+ import { execFile } from 'node:child_process';
+-import { existsSync } from 'node:fs';
++import { existsSync, renameSync } from 'node:fs';
+ import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+ import { homedir } from 'node:os';
+ import { basename, extname, join } from 'node:path';
+@@ -31,6 +33,15 @@ function freeName(/** @type {string} */ dir, /** @type {string} */ name) {
+ 
+ /** @param {string} path an absolute path */
+ export async function moveToTrash(path) {
++  if (hostDirs()) {
++    const root = registeredFilmRoot(path);
++    if (!root) throw new HttpError(409, 'no trash in the hosted Studio');
++    const dir = /** @type {string} */ (filmDirs(root).removed);
++    await mkdir(dir, { recursive: true });
++    /* No async gap between choosing the name and moving: concurrent deletes keep both files. */
++    renameSync(path, join(dir, freeName(dir, basename(path))));
++    return;
++  }
+   /* tests (and anyone who wants deletes kept elsewhere) name the folder that stands for the trash */
+   if (process.env.OPENFILM_TRASH_DIR) {
+     const dir = process.env.OPENFILM_TRASH_DIR;

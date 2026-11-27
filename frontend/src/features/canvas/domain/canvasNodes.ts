@@ -69,6 +69,8 @@ export type ImageSize = (typeof IMAGE_SIZES)[number];
 export type ImageQuality = string;
 
 export interface NodeDisplayData {
+  generationOwner?: 'server' | null;
+  generationRunId?: string | null;
   displayName?: string;
   /**
    * The workflow runner has scheduled this node action. This is deliberately
@@ -294,7 +296,7 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleSourceUrl?: string;
   /** 目标清晰度档位。 */
   upscaleResolution?: '1080p' | '2k' | '4k';
-  upscaleEnhancementModel?: 'standard' | 'topaz';
+  upscaleEnhancementModel?: 'standard' | 'topaz' | 'claymore';
   upscaleModelPendingInitialization?: boolean;
   /** 降噪强度。 */
   upscaleDenoise?: 'none' | '1x' | '2x';
@@ -690,6 +692,8 @@ export interface AudioNodeData extends NodeDisplayData {
   speechMode?: 'preset' | 'clone';
   presetVoice?: string;
   presetModel?: string;
+  /** Project-scoped catalog ID for reference-audio speech, not the upstream model name. */
+  cloneModelId?: string;
   /** New/converted nodes use explicit voice selection; absent on historical canvas nodes. */
   voicePolicyConfirmed?: boolean;
   /** music 模式：生成长度(毫秒),范围 3000–600000,缺省按后端默认 30000。 */
@@ -699,6 +703,8 @@ export interface AudioNodeData extends NodeDisplayData {
   /** music 模式：是否严格遵守音乐段落时长策略(respect_sections_durations),缺省 true。 */
   respectSectionsDurations?: boolean;
   // operations panel (TTS) ---------------------------------------------------
+  /** Recipe production brief; never used as literal speech on compilation failure. */
+  prompt?: string;
   /** 要合成的纯文本。新字段，未来主用。 */
   text?: string;
   /** 旧字段：分段编辑器留下的 segments；保留只为兼容老节点数据。 */

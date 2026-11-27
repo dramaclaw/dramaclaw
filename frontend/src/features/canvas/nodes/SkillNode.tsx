@@ -806,7 +806,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
     && generationTaskKey.length > 0
     && !trackedTask
     && (!taskCenterHydrated || taskRecordGraceActive);
-  const isBusy = submitInFlight || taskIsActive || waitingForTaskRecord;
+  const isBusy = data.generationOwner === 'server' || submitInFlight || taskIsActive || waitingForTaskRecord;
   const submitLabel = t(taskStatusLabelKey(trackedTask, submitInFlight, waitingForTaskRecord));
   const resolvedWidth = typeof width === 'number' ? width : DEFAULT_WIDTH;
   const isSetSelectedBackgroundSkill = data.skill_id === 'freezone.set_selected_background';
@@ -1131,7 +1131,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
   };
 
   useEffect(() => {
-    if (!skill || data.isGenerating !== true) {
+    if (!skill || data.isGenerating !== true || data.generationOwner === 'server') {
       return;
     }
     const runId = typeof data.skillRunId === 'string' ? data.skillRunId : '';
@@ -1165,7 +1165,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           });
         }
         const result = await awaitSkillRunResult(projectId, runId);
-        if (cancelled) {
+        if (cancelled || useCanvasStore.getState().nodes.find(node => node.id === id)?.data.generationOwner === 'server') {
           return;
         }
         if (isFailureStatus(result.status)) {
@@ -1181,7 +1181,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           generationTaskJobId: null,
         });
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && useCanvasStore.getState().nodes.find(node => node.id === id)?.data.generationOwner !== 'server') {
           updateNodeData(id, {
             isGenerating: false,
             generationStartedAt: null,
@@ -1202,6 +1202,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       cancelled = true;
     };
   }, [
+    data.generationOwner,
     data.generationStartedAt,
     data.generationTaskKey,
     data.isGenerating,

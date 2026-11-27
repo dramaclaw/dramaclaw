@@ -43,3 +43,9 @@ def test_non_upload_request_keeps_default_body_limit() -> None:
     request = _multipart_request("/api/v1/projects/project-1/freezone/gen")
 
     assert _request_body_limit(request) == MAX_REQUEST_BODY_BYTES
+
+
+def test_home_chat_upload_uses_upload_body_limit() -> None:
+    request = _multipart_request("/api/v1/chat/uploads")
+
+    assert _request_body_limit(request) == MAX_UPLOAD_REQUEST_BODY_BYTES

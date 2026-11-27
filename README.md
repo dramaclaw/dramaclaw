@@ -215,7 +215,7 @@ docker compose -f docker-compose.release.yml up -d
 
 Open <http://localhost:8080>, go to **Settings → Models & Channels**, and paste your DC key (get one at <https://relayclaw.cdnfg.com>) — or switch to **Custom** to use your own providers. That's it.
 
-The release Compose file runs the published **v2.1.1** multi-arch images (`DRAMACLAW_VERSION=2.1.1`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`). Mainland China users can switch to the ACR mirror with `DRAMACLAW_IMAGE_PREFIX`.
+The release Compose file runs the published **v2.2.0** multi-arch images (`DRAMACLAW_VERSION=2.2.0`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5`). Mainland China users can switch to the ACR mirror with `DRAMACLAW_IMAGE_PREFIX`.
 
 <details>
 <summary><b>Other ways to run it</b></summary>
@@ -264,7 +264,7 @@ Upgrading from an older checkout, pinning versions, exposing the bundled gateway
 - **One canvas, every medium** — image, video, audio, script, beat context, storyboard, style, skill, 360° panorama, 3D world, Previz, interactive story, web page and export nodes. Connect them freely; every node keeps its own generation history.
 - **Image tools** — generate, edit, redraw, outpaint, relight, upscale, multi-view, template edit, reverse-prompt, mark detection, and a **style wall of 45 short-drama looks**.
 - **Video tools** — text / image / keyframe to video, omni-reference generation with file, web-link and on-canvas references, video edit, erase, upscale, audio separation, camera templates and shot analysis; Seedance 2.5 in the recommended catalog.
-- **Audio and voice design** — speech synthesis, voice library, reference audio and music. **Describe a voice in words**, preview it, and save it to a character slot or **My voices** (needs a compatible audio model and `VOICE_DESIGN_ENABLED=1` with daily limits in [`.env`](.env.example)).
+- **Audio and voice design** — speech synthesis, voice library, reference audio and music. **Describe a voice in words**, preview it, and save it to a character slot or **My voices** (requires a compatible audio model in the active catalog).
 - **Director World** — turn an image into a 3D Gaussian Splat set or a scene-360 panorama, frame the shot in the viewer, and reuse the same location consistently across shots.
 - **Built for big canvases** — tabs, outline, minimap, viewport bookmarks, snap-align, level-of-detail rendering, group nodes, shortcuts, revision history with restore and per-canvas locking.
 - **Commit to the series** — preview the impact, then promote a node or a batch into the asset library or an episode; project the series back onto a canvas.

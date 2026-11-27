@@ -152,3 +152,108 @@ async def test_verify_credential_for_request_returns_none_for_ee_missing_cookie(
     monkeypatch.setattr(api_auth, "_verify_browser_session", fail_browser_session)
 
     assert await api_auth.verify_credential_for_request(_request()) is None
+
+
+class _FakeAgentSessionPort:
+    """Returns the legacy dict a server-side session store produced."""
+
+    def __init__(self, sessions: dict[str, dict]):
+        self._sessions = sessions
+
+    async def verify_agent_session(self, token: str) -> dict:
+        return dict(self._sessions[token])
+
+
+def _agent_legacy_user(**extra) -> dict:
+    from novelvideo.ports.auth_contract import AgentAuthenticatedUser
+
+    return AgentAuthenticatedUser(
+        id="u-alice",
+        username="alice",
+        role="owner",
+        agent_session_id="test-session",
+        agent_kind=extra.pop("agent_kind", "codex"),
+        scopes=("projects:write",),
+        **extra,
+    ).to_legacy_dict()
+
+
+@pytest.mark.asyncio
+async def test_external_key_session_is_recognised_only_from_the_verified_session(
+    monkeypatch,
+) -> None:
+    registry, _ports, api_auth = _reset_modules()
+    monkeypatch.delenv("DRAMACLAW_LOCAL_AGENT_TRUST", raising=False)
+    registry.register_port(
+        "auth_session",
+        _FakeAgentSessionPort(
+            {
+                "fake-external-token": _agent_legacy_user(
+                    agent_kind="external-codex",
+                    external_agent_key_id="test-key-id-not-a-secret",
+                ),
+                "fake-in-product-token": _agent_legacy_user(agent_kind="codex"),
+            }
+        ),
+    )
+
+    external = await api_auth.get_api_user(
+        _request(authorization="Bearer fake-external-token")
+    )
+    in_product = await api_auth.get_api_user(
+        _request(
+            authorization="Bearer fake-in-product-token",
+            extra_headers={
+                "x-dramaclaw-external-agent": "1",
+                "x-external-agent-key-id": "test-key-id-not-a-secret",
+            },
+        )
+    )
+
+    assert api_auth.is_external_agent_key_session(external) is True
+    assert api_auth.is_external_agent_key_session(in_product) is False
+
+
+@pytest.mark.asyncio
+async def test_local_trusted_agent_is_never_an_external_key_session(monkeypatch) -> None:
+    _registry, _ports, api_auth = _reset_modules()
+    monkeypatch.setenv("DRAMACLAW_LOCAL_AGENT_TRUST", "true")
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+
+    user = await api_auth.get_api_user(
+        _request(
+            client_host="127.0.0.1",
+            extra_headers={"host": "127.0.0.1:8780"},
+        )
+    )
+
+    assert user["credential_kind"] == "local_trusted_agent"
+    assert api_auth.is_external_agent_key_session(user) is False
+
+
+@pytest.mark.parametrize(
+    "user",
+    [
+        {"id": "u-alice", "username": "alice", "role": "owner"},
+        {
+            "id": "u-alice",
+            "username": "alice",
+            "role": "owner",
+            "external_agent_key_id": "test-key-id-not-a-secret",
+        },
+        {
+            "id": "local",
+            "username": "alice",
+            "credential_kind": "local_trusted_agent",
+            "external_agent_key_id": "test-key-id-not-a-secret",
+        },
+        {"credential_kind": "agent_session", "external_agent_key_id": ""},
+        {"credential_kind": "agent_session", "external_agent_key_id": None},
+        {"credential_kind": "agent_session"},
+        None,
+    ],
+)
+def test_only_agent_sessions_with_a_key_marker_are_external(user) -> None:
+    _registry, _ports, api_auth = _reset_modules()
+
+    assert api_auth.is_external_agent_key_session(user) is False

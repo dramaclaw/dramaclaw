@@ -4,12 +4,11 @@
 支持多模态输入：可直接分析首帧图片理解实际构图。
 """
 
-import io
 import os
 from typing import Optional
 
 from pydantic_ai import Agent, BinaryContent
-from PIL import Image as PILImage
+from novelvideo.utils.reference_image import encode_reference_image_file
 
 from novelvideo.utils.logging import log_agent_start, log_agent_end
 from novelvideo.utils.debug_context import (
@@ -122,31 +121,13 @@ class VideoPromptBuilder:
         return self._agents[language]
 
     def _compress_image(self, image_path: str, compress_quality: int = 60) -> bytes:
-        """压缩图片并返回 bytes。
-
-        Args:
-            image_path: 图片文件路径
-            compress_quality: JPEG 压缩质量 (1-100)
-
-        Returns:
-            压缩后的图片字节
-        """
-        img = PILImage.open(image_path)
+        """Return the image as a bounded JPEG at ``compress_quality``."""
         original_size = os.path.getsize(image_path)
-
-        if img.mode in ('RGBA', 'P'):
-            img = img.convert('RGB')
-
-        buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=compress_quality, optimize=True)
-        image_bytes = buffer.getvalue()
-
-        compressed_size = len(image_bytes)
-        ratio = (1 - compressed_size / original_size) * 100
-        print(f"[VideoPromptBuilder] 压缩图片: {os.path.basename(image_path)}: "
-              f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-              f"({ratio:.0f}% 压缩)")
-
+        image_bytes = encode_reference_image_file(image_path, quality=compress_quality)
+        print(
+            f"[VideoPromptBuilder] 压缩图片: {os.path.basename(image_path)}: "
+            f"{original_size / 1024:.0f}KB → {len(image_bytes) / 1024:.0f}KB"
+        )
         return image_bytes
 
     async def build(

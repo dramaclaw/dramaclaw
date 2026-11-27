@@ -122,9 +122,11 @@ export function VideoComposeWorkspace({
           if (!hasExportableClips(timeline)) {
             throw new NoMediaError();
           }
-          // 首次打开就落草稿：随机 clip id 若每次重开都换一套，film 会被判定为
-          // 新时间线而重建，Studio 素材库也会一份份堆叠。
-          if (!draft?.tracks?.length) {
+          // 解析结果与草稿不同就落草稿（首次打开、上游新接入素材补出的片段都算）：
+          // 随机 clip id 若每次重开都换一套，film 会被判定为新时间线——没改过的片
+          // 被重建、素材库一份份堆叠，手改过的片则被 409 拦下。没变化时不写，免得
+          // 空存一次画布。
+          if (JSON.stringify(timeline) !== JSON.stringify(draft)) {
             store.updateNodeData(nodeId, { draftTimeline: timeline });
           }
           const opened = await openFreezoneVideoComposeStudio(projectId, {

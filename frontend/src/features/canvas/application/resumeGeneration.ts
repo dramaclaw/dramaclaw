@@ -94,6 +94,7 @@ export const DETACHED_GENERATION_PATCH: Record<string, unknown> = {
  */
 export function nodeOwnsLiveGenerationJob(node: CanvasNode): boolean {
   const data = node.data as Record<string, unknown>;
+  if (data.generationOwner === 'server') return false;
   const jobId = typeof data.generationJobId === 'string' ? data.generationJobId : '';
   return (
     data.isGenerating === true
@@ -115,6 +116,7 @@ export function nodeOwnsLiveGenerationJob(node: CanvasNode): boolean {
  */
 export function staleGenerationJobPatch(node: CanvasNode): Record<string, unknown> | null {
   const data = node.data as Record<string, unknown>;
+  if (data.generationOwner === 'server') return null;
   const jobId = typeof data.generationJobId === 'string' ? data.generationJobId : '';
   if (data.isGenerating !== true || jobId.length === 0) {
     return null;
@@ -456,6 +458,7 @@ export async function resumeNodeGeneration(params: {
 }): Promise<void> {
   const { node, projectId, canvasId, updateNodeData, getNodeData } = params;
   const data = node.data as Record<string, unknown>;
+  if (data.generationOwner === 'server') return;
   const taskKey = typeof data.generationTaskKey === 'string' ? data.generationTaskKey : '';
   const taskType =
     typeof data.generationTaskType === 'string' ? (data.generationTaskType as FreezoneTaskType) : null;
@@ -473,7 +476,8 @@ export async function resumeNodeGeneration(params: {
   // 节点被删、被新任务接管或已落过结果（isGenerating 已清）时，这一轮都不该再写。
   const stillOwnsTask = () => {
     const latest = readLatestNodeData();
-    return latest?.isGenerating === true && latest.generationTaskKey === taskKey;
+    return latest?.generationOwner !== 'server'
+      && latest?.isGenerating === true && latest.generationTaskKey === taskKey;
   };
 
   // Quick pre-check: if the task no longer exists server-side (expired/cleaned),
@@ -494,10 +498,13 @@ export async function resumeNodeGeneration(params: {
     return;
   }
 
+  if (!stillOwnsTask()) return;
   try {
     // 按任务类型取预算，跟提交侧同一份口径（见 pollTimeoutForTaskType）。
     if (kind === 'derived-media') {
-      await completeDerivedMedia(projectId, { task_key: taskKey, task_type: taskType, job_id: jobId }, (patch) => updateNodeData(node.id, patch));
+      await completeDerivedMedia(projectId, { task_key: taskKey, task_type: taskType, job_id: jobId }, (patch) => {
+        if (readLatestNodeData()?.generationOwner !== 'server') updateNodeData(node.id, patch);
+      });
       return;
     }
     const completed = await awaitTaskCompletion(taskKey, projectId, { taskType });
@@ -516,6 +523,7 @@ export async function resumeNodeGeneration(params: {
       });
       return;
     }
+    if (!stillOwnsTask()) return;
     const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId, {
       nodeId: node.id,
       readNodeData: readLatestNodeData,
@@ -552,6 +560,7 @@ export async function resumeNodeGeneration(params: {
  */
 export function nodeNeedsGenerationResume(node: CanvasNode): boolean {
   const data = node.data as Record<string, unknown>;
+  if (data.generationOwner === 'server') return false;
   const taskKey = typeof data.generationTaskKey === 'string' ? data.generationTaskKey : '';
   return data.isGenerating === true && taskKey.length > 0 && !sessionOwnsGenerationTask(taskKey);
 }

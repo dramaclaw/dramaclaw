@@ -139,9 +139,13 @@ def _fake_enqueue(calls):
     return fake_enqueue_project_task
 
 
-def test_mainline_video_backend_options_hide_legacy_models_and_expose_mini() -> None:
+def test_mainline_video_backend_options_hide_legacy_models_and_expose_mini(monkeypatch) -> None:
     from novelvideo.api.routes import generation
 
+    from novelvideo import config
+
+    retired = ["seedance-1.0-pro", "seedance-1.0-pro-fast", "seedance-1.5-pro"]
+    monkeypatch.setattr(config, "NEWAPI_VIDEO_MODELS", [*config.NEWAPI_VIDEO_MODELS, *retired])
     options = {
         item.value: item.model_dump()
         for item in generation._api_video_backend_options()
@@ -150,6 +154,11 @@ def test_mainline_video_backend_options_hide_legacy_models_and_expose_mini() -> 
     assert "newapi_seedance-2.0-fast-value" not in options
     assert "newapi_happyhorse-1.0" not in options
 
+    assert all(f"newapi_{model}" not in options for model in retired)
+    assert [value for value, item in options.items() if item["is_default"]] == [
+        "newapi_seedance-2.0-fast"
+    ]
+
     mini = options["newapi_seedance-2.0-mini"]
     assert mini["label"] == "Seedance2.0 Mini"
     assert mini["is_seedance2"] is True
@@ -157,6 +166,53 @@ def test_mainline_video_backend_options_hide_legacy_models_and_expose_mini() -> 
     assert mini["min_duration"] == 4
     assert mini["max_duration"] == 15
 
+
+@pytest.mark.parametrize("backend", [
+    "newapi_seedance-1.0-pro",
+    "newapi_seedance-1.0-pro-fast",
+    "newapi_seedance-1.5-pro",
+    "huimeng_seedance-1.0-pro-fast",
+    "seedance_pro_silent",
+])
+async def test_mainline_rejects_retired_video_models_before_loading_beats(
+    monkeypatch, tmp_path, backend,
+):
+    from novelvideo.api.routes import generation
+    from novelvideo.api.schemas import SingleVideoRequest
+
+    async def unexpected_store(*args):
+        pytest.fail("A retired backend should be rejected before loading beats")
+
+    _patch_generation_project(monkeypatch, generation, tmp_path)
+    monkeypatch.setattr(generation, "make_sqlite_store", unexpected_store)
+
+    response = await generation.generate_single_video(
+        project="demo",
+        episode_num=3,
+        beat_num=2,
+        body=SingleVideoRequest(video_backend=backend),
+        user={"username": "alice"},
+    )
+
+    assert response["ok"] is False
+    assert "已下线" in response["error"]
+
+
+@pytest.mark.parametrize("stored_backend, expected_backend", [
+    ("newapi_seedance-1.0-pro", "newapi_seedance-2.0-fast"),
+    ("huimeng_seedance-1.0-pro-fast", "newapi_seedance-2.0-fast"),
+    ("newapi_seedance-1.5-pro", "newapi_seedance-2.0-fast"),
+    ("newapi_seedance-2.0-mini", "newapi_seedance-2.0-mini"),
+])
+def test_effective_project_video_backend(tmp_path, stored_backend, expected_backend):
+    from novelvideo.project_config import (
+        load_project_config_from_state_dir,
+        save_project_config_in_state_dir,
+    )
+
+    save_project_config_in_state_dir(tmp_path, video_backend=stored_backend)
+
+    assert load_project_config_from_state_dir(tmp_path)["video_backend"] == expected_backend
 
 @pytest.mark.asyncio
 async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
@@ -555,9 +611,11 @@ async def test_single_video_normalizes_duration_before_billing_and_enqueue(
     requested_duration,
     expected_duration,
 ):
+    from novelvideo import config
     from novelvideo.api.routes import generation
     from novelvideo.api.schemas import SingleVideoRequest
 
+    monkeypatch.setattr(config, "NEWAPI_VIDEO_DURATION_BOUNDS", "custom-video:2-12")
     calls = []
     store = _FakeSeedance2Store(
         [
@@ -588,7 +646,7 @@ async def test_single_video_normalizes_duration_before_billing_and_enqueue(
         episode_num=3,
         beat_num=2,
         body=SingleVideoRequest(
-            video_backend="newapi_seedance-1.0-pro-fast",
+            video_backend="newapi_custom-video",
             duration=requested_duration,
         ),
         user={"username": "alice"},
@@ -857,7 +915,7 @@ async def test_happyhorse_single_video_enqueues_prepared_references(
 
 
 @pytest.mark.asyncio
-async def test_single_video_rejects_empty_1x_video_prompt(monkeypatch, tmp_path):
+async def test_single_video_rejects_empty_legacy_video_prompt(monkeypatch, tmp_path):
     from novelvideo.api.routes import generation
     from novelvideo.api.schemas import SingleVideoRequest
 
@@ -884,7 +942,7 @@ async def test_single_video_rejects_empty_1x_video_prompt(monkeypatch, tmp_path)
         project="demo",
         episode_num=3,
         beat_num=2,
-        body=SingleVideoRequest(video_backend="huimeng_seedance-1.0-pro-fast"),
+        body=SingleVideoRequest(video_backend="comfyui"),
         user={"username": "alice"},
     )
 
@@ -895,7 +953,7 @@ async def test_single_video_rejects_empty_1x_video_prompt(monkeypatch, tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_single_video_rejects_empty_1x_keyframe_prompt(monkeypatch, tmp_path):
+async def test_single_video_rejects_empty_legacy_keyframe_prompt(monkeypatch, tmp_path):
     from novelvideo.api.routes import generation
     from novelvideo.api.schemas import SingleVideoRequest
 
@@ -924,7 +982,7 @@ async def test_single_video_rejects_empty_1x_keyframe_prompt(monkeypatch, tmp_pa
         project="demo",
         episode_num=3,
         beat_num=2,
-        body=SingleVideoRequest(video_backend="huimeng_seedance-1.0-pro-fast"),
+        body=SingleVideoRequest(video_backend="comfyui"),
         user={"username": "alice"},
     )
 

@@ -14,14 +14,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from novelvideo.chat import mcp_runtime, story_tools
+from novelvideo.chat import mcp_runtime, request_context, story_tools
+from novelvideo.chat.mcp_compact_schemas import compact_codex_tool
 from novelvideo.chat.story_mcp_policy import STORY_HOOKS
 from novelvideo.chat.agent_api_errors import _http_error_result, _maybe_json
 
@@ -30,22 +31,22 @@ SERVER = Server("dramaclaw_interactive_story", version="0.1.0")
 
 def _request(method: str, path: str, *, query=None, body=None) -> dict[str, Any]:
     """Use only this turn's API credential, reading its file at call time."""
-    base = os.environ.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
+    base = request_context.get("DRAMACLAW_API_URL", "").strip().rstrip("/")
     parsed = urlparse(base)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("interactive-story API URL is not configured")
     if not path.startswith("/api/v1/projects/") or ".." in path.split("/"):
         raise ValueError("interactive-story API path is invalid")
-    token_file = os.environ.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
+    token_file = request_context.get("DRAMACLAW_AGENT_TOKEN_FILE", "").strip()
     if token_file:
         try:
             token = Path(token_file).read_text(encoding="utf-8").strip()
         except OSError:
             token = ""
     else:
-        token = os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+        token = request_context.get("DRAMACLAW_AGENT_TOKEN", "").strip()
     local_trust = (
-        os.environ.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower()
+        request_context.get("DRAMACLAW_LOCAL_AGENT_TRUST", "").strip().lower()
         in {"1", "true", "yes", "on"}
         and parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}
         and not token_file
@@ -150,9 +151,63 @@ def _tools() -> mcp_runtime.ToolIndex:
     return {name: (schema, scoped(handler)) for name, schema, handler in entries}
 
 
+def _story_documents() -> dict[str, Path]:
+    configured = os.environ.get("DRAMACLAW_SKILLS_DIR", "").strip()
+    skills = Path(configured).expanduser() if configured else Path.cwd() / ".agents" / "skills"
+    root = (skills / "interactive-story").resolve()
+    if not root.is_dir():
+        root = Path(__file__).resolve().parents[1] / "agent_skills" / "interactive-story"
+    return {
+        path.relative_to(root).as_posix(): path
+        for path in (root / "SKILL.md", *sorted((root / "references").glob("*.md")))
+        if path.is_file() and path.resolve().is_relative_to(root)
+    }
+
+
+@SERVER.list_resources()
+async def list_resources() -> list[types.Resource]:
+    return [
+        types.Resource(
+            name=name, uri=f"dramaclaw-story://skills/interactive-story/{name}",
+            mimeType="text/markdown",
+        )
+        for name in _story_documents()
+    ]
+
+
+@SERVER.list_resource_templates()
+async def list_resource_templates() -> list[types.ResourceTemplate]:
+    return []
+
+
+@SERVER.read_resource()
+async def read_resource(uri: Any) -> str:
+    parsed = urlparse(str(uri))
+    path = unquote(parsed.path)
+    documents = _story_documents()
+    if parsed.scheme == "dramaclaw-story" and parsed.netloc == "skills":
+        name = path.removeprefix("/interactive-story/")
+    elif parsed.scheme == "file" and not parsed.netloc:
+        # Accept the active workspace URI, including custom skill directories.
+        for document in documents.values():
+            if path == str(document):
+                return document.read_text(encoding="utf-8")
+        # Old conversations can reference a previous workspace. Map just the
+        # advertised skill-relative name to the active copy.
+        _, marker, name = path.rpartition("/.agents/skills/interactive-story/")
+        if not marker:
+            raise ValueError("Unknown interactive story resource")
+    else:
+        raise ValueError("Unknown interactive story resource")
+    document = documents.get(name)
+    if document is None:
+        raise ValueError("Unknown interactive story resource")
+    return document.read_text(encoding="utf-8")
+
+
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
-    return mcp_runtime.build_mcp_tools(_tools())
+    return [compact_codex_tool(tool) for tool in mcp_runtime.build_mcp_tools(_tools())]
 
 
 @SERVER.call_tool(validate_input=False)

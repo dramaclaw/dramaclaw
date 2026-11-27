@@ -7,6 +7,9 @@
 // (no header needed). If the cookie is missing/expired, the stream returns
 // a 401 immediately and we surface that to the caller.
 
+import { TaskCompletionError } from '@/features/canvas/domain/taskCompletionError';
+export { TaskCompletionError, isTaskCancelledError } from '@/features/canvas/domain/taskCompletionError';
+
 import { apiCall } from "./client";
 import { SESSION_EXPIRED_EVENT } from "@/lib/session-expiry";
 import { readUrl } from "@/lib/url-params";
@@ -53,22 +56,6 @@ export interface ProjectTaskLaneLimits {
 }
 
 export type ProjectTaskLimits = Record<ProjectTaskQueueKind, ProjectTaskLaneLimits>;
-
-export class TaskCompletionError extends Error {
-  constructor(
-    message: string,
-    public readonly status: TaskStatus,
-    public readonly taskKey: string,
-  ) {
-    super(message);
-    this.name = "TaskCompletionError";
-  }
-}
-
-/** 用户主动终止的任务不是错误 —— 用于跳过错误弹窗/错误横幅。 */
-export function isTaskCancelledError(error: unknown): boolean {
-  return error instanceof TaskCompletionError && error.status === "cancelled";
-}
 
 /**
  * The third settle state, alongside completed and failed: the front-end

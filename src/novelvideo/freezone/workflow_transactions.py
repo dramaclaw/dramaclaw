@@ -326,9 +326,9 @@ def update_workflow_steps(plan: dict, updates: Any) -> dict:
                 "audioNode",
             }:
                 raise WorkflowOperationError("node does not accept prompt updates")
-            field = {"textAnnotationNode": "content", "audioNode": "text"}.get(
-                node_type, "prompt"
-            )
+            field = "content" if node_type == "textAnnotationNode" else "prompt"
+            if node_type == "audioNode" and data.get("audioKind") == "music":
+                field = "text"
             data[field] = prompt
             if node_type == "textAnnotationNode" and "prompt" in data:
                 data["prompt"] = prompt

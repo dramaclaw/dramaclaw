@@ -60,7 +60,7 @@ import { useEpisodeBeats, useEpisodeDetail } from "@/lib/queries/episodes";
 import { queryKeys } from "@/lib/query-keys";
 import { sceneNameToRef, sceneRefToName } from "@/lib/scene-ref";
 import { parseColorValue } from "@/lib/sketch-colors";
-import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
+import { timeOfDayLabel, timeOfDayOptions } from "@/features/canvas/domain/timeOfDay";
 import type { TFn } from "@/lib/i18n-types";
 import { readUrl } from "@/lib/url-params";
 import { UiSelect } from "@/components/ui";

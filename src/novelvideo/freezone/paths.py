@@ -20,6 +20,13 @@ from urllib.parse import unquote, urlsplit
 
 # canvas id whitelist for `/freezone/canvases/{canvas_id}` (F5)
 CANVAS_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+# The create id names the project-wide creation mutex and is never a canvas.
+CANVAS_CREATE_LOCK_ID = "__create__"
+RESERVED_CANVAS_IDS = frozenset({CANVAS_CREATE_LOCK_ID})
+
+
+def is_writable_canvas_id(canvas_id: str) -> bool:
+    return bool(CANVAS_ID_RE.match(canvas_id)) and canvas_id not in RESERVED_CANVAS_IDS
 
 
 def freezone_root(project_dir: Path) -> Path:

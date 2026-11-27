@@ -1,4 +1,5 @@
 import i18next from 'i18next';
+import myTranslation from '../../../../public/locales/my/translation.json';
 import { enTranslation } from '@/__tests__/helpers/i18n-fixtures';
 import { describe, expect, it } from 'vitest';
 import { buildPlayerHtml } from '@/features/canvas/story/export/buildPlayerHtml';
@@ -47,6 +48,20 @@ describe('buildPlayerHtml', () => {
       const chinese = buildPlayerHtml(baseCompiled(), '{}');
       expect(chinese).toContain('<html lang="zh">');
       expect(extractData(chinese).labels).toMatchObject({ endingBadge: '结局', loadError: '故事加载失败' });
+    } finally {
+      await i18next.changeLanguage('zh');
+    }
+  });
+
+  it('marks a Burmese export and embeds Burmese labels', async () => {
+    i18next.addResourceBundle('my', 'translation', myTranslation, true, true);
+    try {
+      await i18next.changeLanguage('my');
+      const html = buildPlayerHtml(baseCompiled(), '{}');
+      expect(html).toContain('<html lang="my">');
+      expect(extractData(html).labels).toMatchObject({
+        endingBadge: myTranslation.canvas.story.messages.endingBadge,
+      });
     } finally {
       await i18next.changeLanguage('zh');
     }

@@ -1,8 +1,10 @@
-"""WAL migrator tests for converting SQLite files under state/ to WAL."""
+"""Tests for locating SQLite files under state/."""
 
 import sqlite3
 
-from novelvideo.backup.wal_migrator import iter_sqlite_files, migrate_state_tree
+from novelvideo.backup.wal_migrator import iter_sqlite_files
+
+_MAGIC = b"SQLite format 3\x00"
 
 
 def _make_db(path, journal_mode=None):
@@ -15,55 +17,65 @@ def _make_db(path, journal_mode=None):
     conn.close()
 
 
-def test_iter_finds_sqlite_by_magic_and_skips_junk(tmp_path):
-    _make_db(tmp_path / "u1" / "p1" / "data.db")
-    _make_db(tmp_path / "u1" / "p1" / "cognee_system" / "databases" / "cognee_db")
-    (tmp_path / "u1" / "p1" / "project_config.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "u1" / "p1" / "data.db-wal").write_bytes(b"junk")
-    sidecar_dir = tmp_path / "u1" / "p1" / "data.db-litestream"
-    sidecar_dir.mkdir()
-    (sidecar_dir / "x").write_bytes(b"SQLite format 3\x00junk")
-
-    found = {p.relative_to(tmp_path).as_posix() for p in iter_sqlite_files(tmp_path)}
-    assert found == {"u1/p1/data.db", "u1/p1/cognee_system/databases/cognee_db"}
+def _found(root):
+    return {p.relative_to(root).as_posix() for p in iter_sqlite_files(root)}
 
 
-def test_migrate_converts_delete_mode_only(tmp_path):
+def test_iter_finds_databases_by_suffix_and_header(tmp_path):
     _make_db(tmp_path / "u1" / "p1" / "data.db", journal_mode="WAL")
-    _make_db(tmp_path / "u1" / "p1" / "chat.db")
-    _make_db(tmp_path / "_shared" / "verification.db")
+    _make_db(tmp_path / "u1" / "p1" / "_chat" / "s" / "chat.db")
+    _make_db(tmp_path / "u1" / "_home" / "quota.sqlite3")
+    _make_db(tmp_path / "_orgs" / "o" / "u2" / "p2" / "data.db")
+    (tmp_path / "u1" / "p1" / "project_config.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "u1" / "p1" / "notes.db").write_bytes(b"not a database")
 
-    converted, failed = migrate_state_tree(tmp_path)
-
-    assert converted == 2 and failed == 0
-    for rel in ("u1/p1/chat.db", "_shared/verification.db"):
-        conn = sqlite3.connect(tmp_path / rel)
-        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-        conn.close()
-
-
-def test_one_bad_db_does_not_abort_sweep(tmp_path):
-    bad = tmp_path / "u1" / "a_bad" / "data.db"
-    bad.parent.mkdir(parents=True, exist_ok=True)
-    bad.write_bytes(b"SQLite format 3\x00" + b"garbage" * 10)
-    _make_db(tmp_path / "u1" / "z_good" / "chat.db")
-
-    converted, failed = migrate_state_tree(tmp_path)
-
-    assert converted == 1 and failed == 1
-    conn = sqlite3.connect(tmp_path / "u1" / "z_good" / "chat.db")
-    assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-    conn.close()
+    assert _found(tmp_path) == {
+        "u1/p1/data.db",
+        "u1/p1/_chat/s/chat.db",
+        "u1/_home/quota.sqlite3",
+        "_orgs/o/u2/p2/data.db",
+    }
 
 
-def test_migrate_skips_cognee_db_but_iter_still_yields_it(tmp_path):
-    _make_db(tmp_path / "u1" / "p1" / "cognee_system" / "databases" / "cognee_db")
+def test_iter_skips_sidecars_and_own_snapshots(tmp_path):
+    db = tmp_path / "u1" / "p1" / "data.db"
+    _make_db(db)
+    for name in ("data.db-wal", "data.db-shm", "data.db-journal", "data.db.snapshot", "data.db.snapshot.tmp"):
+        (db.parent / name).write_bytes(_MAGIC + b"junk")
+    sidecar_dir = db.parent / "data.db-litestream"
+    sidecar_dir.mkdir()
+    (sidecar_dir / "x.db").write_bytes(_MAGIC + b"junk")
 
-    converted, failed = migrate_state_tree(tmp_path)
+    assert _found(tmp_path) == {"u1/p1/data.db"}
 
-    assert converted == 0 and failed == 0
-    conn = sqlite3.connect(tmp_path / "u1" / "p1" / "cognee_system" / "databases" / "cognee_db")
-    assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "delete"
-    conn.close()
-    found = {p.name for p in iter_sqlite_files(tmp_path)}
-    assert "cognee_db" in found
+
+def test_iter_does_not_sniff_files_without_a_database_suffix(tmp_path):
+    # Only database-named files are opened; the bulk of state/ is JSON.
+    (tmp_path / "u1" / "p1").mkdir(parents=True)
+    (tmp_path / "u1" / "p1" / "blob").write_bytes(_MAGIC + b"junk")
+    (tmp_path / "u1" / "p1" / "canvas.json").write_bytes(_MAGIC + b"junk")
+
+    assert _found(tmp_path) == set()
+
+
+def test_iter_prunes_freezone_history_trees(tmp_path):
+    freezone = tmp_path / "u1" / "p1" / "freezone"
+    _make_db(tmp_path / "u1" / "p1" / "data.db")
+    for rel in (
+        "canvases/_history/c.db",
+        "canvases/_deleted/c/x.db",
+        "_generation_history/c/n.db",
+        "_canvas_events/c.db",
+    ):
+        _make_db(freezone / rel)
+
+    assert _found(tmp_path) == {"u1/p1/data.db"}
+
+
+def test_iter_skips_deprecated_cognee_and_hermes_internals(tmp_path):
+    _make_db(tmp_path / "u1" / "p1" / "cognee_system" / "databases" / "cognee.db")
+    _make_db(tmp_path / "_orgs" / "o" / "u1" / "p2" / "cognee_system" / "x.db")
+    _make_db(tmp_path / "u1" / ".hermes" / "state.db")
+    _make_db(tmp_path / "u1" / ".hermes" / "sessions" / "s1.db")
+
+    assert _found(tmp_path) == {"u1/.hermes/state.db"}

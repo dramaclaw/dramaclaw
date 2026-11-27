@@ -1,4 +1,5 @@
 import i18next from 'i18next';
+import { normalize } from '@/i18n/languages';
 import type { CompiledStory } from '@/features/canvas/story/storyTypes';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { PLAYER_STYLE, PLAYER_SCRIPT } from './playerAssets';
@@ -121,7 +122,7 @@ export function buildPlayerHtml(
   };
 
   return `<!doctype html>
-<html lang="${i18next.resolvedLanguage?.startsWith('en') ? 'en' : i18next.resolvedLanguage?.startsWith('vi') ? 'vi' : 'zh'}">
+<html lang="${normalize(i18next.resolvedLanguage ?? i18next.language)}">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />

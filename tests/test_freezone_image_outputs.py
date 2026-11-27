@@ -218,7 +218,7 @@ async def test_video_completion_schedules_gif_without_losing_paid_video(
     from novelvideo.freezone import jobs
     from novelvideo.task_backend import client
 
-    ctx = SimpleNamespace(output_dir=tmp_path, project_id="mine")
+    ctx = SimpleNamespace(output_dir=tmp_path, state_dir=tmp_path / "state", project_id="mine")
     source = tmp_path / "video.mp4"
     source.write_bytes(b"video")
 

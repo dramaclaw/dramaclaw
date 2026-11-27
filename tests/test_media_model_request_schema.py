@@ -15,6 +15,25 @@ from novelvideo.media_model_request_schema import (
 )
 
 
+@pytest.mark.parametrize("kind", ["image", "video"])
+def test_picker_guide_is_optional_localized_catalog_metadata(kind):
+    config = {"pickerGuide": {
+        "zh": {"summary": "分镜试稿", "detail": "先确定构图。", "tags": ["分镜"]},
+        "my": {"summary": "ပုံကြမ်း", "detail": "ဖွဲ့စည်းပုံကို အရင်သတ်မှတ်ပါ"},
+    }}
+    assert validate_media_model_catalog_config(config, kind) == config
+    assert validate_media_model_catalog_config({}, kind) == {}
+
+
+@pytest.mark.parametrize("guide", [
+    "plain", {"en": []}, {"zh": {"tags": "a"}}, {"en": {"tags": ["a", "b", "c"]}},
+    {"en": {"detail": "x" * 321}}, {"en": {"summary": {"html": "x"}}},
+])
+def test_invalid_picker_guide_is_rejected(guide):
+    with pytest.raises(MediaModelSchemaError, match="pickerGuide"):
+        validate_media_model_catalog_config({"pickerGuide": guide}, "image")
+
+
 SCHEMA = {
     "endpoint": "video/generations",
     "parameters": [

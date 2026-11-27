@@ -13,7 +13,7 @@ After startup, open `http://localhost:8080` and go to **Settings → Models & Ch
 |---|---|---|
 | Official | Use the models provided by RelayClaw | DC Key only |
 | Custom | Route every model through your NewAPI configuration | NewAPI initialization, providers, feature models, embedding, and media models |
-| Local + Official Hybrid | Keep official models while adding Local ComfyUI video models or overriding official models with matching IDs | Official DC Key, Local NewAPI, ComfyUI URL, and workflows |
+| Local + Official Hybrid | Use the official image and video catalog; route matching video model IDs to local ComfyUI | Official DC Key, Local NewAPI, ComfyUI URL, and workflows |
 
 Enable the intended mode after configuring it. New jobs read the latest mode, key, and mappings. Jobs already running do not switch gateways midway.
 
@@ -34,6 +34,14 @@ Official mode is the shortest setup path:
 DramaClaw manages the official gateway URL. RelayClaw already provides the `DC-*-LLM`, `DC-cognee-embedding`, and official media model mappings, so CE-side upstream mappings are unnecessary.
 
 The official image/video list and its resolutions, aspect ratios, durations, and reference-media capabilities come from the bundled `src/novelvideo/official_media_models.json`.
+
+### Preview model capabilities on the canvas
+
+Image and video models can show up to two tags beside the name and a short introduction below it. Only models with an expanded description show a divider and that description when you hover, focus the model with the keyboard, or tap its info button on a touchscreen. The list does not add specifications; you can still adjust parameters on the node after selecting a model.
+
+Custom catalogs can add localized display copy in the model’s `config.pickerGuide`, for example
+`{"en":{"summary":"Storyboard drafting","detail":"Choose the composition before rendering at the final resolution.","tags":["Storyboards"]}}`.
+Supported languages are `zh`, `en`, `pt`, and `vi`. All fields are optional; you can supply just tags. These fields do not change generation parameters or billing.
 
 ### Update the official media model catalog
 
@@ -100,9 +108,9 @@ After initialization, start with **Recommended**. One profile configures:
 
 Enter each provider key separately, then click **Save & Apply All**. Keys are stored separately and never written into profile JSON. Leave an already saved key blank; entering a new value replaces it.
 
-The current recommended template includes OpenRouter, VolcEngine, fal.ai, and DoubaoAudio. The recommended speech mapping keeps `index-tts-2` as DramaClaw's model ID while routing it through the DoubaoAudio channel to the upstream `seed-audio-1.0` model.
+The recommended profile uses OpenRouter (`openai/gpt-6-luna`) for both text and vision, `qwen/qwen3-embedding-8b` for embeddings, and VolcEngine for Seedance video. For audio, it maps `seed-audio-1.0` to the same upstream ID on DoubaoAudio. Audio cloning nodes prefer this model when available. Use the picker at the bottom of the node to switch to another configured speech model without changing your voice selection. Recordings stay in your local voice library. For cloning, configure a media relay that provides a publicly reachable HTTPS URL. Only the selected recording is uploaded for the request; a relay failure stops synthesis before the model is called. CosyVoice requires a provider-issued voice ID and cannot use the recording directly in this node.
 
-The built-in recommended profile is read-only. Switch to **My Config** to edit and persist your own JSON. The main shape is:
+The built-in recommended profile is read-only. Switch to **My Config** to edit and persist your own JSON. The example below shows the Seed Audio mapping alongside text, vision, and embedding. It is a minimal example, not the full recommended profile; keep any other channels and mappings you still need.
 
 ```json
 {
@@ -115,28 +123,39 @@ The built-in recommended profile is read-only. Switch to **My Config** to edit a
       "baseUrl": "",
       "priority": 0,
       "settings": {}
+    },
+    {
+      "id": "doubao_audio",
+      "provider": "doubao_audio",
+      "type": 62,
+      "baseUrl": "",
+      "priority": 0,
+      "settings": {}
     }
   ],
   "featureModels": {
-    "text": {"channel": "openrouter", "model": "upstream-text-model"},
-    "vision": {"channel": "openrouter", "model": "upstream-vision-model"},
+    "text": {"channel": "openrouter", "model": "openai/gpt-6-luna"},
+    "vision": {"channel": "openrouter", "model": "openai/gpt-6-luna"},
     "overrides": {}
   },
   "embedding": {
     "channel": "openrouter",
-    "model": "upstream-embedding-model",
+    "model": "qwen/qwen3-embedding-8b",
     "dimension": 1024,
     "batchSize": 10
   },
   "mediaModels": {
-    "my-video-model": {
-      "channel": "openrouter",
-      "model": "upstream-video-model",
-      "mediaType": "video",
-      "label": "My Video Model",
+    "seed-audio-1.0": {
+      "channel": "doubao_audio",
+      "model": "seed-audio-1.0",
+      "mediaType": "audio",
+      "label": "Seed Audio",
       "enabled": true,
       "sortOrder": 100,
-      "config": {}
+      "config": {
+        "request": {"endpoint": "audio/speech", "parameters": []},
+        "voiceDesignMode": "prompted_speech"
+      }
     }
   }
 }
@@ -202,9 +221,23 @@ Media model configuration controls:
 - Human-review control visibility.
 - Model-specific request parameters.
 
-Built-in mainline models provide the default capability baseline and cannot be removed from the configuration. My Config may add image or video models and edit custom-model capabilities. Save the complete configuration and refresh XiaHua to load the latest catalog and controls.
+Custom mode lists only locally configured, enabled image and video models. An empty configuration produces an empty list; matching IDs do not inherit official descriptions or tags. Official and Hybrid modes show only the official catalog.
 
 The **Model ID** is DramaClaw’s stable identifier. **Upstream Model** is the actual model used by the NewAPI channel; the two may differ.
+
+##### Add an audio model in Custom mode
+
+1. Under **Advanced Settings → Provider channels**, configure a channel that supports the intended audio operation and save its upstream key. For Seed Audio, use **DoubaoAudio** (`doubao_audio`), not the VolcEngine video channel.
+2. Under **Image / Video / Audio Generation Models → Add model**, select **Audio**. Enter the model ID, select the configured channel, set the upstream model name, and turn on **Enable in XiaHua**.
+3. Select **Audio purpose** using the table below. Click **Apply to config** to update the draft, then **Save Image / Video / Audio Config** below the list to write the mapping. Applying the draft alone does not activate it.
+
+| Audio purpose | When to select it | What to check |
+|---|---|---|
+| **Speech synthesis** | A model reads text aloud (`audio/speech`). | A speech-only entry does not appear under **Design a voice**. For cloning, the upstream must accept a reference recording. |
+| **Voice design via prompted speech** | One model creates a voice preview from a description and audition text. Use this for `seed-audio-1.0`. | Uses `audio/speech` with `voiceDesignMode: "prompted_speech"`. No target model or provider-issued voice ID is required. |
+| **Voice design with a target model** | The provider has a separate design model that issues a voice ID for a synthesis model. | Add the synthesis model first (e.g. `cosyvoice-v3.5-flash`, **Speech synthesis**). Then add the design model (e.g. `voice-enrollment`, `audio/voice-designs`) and select the synthesis entry as its target. Both must be enabled and the provider must support the pair. |
+
+To verify without starting a paid job, reopen the voice design dialog. With Seed Audio configured as above, its label appears under **Design model**. With the two-model setup, select the **design** entry there; its details should show the synthesis target. In profile JSON, `config.targetModel` is the target’s **local model ID**, not its display name or necessarily its upstream name.
 
 ### 5. ComfyUI Configuration
 
@@ -242,7 +275,7 @@ The ComfyUI API key is optional. Workflows must use API Format, not the browser 
 
 While the ComfyUI channel exists, the MiniMax H3 template button remains in that channel's **ComfyUI Workflows** area so missing templates can be restored. Loading it again merges the templates into existing workflows and preserves user-configured workflows with the same Workflow IDs. If the ComfyUI URL is empty, the UI fills `http://127.0.0.1:8188`; it does not replace a non-empty custom URL.
 
-Routing is based on model ID. A Local ComfyUI model may appear in XiaHua as a new model; if it shares an ID with an official video model, the local model overrides that official model. All other models continue through RelayClaw. Saving video configuration persists the ComfyUI channel first and then its media models. DramaClaw does not automatically fall back to the official model after a local failure. The user chooses whether to retry or switch models. Hybrid mode manages Local ComfyUI video models only, so it does not require OpenRouter, VolcEngine, or other official upstream provider settings.
+Hybrid routing uses the model ID without changing the official image or video list, descriptions, or tags. A matching official video model can run via local ComfyUI. To select a local-only model on the canvas, use Custom mode. Saving video configuration persists the ComfyUI channel first and then its media models. DramaClaw does not automatically fall back to the official model after a local failure. The user chooses whether to retry or switch models. Hybrid mode manages Local ComfyUI video models only, so it does not require OpenRouter, VolcEngine, or other official upstream provider settings.
 
 ## Reference media storage
 

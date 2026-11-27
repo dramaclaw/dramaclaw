@@ -16,6 +16,8 @@ from pathlib import Path
 
 import httpx
 
+from novelvideo.shared.failure_signals import with_upstream_status
+
 HUIMENGI_BASE_URL = "https://api.huimengi.com"
 HUIMENG_VIDEO_BACKEND_PREFIX = "huimeng_"
 HUIMENG_LEGACY_VIDEO_BACKEND_PREFIX = "huimengi_"
@@ -49,8 +51,9 @@ def local_file_to_data_url(path: str | Path) -> str:
         or mimetypes.guess_type(file_path.name)[0]
         or "application/octet-stream"
     )
-    encoded = base64.b64encode(file_path.read_bytes()).decode("utf-8")
-    return f"data:{mime_type};base64,{encoded}"
+    from novelvideo.utils.reference_image import reference_file_to_data_url
+
+    return reference_file_to_data_url(file_path, mime_type=mime_type)
 
 
 def bytes_to_data_url(content: bytes) -> str:
@@ -348,8 +351,11 @@ class HuimengiTaskClient:
                 json=body,
             )
         if response.status_code != 200:
-            raise RuntimeError(
-                f"HuiMeng submit failed: HTTP {response.status_code} - {response.text}"
+            raise with_upstream_status(
+                RuntimeError(
+                    f"HuiMeng submit failed: HTTP {response.status_code} - {response.text}"
+                ),
+                response.status_code,
             )
         data = response.json()
         if not data.get("task_id"):
@@ -363,8 +369,11 @@ class HuimengiTaskClient:
                 headers=self.headers,
             )
         if response.status_code != 200:
-            raise RuntimeError(
-                f"HuiMeng task query failed: HTTP {response.status_code} - {response.text}"
+            raise with_upstream_status(
+                RuntimeError(
+                    f"HuiMeng task query failed: HTTP {response.status_code} - {response.text}"
+                ),
+                response.status_code,
             )
         return response.json()
 
@@ -401,7 +410,10 @@ class HuimengiTaskClient:
         async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
             response = await client.get(url)
         if response.status_code != 200:
-            raise RuntimeError(f"HuiMeng result download failed: HTTP {response.status_code}")
+            raise with_upstream_status(
+                RuntimeError(f"HuiMeng result download failed: HTTP {response.status_code}"),
+                response.status_code,
+            )
         validate_huimeng_media_download(
             response.content,
             response.headers.get("content-type"),
@@ -417,8 +429,11 @@ class HuimengiTaskClient:
         async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
             response = await client.get(url)
         if response.status_code != 200:
-            raise RuntimeError(
-                f"HuiMeng image download failed: HTTP {response.status_code}"
+            raise with_upstream_status(
+                RuntimeError(
+                    f"HuiMeng image download failed: HTTP {response.status_code}"
+                ),
+                response.status_code,
             )
         validate_huimeng_media_download(
             response.content,

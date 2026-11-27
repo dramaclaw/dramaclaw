@@ -11,8 +11,8 @@ from pydantic_ai.models.test import TestModel
 from novelvideo import config
 from novelvideo.freezone.vision_gateway import (
     FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+    FREEZONE_VISION_IMAGE_MAX_EDGE,
     FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES,
-    FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS,
     VisionInput,
     VisionTransportContext,
     call_freezone_vision_model,
@@ -219,10 +219,17 @@ async def test_compact_vision_inputs_reject_compressed_large_image_before_decode
 ) -> None:
     from PIL import ImageOps
 
+    from novelvideo.freezone import vision_gateway
+
+    # A PNG cannot decode at reduced scale, so one over the limit is refused.
+    # Lower the limit rather than allocate a 100M-pixel test image.
+    monkeypatch.setattr(
+        vision_gateway, "FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS", 40_000_000
+    )
     source_path = tmp_path / "compressed-large.png"
     Image.new("RGB", (8000, 8000), (7, 7, 7)).save(source_path)
     assert source_path.stat().st_size < FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES
-    assert 8000 * 8000 > FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS
+    assert 8000 * 8000 > vision_gateway.FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS
 
     monkeypatch.setattr(
         ImageOps,
@@ -255,3 +262,16 @@ async def test_compact_vision_inputs_reject_large_file_before_open(
 
     with pytest.raises(ValueError, match="exceeds source byte limit"):
         await load_compact_vision_inputs([source_path])
+
+
+@pytest.mark.asyncio
+async def test_compact_vision_inputs_downscale_a_48_megapixel_camera_photo(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "camera.jpg"
+    Image.new("RGB", (8000, 6000), (90, 140, 200)).save(source_path, format="JPEG")
+
+    [vision_input] = await load_compact_vision_inputs([source_path])
+
+    with Image.open(io.BytesIO(vision_input.data)) as compact:
+        assert max(compact.size) == FREEZONE_VISION_IMAGE_MAX_EDGE

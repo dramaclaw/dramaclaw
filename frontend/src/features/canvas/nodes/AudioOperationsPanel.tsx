@@ -2,6 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
+import { useQuery } from '@tanstack/react-query';
+import { usesLegacySpeechVoice } from './audioVoicePolicy';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowUp,
@@ -25,6 +27,7 @@ import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextC
 import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
 import {
   fetchFreezoneTextTranslateResult,
+  fetchAudioCloneModels,
   submitFreezoneTextTranslate,
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
@@ -33,6 +36,7 @@ import { deriveAudioText, useAudioGeneration } from '@/features/canvas/nodes/use
 import { readUrl } from '@/lib/url-params';
 import { PanelExpandButton } from '@/features/canvas/ui/PanelExpandButton';
 import { OperationPanelShell } from '@/features/canvas/ui/OperationPanelShell';
+import { ProviderModelPicker } from '@/features/canvas/ui/ProviderModelPicker';
 import { CANVAS_NODE_OPS_PANEL_CLASS } from '@/features/canvas/ui/nodeFrameStyles';
 import {
   NODE_CREDIT_PILL_FLAT_CLASS,
@@ -89,7 +93,54 @@ export function musicBillingSecondsFromMs(ms: number): number {
 }
 
 function countBillableTextChars(text: string): number {
-  return text.replace(/[\s\u3000]+/gu, '').length;
+  return Array.from(text.replace(/[\s\u3000]+/gu, '')).length;
+}
+
+export function useCanvasAudioQuote(data: AudioNodeData, effectivePrompt: string, isMusic: boolean) {
+  const isClone = !isMusic && !(usesLegacySpeechVoice(data) && data.speechMode === 'preset');
+  const projectId = readUrl().project ?? '';
+  const catalog = useQuery({
+    queryKey: ['freezone-audio-models', projectId],
+    queryFn: () => fetchAudioCloneModels(projectId),
+    enabled: !!projectId && isClone,
+    retry: false,
+  });
+  const { refetch } = catalog;
+  useEffect(() => {
+    if (!projectId || !isClone) return;
+    const refresh = () => { void refetch(); };
+    window.addEventListener('media-model-catalog-updated', refresh);
+    return () => window.removeEventListener('media-model-catalog-updated', refresh);
+  }, [isClone, projectId, refetch]);
+  const choice = data.cloneModelId
+    ? catalog.data?.find(option => option.id === data.cloneModelId)
+    : catalog.data?.[0];
+  const speechBillableChars = countBillableTextChars(effectivePrompt);
+  const musicLengthMs =
+    typeof data.musicLengthMs === 'number' ? data.musicLengthMs : DEFAULT_MUSIC_LENGTH_MS;
+  const musicBillingSeconds = musicBillingSecondsFromMs(musicLengthMs);
+  const audioCost = useGenerationCreditCost(
+    'feature',
+    isMusic ? AUDIO_MUSIC_FEATURE_KEY
+      : isClone && (!choice || choice.requiresVoiceId) ? null : AUDIO_SPEECH_FEATURE_KEY,
+    {
+      surface: 'canvas',
+      quantity: isMusic ? undefined : speechBillableChars,
+      params: isMusic
+        ? {
+            operation: 'music',
+            music_length_ms: musicLengthMs,
+            pricing_quantity: musicBillingSeconds,
+          }
+        : {
+            operation: 'speech',
+            ...(isClone && choice ? { pricing_kind: 'audio', pricing_model: choice.model, catalog_id: choice.id } : {}),
+            billable_chars: speechBillableChars,
+            pricing_quantity: speechBillableChars,
+          },
+    },
+  );
+  return { choice, catalog, isClone, musicLengthMs, audioCost };
 }
 
 interface AudioOperationsPanelProps {
@@ -108,38 +159,16 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   // music 模式：高级设置（音乐时长等）默认收起，点底部设置按钮展开。
   const [showMusicSettings, setShowMusicSettings] = useState(false);
   // 'music'：文字生成音乐(走 /freezone/audio/eleven-music)；缺省/'speech'：克隆音频(TTS)。
-  const isMusic = data.audioKind === 'music';
   const voiceMissing = requiresCustomVoiceSelection(data);
   // 生成逻辑(含失败重试)抽到 useAudioGeneration，与节点本体的重试共用同一实现。
   const {
     generate: handleSubmit,
+    isMusic,
     effectivePrompt,
     isGenerating,
     modelTaskAccess,
   } = useAudioGeneration(nodeId, data);
-  const speechBillableChars = countBillableTextChars(effectivePrompt);
-  const musicLengthMs =
-    typeof data.musicLengthMs === 'number' ? data.musicLengthMs : DEFAULT_MUSIC_LENGTH_MS;
-  const musicBillingSeconds = musicBillingSecondsFromMs(musicLengthMs);
-  const audioCost = useGenerationCreditCost(
-    'feature',
-    isMusic ? AUDIO_MUSIC_FEATURE_KEY : AUDIO_SPEECH_FEATURE_KEY,
-    {
-      surface: 'canvas',
-      quantity: isMusic ? undefined : speechBillableChars,
-      params: isMusic
-        ? {
-            operation: 'music',
-            music_length_ms: musicLengthMs,
-            pricing_quantity: musicBillingSeconds,
-          }
-        : {
-            operation: 'speech',
-            billable_chars: speechBillableChars,
-            pricing_quantity: speechBillableChars,
-          },
-    },
-  );
+  const { choice, catalog, isClone, audioCost } = useCanvasAudioQuote(data, effectivePrompt, isMusic);
   const billingRuleMissing =
     audioCost.error instanceof BillingRuleNotConfiguredError;
   const costDisplay =
@@ -227,6 +256,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
 
   // 文本框为空但引用了非空文本时也允许提交（effectivePrompt 会回退到上游引用）。
   const submitDisabled =
+    (isClone && (!choice || choice.requiresVoiceId || catalog.isError)) ||
     isGenerating || billingRuleMissing || modelTaskAccess.blocked ||
     effectivePrompt.length === 0;
 
@@ -350,70 +380,94 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
         </div>
       ) : null}
 
-      <div className="flex shrink-0 items-center justify-end gap-2 px-3 pb-3 pt-1">
-        <IconButton
-          title={modelTaskAccess.message ?? t('node.audioPanel.translate')}
-          onClick={handleTranslate}
-          disabled={
-            modelTaskAccess.blocked
-            || isGenerating
-            || isTranslating
-            || text.trim().length === 0
-          }
-          active={isTranslating}
-        >
-          {isTranslating ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Languages className="h-4 w-4" />
+      {isClone && choice?.requiresVoiceId && (
+        <p role="status" className="px-3 text-xs text-text-muted">{t('node.audioPanel.cloneVoiceIdRequired')}</p>
+      )}
+      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {isClone && (
+            <ProviderModelPicker
+              className="min-w-0"
+              title={t('node.audioPanel.cloneModel')}
+              selectedModelId={choice?.id ?? ''}
+              placeholder={t(catalog.isLoading ? 'common.loading' : catalog.isError ? 'node.audioPanel.cloneModelsLoadFailed'
+                : !catalog.data?.length ? 'modelPicker.empty' : 'node.audioPanel.noCloneModel')}
+              disabled={isGenerating || catalog.isError || !catalog.data?.length}
+              models={(catalog.data ?? []).map(({ id, label, model }) => ({ id, label, apiModel: model, providerId: 'newapi' }))}
+              showGuide={false}
+              onChange={(cloneModelId) => updateNodeData(nodeId, { cloneModelId })}
+            />
           )}
-        </IconButton>
-        {!isMusic && (
           <IconButton
-            title={t('node.audioPanel.voiceSettings')}
-            onClick={() => setShowVoiceSettings((v) => !v)}
-            active={showVoiceSettings}
+            title={modelTaskAccess.message ?? t('node.audioPanel.translate')}
+            onClick={handleTranslate}
+            disabled={
+              modelTaskAccess.blocked
+              || isGenerating
+              || isTranslating
+              || text.trim().length === 0
+            }
+            active={isTranslating}
           >
-            <SlidersHorizontal className="h-4 w-4" />
+            {isTranslating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Languages className="h-4 w-4" />
+            )}
           </IconButton>
-        )}
-        {isMusic && (
-          <IconButton
-            title={t('node.audioPanel.advancedSettings')}
-            onClick={() => setShowMusicSettings((v) => !v)}
-            active={showMusicSettings}
-          >
-            <Settings2 className="h-4 w-4" />
-          </IconButton>
-        )}
-        <CreditCostPill
-          display={costDisplay}
-          promotion={audioCost.data?.data.promotion}
-          disabled={submitDisabled}
-          className={NODE_CREDIT_PILL_FLAT_CLASS}
-        />
-        <button
-          type="button"
-          disabled={submitDisabled}
-          title={
-            modelTaskAccess.message
-            ?? (voiceMissing
-              ? t('node.audioPanel.generateWithoutVoice')
-              : t('node.audioPanel.generate'))
-          }
-          onClick={() => void handleSubmit()}
-          className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
-            submitDisabled
-              ? NODE_GENERATE_BUTTON_DISABLED_CLASS
-              : NODE_GENERATE_BUTTON_ENABLED_CLASS
-          }`}
-        >
-          {isGenerating ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <ArrowUp className="h-3 w-3" />
+          {!isMusic && (
+            <IconButton
+              title={t('node.audioPanel.voiceSettings')}
+              onClick={() => setShowVoiceSettings((v) => !v)}
+              active={showVoiceSettings}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </IconButton>
           )}
-        </button>
+          {isMusic && (
+            <IconButton
+              title={t('node.audioPanel.advancedSettings')}
+              onClick={() => setShowMusicSettings((v) => !v)}
+              active={showMusicSettings}
+            >
+              <Settings2 className="h-4 w-4" />
+            </IconButton>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <CreditCostPill
+            display={costDisplay}
+            promotion={audioCost.data?.data.promotion}
+            disabled={submitDisabled}
+            className={NODE_CREDIT_PILL_FLAT_CLASS}
+          />
+          <button
+            type="button"
+            disabled={submitDisabled}
+            title={
+              modelTaskAccess.message
+              ?? (voiceMissing
+                ? t('node.audioPanel.generateWithoutVoice')
+                : t('node.audioPanel.generate'))
+            }
+            onClick={() => {
+              // Pin the model whose price was shown, even if the catalog changes before enqueue.
+              if (isClone && choice && !data.cloneModelId) updateNodeData(nodeId, { cloneModelId: choice.id });
+              void handleSubmit();
+            }}
+            className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
+              submitDisabled
+                ? NODE_GENERATE_BUTTON_DISABLED_CLASS
+                : NODE_GENERATE_BUTTON_ENABLED_CLASS
+            }`}
+          >
+            {isGenerating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ArrowUp className="h-3 w-3" />
+            )}
+          </button>
+        </div>
       </div>
 
       {!isMusic && showVoiceSettings && (

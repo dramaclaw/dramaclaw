@@ -7,6 +7,7 @@
   "packageManager": "pnpm@11.5.0",
   "scripts": {
     "dev": "vite",
+    "build:canvas-server": "vite build -c vite.canvas-server.config.ts",
     "build": "tsc -b && vite build",
     "build:ce": "tsc -b && vite build --mode ce",
     "preview": "vite preview",

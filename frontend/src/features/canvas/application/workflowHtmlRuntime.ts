@@ -287,6 +287,7 @@ async function saveGeneratedHtmlSource(input: {
     || latestData?.htmlSelectionToken === input.selectionToken;
   if (
     !latest ||
+    latestData?.generationOwner === 'server' ||
     (input.taskKey && latestData?.generationTaskKey !== input.taskKey) ||
     latestData?.artifactId !== input.artifactId ||
     (selectionStillCurrent && latestData?.artifactVersion !== input.baseVersion)
@@ -320,7 +321,8 @@ async function saveGeneratedHtmlSource(input: {
   }
   const latestAfterSave = useCanvasStore.getState().nodes.find((item) => item.id === input.nodeId);
   const currentSelection = (latestAfterSave?.data as Record<string, unknown> | undefined)?.htmlSelectionToken;
-  const mayAttach = !input.selectionToken || currentSelection === input.selectionToken;
+  const mayAttach = latestAfterSave?.data.generationOwner !== 'server'
+    && (!input.selectionToken || currentSelection === input.selectionToken);
   const output = await attachSavedArtifact(
     artifact,
     input.nodeId,
@@ -331,7 +333,7 @@ async function saveGeneratedHtmlSource(input: {
       ? undefined
       : 'HTML was saved to history; the node kept the version selected while generation was running.',
   );
-  if (!mayAttach && input.taskKey && latestAfterSave?.data.generationTaskKey === input.taskKey) {
+  if (!mayAttach && latestAfterSave?.data.generationOwner !== 'server' && input.taskKey && latestAfterSave?.data.generationTaskKey === input.taskKey) {
     useCanvasStore.getState().updateNodeData(input.nodeId, {
       isGenerating: false,
       generationStartedAt: null,
@@ -363,7 +365,7 @@ export async function resumePersistedHtmlGeneration(input: {
   );
   if (!node) return;
   const data = node.data as Record<string, unknown>;
-  if (data.generationTaskKey !== input.taskKey) return;
+  if (data.generationOwner === 'server' || data.generationTaskKey !== input.taskKey) return;
   try {
     const result = await fetchFreezoneTextGenerateResult(input.projectId, input.jobId);
     if (!result.generated_text.trim()) {
@@ -395,7 +397,7 @@ export async function resumePersistedHtmlGeneration(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const latest = useCanvasStore.getState().nodes.find((item) => item.id === input.nodeId);
-    if (!latest || latest.data.generationTaskKey !== input.taskKey) return;
+    if (!latest || latest.data.generationOwner === 'server' || latest.data.generationTaskKey !== input.taskKey) return;
     const phase = /complete HTML document/i.test(message)
       ? 'invalid_output'
       : /conflict|version changed/i.test(message)

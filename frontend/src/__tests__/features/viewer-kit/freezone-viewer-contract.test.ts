@@ -438,12 +438,15 @@ describe("freezone viewer contracts", () => {
     expect(worldNode).toContain("nodeToolbar.image360");
     expect(worldNode).toContain("referenceImages");
     expect(worldNode).toContain("onReferenceImageChange");
-    expect(worldNode).toContain("const inferredImageSourceKind");
-    expect(worldNode).toContain("if (isPanoImageCanvasNode(sourceNodeForGeneration)) return 'pano';");
-    expect(worldNode).toContain("function imageTo3gsKindForSource");
-    expect(worldNode).toContain("const sourceKind = imageTo3gsKindForSource(sourceNode, selectedImageSourceKind)");
-    expect(worldNode).toContain("submitFreezoneImageTo3GS");
-    expect(worldNode).toContain("sourceFromImageTo3gsResult");
+    expect(worldNode).toContain("selectWorldUpstreamFromNodes");
+    expect(worldNode).toContain("worldVisibleSourceKind");
+    expect(worldNode).toContain("buildWorldGenerationRequest");
+    expect(worldNode).toContain("worldGenerationSuccessPatch");
+    const worldRequest = read("src/features/canvas/application/generationRequests/worldGenerationRequest.ts");
+    const worldResult = read("src/features/canvas/application/generationRequests/worldGenerationResult.ts");
+    expect(worldRequest).toContain("isPanoImageCanvasNode");
+    expect(worldRequest).toContain("function imageTo3gsKindForSource");
+    expect(worldResult).toContain("sourceFromImageTo3gsResult");
     expect(worldNode).toContain("'freezone.image_to_3gs'");
     expect(worldNode).toContain("worldBillingRuleMissing");
     expect(worldNode).toContain("<CreditCostPill");
@@ -482,7 +485,11 @@ describe("freezone viewer contracts", () => {
 
     expect(imageGenForm).toContain("autoCommitOnGenerate");
     expect(imageGenForm).toContain("canvasEventBus.publish('freezone/commit-node'");
-    expect(imageGenForm).toContain("auto: true");
+    const imageGenerationResult = read(
+      "src/features/canvas/application/generationRequests/imageGenerationResult.ts",
+    );
+    expect(imageGenerationResult).toContain("auto: true");
+    expect(imageGenerationResult).toContain("kind: 'commit_node'");
   });
 
   it("routes projection group toolbar actions through projection sync and remove events", () => {
@@ -525,7 +532,7 @@ describe("freezone viewer contracts", () => {
 
   it("keeps viewer purpose and capture metadata as explicit shared contracts", () => {
     const purpose = read("src/features/viewer-kit/viewerPurpose.ts");
-    const store = read("src/stores/canvasStore.ts");
+    const store = read("src/features/canvas/core/canvasStore.ts");
 
     expect(purpose).toContain('ViewerPurpose = "mainline" | "freezone" | "asset" | "beat"');
     expect(store).toContain("captureMetadata");

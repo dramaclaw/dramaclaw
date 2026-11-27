@@ -67,10 +67,11 @@ function convertCurrency(amount: number, from: PriceCurrency, to: PriceCurrency,
   return amount / safeRate;
 }
 
-function pricingLocale(language: string): string {
+export function pricingLocale(language: string): string {
   if (language.startsWith('zh')) return 'zh-CN';
   if (language.startsWith('pt')) return 'pt-PT';
   if (language.startsWith('vi')) return 'vi-VN';
+  if (language.startsWith('my')) return 'my-MM';
   return 'en-US';
 }
 

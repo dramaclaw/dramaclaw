@@ -32,6 +32,7 @@ from novelvideo.shared.billing_errors import (
     insufficient_credits_payload,
     is_insufficient_credits_error,
 )
+from novelvideo.shared.failure_signals import exception_failure_signal
 from novelvideo.task_backend.consumer import VerifiedTaskDelivery
 from novelvideo.task_backend.envelope import (
     InvalidTaskEnvelope,
@@ -48,7 +49,7 @@ from novelvideo.task_backend.registry import (
 )
 from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS, read_projection
 from novelvideo.task_backend.subprocesses import project_task_subprocess_context
-from novelvideo.task_state import project_task_run_context
+from novelvideo.task_state import TaskState, project_task_run_context
 from novelvideo.utils.document_parsers import count_billable_text_chars
 
 logger = logging.getLogger(__name__)
@@ -275,6 +276,17 @@ def _without_settlement_handles(metadata: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def signed_billing_feature_key(payload: Any) -> str:
+    """Extract the feature key carried by the signed task payload."""
+    payload = payload if type(payload) is dict else {}
+    billing = payload.get("billing")
+    return (
+        str(billing.get("feature_key") or "").strip()
+        if type(billing) is dict and type(billing.get("feature_key")) is str
+        else ""
+    )
+
+
 async def _resolve_feature_reservation_id(
     delivery: VerifiedTaskDelivery,
     *,
@@ -283,13 +295,6 @@ async def _resolve_feature_reservation_id(
     beat_num: Any,
     scope: Any,
 ) -> FeatureSettlementResolution:
-    payload = delivery.payload if type(delivery.payload) is dict else {}
-    billing = payload.get("billing")
-    signed_feature_key = (
-        str(billing.get("feature_key") or "").strip()
-        if type(billing) is dict and type(billing.get("feature_key")) is str
-        else ""
-    )
     identity = VerifiedTaskSettlementIdentity(
         root_task_id=delivery.admission.root_task_id,
         project_id=delivery.project_id,
@@ -298,7 +303,7 @@ async def _resolve_feature_reservation_id(
         episode=episode,
         beat_num=beat_num if type(beat_num) is int else None,
         scope=scope if type(scope) is str else None,
-        feature_key=signed_feature_key,
+        feature_key=signed_billing_feature_key(delivery.payload),
     )
     resolution = await get_usage_meter().resolve_feature_credit_reservation(identity)
     if resolution.outcome == "resolved":
@@ -498,6 +503,39 @@ async def refund_undelivered_feature_credit_reservation(
         )
         return SettlementIntentResult(accepted=False, retryable=True)
     return SettlementIntentResult(accepted=True, retryable=False)
+
+
+async def release_interrupted_inline_task_reservation(task: TaskState) -> None:
+    """Refund an interrupted inline task whose owner cannot settle it anymore."""
+    feature_key = (task.metadata or {}).get("billing_feature_key")
+    identity = VerifiedTaskSettlementIdentity(
+        root_task_id=task.task_id,
+        project_id=task.project_id,
+        requester_user_id=task.requester_user_id,
+        task_type=task.task_type,
+        episode=task.episode,
+        beat_num=task.beat_num if type(task.beat_num) is int else None,
+        scope=task.scope if type(task.scope) is str else None,
+        feature_key=feature_key if type(feature_key) is str else "",
+    )
+    try:
+        resolution = await get_usage_meter().resolve_feature_credit_reservation(identity)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "feature_credit_settlement_adapter_failure",
+            extra={
+                "settlement_action": "refund",
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
+        )
+        return
+    if resolution.outcome == "resolved":
+        await refund_undelivered_feature_credit_reservation(
+            resolution.reservation_id, metadata={"source": "task_owner_exited"},
+        )
+    elif resolution.outcome != "not_applicable":
+        logger.warning("interrupted inline task reservation resolution rejected")
 
 
 _refund_undelivered_feature_credit_reservation = (
@@ -877,7 +915,26 @@ def run_project_task_core_sync(
         )
         return {"failed": True, "error_code": error_code}
     feature_reservation_id = feature_settlement_resolution.reservation_id
-    trusted_billing_metadata = feature_settlement_resolution.trusted_billing_metadata()
+    trusted_billing_metadata: dict[str, Any] = (
+        feature_settlement_resolution.trusted_billing_metadata()
+    )
+    payload = delivery.payload if type(delivery.payload) is dict else {}
+    billing = payload.get("billing")
+    result_billing_version = (
+        billing.get("result_billing_version") if type(billing) is dict else None
+    )
+    # Reconstruct the output-pricing handshake from the verified request and
+    # authoritative EE policy. Unsigned delivery hints cannot authorize money
+    # movement; a durable enqueue reservation keeps legacy EE on its old path.
+    if (
+        task_type == "freezone_text_generate"
+        and type(result_billing_version) is int
+        and result_billing_version == 2
+        and feature_settlement_resolution.outcome == "not_applicable"
+        and feature_settlement_resolution.feature_key == "freezone.text_generate"
+        and feature_settlement_resolution.model_call_credit_policy == "feature_included"
+    ):
+        trusted_billing_metadata["result_billing_version_ack"] = 2
     if trusted_billing_metadata:
         envelope["billing_metadata"] = trusted_billing_metadata
     timeout_seconds = _project_task_timeout_seconds()
@@ -1198,7 +1255,11 @@ def run_project_task_core_sync(
                     beat_num=beat_num,
                     scope=scope,
                     error=error,
-                    metadata={**run_metadata, **failure_payload},
+                    metadata={
+                        **run_metadata,
+                        **failure_payload,
+                        **exception_failure_signal(exc),
+                    },
                     expected_task_id=run_task_id,
                 )
                 asyncio.run(

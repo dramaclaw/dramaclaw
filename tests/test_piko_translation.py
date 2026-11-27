@@ -19,6 +19,7 @@ def result(text="你好", target="zh"):
     ("zh", "zh", "en"), ("ja", "zh", "en"), ("fr", "en", "en"),
     ("en", "zh", "zh"), ("en-US", "zh", "zh"), ("en", "en", "en"),
     ("en", "vi", "vi"), ("vi", "vi", "en"),
+    ("en", "my", "my"), ("my", "my", "en"),
 ])
 async def test_detected_language_controls_translation_direction(monkeypatch, source, interface, target):
     import pydantic_ai
@@ -99,17 +100,21 @@ def client(monkeypatch):
         yield client
 
 
-def test_route_contract_and_validation(client, monkeypatch):
+@pytest.mark.parametrize("language, translated", [("zh", "你好"), ("my", "မင်္ဂလာပါ")])
+def test_route_contract_and_validation(client, monkeypatch, language, translated):
     calls = []
     async def translate(text, target):
         calls.append((text, target))
-        return result("你好", target)
+        return result(translated, target)
     monkeypatch.setattr(translation, "translate_message", translate)
-    body = {"text": "hi", "target_language": "zh", "conversation": "private:a"}
-    assert client.post("/piko/chat/translate", json=body).json()["translated_text"] == "你好"
+    body = {"text": "hi", "target_language": language, "conversation": "private:a"}
+    response = client.post("/piko/chat/translate", json=body)
+    assert response.status_code == 200
+    assert response.json()["translated_text"] == translated
+    assert response.json()["target_language"] == language
     for update in [{"text": " "}, {"text": "x" * 81}, {"target_language": "fr"}, {"api_key": "forbidden"}]:
         assert client.post("/piko/chat/translate", json={**body, **update}).status_code == 422
-    assert calls == [("hi", "zh")]
+    assert calls == [("hi", language)]
 
 
 def test_provider_errors_are_sanitized(client, monkeypatch):

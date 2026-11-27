@@ -1,7 +1,16 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Chat history could not be saved. Please try again later; the current message is still available locally.",
-    "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history."
+    "historyIncomplete": "Some history in this conversation is too large to load fully. Message text is still available. Please ask an administrator to compact the history.",
+    "ceHistory": {
+      "title": "Some chat history could not be fully loaded",
+      "description": "This conversation has large or invalid history records, so some reasoning and tool records were not loaded. Message text is still available. This does not mean a model call failed.",
+      "help": "View troubleshooting steps",
+      "support": "Contact community support",
+      "continue": "If you can still send messages normally, you can keep using this conversation. There is no need to clear the chat or delete the project.",
+      "backup": "To recover the full history, first stop the app and related services, back up the complete chat database (chat.db, including any WAL files), then follow the detailed guide to inspect and compact it. Compaction cannot fix every oversized or invalid record.",
+      "privacy": "When asking for help, include your app version, operating system, screenshots and redacted logs. The chat database may contain private conversations and sensitive information. Do not upload it directly to a public issue.",
+      "recoveryGuide": "Open the detailed history recovery guide"
+    }
   },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirm workflow creation",
@@ -531,7 +540,8 @@
         "initializeExpired": "This OTP sign-in is no longer recent enough. Sign in with a new code and try again.",
         "error": "Could not change the password. Try again."
       },
-      "languagePortuguese": "Português"
+      "languagePortuguese": "Português",
+      "languageBurmese": "မြန်မာဘာသာ"
     },
     "pikoHub": {
       "play": "Piko Play",
@@ -791,6 +801,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Compacting context…",
+    "contextCompacted": "Context compacted so the conversation can continue",
     "clearChat": {
       "title": "Clear this chat?",
       "description": "This chat history will be deleted. Your next message will start a new Agent context. The canvas, project, and other chats will stay unchanged. Running generation tasks will continue.",
@@ -842,6 +854,8 @@
     "emptyTitle": "Start a conversation",
     "emptyDescription": "Ask about project progress, failed tasks, or have the assistant organize your creative plan.",
     "syncingHistoryTitle": "Initializing conversation",
+    "loadEarlierMessages": "Load earlier messages",
+    "loadingEarlierMessages": "Loading earlier messages…",
     "syncingHistoryDescription": "Connecting to Xia Director and syncing chat history. Please wait.",
     "disclaimer": "Xia Director can make mistakes. Check key story, character, and asset details.",
     "placeholder": "After uploading a script, ask Xia Director to advance episodes, visuals, audio, or final video",
@@ -884,10 +898,6 @@
     "dropFiles": "Drop to upload files",
     "unsupportedDropFiles": "Only .txt, .md, .doc, and .docx are supported",
     "removeAttachment": "Remove attachment",
-    "approvalExpires": "Expires in {{seconds}}s",
-    "allowOnce": "Allow once",
-    "allowAlways": "Always allow",
-    "deny": "Deny",
     "instance": "Instance",
     "model": "Model",
     "noInstances": "No instances",
@@ -970,6 +980,20 @@
         "vocalsAllowed": "Vocals allowed",
         "continue": "Continue with selected voice"
       },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Delete nodes",
+          "clear_canvas": "Clear the canvas",
+          "paid_generation": "Run generation"
+        },
+        "separator": ", ",
+        "credits": "Confirming will consume credits.",
+        "creditsAmount": "Confirming will consume {{credits}} credits.",
+        "expiresIn": "Valid for {{minutes}} min",
+        "confirm": "Confirm",
+        "refuse": "Cancel",
+        "failed": "Action failed. Please try again."
+      },
       "canvasExecuting": "Executing...",
       "currentSelection": "Current selection",
       "usedThisTurn": "Used this turn",
@@ -1046,6 +1070,11 @@
         "audioOff": "Muted"
       },
       "clarification": {
+        "adDirection": {
+          "question": "How would you like to shape this interactive ad?",
+          "describe": "I’ll describe the direction",
+          "recommend": "Suggest a direction based on the selling points"
+        },
         "submitFailed": "Failed to submit additional information. Please try again.",
         "cancelled": "Cancelled",
         "skipped": "Skipped",
@@ -1531,6 +1560,8 @@
       "assetNamePlaceholder": "Enter an asset name"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "A node you changed was deleted elsewhere. Your version was kept.",
+      "localDeletedRemoteChanged": "A node you deleted was just changed elsewhere (for example by the Agent). It stays deleted.",
       "backupFailed": "Cloud backup failed. Please try again later.",
       "backupPending": "Saved locally; the cloud backup will retry.",
       "bodyOverLimit": "Canvas data is {{actual}} KB, over the {{limit}} KB limit. Saving is paused.",
@@ -2812,7 +2843,7 @@
         "confirmDescription": "{{feature}} will start immediately after confirmation.",
         "confirmAction": "Confirm and start",
         "costLoading": "Loading the current organization price",
-        "costUnavailable": "Price is temporarily unavailable. Try again later.",
+        "costUnavailable": "Price is unavailable.",
         "openWorld": "Open Director World",
         "worldNotReady": "Director World not ready"
       },
@@ -5860,7 +5891,7 @@
       "regenerateVideo": "Regenerate video",
       "regenerateDescription": "Regenerate the video and convert it to GIF",
       "videoBilling": "Locked first frame · 4 seconds · 720P · No audio. Video is billed at the quoted price; GIF conversion is free.",
-      "quoteUnavailable": "Credit estimate is unavailable. Please try again later.",
+      "quoteUnavailable": "Credit estimate is unavailable.",
       "confirm": "Confirm generation",
       "svgDescription": "Convert locally to SVG. Complex images may lose detail.",
       "videoUnavailable": "Video model unavailable",
@@ -5946,8 +5977,6 @@
         "conditionalBranch": "Conditional branch (else/automatic)",
         "unknownInitialValues": "Initial variable values are unknown; defaulting to 0 (no global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} exceeds the number of choices and was ignored.",
-        "agentRefreshConflict": "The agent updated the canvas, but you have unsaved local changes. Save a copy or refresh to continue.",
-        "refreshConflict": "The canvas was updated in the background, but you have unsaved local changes. Save a copy or refresh to continue.",
         "storyGroup": "Interactive story",
         "segmentTitle": "Segment {{index}}",
         "firstFrame": "first frame",
@@ -6561,6 +6590,7 @@
     }
   },
   "modelPicker": {
+    "details": "Details for {{model}}",
     "provider": "Provider",
     "model": "Model",
     "empty": "No models available"
@@ -6879,6 +6909,7 @@
         "submit": "Generate HD video",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "claymoreModel": "RelayClaw Video Enhancement",
         "modelUnavailable": "The saved enhancement model is unavailable. Select an available model to continue."
       }
     },
@@ -7246,6 +7277,10 @@
       "voiceMissing": "No usable custom voice is selected",
       "translate": "Translate (Chinese ⇄ English)",
       "voiceSettings": "Voice settings",
+      "cloneModel": "Speech model",
+      "noCloneModel": "Select an available speech model",
+      "cloneModelsLoadFailed": "Could not load speech models",
+      "cloneVoiceIdRequired": "This model needs a provider voice ID and cannot clone directly from a reference clip.",
       "advancedSettings": "Advanced settings",
       "generate": "Generate",
       "generateWithoutVoice": "Generate (skip when no custom voice is selected)",
@@ -7974,7 +8009,63 @@
       "models": "Models & Channels",
       "storage": "Media Storage",
       "freezoneSkills": "Xiahua Skill",
-      "freezoneRecipes": "Freezone Recipes"
+      "freezoneRecipes": "Freezone Recipes",
+      "agentKeys": "Agent Key"
+    },
+    "agentKeys": {
+      "title": "Agent Key",
+      "intro": "An agent key lets external AI tools (MCP clients) act as you on the selected projects and spend your credits. Do not share it. If a key is lost or leaked, revoke it right away.",
+      "create": {
+        "title": "Create a key",
+        "label": "Name",
+        "labelPlaceholder": "e.g. My MCP client",
+        "scope": "Project access",
+        "scopeSelected": "Selected projects",
+        "scopeAll": "All projects",
+        "allWarning": "This key can act on every project you have now and any project you create later.",
+        "projectsLoading": "Loading projects…",
+        "projectsError": "Could not load your projects.",
+        "noProjects": "You don't have any projects yet.",
+        "selectProject": "Select at least one project.",
+        "submit": "Create key",
+        "created": "Agent key created"
+      },
+      "reveal": {
+        "title": "Your new agent key",
+        "keyLabel": "Agent key",
+        "warning": "This key is shown only once. Copy it now and store it somewhere safe; you won't be able to see it again.",
+        "usage": "In your MCP client, use the endpoint {{tools}} or {{workflows}} and send the HTTP header {{header}}.",
+        "copy": "Copy",
+        "copied": "Agent key copied",
+        "copyFailed": "Copy failed. Please copy the key manually.",
+        "done": "Done"
+      },
+      "list": {
+        "title": "Your keys",
+        "loading": "Loading keys…",
+        "empty": "You have no agent keys yet.",
+        "retry": "Retry",
+        "allProjects": "All projects",
+        "projects": "Projects: {{names}}",
+        "created": "Created {{time}}",
+        "lastUsed": "Last used {{time}}",
+        "neverUsed": "Never used",
+        "expires": "Expires {{time}}"
+      },
+      "status": {
+        "active": "Active",
+        "revoked": "Revoked",
+        "expired": "Expired"
+      },
+      "revoke": {
+        "button": "Revoke",
+        "aria": "Revoke {{label}}",
+        "confirmTitle": "Revoke agent key",
+        "confirmDescription": "Revoke “{{label}}”? Tools using this key will stop working immediately. This cannot be undone.",
+        "confirm": "Revoke",
+        "cancel": "Cancel",
+        "done": "Agent key revoked"
+      }
     },
     "freezoneCatalog": {
       "skills": {
@@ -8493,7 +8584,13 @@
       },
       "mediaModels": {
         "title": "Image / Video / Audio Generation Models",
-        "description": "Models come from the current custom local configuration. Add image or video models and configure the capabilities shown in XiaHua.",
+        "description": "Manage local image, video, audio and blockout models and their capabilities.",
+        "audioPurpose": "Audio purpose",
+        "speech": "Speech synthesis",
+        "promptedSpeech": "Voice design via prompted speech",
+        "voiceDesign": "Voice design with a target model",
+        "audioTarget": "Target speech model",
+        "audioTargetRequired": "Select a compatible speech model first. Enable the target if the design model is enabled.",
         "addModel": "Add model",
         "addModelTitle": "Add media model",
         "editModelTitle": "Edit media model",
@@ -8869,6 +8966,8 @@
       "hint": "Connect at least {{min}} video nodes to open",
       "counts": "Video {{video}} · Audio {{audio}}",
       "open": "Open video compose & edit",
+      "exporting": "Exporting…",
+      "exportFailed": "Export failed",
       "reopen": "Reopen",
       "resultName": "Composed video"
     },
@@ -9092,6 +9191,7 @@
       "noMatches": "No matching nodes"
     },
     "runtime": {
+      "waitingForConfirmation": "Waiting for your confirmation",
       "waitingForGenerationParameters": "Waiting for generation parameters",
       "clarificationPaused": "Waiting for an answer is paused"
     }
@@ -9694,6 +9794,7 @@
     "restartTitle": "Start over with a new request?",
     "restartHint": "The original request has an unknown result. Starting over will not retry it. Generating again will create a new request and may incur another charge. Continue?",
     "refreshTarget": "Refresh save destination",
+    "gatewayPrice": "Fees depend on your gateway",
     "price": "This generation: {{price}} credits / call",
     "quoteLoading": "Loading price and availability…",
     "close": "Close",
@@ -10192,9 +10293,9 @@
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Picture check",
-      "pictureCheckHint": "Project the blockout back onto the picture and check that positions, sizes and camera agree; one or two extra model rounds, so slower",
+      "pictureCheckHint": "Align positions and sizes to the picture; 1–2 extra rounds",
       "renderCheck": "Render check",
-      "renderCheckHint": "Render the blockout and let the model compare it with the picture and rewrite, twice; two extra model rounds, so slower",
+      "renderCheckHint": "Render and refine against the picture; 2 extra rounds",
       "model": "Model",
       "modelDefault": "{{name}} (default)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
@@ -10209,13 +10310,7 @@
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
-      "guide": {
-        "title": "Images that work well",
-        "space": "A scene whose layout is readable: a room, a street, a courtyard",
-        "floor": "The floor is visible, along with at least one wall or clear boundary",
-        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
-        "occlusion": "People or foreground objects do not cover the main pieces"
-      },
+      "guide": "Works best with a wide, eye-level shot that shows the floor and walls",
       "hint": {
         "title": "This image may affect the result; you can still continue",
         "small": "The image is small (short edge under 512 px), so details may be hard to read",
@@ -10252,6 +10347,7 @@
       "close": "Close model library",
       "categories": "Categories",
       "all": "All",
+      "recent": "Recent",
       "category": {
         "primitive": "Primitives",
         "furniture": "Furniture",

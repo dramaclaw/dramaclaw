@@ -95,6 +95,21 @@ describe("WorkflowRunRecoveryBar", () => {
     });
   });
 
+  it('does not offer browser recovery for a server-owned node before submission', () => {
+    useCanvasStore.getState().updateNodeData('video-1', {
+      isGenerating: true, generationOwner: 'server', generationRunId: 'run',
+    });
+    expect(recoverableWorkflowNodeIds(failedRun, new Set(['video-1']))).toEqual([]);
+    expect(staleResumableWorkflowRunIds([failedRun], new Set(['video-1']))).toEqual([]);
+  });
+
+  it('does not cancel a recovery record while a server-owned node has prior output', () => {
+    useCanvasStore.getState().updateNodeData('video-1', {
+      isGenerating: true, generationOwner: 'server', videoUrl: 'prior.mp4',
+    });
+    expect(staleResumableWorkflowRunIds([failedRun], new Set(['video-1']))).toEqual([]);
+  });
+
   it("returns only unfinished workflow node ids", () => {
     expect(resumableWorkflowNodeIds(failedRun)).toEqual(["video-1", "compose-1"]);
     expect(recoverableWorkflowNodeIds(

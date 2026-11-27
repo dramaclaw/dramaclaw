@@ -28,31 +28,57 @@ class Claim:
 
 
 class RecordingPort:
-    """Records transitions and hands back an advancing version."""
+    """Records transitions and hands back an advancing version.
+
+    Each method spells out the keyword arguments ``EgressOperationPort``
+    requires. A fake that took ``**kwargs`` would accept a call the real ledger
+    rejects, and the finalizer swallows that rejection by design.
+    """
 
     def __init__(self, failing: set[str] | None = None) -> None:
         self.calls: list[tuple[str, int]] = []
+        self.handles: dict[str, str | None] = {}
         self._version = 1
         self._failing = failing or set()
 
-    async def _transition(self, name: str, *, expected_version: int, **_) -> Snapshot:
+    async def _transition(self, name: str, expected_version: int) -> Snapshot:
         self.calls.append((name, expected_version))
         if name in self._failing:
             raise RuntimeError("ledger unavailable")
         self._version += 1
         return Snapshot(self._version)
 
-    async def mark_accepted(self, **kwargs):
-        return await self._transition("accepted", **kwargs)
+    async def mark_accepted(
+        self,
+        *,
+        operation_id: str,
+        transition_token: str,
+        expected_version: int,
+        provider_job_id: str | None,
+    ) -> Snapshot:
+        self.handles["provider_job_id"] = provider_job_id
+        return await self._transition("accepted", expected_version)
 
-    async def mark_completed(self, **kwargs):
-        return await self._transition("completed", **kwargs)
+    async def mark_completed(
+        self,
+        *,
+        operation_id: str,
+        transition_token: str,
+        expected_version: int,
+        result_ref: str | None,
+    ) -> Snapshot:
+        self.handles["result_ref"] = result_ref
+        return await self._transition("completed", expected_version)
 
-    async def mark_unknown(self, **kwargs):
-        return await self._transition("unknown", **kwargs)
+    async def mark_unknown(
+        self, *, operation_id: str, transition_token: str, expected_version: int
+    ) -> Snapshot:
+        return await self._transition("unknown", expected_version)
 
-    async def mark_rejected_before_submit(self, **kwargs):
-        return await self._transition("rejected", **kwargs)
+    async def mark_rejected_before_submit(
+        self, *, operation_id: str, transition_token: str, expected_version: int
+    ) -> Snapshot:
+        return await self._transition("rejected", expected_version)
 
     @property
     def names(self) -> list[str]:
@@ -77,6 +103,20 @@ async def test_a_normal_turn_is_accepted_then_completed() -> None:
     await turn.submitted_to_agent()
     await turn.finish(ledger.DISPOSITION_COMPLETED)
     assert port.names == ["accepted", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_a_chat_turn_declares_that_it_leaves_no_handle() -> None:
+    """The claim is ``HandleKind.NONE``: no upstream job id, no result to point at.
+
+    Both arguments are required by the port, so leaving them out is a rejected
+    call, not an implicit ``None``.
+    """
+    port = RecordingPort()
+    turn = finalizer(port)
+    await turn.submitted_to_agent()
+    await turn.finish(ledger.DISPOSITION_COMPLETED)
+    assert port.handles == {"provider_job_id": None, "result_ref": None}
 
 
 @pytest.mark.parametrize(

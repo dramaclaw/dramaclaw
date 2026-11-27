@@ -570,6 +570,7 @@ def ensure_user_hermes_workspace(
 
     # hermes config (only write if missing — user may have customized)
     config_yaml = home / "config.yaml"
+    _set_aside_unparseable_config(config_yaml)
     if not config_yaml.exists():
         config_yaml.write_text(
             (
@@ -601,6 +602,37 @@ def ensure_user_hermes_workspace(
     _ensure_gateway_env_file(env_file)
 
     return home
+
+
+def _set_aside_unparseable_config(config_yaml: Path) -> None:
+    """Move an unparseable config.yaml aside so the caller rebuilds the default.
+
+    The Hermes agent runtime is no longer the runtime in use, but this
+    workspace is still prepared on every canvas bridge, confirmation and MCP
+    request because those directories live under it. A config that cannot be
+    parsed would otherwise be left in place and warned about by every policy
+    step on every request. Hermes cannot use such a file either, so keep a
+    copy at ``config.yaml.invalid`` and let the default be written once.
+    """
+    try:
+        text = config_yaml.read_text(encoding="utf-8")
+    except OSError:
+        return
+    try:
+        yaml.safe_load(text)
+    except yaml.YAMLError:
+        try:
+            config_yaml.replace(config_yaml.with_name("config.yaml.invalid"))
+        except OSError:
+            _log.warning(
+                "failed to set aside unparseable hermes config at %s", config_yaml
+            )
+            return
+        _log.warning(
+            "hermes config yaml at %s could not be parsed; saved it as "
+            "config.yaml.invalid and rebuilt the default",
+            config_yaml,
+        )
 
 
 def list_freezone_hermes_workflow_skills(username: str) -> list[dict[str, object]]:

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { stableCanvasIdHash } from "@/features/canvas/core/canvasCreation";
 import type { FreezonePresetCanvasRequest } from "@/api/canvas";
 import type { CanvasEdge, CanvasNode } from "@/stores/canvasStore";
 import {
@@ -369,15 +370,6 @@ function uniqueById<T extends { id: string }>(items: T[]): T[] {
 
 function sanitizeProjectionPart(value: string): string {
   return value.trim().replace(/[:\s]+/g, "_").slice(0, 80) || "unknown";
-}
-
-function stableCanvasIdHash(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36);
 }
 
 function sortParentNodesBeforeChildren(nodes: CanvasNode[]): CanvasNode[] {

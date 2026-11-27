@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from novelvideo.chat.inline_data import drop_inline_data
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 
@@ -134,7 +135,7 @@ def append_message(
     *,
     now_iso: Callable[[], str],
 ) -> dict[str, Any]:
-    media = media or []
+    media = drop_inline_data(media or [])
     created_at_iso = now_iso()
     cursor = conn.execute(
         """
@@ -169,7 +170,7 @@ def replace_trace_messages(
             (
                 str(message.get("role") or "assistant"),
                 str(message.get("content") or ""),
-                json.dumps(message.get("media") or [], ensure_ascii=False),
+                json.dumps(drop_inline_data(message.get("media") or []), ensure_ascii=False),
                 str(message.get("created_at") or now_iso()),
             ),
         )

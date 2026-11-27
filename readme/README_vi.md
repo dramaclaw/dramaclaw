@@ -215,7 +215,7 @@ docker compose -f docker-compose.release.yml up -d
 
 Mở <http://localhost:8080>, vào **Settings → Models & Channels**, và dán DC key của bạn (lấy tại <https://relayclaw.cdnfg.com>) — hoặc chuyển sang **Custom** để dùng các nhà cung cấp của riêng bạn. Vậy là xong.
 
-File Compose phát hành chạy các image đa kiến trúc **v2.1.1** đã phát hành (`DRAMACLAW_VERSION=2.1.1`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`). Người dùng ở Trung Quốc đại lục có thể chuyển sang mirror ACR bằng `DRAMACLAW_IMAGE_PREFIX`.
+File Compose phát hành chạy các image đa kiến trúc **v2.2.0** đã phát hành (`DRAMACLAW_VERSION=2.2.0`, `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5`). Người dùng ở Trung Quốc đại lục có thể chuyển sang mirror ACR bằng `DRAMACLAW_IMAGE_PREFIX`.
 
 <details>
 <summary><b>Các cách chạy khác</b></summary>
@@ -264,7 +264,7 @@ Nâng cấp từ một checkout cũ, ghim phiên bản, mở gateway đi kèm ra
 - **Một canvas, mọi loại media** — node ảnh, video, âm thanh, kịch bản, ngữ cảnh beat, storyboard, phong cách, skill, toàn cảnh 360°, thế giới 3D, Previz, truyện tương tác, trang web và xuất. Kết nối tự do; mỗi node giữ lịch sử sinh nội dung riêng.
 - **Công cụ ảnh** — tạo, chỉnh sửa, vẽ lại, mở rộng khung (outpaint), chiếu sáng lại, upscale, đa góc nhìn, chỉnh sửa theo mẫu, suy ngược prompt, phát hiện đánh dấu, và một **bức tường phong cách với 45 look phim drama ngắn**.
 - **Công cụ video** — text / image / keyframe sang video, sinh nội dung tham chiếu toàn diện với tham chiếu từ file, link web và ngay trên canvas, chỉnh sửa video, xóa, upscale, tách âm thanh, mẫu chuyển động camera và phân tích cảnh quay; Seedance 2.5 có trong danh mục khuyến nghị.
-- **Âm thanh và thiết kế giọng** — tổng hợp giọng nói, thư viện giọng, âm thanh tham chiếu và nhạc. **Mô tả giọng bằng lời**, nghe thử, rồi lưu vào vị trí giọng của nhân vật hoặc **My voices** (cần model âm thanh tương thích và `VOICE_DESIGN_ENABLED=1` cùng giới hạn hằng ngày trong [`.env`](../.env.example)).
+- **Âm thanh và thiết kế giọng** — tổng hợp giọng nói, thư viện giọng, âm thanh tham chiếu và nhạc. **Mô tả giọng bằng lời**, nghe thử, rồi lưu vào vị trí giọng của nhân vật hoặc **My voices** (cần model âm thanh tương thích trong danh mục đang dùng).
 - **Director World** — biến một ảnh thành bối cảnh 3D Gaussian Splat hoặc toàn cảnh scene-360, lấy khung hình trong trình xem, và tái sử dụng cùng một địa điểm nhất quán qua các cảnh quay.
 - **Xây cho canvas lớn** — tab, dàn ý, minimap, bookmark vùng nhìn, căn chỉnh bám lưới, render theo mức chi tiết (level-of-detail), node nhóm, phím tắt, lịch sử phiên bản có khôi phục và khóa theo từng canvas.
 - **Commit vào series** — xem trước tác động, rồi đưa một node hoặc cả một lô vào thư viện tài sản hoặc một tập; chiếu series ngược lại lên canvas.

@@ -115,6 +115,7 @@ import {
 } from "@/features/superchat/use-superchat";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
 import { resolveMessagePresentation } from "@/features/superchat/message-presentation";
+import { bareToolName, stripTerminalStyleSequences } from "@/features/superchat/message";
 import {
   buildChatTaskBatchNotification,
   resolveChatTaskBatchSummary,
@@ -142,7 +143,9 @@ import {
 } from "@/features/superchat/director-run-mode";
 import { ComposerWaitingStatus } from "@/features/superchat/composer-waiting-status";
 import { ChatTaskStatusBar } from "@/features/superchat/chat-task-status-bar";
+import { ChatHistoryNotice } from "@/features/superchat/chat-history-notice";
 import { calculateTimelineContextDelta } from "@/features/superchat/timeline-scroll";
+import { ChatMarkdownLink, remarkChatCanvasPaths } from "@/features/superchat/chat-canvas-links";
 import { useEventBus } from "@/task-center/event-bus-context";
 import { useTaskCenterStore } from "@/task-center/store";
 import {
@@ -153,7 +156,14 @@ import {
   type UiSpec,
 } from "@/features/superchat/spec-extract";
 import type { ChatMessage, ChatMessagePart } from "@/features/superchat/types";
-import type { ApprovalDecision, ApprovalRequest, ChatAttachment } from "@/features/superchat/types";
+import type { ChatAttachment } from "@/features/superchat/types";
+import {
+  composerFileAttachment,
+  composerFileOf,
+  forgetComposerFiles,
+  uploadHomeAttachments,
+  type ComposerFiles,
+} from "@/features/superchat/chat-attachment-files";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import type { FormatCheck, UploadResult } from "@/lib/queries/ingest";
 import type {
@@ -174,10 +184,7 @@ import {
 import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import type { ComposeTimelineState } from "@/features/canvas/compose/timelineModel";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
-import {
-  VIDEO_UPSCALE_RESOLUTIONS,
-  VIDEO_UPSCALE_RESOLUTION_LABEL,
-} from "@/features/canvas/application/videoUpscale";
+import { VIDEO_UPSCALE_RESOLUTIONS, VIDEO_UPSCALE_RESOLUTION_LABEL } from "@/features/canvas/domain/videoUpscaleResolutions";
 import { useFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { VoiceSelectionModal } from "@/features/canvas/nodes/VoiceSelectionModal";
@@ -222,9 +229,12 @@ import {
   shouldIncludeCanvasSummary,
 } from "@/features/freezone/chatNodeReferences";
 import {
+  canvasApprovalAppliesWithoutClick,
+  canvasApprovalIsExpired,
   visibleStructuredBlocksForMessage,
   type CanvasCommandExecutionMode,
 } from "@/features/superchat/canvas-command-display";
+import { CanvasConfirmationStack } from "@/features/superchat/canvas-confirmation-card";
 import { looksLikeCanvasExecutionNarration } from "@/features/superchat/canvas-execution-narration";
 import {
   filterFreezoneSkillSuggestions,
@@ -335,11 +345,6 @@ function resolveSpecMediaUrl(src: string): Promise<string> {
   return Promise.resolve(resolveMediaUrl(src) ?? src);
 }
 
-type AttachmentBlob = {
-  blob: Blob;
-  filename: string;
-};
-
 type QueuedSendItem = {
   id: string;
   text: string;
@@ -396,10 +401,6 @@ const FREEZONE_TOOL_DISPLAY: Record<string, { title: string; description: string
   freezone_delete_nodes: {
     title: "删除节点",
     description: "准备删除画布节点",
-  },
-  freezone_clear_canvas: {
-    title: "清空画布",
-    description: "准备清空普通画布节点和连接",
   },
   freezone_delete_edges: {
     title: "断开连线",
@@ -654,7 +655,7 @@ function normalizeMessageText(text: string): string {
 // 每渲染一次就新建一份的话 React 认不出是同一个类型，会把整棵 markdown 子树卸载重挂。
 // 消息列表一有重渲染（任务流 30s 看门狗、流式输出……）整列消息就会重建 DOM 闪一下，
 // 而输入框压在上面带 backdrop-blur，背景重采样会让框内跟着闪。
-const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkChatCanvasPaths];
 
 export function isGenerationSuccessSummaryText(text: string): boolean {
   return /^生成成功[，,]\s*无失败[。.]?$/.test(text.trim());
@@ -702,16 +703,7 @@ const MARKDOWN_COMPONENTS: MarkdownComponents = {
     );
   },
   em: ({ children }) => <em className="italic">{children}</em>,
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-primary underline underline-offset-2"
-    >
-      {children}
-    </a>
-  ),
+  a: ChatMarkdownLink,
   code: ({ children }) => (
     <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.92em]">{children}</code>
   ),
@@ -1789,9 +1781,8 @@ function FreezoneToolActivityCard({ message }: { message: ChatMessage }) {
 
 function genericToolTitle(message: ChatMessage): string {
   const raw = toolRawRecord(message);
-  const name = typeof raw?.name === "string" ? raw.name.trim() : "";
-  const normalizedName = name.toLowerCase().split(".").pop() ?? "";
-  const override = AGENT_TOOL_TITLE_OVERRIDES[normalizedName];
+  const name = typeof raw?.name === "string" ? bareToolName(raw.name.trim()) : "";
+  const override = AGENT_TOOL_TITLE_OVERRIDES[name.toLowerCase()];
   if (override) return override;
   if (!name) return "执行工具";
   return name
@@ -1830,7 +1821,7 @@ function AgentToolActivityCard({ message }: { message: ChatMessage }) {
   const error = typeof raw?.error === "string"
     ? raw.error.trim()
     : raw?.error ? JSON.stringify(raw.error) : "";
-  const detail = error || (typeof raw?.text === "string" ? raw.text.trim() : "");
+  const detail = error || (typeof raw?.text === "string" ? stripTerminalStyleSequences(raw.text).trim() : "");
   return (
     <div
       className={cn(
@@ -1862,7 +1853,8 @@ function isAgentRuntimePart(part: ChatMessagePart): boolean {
   return part.type === "tool_status"
     || part.type === "agent_plan"
     || part.type === "agent_thought"
-    || part.type === "agent_usage";
+    || part.type === "agent_usage"
+    || part.type === "context_compaction";
 }
 
 function messageHasAgentRuntimeActivity(message: ChatMessage): boolean {
@@ -1872,7 +1864,8 @@ function messageHasAgentRuntimeActivity(message: ChatMessage): boolean {
 function isVisibleAgentProgressPart(part: ChatMessagePart): boolean {
   return part.type === "tool_status"
     || part.type === "agent_plan"
-    || part.type === "agent_thought";
+    || part.type === "agent_thought"
+    || part.type === "context_compaction";
 }
 
 function messageHasVisibleAgentProgressActivity(message: ChatMessage): boolean {
@@ -2111,22 +2104,18 @@ function toolStatusRuntimeText(params: {
   const { status, title, toolMessage, t } = params;
   const raw = toolRawRecord(toolMessage);
   const businessStatus = toolBusinessStatus(toolMessage);
-  if (businessStatus === "clarification_required") return t("superchat.runtime.waitingForGenerationParameters");
+  if (businessStatus === "clarification_required"
+    || businessStatus === "video_model_clarification_required") {
+    return t("superchat.runtime.waitingForGenerationParameters");
+  }
+  if (businessStatus === "confirmation_required") return t("superchat.runtime.waitingForConfirmation");
   if (businessStatus === "clarification_frontend_timeout") return t("superchat.runtime.clarificationPaused");
-  if (
-    status === "failed" &&
-    (raw?.name === "freezone_put_agent_catalog_draft_outline" ||
-      raw?.tool_name === "freezone_put_agent_catalog_draft_outline" ||
-      raw?.toolName === "freezone_put_agent_catalog_draft_outline")
-  ) {
+  const toolNames = [raw?.name, raw?.tool_name, raw?.toolName].flatMap((candidate) =>
+    typeof candidate === "string" ? [bareToolName(candidate)] : []);
+  if (status === "failed" && toolNames.includes("freezone_put_agent_catalog_draft_outline")) {
     return "待重新整理 Skill 方案";
   }
-  if (
-    status === "failed" &&
-    (raw?.name === "freezone_prepare_workflow_draft" ||
-      raw?.tool_name === "freezone_prepare_workflow_draft" ||
-      raw?.toolName === "freezone_prepare_workflow_draft")
-  ) {
+  if (status === "failed" && toolNames.includes("freezone_prepare_workflow_draft")) {
     return "待重新生成工作流草稿";
   }
   if (status === "running") return `正在${title}`;
@@ -2333,6 +2322,15 @@ function AgentRuntimeTimeline({
                 {statusText}{repeatText}
               </span>
               {detail && <span className="min-w-0 flex-1 break-words text-[11px] text-red-200/80">{detail}</span>}
+            </div>
+          );
+        }
+        if (part.type === "context_compaction") {
+          const running = part.event && typeof part.event === "object"
+            && "status" in part.event && part.event.status === "running";
+          return (
+            <div key={part.id} className="py-0.5 text-muted-foreground">
+              {t(running ? "aiAssistant.contextCompacting" : "aiAssistant.contextCompacted")}
             </div>
           );
         }
@@ -4450,6 +4448,7 @@ type SkillStudioQuestionSelection = {
 type SkillStudioQuestionSelections = Record<string, string | string[] | SkillStudioQuestionSelection>;
 
 type AssistantClarificationQuestion = SkillStudioQuestion & {
+  copy_template?: string;
   mode?: "single" | "multiple";
   options_source?: ClarificationOptionsSource;
   /** Server-verified catalog modes required by the target video nodes. */
@@ -4708,6 +4707,23 @@ function clarificationCapabilityOptions(
   return values.length > 0 ? values : fallback;
 }
 
+function localizeAdDirection(question: AssistantClarificationQuestion, t: TFunction) {
+  if (question.copy_template !== "interactive_ad_direction") return question;
+  return {
+    ...question,
+    title: t("freezone.chat.clarification.adDirection.question"),
+    options: question.options?.map((option) => {
+      if (option.id === "describe") {
+        return { ...option, label: t("freezone.chat.clarification.adDirection.describe") };
+      }
+      if (option.id === "recommend") {
+        return { ...option, label: t("freezone.chat.clarification.adDirection.recommend") };
+      }
+      return option;
+    }),
+  };
+}
+
 function clarificationQuestionsWithLiveModelCatalogs(
   questions: AssistantClarificationQuestion[],
   imageModels: readonly ClarificationCatalogModel[],
@@ -4837,7 +4853,7 @@ function clarificationQuestionsWithLiveModelCatalogs(
         count: Number(value),
       }) ?? `${value} videos`);
     }
-    if (values === null) return question;
+    if (values === null) return t ? localizeAdDirection(question, t) : question;
     return {
       ...question,
       options_source: source,
@@ -6418,9 +6434,29 @@ export function buildSkillStudioQuestionResponseForTest(
   ].join("\n");
 }
 
+// The live frame or stored event may omit scope; the reply must still reach the
+// bridge of the project the card is shown in, so fall back to the current page.
+interface BridgeResultScopeOptions {
+  projectId?: string;
+  canvasId?: string;
+  agentId?: string;
+}
+
+function bridgeResultScope(
+  event: { project_id?: string | null; canvas_id?: string | null; agent_id?: string | null },
+  options: BridgeResultScopeOptions,
+) {
+  return {
+    project_id: event.project_id || options.projectId || undefined,
+    canvas_id: event.canvas_id || options.canvasId || undefined,
+    agent_id: event.agent_id || options.agentId || undefined,
+  };
+}
+
 export function buildSkillStudioQuestionToolResultForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.questions" }>,
   selections: SkillStudioQuestionSelections,
+  options: BridgeResultScopeOptions = {},
 ) {
   const safeSelections = Object.fromEntries(
     Object.entries(selections).filter(([key]) => !key.startsWith("__")),
@@ -6429,9 +6465,7 @@ export function buildSkillStudioQuestionToolResultForTest(
     turn_id: event.turn_id ?? undefined,
     anchor_text_prefix: event.anchor_text_prefix ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     skill_studio_status: "answered",
     ok: true,
@@ -6471,7 +6505,7 @@ export function buildAssistantClarificationResponseForTest(
 export function buildAssistantClarificationToolResultForTest(
   event: AssistantClarificationUiEvent,
   answers: AssistantClarificationAnswers,
-  options: { skillStudioRevision?: boolean; projectId?: string; canvasId?: string; agentId?: string; cancelMessage?: string } = {},
+  options: BridgeResultScopeOptions & { skillStudioRevision?: boolean; cancelMessage?: string } = {},
 ) {
   const cancelled = answers.__action === "cancel";
   const safeAnswers = Object.fromEntries(
@@ -6495,9 +6529,7 @@ export function buildAssistantClarificationToolResultForTest(
     turn_id: event.turn_id ?? undefined,
     anchor_text_prefix: event.anchor_text_prefix ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id || options.projectId || undefined,
-    canvas_id: event.canvas_id || options.canvasId || undefined,
-    agent_id: event.agent_id || options.agentId || undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     clarification_status: cancelled ? "cancelled" : "answered",
     ok: !cancelled,
@@ -6506,49 +6538,6 @@ export function buildAssistantClarificationToolResultForTest(
     message: cancelled ? options.cancelMessage ?? "用户退出模型选择，需要先调整镜头模式或配置兼容模型。" : message,
   };
 }
-
-function buildPersistedAssistantClarificationEvent(
-  event: AssistantClarificationUiEvent,
-  {
-    action,
-    answers,
-    clarificationStatus,
-    receivedAt,
-    skipped,
-    usedRecommended,
-  }: {
-    action: string;
-    answers: AssistantClarificationAnswers;
-    clarificationStatus: string;
-    receivedAt: number;
-    skipped: boolean;
-    usedRecommended: boolean;
-  },
-): Record<string, unknown> {
-  return {
-    type: "assistant.clarification.request",
-    bridge_key: event.bridge_key,
-    project_id: event.project_id,
-    canvas_id: event.canvas_id,
-    agent_id: event.agent_id,
-    anchor_text_prefix: event.anchor_text_prefix ?? null,
-    received_at: receivedAt,
-    clarification_id: event.clarification_id,
-    title: event.title,
-    description: event.description,
-    questions: event.questions,
-    allow_recommended: event.allow_recommended,
-    allow_skip: event.allow_skip,
-    submitted: true,
-    action,
-    clarification_status: clarificationStatus,
-    answers,
-    skipped,
-    used_recommended: usedRecommended,
-  };
-}
-
-export const buildPersistedAssistantClarificationEventForTest = buildPersistedAssistantClarificationEvent;
 
 function skillStudioResultClientDebug(
   event: SkillStudioUiEvent,
@@ -6643,6 +6632,7 @@ export const normalizeSkillStudioDraftForCatalogForTest = normalizeSkillStudioDr
 export function buildSkillStudioDraftToolResultForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
   draft: Record<string, unknown>,
+  options: BridgeResultScopeOptions = {},
 ) {
   const normalizedDraft = normalizeSkillStudioDraftForCatalog(draft);
   const skill = normalizedDraft.skill && typeof normalizedDraft.skill === "object" && !Array.isArray(normalizedDraft.skill)
@@ -6659,9 +6649,7 @@ export function buildSkillStudioDraftToolResultForTest(
   return {
     turn_id: event.turn_id ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     skill_studio_status: "catalog_saved",
     ok: true,
@@ -6691,13 +6679,12 @@ interface SkillStudioToolResultResponse {
 
 export function buildSkillStudioDraftCancelToolResultForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
+  options: BridgeResultScopeOptions = {},
 ) {
   return {
     turn_id: event.turn_id ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     skill_studio_status: "catalog_cancelled",
     ok: true,
@@ -6726,6 +6713,7 @@ export function buildSkillStudioDraftCancelToolResultForTest(
 export function buildSkillStudioDraftRevisionToolResultForTest(
   event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
   draft: Record<string, unknown>,
+  options: BridgeResultScopeOptions = {},
 ) {
   const skill = draft.skill && typeof draft.skill === "object" && !Array.isArray(draft.skill)
     ? draft.skill as Record<string, unknown>
@@ -6741,9 +6729,7 @@ export function buildSkillStudioDraftRevisionToolResultForTest(
   return {
     turn_id: event.turn_id ?? undefined,
     bridge_key: event.bridge_key ?? "",
-    project_id: event.project_id ?? undefined,
-    canvas_id: event.canvas_id ?? undefined,
-    agent_id: event.agent_id ?? undefined,
+    ...bridgeResultScope(event, options),
     tool_call_status: "completed" as const,
     skill_studio_status: "revision_started",
     ok: true,
@@ -7141,9 +7127,10 @@ function SkillStudioQuestionsCard({
   );
 }
 
-function AssistantClarificationSummaryCard({ event }: { event: AssistantClarificationUiEvent }) {
+export function AssistantClarificationSummaryCard({ event }: { event: AssistantClarificationUiEvent }) {
   const { t } = useTranslation();
-  const questions = Array.isArray(event.questions) ? event.questions : [];
+  const questions = (Array.isArray(event.questions) ? event.questions : [])
+    .map((question) => localizeAdDirection(question, t));
   const answers = event.answers && typeof event.answers === "object" ? event.answers : {};
   const timelineItems = visibleAssistantClarificationTimelineItems(
     questions,
@@ -7154,7 +7141,8 @@ function AssistantClarificationSummaryCard({ event }: { event: AssistantClarific
   const cancelled = event.cancelled === true
     || event.action === "cancel"
     || event.clarification_status === "cancelled";
-  const skipped = event.skipped === true || event.action === "skip";
+  const skipped = event.skipped === true || event.action === "skip"
+    || event.clarification_status === "skip" || event.clarification_status === "skipped";
   const statusLabel = cancelled
     ? t("freezone.chat.clarification.cancelled")
     : skipped
@@ -9514,84 +9502,6 @@ function isVideoAttachment(attachment: ChatAttachment): boolean {
   );
 }
 
-function ApprovalCard({
-  approval,
-  onResolve,
-}: {
-  approval: ApprovalRequest;
-  onResolve: (decision: ApprovalDecision) => void;
-}) {
-  const { t } = useTranslation();
-  const remaining = approval.expiresAtMs
-    ? Math.max(0, Math.ceil((approval.expiresAtMs - Date.now()) / 1000))
-    : null;
-  const agentOptions = approval.kind === "agent"
-    ? (approval.options ?? []).flatMap((option) => {
-      const optionId = option.optionId ?? option.option_id;
-      return optionId ? [{ ...option, optionId }] : [];
-    })
-    : [];
-
-  return (
-    <div className="border-b border-amber-500/20 bg-amber-500/8 px-3 py-3">
-      <div className="mb-2 flex items-start gap-2">
-        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-foreground">{approval.title}</div>
-          {remaining !== null && (
-            <div className="text-xs text-muted-foreground">
-              {t("aiAssistant.approvalExpires", { seconds: remaining })}
-            </div>
-          )}
-        </div>
-        <Badge variant="outline" className="rounded-md uppercase">
-          {approval.kind}
-        </Badge>
-      </div>
-      {approval.description && (
-        <p className="mb-2 text-xs leading-5 text-muted-foreground">{approval.description}</p>
-      )}
-      {approval.command && (
-        <pre className="max-h-32 overflow-auto rounded-md border border-border/70 bg-background/60 px-2 py-1.5 text-xs whitespace-pre-wrap break-all">
-          {approval.command}
-        </pre>
-      )}
-      <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
-        {approval.cwd && <div className="truncate">CWD: {approval.cwd}</div>}
-        {approval.host && <div className="truncate">Host: {approval.host}</div>}
-        {approval.security && <div className="truncate">Security: {approval.security}</div>}
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {approval.kind === "agent" ? agentOptions.map((option) => {
-          const kind = String(option.kind ?? "").toLowerCase();
-          const destructive = kind.includes("reject") || kind.includes("deny");
-          const persistent = kind.includes("always");
-          return (
-            <Button
-              key={option.optionId}
-              size="xs"
-              variant={destructive ? "destructive" : persistent ? "outline" : "default"}
-              onClick={() => onResolve({ optionId: option.optionId })}
-            >
-              {option.name || option.optionId}
-            </Button>
-          );
-        }) : (<>
-          <Button size="xs" onClick={() => onResolve("allow-once")}>
-            {t("aiAssistant.allowOnce")}
-          </Button>
-          <Button size="xs" variant="outline" onClick={() => onResolve("allow-always")}>
-            {t("aiAssistant.allowAlways")}
-          </Button>
-          <Button size="xs" variant="destructive" onClick={() => onResolve("deny")}>
-            {t("aiAssistant.deny")}
-          </Button>
-        </>)}
-      </div>
-    </div>
-  );
-}
-
 function ControlBar({
   chat,
   compact = false,
@@ -10051,53 +9961,12 @@ function buildReingestCancelledContext(pending: ReingestConfirmation): string {
   ].join("\n");
 }
 
-function dataUrlToAttachmentBlob(attachment: ChatAttachment): AttachmentBlob | null {
-  const content = attachment.content;
-  if (!content?.startsWith("data:")) return null;
-  const comma = content.indexOf(",");
-  if (comma < 0) return null;
-  const meta = content.slice(0, comma);
-  const base64 = content.slice(comma + 1);
-  const mime = attachment.mimeType || /data:([^;]+)/.exec(meta)?.[1] || "application/octet-stream";
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return {
-    blob: new Blob([bytes], { type: mime }),
-    filename: attachment.fileName || "novel.txt",
-  };
-}
-
-function dataUrlToText(attachment: ChatAttachment): string | null {
-  const content = attachment.content;
-  if (!content?.startsWith("data:")) return null;
-  const comma = content.indexOf(",");
-  if (comma < 0) return null;
-  const meta = content.slice(0, comma);
-  const payload = content.slice(comma + 1);
-  try {
-    if (!/;base64/i.test(meta)) {
-      return decodeURIComponent(payload);
-    }
-    const binary = atob(payload);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  } catch {
-    return null;
-  }
-}
-
 async function uploadNovelForIngest(
   project: string,
-  file: AttachmentBlob,
+  file: File,
 ): Promise<IngestUploadResult> {
   const formData = new FormData();
-  formData.append("file", file.blob, file.filename);
+  formData.append("file", file, file.name);
   const response = await jsonWithBackendError<OkResponse<IngestUploadResult> | ErrorResponse>(
     uploadApi.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
   );
@@ -10132,14 +10001,13 @@ function surfaceFormatCheckWarnings(
 async function uploadAttachmentsForIngest(
   project: string,
   attachments: ChatAttachment[],
+  files: ComposerFiles,
   t: TFunction,
 ): Promise<PreparedIngestAttachment[]> {
   const prepared: PreparedIngestAttachment[] = [];
 
   for (const attachment of attachments) {
-    const file = isNovelAttachment(attachment)
-      ? dataUrlToAttachmentBlob(attachment)
-      : null;
+    const file = isNovelAttachment(attachment) ? composerFileOf(attachment, files) : undefined;
 
     if (!file) {
       prepared.push({ attachment, original: attachment });
@@ -10147,25 +10015,22 @@ async function uploadAttachmentsForIngest(
     }
 
     try {
-      toast.info(t("aiAssistant.attachmentAnalysisUploading", { filename: file.filename }));
+      toast.info(t("aiAssistant.attachmentAnalysisUploading", { filename: file.name }));
       const upload = await uploadNovelForIngest(project, file);
-      const { content: _content, path: _path, url: _url, ...attachmentMetadata } = attachment;
       prepared.push({
         upload,
         original: attachment,
         attachment: {
-          ...attachmentMetadata,
+          ...attachment,
           fileName: upload.filename,
           fileSize: upload.size,
         },
       });
     } catch (error) {
-      const message = backendErrorToastMessage(error, t);
-      const { content: _content, ...attachmentMetadata } = attachment;
       prepared.push({
         original: attachment,
-        attachment: attachmentMetadata,
-        error: message,
+        attachment,
+        error: backendErrorToastMessage(error, t),
       });
     }
   }
@@ -10208,6 +10073,7 @@ async function projectHasIngestedContent(project: string): Promise<boolean> {
 async function buildAttachmentAnalysisContext(
   project: string | undefined,
   preparedAttachments: PreparedIngestAttachment[],
+  files: ComposerFiles,
 ): Promise<string> {
   const lines = [
     "[DRAMACLAW_ATTACHMENT_CONTEXT]",
@@ -10240,10 +10106,13 @@ async function buildAttachmentAnalysisContext(
       } else if (prepared.error) {
         lines.push(`dramaclaw_upload_error: ${prepared.error}`);
       }
+    } else if (prepared.error) {
+      lines.push(`upload_error: ${prepared.error}`);
     }
 
     if (isInlineTextAttachment(originalAttachment)) {
-      const text = dataUrlToText(originalAttachment);
+      const file = composerFileOf(originalAttachment, files);
+      const text = file ? await file.text() : null;
       if (text) {
         const truncated = text.length > INLINE_TEXT_ATTACHMENT_LIMIT;
         lines.push(`text_content${truncated ? "_truncated" : ""}:`);
@@ -11283,6 +11152,7 @@ const CANVAS_APPROVAL_VIDEO_DURATION_MIN = 5;
 const CANVAS_APPROVAL_VIDEO_DURATION_MAX = 15;
 
 type PendingCanvasCommandApproval = {
+  serverApproved?: boolean;
   id: string;
   key: string;
   messageId: string;
@@ -12450,6 +12320,7 @@ function canvasCommandApprovalDetailsFromUiEvents(events: unknown[] | undefined)
         ? value.receivedAt
         : canvasSurfaceEventOrder(value, approvals.length);
     approvals.push({
+      restoredFromHistory: true,
       canvasId,
       turnId,
       anchorMessageId: typeof value.anchorMessageId === "string" ? value.anchorMessageId : null,
@@ -12928,6 +12799,8 @@ export function SuperChatPanel({
   const freezoneSkillSuggestionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const freezoneSkillMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Picked files by attachment id. Attachments themselves only ever carry an address.
+  const composerFilesRef = useRef(new Map<string, File>());
   const draftInputRef = useRef<HTMLElement | null>(null);
   const restoreDraftFocusRef = useRef(false);
   const dragDepthRef = useRef(0);
@@ -12945,10 +12818,11 @@ export function SuperChatPanel({
   }, [agentBillingReference, isFreezoneLayout]);
   const shouldStickToBottomRef = useRef(true);
   const suppressAutoScrollUntilRef = useRef(0);
+  const restoreFromBottomRef = useRef<number | null>(null);
+  const firstMessageBeforeOlderRef = useRef<string | null>(null);
   const historyScrollKeyRef = useRef<string | null>(null);
   const composerShellRef = useRef<HTMLDivElement | null>(null);
   const composerBeamRef = useRef<BorderBeamController | null>(null);
-  const skillStudioDraftPersistTimerRef = useRef<number | null>(null);
   const onFreezoneUserMessageRef = useRef(onFreezoneUserMessage);
   const onConnectionStateChangeRef = useRef(onConnectionStateChange);
   const consumedPendingAttachmentsKeyRef = useRef<string | null>(null);
@@ -13299,6 +13173,7 @@ export function SuperChatPanel({
   }, [deselectFreezoneNodeReferences, selectedFreezoneNodes]);
   const removeAttachment = useCallback((attachment: ChatAttachment) => {
     const removedCanvasNodeIds = new Set(canvasNodeReferenceAttachmentNodeIds(attachment));
+    if (attachment.id) composerFilesRef.current.delete(attachment.id);
     setAttachments((current) => current.filter((item) => item.id !== attachment.id));
     deselectFreezoneNodeReferences(removedCanvasNodeIds);
   }, [deselectFreezoneNodeReferences]);
@@ -13632,13 +13507,15 @@ export function SuperChatPanel({
     const commandCount = detail.envelopes.reduce((sum, envelope) => sum + envelope.commands.length, 0);
     const receivedAt = detail.receivedAt ?? Date.now();
     const receivedAtLooksLikeEpochMs = receivedAt > 1_000_000_000_000;
-    const expiresAt = detail.autoExpires
-      ? (
-          receivedAtLooksLikeEpochMs
-            ? receivedAt + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
-            : Date.now() + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
-        )
-      : undefined;
+    const expiresAt = detail.restoredFromHistory
+      ? Date.now()
+      : detail.autoExpires
+        ? (
+            receivedAtLooksLikeEpochMs
+              ? receivedAt + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
+              : Date.now() + CANVAS_COMMAND_APPROVAL_TIMEOUT_MS
+          )
+        : undefined;
     return {
       id: key,
       key,
@@ -13655,6 +13532,7 @@ export function SuperChatPanel({
       commandCount,
       plans: canvasCommandPlansFromEnvelopes(detail.envelopes),
       externalMcpCommand: detail.externalMcpCommand === true,
+      serverApproved: detail.restoredFromHistory ? false : detail.serverApproved,
       requiresUserChoice: detail.requiresUserChoice === true,
     };
   }, [activeMessages, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
@@ -13857,11 +13735,7 @@ export function SuperChatPanel({
       const anchorTextPrefix =
         typeof detail.anchorTextPrefix === "string"
           ? detail.anchorTextPrefix
-          : assistantAnchorText
-            ? assistantAnchorText
-            : turnId && turnId === chat.activeTurnId && chat.streamText
-              ? chat.streamText
-              : null;
+          : assistantAnchorText || null;
       const surfaceOrder = Date.now();
       if (turnId) {
         const activity: CanvasContextActivity = {
@@ -13896,7 +13770,6 @@ export function SuperChatPanel({
   }, [
     activeMessages,
     chat.activeTurnId,
-    chat.streamText,
     chat,
     effectiveFreezoneCanvasId,
     freezoneAgentMatches,
@@ -13990,45 +13863,13 @@ export function SuperChatPanel({
     };
   }, [activeMessages, chat, effectiveFreezoneCanvasId, freezoneAgentMatches, latestAssistantMessageId, variant]);
 
-  const persistCanvasCommandUiEvent = useCallback((
-    turnId: string | null | undefined,
-    event: Record<string, unknown>,
-  ): Promise<boolean> => {
-    if (!params.project || !effectiveFreezoneCanvasId || !turnId) {
-      return Promise.resolve(false);
-    }
-    return api
-      .post("api/v1/chat/ui-events", {
-        json: {
-          scope: {
-            kind: "project",
-            id: params.project,
-            surface: "freezone",
-            canvasId: effectiveFreezoneCanvasId,
-          },
-          turn_id: turnId,
-          event,
-        },
-      })
-      .then(() => true)
-      .catch((error) => {
-        console.warn("[freezone-canvas-command] failed to persist superchat canvas event", {
-          canvasId: effectiveFreezoneCanvasId,
-          turnId,
-          error,
-        });
-        return false;
-      });
-  }, [effectiveFreezoneCanvasId, params.project]);
-
   useEffect(() => {
     const projectId = params.project?.trim();
     const canvasIdForRequest = effectiveFreezoneCanvasId?.trim();
     if (variant !== "freezone" || !projectId || !canvasIdForRequest) return;
 
     const recoveryFeedbacks = { ...persistedCanvasCommandFeedbackByMessageId };
-    // UI-event persistence is best effort. The live message part is also a
-    // recoverable receipt when that request fails or has not reached history.
+    // Include live receipts that have not reached the server history snapshot.
     for (const message of chat.messages) {
       for (const part of message.parts ?? []) {
         if (part.type !== "canvas_feedback") continue;
@@ -14065,11 +13906,9 @@ export function SuperChatPanel({
             if (run.status === "running") continue;
 
             // Recover server-side media outputs as well as the chat receipt.
-            // The runtime refuses this replacement while local edits are dirty.
+            // Merge the new server content with any local work still being saved.
             try {
-              await refreshRemoteFreezoneCanvas(projectId, canvasIdForRequest, {
-                protectUnsavedLocalEdits: true,
-              });
+              await refreshRemoteFreezoneCanvas(projectId, canvasIdForRequest);
             } catch {
               // Run completion remains authoritative during a canvas fetch outage.
             }
@@ -14097,19 +13936,6 @@ export function SuperChatPanel({
                 event: terminalFeedback,
               },
             );
-            await persistCanvasCommandUiEvent(feedback.turnId, {
-              schema_version: "canvas_command_result.v1",
-              type: "canvas_command_result",
-              canvas_id: canvasIdForRequest,
-              turn_id: feedback.turnId ?? null,
-              bridge_key: feedback.bridgeKey ?? null,
-              workflow_run_id: runId,
-              completion_notice: true,
-              envelopes: feedback.envelopes,
-              result,
-              anchor_text_prefix: feedback.anchorTextPrefix ?? null,
-              received_at: Date.now(),
-            });
             reportCanvasCommandToolResult({
               bridgeKey: feedback.bridgeKey,
               turnId: feedback.turnId,
@@ -14137,7 +13963,6 @@ export function SuperChatPanel({
     effectiveFreezoneAgentId,
     effectiveFreezoneCanvasId,
     params.project,
-    persistCanvasCommandUiEvent,
     persistedCanvasCommandFeedbackByMessageId,
     replaceCanvasCommandFeedback,
     queueBackgroundWorkflowNotification,
@@ -14145,54 +13970,8 @@ export function SuperChatPanel({
     variant,
   ]);
 
-  const persistSkillStudioUiEvent = useCallback((
-    turnId: string | null | undefined,
-    event: Record<string, unknown>,
-    options: { debounce?: boolean } = {},
-  ) => {
-    if (!params.project || !effectiveFreezoneCanvasId || !turnId) return;
-    const postEvent = () => {
-      void api.post("api/v1/chat/ui-events", {
-        json: {
-          scope: {
-            kind: "project",
-            id: params.project,
-            surface: "freezone",
-            canvasId: effectiveFreezoneCanvasId,
-            agentId: typeof event.agent_id === "string" ? event.agent_id : effectiveFreezoneAgentId,
-          },
-          turn_id: turnId,
-          event,
-        },
-      }).catch((error) => {
-        console.warn("[skill-studio] failed to persist superchat ui event", {
-          canvasId: effectiveFreezoneCanvasId,
-          turnId,
-          error,
-        });
-      });
-    };
-    if (!options.debounce) {
-      postEvent();
-      return;
-    }
-    if (skillStudioDraftPersistTimerRef.current !== null) {
-      window.clearTimeout(skillStudioDraftPersistTimerRef.current);
-    }
-    skillStudioDraftPersistTimerRef.current = window.setTimeout(() => {
-      skillStudioDraftPersistTimerRef.current = null;
-      postEvent();
-    }, 450);
-  }, [effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project]);
-
-  useEffect(() => () => {
-    if (skillStudioDraftPersistTimerRef.current !== null) {
-      window.clearTimeout(skillStudioDraftPersistTimerRef.current);
-      skillStudioDraftPersistTimerRef.current = null;
-    }
-  }, []);
-
   const handleApplyCanvasCommandApproval = useCallback((approval: PendingCanvasCommandApproval) => {
+    if (canvasApprovalIsExpired(approval.expiresAt, Date.now())) return;
     if (executingCanvasCommandApprovalIdsRef.current.has(approval.id)) return;
     resolvedCanvasCommandApprovalKeysRef.current.add(approval.key);
     resolvedCanvasCommandApprovalKeysRef.current.add(canvasCommandApprovalApplyKey(approval));
@@ -14212,16 +13991,6 @@ export function SuperChatPanel({
         approval.key,
       );
       try {
-        await persistCanvasCommandUiEvent(approval.turnId, {
-          schema_version: "canvas_command_approval_resolution.v1",
-          type: "canvas_command_approval_resolution",
-          canvas_id: effectiveFreezoneCanvasId,
-          turn_id: approval.turnId ?? null,
-          bridge_key: approval.bridgeKey ?? null,
-          envelopes: approval.envelopes,
-          decision: "confirmed",
-          received_at: receivedAt,
-        });
         const applyKey = canvasCommandApprovalApplyKey(approval);
         const canRepeatApproval = canvasCommandApprovalCanRepeat(approval);
         if (!canRepeatApproval && appliedCanvasCommandApprovalKeysRef.current.has(applyKey)) {
@@ -14318,18 +14087,6 @@ export function SuperChatPanel({
                   event: pendingFeedback,
                 },
               );
-              void persistCanvasCommandUiEvent(approval.turnId, {
-                schema_version: "canvas_command_result.v1",
-                type: "canvas_command_result",
-                canvas_id: effectiveFreezoneCanvasId,
-                turn_id: approval.turnId ?? null,
-                bridge_key: approval.bridgeKey ?? null,
-                workflow_run_id: persistedWorkflowRunId,
-                envelopes: approval.envelopes,
-                result: pendingResult,
-                anchor_text_prefix: approval.anchorTextPrefix ?? null,
-                received_at: receivedAt,
-              });
               setPendingCanvasCommandApprovals((current) =>
                 removePendingCanvasCommandApproval(current, approval));
               result = await execution;
@@ -14456,26 +14213,13 @@ export function SuperChatPanel({
             feedbackPart,
           );
         }
-        void persistCanvasCommandUiEvent(approval.turnId, {
-          schema_version: "canvas_command_result.v1",
-          type: "canvas_command_result",
-          canvas_id: effectiveFreezoneCanvasId,
-          turn_id: approval.turnId ?? null,
-          bridge_key: approval.bridgeKey ?? null,
-          workflow_run_id: persistedWorkflowRunId,
-          completion_notice: backgroundAccepted && Boolean(persistedWorkflowRunId),
-          envelopes: approval.envelopes,
-          result,
-          anchor_text_prefix: approval.anchorTextPrefix ?? null,
-          received_at: receivedAt,
-        });
         setPendingCanvasCommandApprovals((current) => removePendingCanvasCommandApproval(current, approval));
       } finally {
         executingCanvasCommandApprovalIdsRef.current.delete(approval.id);
         setExecutingCanvasCommandApprovalIds(new Set(executingCanvasCommandApprovalIdsRef.current));
       }
     })();
-  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistCanvasCommandUiEvent, replaceCanvasCommandFeedback, queueBackgroundWorkflowNotification, t]);
+  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, replaceCanvasCommandFeedback, queueBackgroundWorkflowNotification, t]);
 
   const handleCancelCanvasCommandApproval = useCallback((approval: PendingCanvasCommandApproval, reason: CanvasCommandApprovalCancelReason = "user") => {
     if (executingCanvasCommandApprovalIdsRef.current.has(approval.id)) return;
@@ -14521,28 +14265,6 @@ export function SuperChatPanel({
       cancelled: true,
     });
     const feedbackKey = canvasCommandFeedbackKey(approval.bridgeKey, approval.turnId, undefined, approval.key);
-    void persistCanvasCommandUiEvent(approval.turnId, {
-      schema_version: "canvas_command_approval_resolution.v1",
-      type: "canvas_command_approval_resolution",
-      canvas_id: effectiveFreezoneCanvasId,
-      turn_id: approval.turnId ?? null,
-      bridge_key: approval.bridgeKey ?? null,
-      envelopes: approval.envelopes,
-      decision: reason === "timeout" ? "timeout" : "cancelled",
-      received_at: receivedAt,
-    });
-    void persistCanvasCommandUiEvent(approval.turnId, {
-      schema_version: "canvas_command_result.v1",
-      type: "canvas_command_result",
-      canvas_id: effectiveFreezoneCanvasId,
-      bridge_key: approval.bridgeKey ?? null,
-      envelopes: approval.envelopes,
-      result,
-      anchor_text_prefix: approval.anchorTextPrefix ?? null,
-      received_at: receivedAt,
-      cancelled: true,
-      cancel_reason: reason,
-    });
     appendCanvasCommandFeedback(
       approval.messageId,
       feedbackKey,
@@ -14582,7 +14304,7 @@ export function SuperChatPanel({
       },
     );
     setPendingCanvasCommandApprovals((current) => removePendingCanvasCommandApproval(current, approval));
-  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistCanvasCommandUiEvent, t]);
+  }, [appendCanvasCommandFeedback, chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, t]);
 
   const handleRetryCanvasCommandFeedback = useCallback((
     feedback: CanvasCommandFeedback,
@@ -14600,8 +14322,9 @@ export function SuperChatPanel({
   }, [chat, t]);
 
   useEffect(() => {
-    if (canvasCommandExecutionMode !== "auto_execute") return;
     for (const approval of pendingCanvasCommandApprovals) {
+      if (canvasApprovalIsExpired(approval.expiresAt, Date.now())) continue;
+      if (!canvasApprovalAppliesWithoutClick(canvasCommandExecutionMode, approval.serverApproved)) continue;
       if (approval.requiresUserChoice) continue;
       // manual_ui 动作必须由用户主动确认。自动模式不能把“重试生成”擅自
       // 解释成“打开声线选择并改用自定义声线”。
@@ -14746,15 +14469,9 @@ export function SuperChatPanel({
     persistedCanvasCommandFeedbackByMessageId,
     visibleMessages,
   ]);
-  const activeMessageCount = activeMessages.length;
   const lastActiveMessageId = activeMessages[activeMessages.length - 1]?.id ?? "";
   const deferStructuredRender =
     chat.busy && !chat.settings.showStructuredSourceWhileStreaming;
-  const streamTextAlreadyRendered =
-    Boolean(chat.streamText)
-    && visibleMessages.some(
-      (message) => message.role === "assistant" && message.text === chat.streamText,
-    );
   const lastConversationalMessage = [...activeMessages]
     .reverse()
     .find((message) => message.role === "user" || message.role === "assistant");
@@ -14812,7 +14529,7 @@ export function SuperChatPanel({
     );
   const thinkingCanvasContextActivity = useMemo(() => {
     if (hasActiveComposerPrompt) return null;
-    if (variant !== "freezone" || !chat.busy || !chat.activeTurnId || chat.streamText.trim()) return null;
+    if (variant !== "freezone" || !chat.busy || !chat.activeTurnId) return null;
     const turnId = chat.activeTurnId;
     const hasAssistantText = activeMessages.some(
       (message) =>
@@ -14848,7 +14565,6 @@ export function SuperChatPanel({
     canvasContextActivitiesByMessageId,
     chat.activeTurnId,
     chat.busy,
-    chat.streamText,
     hasActiveComposerPrompt,
     pendingCanvasCommandApprovals,
     persistedCanvasCommandFeedbackByMessageId,
@@ -14863,7 +14579,6 @@ export function SuperChatPanel({
   );
   const showWaitingIndicator =
     chat.busy
-    && !chat.streamText.trim()
     && !hasActiveComposerPrompt
     && !thinkingCanvasContextActivity
     && (
@@ -14936,6 +14651,38 @@ export function SuperChatPanel({
     });
   }, []);
 
+  const firstRenderedMessageId = visibleMessages[0]?.id ?? "";
+  const loadOlderHistory = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !chat.hasOlderHistory || chat.loadingOlderHistory) return;
+    restoreFromBottomRef.current = el.scrollHeight - el.scrollTop;
+    firstMessageBeforeOlderRef.current = firstRenderedMessageId;
+    shouldStickToBottomRef.current = false;
+    suppressAutoScrollUntilRef.current = Date.now() + 1500;
+    chat.loadOlderHistory();
+  }, [chat.hasOlderHistory, chat.loadingOlderHistory, chat.loadOlderHistory, firstRenderedMessageId]);
+  const olderHistoryStateRef = useRef({
+    hasOlderHistory: chat.hasOlderHistory,
+    loadingOlderHistory: chat.loadingOlderHistory,
+    loadOlderHistory,
+  });
+  olderHistoryStateRef.current = {
+    hasOlderHistory: chat.hasOlderHistory,
+    loadingOlderHistory: chat.loadingOlderHistory,
+    loadOlderHistory,
+  };
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || restoreFromBottomRef.current === null) return;
+    if (firstRenderedMessageId !== firstMessageBeforeOlderRef.current) {
+      el.scrollTop = el.scrollHeight - restoreFromBottomRef.current;
+      restoreFromBottomRef.current = null;
+    } else if (!chat.loadingOlderHistory) {
+      restoreFromBottomRef.current = null;
+    }
+  }, [chat.messages, chat.loadingOlderHistory, firstRenderedMessageId]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -14943,6 +14690,10 @@ export function SuperChatPanel({
       const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       shouldStickToBottomRef.current = distanceToBottom < 96;
       setShowScrollToBottom(distanceToBottom > 180);
+      const olderHistory = olderHistoryStateRef.current;
+      if (el.scrollTop < 120 && olderHistory.hasOlderHistory && !olderHistory.loadingOlderHistory) {
+        olderHistory.loadOlderHistory();
+      }
     };
     updateStickiness();
     el.addEventListener("scroll", updateStickiness, { passive: true });
@@ -14956,7 +14707,7 @@ export function SuperChatPanel({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [chat.busy, chat.messages, chat.streamText, showWaitingIndicator, scrollToChatBottom]);
+  }, [chat.busy, chat.messages, showWaitingIndicator, scrollToChatBottom]);
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -14989,7 +14740,7 @@ export function SuperChatPanel({
 
   useEffect(() => {
     if (!chat.historyReady) return;
-    const scrollKey = `${params.project ?? ""}:${activeMessageCount}:${lastActiveMessageId}`;
+    const scrollKey = `${params.project ?? ""}:${lastActiveMessageId}`;
     if (historyScrollKeyRef.current === scrollKey) return;
     historyScrollKeyRef.current = scrollKey;
     shouldStickToBottomRef.current = true;
@@ -15008,7 +14759,7 @@ export function SuperChatPanel({
       window.clearTimeout(secondTimeout);
       window.clearTimeout(thirdTimeout);
     };
-  }, [activeMessageCount, chat.historyReady, lastActiveMessageId, params.project, scrollToChatBottom]);
+  }, [chat.historyReady, lastActiveMessageId, params.project, scrollToChatBottom]);
 
   useEffect(() => {
     setQueuedMessages([]);
@@ -15248,7 +14999,12 @@ export function SuperChatPanel({
 
         setPreparingSend(true);
         try {
-          const prepared = await uploadAttachmentsForIngest(project, ordinaryAttachments, t);
+          const prepared = await uploadAttachmentsForIngest(
+            project,
+            ordinaryAttachments,
+            composerFilesRef.current,
+            t,
+          );
           surfaceFormatCheckWarnings(prepared, t, (formatCheck, filename) =>
             setFormatCheckDetails({ formatCheck, filename }),
           );
@@ -15331,18 +15087,16 @@ export function SuperChatPanel({
       } else if (ordinaryAttachments.length > 0) {
         setPreparingSend(true);
         try {
-          const prepared = project
-            ? await uploadAttachmentsForIngest(project, ordinaryAttachments, t)
-            : ordinaryAttachments.map((attachment) => ({ attachment, original: attachment }));
+          const files = composerFilesRef.current;
+          const prepared: PreparedIngestAttachment[] = project
+            ? await uploadAttachmentsForIngest(project, ordinaryAttachments, files, t)
+            : await uploadHomeAttachments(ordinaryAttachments, files);
           surfaceFormatCheckWarnings(prepared, t, (formatCheck, filename) =>
             setFormatCheckDetails({ formatCheck, filename }),
           );
           transportAttachments = [...prepared.map((item) => item.attachment), ...canvasReferenceAttachments];
           contextUploadedFiles = recordUploadedFiles(project, prepared);
-          const context = await buildAttachmentAnalysisContext(
-            project,
-            prepared,
-          );
+          const context = await buildAttachmentAnalysisContext(project, prepared, files);
           nextText = appendAttachmentAnalysisContext(text, context);
         } finally {
           setPreparingSend(false);
@@ -15473,6 +15227,7 @@ export function SuperChatPanel({
     const remainingMessages = queuedMessages.filter((_, index) => index !== nextIndex);
     void sendWithIngestAutomation(nextMessage.text, nextMessage.attachments).then((sent) => {
       if (!sent) return;
+      forgetComposerFiles(composerFilesRef.current, nextMessage.attachments);
       setQueuedMessages(remainingMessages);
       setSelectedQueuedMessageId(remainingMessages[0]?.id ?? null);
     });
@@ -15567,6 +15322,7 @@ export function SuperChatPanel({
     }
     void sendWithIngestAutomation(text, queuedAttachments).then((sent) => {
       if (!sent) return;
+      forgetComposerFiles(composerFilesRef.current, queuedAttachments);
       setDraft("");
       setAttachments([]);
       deselectFreezoneNodeReferences(sentCanvasNodeIds);
@@ -15589,6 +15345,7 @@ export function SuperChatPanel({
       setDraft("");
       setAttachments([]);
       setQueuedMessages([]);
+      composerFilesRef.current.clear();
       setSelectedHistoryMessageIndex(null);
       setPendingCanvasCommandApprovals([]);
       setClearDialogOpen(false);
@@ -15709,6 +15466,12 @@ export function SuperChatPanel({
     }
   };
 
+  const bridgeResultScopeOptions = useMemo(() => ({
+    projectId: params.project || undefined,
+    canvasId: effectiveFreezoneCanvasId || undefined,
+    agentId: effectiveFreezoneAgentId || undefined,
+  }), [params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId]);
+
   const submitSkillStudioQuestionResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.questions" }>,
     selections: SkillStudioQuestionSelections,
@@ -15728,7 +15491,7 @@ export function SuperChatPanel({
           ? "skip"
           : "submit";
       const payload = {
-        ...buildSkillStudioQuestionToolResultForTest(event, selections),
+        ...buildSkillStudioQuestionToolResultForTest(event, selections, bridgeResultScopeOptions),
         action,
         skill_studio_status: action === "submit" ? "answered" : action,
         client_debug: skillStudioResultClientDebug(event, "questions_card_ws", {
@@ -15748,23 +15511,6 @@ export function SuperChatPanel({
         return false;
       }
       if (event.turn_id) {
-        const receivedAt = uiEventFirstReceivedAt(event);
-        const persistedEvent = {
-          type: "skill_studio.questions",
-          bridge_key: event.bridge_key,
-          skill_studio_session_id: event.skill_studio_session_id,
-          project_id: event.project_id ?? params.project,
-          canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-          agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-          anchor_text_prefix: event.anchor_text_prefix ?? null,
-          received_at: receivedAt,
-          title: event.title,
-          description: event.description,
-          questions: event.questions,
-          submitted: true,
-          action,
-          selections: payload.selections,
-        };
         updateChatUiEvent(
           event.turn_id,
           (candidate) => skillStudioEventMatches(candidate, event),
@@ -15776,7 +15522,6 @@ export function SuperChatPanel({
             selections: payload.selections,
           }),
         );
-        persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
       return true;
     } catch (error) {
@@ -15784,7 +15529,7 @@ export function SuperChatPanel({
       toast.error("提交 Skill Studio 选择失败，请重试");
       return false;
     }
-  }, [chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
+  }, [chat, bridgeResultScopeOptions, updateChatUiEvent]);
 
   const submitAssistantClarificationResponse = useCallback(async (
     event: AssistantClarificationUiEvent,
@@ -15821,10 +15566,8 @@ export function SuperChatPanel({
       const skillStudioRevision = activeAssistantClarificationIsSkillStudioRevision(visibleMessages, event);
       const payload = {
         ...buildAssistantClarificationToolResultForTest(event, answers, {
+          ...bridgeResultScopeOptions,
           skillStudioRevision,
-          projectId: params.project || undefined,
-          canvasId: effectiveFreezoneCanvasId || undefined,
-          agentId: effectiveFreezoneAgentId || undefined,
           cancelMessage: t("freezone.chat.generationParams.catalog.exitMessage"),
         }),
         action,
@@ -15860,15 +15603,6 @@ export function SuperChatPanel({
           ?? (action === "submit" ? "answered" : action === "cancel" ? "cancelled" : action);
         const skipped = result.data?.skipped ?? action === "skip";
         const usedRecommended = result.data?.used_recommended ?? action === "recommended";
-        const receivedAt = uiEventFirstReceivedAt(event);
-        const persistedEvent = buildPersistedAssistantClarificationEvent(event, {
-          action: acceptedAction,
-          answers: acceptedAnswers,
-          clarificationStatus: actionStatus,
-          receivedAt,
-          skipped,
-          usedRecommended,
-        });
         updateChatUiEvent(
           null,
           (candidate) =>
@@ -15893,7 +15627,6 @@ export function SuperChatPanel({
             used_recommended: usedRecommended,
           }),
         );
-        persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
       if (submittedAssistantClarificationKeysRef.current.size > 200) {
         submittedAssistantClarificationKeysRef.current = new Set(
@@ -15907,7 +15640,7 @@ export function SuperChatPanel({
       toast.error(t("freezone.chat.clarification.submitFailed"));
       return false;
     }
-	  }, [chat, params.project, effectiveFreezoneCanvasId, effectiveFreezoneAgentId, persistSkillStudioUiEvent, updateChatUiEvent, visibleMessages, t]);
+	  }, [chat, bridgeResultScopeOptions, updateChatUiEvent, visibleMessages, t]);
 
   const submitSkillStudioDraftResponse = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -15919,7 +15652,7 @@ export function SuperChatPanel({
     }
     try {
       const payload = {
-        ...buildSkillStudioDraftToolResultForTest(event, draftPayload),
+        ...buildSkillStudioDraftToolResultForTest(event, draftPayload, bridgeResultScopeOptions),
         client_debug: skillStudioResultClientDebug(event, "draft_confirm_add_http", {
           active_turn_id: chat.activeTurnId,
           chat_busy: chat.busy,
@@ -15968,24 +15701,6 @@ export function SuperChatPanel({
           .catch(() => undefined);
       }
       if (event.turn_id) {
-        const receivedAt = uiEventFirstReceivedAt(event);
-        const persistedEvent = {
-          type: "skill_studio.draft",
-          bridge_key: event.bridge_key,
-          skill_studio_session_id: event.skill_studio_session_id,
-          project_id: event.project_id ?? params.project,
-          canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-          agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-          anchor_text_prefix: event.anchor_text_prefix ?? null,
-          received_at: receivedAt,
-          mode: event.mode,
-          draft: payload.draft,
-          submitted: true,
-          saved_to_catalog: payload.saved_to_catalog,
-          saved_skill_ids: payload.saved_skill_ids,
-          saved_recipe_ids: payload.saved_recipe_ids,
-          action: payload.action,
-        };
         updateChatUiEvent(
           event.turn_id,
           (candidate) => skillStudioEventMatches(candidate, event),
@@ -16000,7 +15715,6 @@ export function SuperChatPanel({
               action: payload.action,
             }),
           );
-        persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       }
       toast.success("已添加到虾画 Skills / Recipes");
       return true;
@@ -16009,26 +15723,13 @@ export function SuperChatPanel({
       toast.error("添加 Skill / Recipe 失败，请检查必填字段后重试");
       return false;
     }
-  }, [chat.activeTurnId, chat.busy, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, queryClient, updateChatUiEvent]);
+  }, [bridgeResultScopeOptions, chat.activeTurnId, chat.busy, queryClient, updateChatUiEvent]);
 
   const handleSkillStudioDraftChange = useCallback((
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
     draftPayload: Record<string, unknown>,
   ) => {
     if (!event.turn_id) return;
-    const receivedAt = uiEventFirstReceivedAt(event);
-    const persistedEvent = {
-      type: "skill_studio.draft",
-      bridge_key: event.bridge_key,
-      skill_studio_session_id: event.skill_studio_session_id,
-      project_id: event.project_id ?? params.project,
-      canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-      agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-      anchor_text_prefix: event.anchor_text_prefix ?? null,
-      received_at: receivedAt,
-      mode: event.mode,
-      draft: draftPayload,
-    };
     updateChatUiEvent(
       event.turn_id,
       (candidate) => skillStudioEventMatches(candidate, event),
@@ -16038,8 +15739,7 @@ export function SuperChatPanel({
         draft: draftPayload,
       }),
     );
-    persistSkillStudioUiEvent(event.turn_id, persistedEvent, { debounce: true });
-  }, [effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
+  }, [updateChatUiEvent]);
 
   const startSkillStudioDraftRevision = useCallback(async (
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -16052,7 +15752,7 @@ export function SuperChatPanel({
     }
     try {
       const payload = {
-        ...buildSkillStudioDraftRevisionToolResultForTest(event, draftPayload),
+        ...buildSkillStudioDraftRevisionToolResultForTest(event, draftPayload, bridgeResultScopeOptions),
         client_debug: skillStudioResultClientDebug(event, "draft_start_revision_button_ws", {
           active_turn_id: chat.activeTurnId,
           chat_busy: chat.busy,
@@ -16062,22 +15762,6 @@ export function SuperChatPanel({
         toast.error("Skill Studio 连接未就绪，请重试");
         return false;
       }
-      const receivedAt = uiEventFirstReceivedAt(event);
-      const persistedEvent = {
-        type: "skill_studio.draft",
-        bridge_key: event.bridge_key,
-        skill_studio_session_id: event.skill_studio_session_id,
-        project_id: event.project_id ?? params.project,
-        canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-        agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-        anchor_text_prefix: event.anchor_text_prefix ?? null,
-        received_at: receivedAt,
-        mode: event.mode,
-        draft: payload.draft,
-        revision_pending: true,
-        action: payload.action,
-        skill_studio_status: payload.skill_studio_status,
-      };
       updateChatUiEvent(
         event.turn_id,
         (candidate) => skillStudioEventMatches(candidate, event),
@@ -16090,14 +15774,13 @@ export function SuperChatPanel({
           skill_studio_status: payload.skill_studio_status,
         }),
       );
-      persistSkillStudioUiEvent(event.turn_id, persistedEvent);
       return true;
     } catch (error) {
       console.error("[superchat] skill studio draft revision submit failed", error);
       toast.error("启动草稿调整失败，请重试");
       return false;
     }
-  }, [chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
+  }, [chat, bridgeResultScopeOptions, updateChatUiEvent]);
 
   const handleCancelSkillStudioDraft = useCallback((
     event: Extract<SkillStudioUiEvent, { type: "skill_studio.draft" }>,
@@ -16109,7 +15792,7 @@ export function SuperChatPanel({
       return;
     }
     const payload = {
-      ...buildSkillStudioDraftCancelToolResultForTest(event),
+      ...buildSkillStudioDraftCancelToolResultForTest(event, bridgeResultScopeOptions),
       client_debug: skillStudioResultClientDebug(event, "draft_cancel_button_ws", {
         active_turn_id: chat.activeTurnId,
         chat_busy: chat.busy,
@@ -16119,19 +15802,6 @@ export function SuperChatPanel({
       toast.error("Skill Studio 连接未就绪，请重试");
       return;
     }
-    const receivedAt = uiEventFirstReceivedAt(event);
-    const persistedEvent = {
-      type: "skill_studio.draft",
-      bridge_key: event.bridge_key,
-      skill_studio_session_id: event.skill_studio_session_id,
-      project_id: event.project_id ?? params.project,
-      canvas_id: event.canvas_id ?? effectiveFreezoneCanvasId,
-      agent_id: event.agent_id ?? effectiveFreezoneAgentId,
-      anchor_text_prefix: event.anchor_text_prefix ?? null,
-      received_at: receivedAt,
-      draft: draftPayload,
-      cancelled: true,
-    };
     updateChatUiEvent(
       event.turn_id,
       (candidate) => skillStudioEventMatches(candidate, event),
@@ -16142,8 +15812,7 @@ export function SuperChatPanel({
         cancelled: true,
       }),
     );
-    persistSkillStudioUiEvent(event.turn_id, persistedEvent);
-  }, [chat, effectiveFreezoneAgentId, effectiveFreezoneCanvasId, params.project, persistSkillStudioUiEvent, updateChatUiEvent]);
+  }, [chat, bridgeResultScopeOptions, updateChatUiEvent]);
 
   const handleComposerKeyDown = (event: ReactKeyboardEvent) => {
     if (!shouldSubmitComposerEnter(event)) return;
@@ -16199,25 +15868,14 @@ export function SuperChatPanel({
 
   const addFiles = (files: FileList | null) => {
     if (!files) return;
-    Array.from(files).forEach((file) => {
-      if (!isAllowedScriptUpload(file)) return;
-      const reader = new FileReader();
-      reader.addEventListener("load", () => {
-        const dataUrl = String(reader.result || "");
-        setAttachments((current) => [
-          ...current,
-          {
-            id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            type: file.type.startsWith("image/") ? "image" : "file",
-            mimeType: file.type || "application/octet-stream",
-            fileName: file.name,
-            fileSize: file.size,
-            content: dataUrl,
-          },
-        ]);
+    const picked = Array.from(files)
+      .filter(isAllowedScriptUpload)
+      .map((file) => {
+        const id = `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        composerFilesRef.current.set(id, file);
+        return composerFileAttachment(file, id);
       });
-      reader.readAsDataURL(file);
-    });
+    if (picked.length > 0) setAttachments((current) => [...current, ...picked]);
     if (fileInputRef.current) fileInputRef.current.value = "";
     window.requestAnimationFrame(() => {
       draftInputRef.current?.focus({ preventScroll: true });
@@ -16376,14 +16034,7 @@ export function SuperChatPanel({
             {chat.error}
           </div>
         )}
-
-        {chat.approvals.map((approval) => (
-          <ApprovalCard
-            key={approval.id}
-            approval={approval}
-            onResolve={(decision) => chat.resolveApproval(approval, decision)}
-          />
-        ))}
+        {chat.historyIncomplete && <ChatHistoryNotice />}
 
         <PinnedPanel
           messages={pinnedMessages}
@@ -16426,7 +16077,7 @@ export function SuperChatPanel({
                   <div className="text-xs leading-5">{t("aiAssistant.syncingHistoryDescription")}</div>
                 </div>
               </div>
-            ) : chat.messages.length === 0 && !chat.streamText && !showWaitingIndicator && orphanCanvasCommandSurfaces.length === 0 ? (
+            ) : chat.messages.length === 0 && !showWaitingIndicator && orphanCanvasCommandSurfaces.length === 0 ? (
               <div className={cn("mx-auto flex h-full w-full max-w-[760px] items-center justify-center text-center", isFreezoneLayout && "max-w-none")}>
                 <div className="max-w-64 text-sm text-muted-foreground">
                   <div className="mb-2 font-medium text-foreground">{t("aiAssistant.emptyTitle")}</div>
@@ -16435,6 +16086,20 @@ export function SuperChatPanel({
               </div>
             ) : (
               <div ref={messageListRef} className={cn("mx-auto w-full max-w-[760px] space-y-5", isFreezoneLayout && "max-w-none space-y-4")}>
+                {chat.hasOlderHistory && (
+                  <div className="flex justify-center">
+                    <button
+                      type="button"
+                      className="tap-button text-xs text-muted-foreground"
+                      onClick={loadOlderHistory}
+                      disabled={chat.loadingOlderHistory}
+                    >
+                      {chat.loadingOlderHistory
+                        ? t("aiAssistant.loadingEarlierMessages")
+                        : t("aiAssistant.loadEarlierMessages")}
+                    </button>
+                  </div>
+                )}
                 {visibleMessages.map((message) => (
                   <div
                     key={message.id}
@@ -16491,32 +16156,6 @@ export function SuperChatPanel({
                     />
                   </div>
                 ))}
-                {chat.streamText && !streamTextAlreadyRendered && (
-                  <MessageBubble
-                    message={{
-                      id: "streaming",
-                      role: "assistant",
-                      text: chat.streamText,
-                      timestamp: Date.now(),
-                    }}
-                    variant={variant}
-                    onOpenDetail={setDetailMessage}
-                    onOpenMedia={setMediaDetail}
-                    pinned={false}
-                    onDelete={() => undefined}
-                    onTogglePin={() => undefined}
-                    deferStructuredRender={deferStructuredRender}
-                    streaming={chat.busy}
-                    onSubmitSkillStudioQuestionResponse={submitSkillStudioQuestionResponse}
-                    onSubmitSkillStudioDraftResponse={submitSkillStudioDraftResponse}
-                    onStartSkillStudioDraftRevision={startSkillStudioDraftRevision}
-                    onSkillStudioDraftChange={handleSkillStudioDraftChange}
-                    onCancelSkillStudioDraft={handleCancelSkillStudioDraft}
-                    onPreserveScrollAnchor={preserveScrollAnchor}
-                    freezoneSkillSuggestions={freezoneSkillSuggestions}
-                    freezoneRecipeCatalog={freezoneRecipeCatalog}
-                  />
-                )}
                 {orphanCanvasCommandSurfaces.map((surface) => (
                   <MessageBubble
                     key={`orphan-canvas-surface:${surface.id}`}
@@ -16659,6 +16298,13 @@ export function SuperChatPanel({
               scope={isFreezoneLayout ? "canvas" : "project"}
             />
           ) : null}
+          {isFreezoneLayout && params.project && effectiveFreezoneCanvasId && effectiveFreezoneAgentId && (
+            <CanvasConfirmationStack
+              projectId={params.project}
+              canvasId={effectiveFreezoneCanvasId}
+              agentIds={[effectiveFreezoneAgentId]}
+            />
+          )}
           <div
             ref={composerShellRef}
             className={cn(

@@ -35,9 +35,9 @@ import { useUpstreamImages } from '@/features/canvas/application/useUpstreamGrap
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { backendErrorToastMessage } from '@/lib/api-errors';
 import { useModelTaskAccess } from '@/lib/model-task-access';
+import { parseAspectRatio } from '@/features/canvas/domain/aspectRatio';
 import {
   detectAspectRatio,
-  parseAspectRatio,
   pickClosestAspectRatio,
   resolveImageDisplayUrl,
 } from '@/features/canvas/application/imageData';
@@ -68,7 +68,7 @@ import {
   EMPTY_CATALOG_IMAGE_MODEL,
   useCatalogImageModels,
 } from '@/features/canvas/domain/catalogImageModels';
-import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
+import { pricingLocale, resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import { ModelParamsControls } from '@/features/canvas/ui/ModelParamsControls';
 import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
@@ -155,10 +155,6 @@ const STORYBOARD_GEN_PROVIDER_ACTIVE_CLASS =
   '!border-white/30 !bg-white/[0.08] !text-text-dark !shadow-none';
 const STORYBOARD_GEN_PROVIDER_INACTIVE_CLASS =
   '!border-white/18 !bg-black/18 !text-text-muted hover:!border-white/34 hover:!bg-white/[0.075] hover:!text-text-dark';
-const STORYBOARD_GEN_MODEL_OPTION_CLASS =
-  '!min-h-0 !min-w-0 !justify-start !rounded-none !border-transparent !bg-transparent !px-0 !py-1 !text-left !text-[14px]';
-const STORYBOARD_GEN_MODEL_ACTIVE_CLASS = '!text-white';
-const STORYBOARD_GEN_MODEL_INACTIVE_CLASS = '!text-text-muted hover:!text-text-dark';
 const STORYBOARD_GEN_PARAM_GROUP_CLASS =
   'rounded-[8px] border border-white/18 bg-[#0f1116]/74 p-1';
 const STORYBOARD_GEN_PARAM_ACTIVE_CLASS =
@@ -794,9 +790,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       lines.push(
         t('pricing.grsaiTier', {
           price: resolvedPriceDisplay.grsaiCreditTier.priceCny.toFixed(2),
-          credits: resolvedPriceDisplay.grsaiCreditTier.credits.toLocaleString(
-            i18n.language.startsWith('zh') ? 'zh-CN' : i18n.language.startsWith('pt') ? 'pt-PT' : i18n.language.startsWith('vi') ? 'vi-VN' : 'en-US'
-          ),
+          credits: resolvedPriceDisplay.grsaiCreditTier.credits.toLocaleString(pricingLocale(i18n.language)),
         })
       );
     }
@@ -1071,11 +1065,17 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         selectedResolution.value
       );
       // 先把本地渲染的网格上传换成后端 URL——画布节点数据不能存 base64
-      // （会膨胀 PUT 体积、拖慢画布）。上传失败时回退 dataUrl 兜底。
-      const gridImageUrl = await uploadLocalImageToBackend(
-        gridImageDataUrl,
-        `storyboard-grid-preview-${id}-${Date.now()}.png`
-      );
+      // （会膨胀 PUT 体积、拖慢画布）。上传失败时显示错误。
+      let gridImageUrl: string;
+      try {
+        gridImageUrl = await uploadLocalImageToBackend(
+          gridImageDataUrl,
+          `storyboard-grid-preview-${id}-${Date.now()}.png`
+        );
+      } catch (uploadError) {
+        setError(uploadError instanceof Error ? uploadError.message : String(uploadError));
+        return;
+      }
       const newNodePosition = findNodePosition(
         id,
         EXPORT_RESULT_NODE_DEFAULT_WIDTH,
@@ -1163,12 +1163,24 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       selectedResolution.value
     );
     // Upload the locally-rendered grid so the generation request carries a real
-    // backend URL instead of the full base64 grid payload. Best-effort: falls
-    // back to the data URL if upload fails.
-    const gridImageUrl = await uploadLocalImageToBackend(
-      gridImageDataUrl,
-      `storyboard-grid-${id}-${Date.now()}.png`
-    );
+    // backend URL instead of the full base64 grid payload. Report upload
+    // failures before submitting the generation request.
+    let gridImageUrl: string;
+    try {
+      gridImageUrl = await uploadLocalImageToBackend(
+        gridImageDataUrl,
+        `storyboard-grid-${id}-${Date.now()}.png`
+      );
+    } catch (uploadError) {
+      const message = uploadError instanceof Error ? uploadError.message : String(uploadError);
+      setError(message);
+      updateNodeData(newNodeId, {
+        isGenerating: false,
+        generationStartedAt: null,
+        generationError: message,
+      });
+      return;
+    }
     const allReferenceImages = [...incomingImages, gridImageUrl];
     const metadataFrameNotes = nodeData.frames
       .slice(0, safeRows * safeCols)
@@ -1750,14 +1762,11 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
             paramsChipClassName={STORYBOARD_GEN_PARAMS_CHIP_CLASS}
             modelPanelAlign="start"
             paramsPanelAlign="start"
-            modelPanelClassName={`inline-block w-[430px] max-w-[calc(100vw-32px)] p-3 ${STORYBOARD_GEN_BOTTOM_PANEL_CLASS}`}
+            modelPanelClassName="inline-block w-[430px] max-w-[calc(100vw-32px)] p-3"
             paramsPanelClassName={`w-[430px] max-w-[calc(100vw-32px)] p-3 ${STORYBOARD_GEN_BOTTOM_PANEL_CLASS}`}
             providerOptionClassName={STORYBOARD_GEN_PROVIDER_OPTION_CLASS}
             activeProviderOptionClassName={STORYBOARD_GEN_PROVIDER_ACTIVE_CLASS}
             inactiveProviderOptionClassName={STORYBOARD_GEN_PROVIDER_INACTIVE_CLASS}
-            modelOptionClassName={STORYBOARD_GEN_MODEL_OPTION_CLASS}
-            activeModelOptionClassName={STORYBOARD_GEN_MODEL_ACTIVE_CLASS}
-            inactiveModelOptionClassName={STORYBOARD_GEN_MODEL_INACTIVE_CLASS}
             optionGroupClassName={STORYBOARD_GEN_PARAM_GROUP_CLASS}
             activeParamOptionClassName={STORYBOARD_GEN_PARAM_ACTIVE_CLASS}
             inactiveParamOptionClassName={STORYBOARD_GEN_PARAM_INACTIVE_CLASS}

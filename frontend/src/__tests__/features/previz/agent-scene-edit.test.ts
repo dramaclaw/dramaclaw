@@ -3,11 +3,8 @@
 // Agent 的 sceneEdit 落地：编辑器开着这个节点就进 store，关着就只算出要写回节点的补丁。
 import { beforeEach, describe, expect, it } from "vitest";
 
-import {
-  landNodeAgentSceneEdit,
-  nodeAgentSceneDigest,
-  planNodeAgentSceneEdit,
-} from "@/features/previz/agentSceneEdit";
+import { nodeAgentSceneDigest, planNodeAgentSceneEdit } from "@/features/previz/agentScenePlanning";
+import { landNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
 import { createDefaultScene } from "@/features/previz/domain/scene";
 import { usePrevizStore } from "@/features/previz/store";
 

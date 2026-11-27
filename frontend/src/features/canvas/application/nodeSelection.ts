@@ -9,6 +9,7 @@
  * 写回 null（因为真的没有节点是 selected 的）。所以必须先经 onNodesChange 派发
  * select 变更，再同步 store——两处都要，缺一处就等于没选中。
  */
+import { selectNodeExclusively as selectNodeExclusivelyIn } from '@/features/canvas/core/selection';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 /** 进入画布时清掉仅属于上一视图会话的选中态，不改内容和撤销历史。 */
@@ -30,15 +31,5 @@ export function clearCanvasSelection(): void {
 }
 
 export function selectNodeExclusively(nodeId: string): void {
-  const store = useCanvasStore.getState();
-  if (!store.nodes.some((node) => node.id === nodeId)) return;
-  const changes = store.nodes
-    .filter((node) => Boolean(node.selected) !== (node.id === nodeId))
-    .map((node) => ({
-      id: node.id,
-      type: 'select' as const,
-      selected: node.id === nodeId,
-    }));
-  if (changes.length > 0 && typeof store.onNodesChange === 'function') store.onNodesChange(changes);
-  if (typeof store.setSelectedNode === 'function') store.setSelectedNode(nodeId);
+  selectNodeExclusivelyIn(useCanvasStore, nodeId);
 }

@@ -38,9 +38,9 @@ from novelvideo.director_world.blockout.scene_ir import (
     SceneIR,
 )
 from novelvideo.egress_context import TrustedEgressContext
-from novelvideo.official_defaults import ADVANCED_TEXT_MODEL_BY_ENV
+from novelvideo.shared.runtime_env import uses_local_ce_runtime
 
-BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
+DEFAULT_BLOCKOUT_MODEL = "DC-previz-blockout-LLM"
 BLOCKOUT_REASONING_EFFORT_ENV = "PREVIZ_BLOCKOUT_REASONING_EFFORT"
 BLOCKOUT_TIMEOUT_ENV = "PREVIZ_BLOCKOUT_TIMEOUT_SECONDS"
 BLOCKOUT_TIMEOUT_SECONDS = 300.0
@@ -56,21 +56,16 @@ _MAX_KEPT_PROGRAM_CHARS = MAX_PROGRAM_CHARS * 2
 
 
 def resolve_blockout_model(model_override: str | None = None) -> str:
-    """The model one job runs on.
-
-    A non-blank `model_override` (the user's pick in the dialog) wins; otherwise
-    `PREVIZ_BLOCKOUT_MODEL`, otherwise the route every other business model
-    takes: BrainClaw when the gateway is BrainClaw, else the logical name the
-    settings page maps for this feature.
-    """
-    from novelvideo.config import get_effective_newapi_text_model_name
-
-    selected = (model_override or "").strip() or os.environ.get(BLOCKOUT_MODEL_ENV, "").strip()
+    """Prefer an explicit selection, then use the edition's default route."""
+    selected = (model_override or "").strip()
     if selected:
         return selected
-    return get_effective_newapi_text_model_name(
-        BLOCKOUT_MODEL_ENV, ADVANCED_TEXT_MODEL_BY_ENV[BLOCKOUT_MODEL_ENV]
-    )
+
+    from novelvideo.model_gateway_settings import get_effective_llm_config
+
+    if uses_local_ce_runtime() and get_effective_llm_config().is_brainclaw:
+        return "brainclaw"
+    return DEFAULT_BLOCKOUT_MODEL
 
 
 def resolve_blockout_model_settings() -> dict | None:

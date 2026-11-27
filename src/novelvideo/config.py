@@ -14,6 +14,11 @@ from novelvideo.official_defaults import (
     OFFICIAL_NEWAPI_BASE_URL,
 )
 from novelvideo.shared.runtime_env import is_ce_effective, uses_local_ce_runtime
+from novelvideo.video_backend import (
+    DEFAULT_MAINLINE_VIDEO_BACKEND,
+    DEFAULT_MAINLINE_VIDEO_MODEL,
+    is_retired_video_backend,
+)
 
 # 加载环境变量（必须在任何其他导入之前）
 load_dotenv()
@@ -387,8 +392,14 @@ def get_newapi_text_pydantic_model(
     brainclaw_profile=None,
     brainclaw_profile_variant=None,
     capability: str = "text.generate",
+    credential_override: tuple[str, str] | None = None,
 ):
-    """Create a PydanticAI OpenAI-compatible model that routes through newAPI."""
+    """Create a PydanticAI OpenAI-compatible model that routes through newAPI.
+
+    ``credential_override`` is an already-admitted ``(api_key, base_url)`` pair,
+    used by model children that received an organization credential from their
+    parent process. It bypasses platform credential resolution entirely.
+    """
     from novelvideo.brainclaw_contract import brainclaw_profile_headers
     from novelvideo.model_gateway_settings import get_effective_llm_config
 
@@ -416,6 +427,18 @@ def get_newapi_text_pydantic_model(
         profile_variant=brainclaw_profile_variant,
         brainclaw_active=llm_config.is_brainclaw if uses_local_ce_runtime() else True,
     )
+    if credential_override is not None:
+        api_key, base_url = credential_override
+        if not api_key or not base_url:
+            raise ValueError("credential_override requires both api_key and base_url")
+        return _newapi_text_openai_model(
+            model_name,
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            profile=profile,
+            default_headers=default_headers,
+        )
     if not uses_local_ce_runtime():
         from novelvideo.model_gateway_runtime import (
             create_request_scoped_gateway_model,
@@ -925,26 +948,40 @@ def _csv_env(name: str, default: str) -> list[str]:
 # newAPI 视频网关。VIDEO_BACKEND 使用 newapi_<model> 时会通过 NEWAPI_BASE_URL 调用。
 NEWAPI_VIDEO_MODELS = _csv_env(
     "NEWAPI_VIDEO_MODELS",
-    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0,seedance-2.0-mini",
+    f"{DEFAULT_MAINLINE_VIDEO_MODEL},seedance-2.0,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0,seedance-2.0-mini",
 )
 DEFAULT_VIDEO_MODEL = os.environ.get(
     "DEFAULT_VIDEO_MODEL",
-    os.environ.get("NEWAPI_VIDEO_MODEL", NEWAPI_VIDEO_MODELS[0]),
+    os.environ.get(
+        "NEWAPI_VIDEO_MODEL", next(iter(NEWAPI_VIDEO_MODELS), DEFAULT_MAINLINE_VIDEO_MODEL)
+    ),
 ).strip()
+if is_retired_video_backend(DEFAULT_VIDEO_MODEL):
+    DEFAULT_VIDEO_MODEL = DEFAULT_MAINLINE_VIDEO_MODEL
 NEWAPI_VIDEO_MODEL = os.environ.get("NEWAPI_VIDEO_MODEL", DEFAULT_VIDEO_MODEL).strip()
+if is_retired_video_backend(NEWAPI_VIDEO_MODEL):
+    NEWAPI_VIDEO_MODEL = DEFAULT_MAINLINE_VIDEO_MODEL
 NEWAPI_VIDEO_RESOLUTION = os.environ.get("NEWAPI_VIDEO_RESOLUTION", "720p")
 NEWAPI_VIDEO_AUDIO_MODELS = _csv_env(
     "NEWAPI_VIDEO_AUDIO_MODELS",
-    "seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,seedance-2.0-mini",
+    "seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,seedance-2.0-mini",
 )
 NEWAPI_VIDEO_DURATION_BOUNDS = os.environ.get(
     "NEWAPI_VIDEO_DURATION_BOUNDS",
     "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15,seedance-2.0-mini:4-15",
 ).strip()
 
-# 视频生成后端: newapi_seedance-1.0-pro-fast (默认), newapi_seedance-2.0-fast,
-# comfyui, seedance_fast, seedance_pro, seedance_pro_silent, grok_720
+# 视频生成后端: newapi_seedance-2.0-fast (默认), comfyui, grok_720 等。
 VIDEO_BACKEND = os.environ.get("VIDEO_BACKEND", f"newapi_{DEFAULT_VIDEO_MODEL}")
+if is_retired_video_backend(VIDEO_BACKEND):
+    VIDEO_BACKEND = DEFAULT_MAINLINE_VIDEO_BACKEND
+
+
+def resolve_newapi_video_backend_alias(backend: str) -> str:
+    if backend.strip().lower() == "newapi":
+        return f"newapi_{NEWAPI_VIDEO_MODEL}"
+    return backend
+
 
 # Seedance 模型（火山方舟）
 SEEDANCE_FAST_MODEL = os.environ.get(

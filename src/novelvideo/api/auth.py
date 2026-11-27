@@ -20,7 +20,11 @@ from fastapi import Depends, HTTPException, Request
 
 from novelvideo.ports import get_auth_port, get_auth_session_port
 from novelvideo.ports import registry as port_registry
-from novelvideo.ports.auth_contract import AuthError, AuthFailureReason
+from novelvideo.ports.auth_contract import (
+    AuthError,
+    AuthFailureReason,
+    is_external_agent_key_session as is_external_agent_key_session,
+)
 
 logger = logging.getLogger("novelvideo.api.auth")
 
@@ -42,7 +46,7 @@ AGENT_WRITE_SCOPES = {
 }
 PROJECT_PATH_RE = re.compile(r"/projects/([^/]+)")
 LOCAL_TRUST_HOSTS = {"127.0.0.1", "::1", "localhost"}
-UNSUPPORTED_QUERY_CREDENTIALS = {"token", "access_token", "api_key"}
+UNSUPPORTED_QUERY_CREDENTIALS = {"token", "access_token", "api_key", "upload_ticket"}
 _EFFECTIVE_ACCESS_DENIED = "effective access denied"
 
 

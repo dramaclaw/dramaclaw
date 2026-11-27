@@ -19,7 +19,8 @@ FREEZONE_VISION_IMAGE_MAX_EDGE = 1280
 FREEZONE_VISION_IMAGE_JPEG_QUALITY = 92
 FREEZONE_VISION_IMAGE_COMPACT_CONCURRENCY = 1
 FREEZONE_VISION_IMAGE_MAX_SOURCE_BYTES = 64 * 1024 * 1024
-FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS = 40_000_000
+# Pixels actually decoded; JPEGs are decoded at reduced scale first.
+FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS = 100_000_000
 
 logger = logging.getLogger(__name__)
 _VISION_IMAGE_COMPACTION_SLOTS = threading.BoundedSemaphore(
@@ -41,6 +42,8 @@ def _compact_vision_images(
 ) -> list[VisionInput]:
     """Load image paths sequentially and return compact JPEG model inputs."""
     from PIL import Image, ImageOps
+
+    from novelvideo.utils.reference_image import fit_within, reduce_decode_scale
 
     if max_edge <= 0:
         raise ValueError("max_edge must be positive")
@@ -72,6 +75,10 @@ def _compact_vision_images(
             source_width, source_height = source.size
             if source_width <= 0 or source_height <= 0:
                 raise ValueError("vision image dimensions must be positive")
+            # A JPEG headed for max_edge decodes at 1/2..1/8 scale, so camera
+            # originals are shrunk rather than refused.
+            reduce_decode_scale(source, fit_within(source.size, max_edge))
+            source_width, source_height = source.size
             source_pixels = source_width * source_height
             if source_pixels > FREEZONE_VISION_IMAGE_MAX_SOURCE_PIXELS:
                 raise ValueError(

@@ -66,8 +66,15 @@ def test_public_exact_plan_patch_revision_and_confirmation(exact_draft_tool, mon
     stale = plugin._handle_confirm_workflow_draft({"draft_id": prepared["draft_id"], "revision": 1})
     assert stale["status"] == "workflow_draft_revision_conflict"
     assert emitted == []
-    assert all(method == "GET" for method, path, body in requests)
+    # The stale confirmation itself reaches the server, which claims nothing and
+    # records that this canvas now waits for the latest revision to be confirmed.
+    assert [(method, body) for method, _path, body in requests] == [
+        ("GET", None), ("POST", {"revision": 1}),
+    ]
+    assert requests[-1][1].endswith("/claim")
     assert client.enqueued_tasks == []
+    check = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-draft-revision-conflict"
+    assert client.get(check).json()["data"]["confirmation_required"] is True
     confirmed = plugin._handle_confirm_workflow_draft({"draft_id": prepared["draft_id"], "revision": 2})
     assert confirmed["ok"] is True, confirmed
     repeated = plugin._handle_confirm_workflow_draft({"draft_id": prepared["draft_id"], "revision": 2})

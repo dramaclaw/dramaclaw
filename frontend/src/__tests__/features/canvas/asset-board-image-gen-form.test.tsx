@@ -3,7 +3,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { submitFreezoneGen } from '@/api/ops';
+import { sendGenerationWireRequest } from '@/api/ops';
 import { CANVAS_NODE_TYPES, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { AssetBoardView } from '@/features/canvas/ui/asset-board/AssetBoardView';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -37,7 +37,7 @@ vi.mock('@/api/ops', async (importOriginal) => ({
   listFreezoneStyleTemplates: vi.fn(async () => []),
   fetchFreezoneCameraOptions: vi.fn(async () => null),
   listFreezoneGenerationHistory: vi.fn(async () => []),
-  submitFreezoneGen: vi.fn(async () => ({
+  sendGenerationWireRequest: vi.fn(async () => ({
     task_key: 'task-1',
     task_type: 'freezone_gen',
     job_id: 'job-1',
@@ -83,7 +83,7 @@ function openDetail(name: string) {
 
 describe('故事板详情 · 图片生成表单', () => {
   beforeEach(() => {
-    vi.mocked(submitFreezoneGen).mockClear();
+    vi.mocked(sendGenerationWireRequest).mockClear();
   });
 
   it('空 imageGen 节点：媒体区显示「待确认后生成」占位，下方挂完整生成表单', () => {
@@ -104,7 +104,7 @@ describe('故事板详情 · 图片生成表单', () => {
     expect(within(detail).getByRole('button', { name: '生成' })).toBeInTheDocument();
   });
 
-  it('有提示词 → 点提交走真实提交链路（submitFreezoneGen 收到该 prompt）', async () => {
+  it('有提示词 → 点提交走真实提交链路（sendGenerationWireRequest 收到该 prompt）', async () => {
     seed([emptyImageGenNode({ prompt: '一只在雪夜里发光的小猫' })]);
     openDetail('图片节点 3');
 
@@ -112,11 +112,11 @@ describe('故事板详情 · 图片生成表单', () => {
     expect(submit).not.toBeDisabled();
     fireEvent.click(submit);
 
-    await waitFor(() => expect(submitFreezoneGen).toHaveBeenCalled());
-    const [project, payload] = vi.mocked(submitFreezoneGen).mock.calls[0];
-    expect(project).toBe('demo-project');
-    expect(payload.prompt).toBe('一只在雪夜里发光的小猫');
-    expect(payload.nodeId).toBe('gen-1');
+    await waitFor(() => expect(sendGenerationWireRequest).toHaveBeenCalled());
+    const [{ path, body }] = vi.mocked(sendGenerationWireRequest).mock.calls[0];
+    expect(path).toBe('projects/demo-project/freezone/gen');
+    expect(body.prompt).toBe('一只在雪夜里发光的小猫');
+    expect(body.node_id).toBe('gen-1');
   });
 
   it('提示词为空且无上游文本 → 提交按钮禁用', () => {

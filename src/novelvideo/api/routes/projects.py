@@ -15,7 +15,7 @@ from anyio.lowlevel import RunVar
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import JSONResponse
 
-from novelvideo.api.auth import get_api_user, require_scope
+from novelvideo.api.auth import get_api_user, is_external_agent_key_session, require_scope
 from novelvideo.api.deps import (
     make_sqlite_store_for_context,
     make_static_url_for_context,
@@ -43,6 +43,10 @@ from novelvideo.embedding_models import (
 from novelvideo.knowledge_pipeline import KNOWLEDGE_PIPELINE_KEY, KNOWLEDGE_PIPELINE_STRUCTURED
 from novelvideo.novel_source import has_imported_novel
 from novelvideo.ports import get_project_access, get_project_registry
+from novelvideo.ports.auth_contract import (
+    AGENT_KEY_PROJECT_DELETED_CODE,
+    AGENT_KEY_PROJECT_DELETED_MESSAGE,
+)
 from novelvideo.scene_prerequisites import scene_build_applies
 from novelvideo.ports.project import ProjectRecord, require_role_value
 from novelvideo.security import (
@@ -60,6 +64,7 @@ from novelvideo.project_config import (
 )
 from novelvideo.project_context import (
     ProjectContext,
+    is_project_soft_deleted,
     is_record_home_node,
     require_project_home_node,
     resolve_project_context,
@@ -653,6 +658,15 @@ async def list_projects(user: dict = Depends(get_api_user)):
     principals = await access.resolve_requester_principals(user_id)
     records = await registry.list_accessible_projects([(p.type, p.id) for p in principals])
     records = [record for record in records if not record.purged_at]
+    if is_external_agent_key_session(user):
+        records = [record for record in records if record.status != "deleted"]
+    allowed_projects = user.get("allowed_projects")
+    if (
+        user.get("credential_kind") == "agent_session"
+        and isinstance(allowed_projects, list)
+        and allowed_projects
+    ):
+        records = [record for record in records if record.id in allowed_projects]
     roles = {
         record.id: await access.effective_project_role(record, principals) for record in records
     }
@@ -827,6 +841,18 @@ async def authorize_project_static_media(project: str, user: dict = Depends(get_
     principals = await access.resolve_requester_principals(requester_user_id)
     role = await access.effective_project_role_by_id(project, principals)
     require_role_value(role, "viewer")
+    if is_external_agent_key_session(user):
+        record = await get_project_registry().get_project(project)
+        if record is not None and is_project_soft_deleted(record):
+            # The proxy auth subrequest accepts only 2xx, 401, and 403, so 409 becomes 500.
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": AGENT_KEY_PROJECT_DELETED_CODE,
+                    "message": AGENT_KEY_PROJECT_DELETED_MESSAGE,
+                    "project_id": project,
+                },
+            )
     return Response(status_code=204)
 
 

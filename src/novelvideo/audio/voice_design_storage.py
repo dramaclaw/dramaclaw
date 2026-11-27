@@ -324,14 +324,7 @@ class VoiceDesignStorage:
                 ).decode()
             return page, next_cursor
 
-    def claim(
-        self,
-        candidate_id: str,
-        *,
-        daily_limit: int = 20,
-        channel_key: str = "",
-        channel_daily_limit: int | None = None,
-    ) -> dict[str, Any] | None:
+    def claim(self, candidate_id: str) -> dict[str, Any] | None:
         self.cleanup()
         now = self.clock()
         with self._transaction() as db:
@@ -343,19 +336,6 @@ class VoiceDesignStorage:
                 (self.ctx.requester_user_id, now),
             ).fetchone():
                 raise CandidateStorageError("rate_limited")
-            count = db.execute(
-                "SELECT COUNT(*) FROM quota.usage WHERE user_id=? AND day=?",
-                (self.ctx.requester_user_id, int(now // 86400)),
-            ).fetchone()[0]
-            if count >= daily_limit:
-                raise CandidateStorageError("voice_design_quota_exceeded")
-            if channel_daily_limit is not None:
-                channel_count = db.execute(
-                    "SELECT COUNT(*) FROM quota.usage WHERE channel_key=? AND day=?",
-                    (channel_key, int(now // 86400)),
-                ).fetchone()[0]
-                if channel_count >= channel_daily_limit:
-                    raise CandidateStorageError("voice_design_quota_exceeded")
             db.execute(
                 "INSERT INTO quota.usage VALUES (?,?,?,?,?,?)",
                 (
@@ -364,7 +344,7 @@ class VoiceDesignStorage:
                     str(UUID(str(candidate_id))),
                     int(now // 86400),
                     now + self.lease_seconds,
-                    channel_key,
+                    "",
                 ),
             )
             db.execute(

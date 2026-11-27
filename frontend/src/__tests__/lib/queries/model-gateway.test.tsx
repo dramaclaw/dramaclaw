@@ -24,6 +24,7 @@ vi.mock("@/lib/api", () => ({
 import {
   type OfficialMediaCatalogStatus,
   useCheckOfficialMediaCatalog,
+  useEnableCustom,
   useOfficialMediaCatalogWatcher,
   useSaveProviderChannels,
 } from "@/lib/queries/model-gateway";
@@ -187,6 +188,29 @@ describe("official media catalog watcher", () => {
         "media-model-catalog-updated",
         onCatalogUpdated,
       );
+    }
+  });
+});
+
+describe("canvas catalog after a gateway mode change", () => {
+  it("refreshes open pickers only after a successful switch", async () => {
+    let accepted = false;
+    server.use(http.post("http://localhost:3000/api/v1/model-gateway/custom/enable", () =>
+      HttpResponse.json({ ok: accepted }, { status: accepted ? 200 : 400 }),
+    ));
+    const onUpdate = vi.fn();
+    window.addEventListener("media-model-catalog-updated", onUpdate);
+    try {
+      const { result } = renderHook(() => useEnableCustom(), {
+        wrapper: wrapper(new QueryClient()),
+      });
+      await act(async () => { await result.current.mutateAsync(); });
+      expect(onUpdate).not.toHaveBeenCalled();
+      accepted = true;
+      await act(async () => { await result.current.mutateAsync(); });
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("media-model-catalog-updated", onUpdate);
     }
   });
 });

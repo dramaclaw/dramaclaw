@@ -1,18 +1,16 @@
-import {htmlArtifactCommandError} from '@/features/html-artifacts/commands';
-import { extractUpstreamContent } from "@/features/canvas/application/graphContentResolver";
+import { htmlArtifactCommandError } from '@/features/html-artifacts/commandSchema';
+import { workflowExternalSourceMismatch } from "@/features/canvas/core/commands/workflowExternalSource";
 import type { CanvasEdge, CanvasNode, VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES, type CanvasNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
   isPresetManagedNode,
   isSystemManagedNodeData,
 } from "@/features/canvas/domain/mainlineNodeFlags";
-import {
-  VIDEO_UPSCALE_RESOLUTIONS,
-} from "@/features/canvas/application/videoUpscale";
-import { getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
+import { VIDEO_UPSCALE_RESOLUTIONS } from "@/features/canvas/domain/videoUpscaleResolutions";
+import { defaultNodeDataDefaults, getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle, type NodeDataDefaults } from "@/features/canvas/domain/nodeRegistry";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
-import { planNodeAgentSceneEdit } from "@/features/previz/agentSceneEdit";
+import { planNodeAgentSceneEdit } from "@/features/previz/agentScenePlanning";
 import type { PrevizScene } from "@/features/previz/domain/scene";
 import {
   isBeatContextAgentEditablePatch,
@@ -31,16 +29,25 @@ import {
   isCanvasLinkTypeAllowed,
   normalizeCanvasEdgeSemanticKind,
 } from "@/features/freezone/canvasEdgeSemantics";
-import type { CanvasChatCommandEnvelope } from "@/features/freezone/canvasChatCommands";
+import type { CanvasChatCommandEnvelope } from "@/features/canvas/core/commands/types";
 
 export type CanvasCommandValidationIssue = {
   path: string;
   message: string;
 };
 
+export type CanvasCommandUnavailableAction = {
+  envelopeIndex: number;
+  commandIndex: number;
+  nodeId: string;
+  action: string;
+};
+
 export type CanvasCommandValidationResult = {
   ok: boolean;
   issues: CanvasCommandValidationIssue[];
+  // Lists run commands whose target node action catalog lacks the action; present only when non-empty.
+  unavailableActions?: CanvasCommandUnavailableAction[];
 };
 
 const RESERVED_DATA_KEYS = new Set([
@@ -55,24 +62,6 @@ const RESERVED_DATA_KEYS = new Set([
 
 const AUDIO_DOWNLOAD_FORMATS = new Set(["source", "mp3", "m4a", "wav"]);
 const VIDEO_UPSCALE_RESOLUTION_VALUES = new Set<string>(VIDEO_UPSCALE_RESOLUTIONS);
-
-/** Error when a workflow external input no longer holds the media its draft verified. */
-export function workflowExternalSourceMismatch(
-  source: CanvasNode | undefined,
-  sourceId: string,
-  expected: { imageUrl?: unknown; videoUrl?: unknown },
-): string | null {
-  const content = source ? extractUpstreamContent(source) : undefined;
-  if (typeof expected.videoUrl === "string" && expected.videoUrl.trim() &&
-    content?.videoUrl !== expected.videoUrl) {
-    return `workflow source video changed: ${sourceId}`;
-  }
-  if (typeof expected.imageUrl === "string" && expected.imageUrl.trim() &&
-    content?.imageUrl !== expected.imageUrl) {
-    return `workflow source image changed: ${sourceId}`;
-  }
-  return null;
-}
 
 function hasReservedKeys(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
@@ -93,13 +82,13 @@ function makeVirtualNode(command: {
   client_id?: string;
   node_type: CanvasNode["type"];
   data?: Partial<CanvasNodeData>;
-}): CanvasNode | null {
+}, defaults: NodeDataDefaults): CanvasNode | null {
   if (!command.client_id) return null;
   return {
     id: command.client_id,
     type: command.node_type,
     position: { x: 0, y: 0 },
-    data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...command.data },
+    data: { ...getNodeDefinition(command.node_type).createDefaultData(defaults), ...command.data },
   } as CanvasNode;
 }
 
@@ -108,8 +97,9 @@ function validateModelAndModeFields(
   path: string,
   node: CanvasNode,
   data: Partial<CanvasNodeData>,
+  defaults: NodeDataDefaults,
 ): void {
-  const schema = buildCanvasNodeActionCatalog(node).editable_schema;
+  const schema = buildCanvasNodeActionCatalog(node, { nodeDataDefaults: defaults }).editable_schema;
   const values = { ...data } as Record<string, unknown>;
   if (node.type === CANVAS_NODE_TYPES.video && ("model" in data || "genMode" in data)) {
     values.genMode = (node.data as { genMode?: unknown }).genMode ?? "textToVideo";
@@ -201,6 +191,7 @@ export function validateCanvasChatCommandEnvelopes(
   envelopes: CanvasChatCommandEnvelope[],
   nodes: CanvasNode[],
   edges: CanvasEdge[],
+  defaults: NodeDataDefaults = defaultNodeDataDefaults,
 ): CanvasCommandValidationResult {
   const nodeIds = new Set(nodes.map((node) => node.id));
   const edgeIds = new Set(edges.map((edge) => edge.id));
@@ -209,6 +200,7 @@ export function validateCanvasChatCommandEnvelopes(
   // 预演台节点在这一批里已经规划出来的场景：后面的 sceneEdit 接着它算，不回头读原始场景。
   const plannedPrevizScenes = new Map<string, PrevizScene>();
   const issues: CanvasCommandValidationIssue[] = [];
+  const unavailableActions: CanvasCommandUnavailableAction[] = [];
 
   const isKnownNodeRef = (id: string): boolean => nodeIds.has(id) || clientIds.has(id);
   const isKnownDeleteRef = (id: string): boolean => isKnownNodeRef(id) || edgeIds.has(id);
@@ -225,7 +217,7 @@ export function validateCanvasChatCommandEnvelopes(
             if (!source || !nodeHasSourceHandle(source.type)) addIssue(issues,path,`HTML reference node is unavailable: ${id}`);
           }
           if (!error && (command.action === "create" || command.action === "prepare") && command.client_id) {
-            const virtualNode = makeVirtualNode({client_id:command.client_id,node_type:"htmlArtifactNode",data:command.workflow_data})!;
+            const virtualNode = makeVirtualNode({client_id:command.client_id,node_type:"htmlArtifactNode",data:command.workflow_data}, defaults)!;
             clientIds.add(virtualNode.id);
             nodeById.set(virtualNode.id,virtualNode);
           }
@@ -241,7 +233,7 @@ export function validateCanvasChatCommandEnvelopes(
             client_id: command.client_id,
             node_type: command.node_type,
             data,
-          });
+          }, defaults);
           if (virtualNode) {
             clientIds.add(virtualNode.id);
             nodeById.set(virtualNode.id, virtualNode);
@@ -259,9 +251,10 @@ export function validateCanvasChatCommandEnvelopes(
               id: `__validate__:${command.node_type}`,
               type: command.node_type,
               position: { x: 0, y: 0 },
-              data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...data },
+              data: { ...getNodeDefinition(command.node_type).createDefaultData(defaults), ...data },
             } as CanvasNode),
             data,
+            defaults,
           );
           break;
         }
@@ -291,7 +284,7 @@ export function validateCanvasChatCommandEnvelopes(
               client_id: command.client_id,
               node_type: nodeType,
               data,
-            });
+            }, defaults);
             if (virtualNode) {
               clientIds.add(virtualNode.id);
               nodeById.set(virtualNode.id, virtualNode);
@@ -311,9 +304,10 @@ export function validateCanvasChatCommandEnvelopes(
                 id: command.client_id ?? `__validate__:${nodeType}`,
                 type: nodeType,
                 position: { x: 0, y: 0 },
-                data: { ...getNodeDefinition(nodeType).createDefaultData(), ...data },
+                data: { ...getNodeDefinition(nodeType).createDefaultData(defaults), ...data },
               } as CanvasNode,
               data,
+              defaults,
             );
           }
           break;
@@ -324,7 +318,7 @@ export function validateCanvasChatCommandEnvelopes(
             break;
           }
           const target = nodeById.get(command.node_id);
-          const data = normalizeCanvasCommandNodeData(target?.type, command.data);
+          const data = normalizeCanvasCommandNodeData(target?.type, command.data, target?.data);
           const isAllowedPresetBeatContextPatch =
             target?.type === CANVAS_NODE_TYPES.beatContext && isBeatContextAgentEditablePatch(data);
           if (target && isPresetManagedNode(target) && !isAllowedPresetBeatContextPatch) {
@@ -335,7 +329,7 @@ export function validateCanvasChatCommandEnvelopes(
             addIssue(issues, path, `reserved data fields are not allowed: ${reserved.join(", ")}`);
           }
           if (target) {
-            const editable = new Set(buildCanvasNodeActionCatalog(target).editable_fields);
+            const editable = new Set(buildCanvasNodeActionCatalog(target, { nodeDataDefaults: defaults }).editable_fields);
             // These values are written by the frontend generation-approval card. They are
             // intentionally omitted from the public Agent edit schema, but the approved batch
             // must be able to persist the user's system/custom voice decision before generation.
@@ -367,6 +361,7 @@ export function validateCanvasChatCommandEnvelopes(
               path,
               { ...target, data: { ...target.data, ...data } as CanvasNodeData },
               data,
+              defaults,
             );
             nodeById.set(target.id, { ...target, data: { ...target.data, ...data } as CanvasNodeData });
           }
@@ -497,13 +492,14 @@ export function validateCanvasChatCommandEnvelopes(
           if (target.type === CANVAS_NODE_TYPES.video && command.action === "generate_video") {
             validateModelAndModeFields(issues, path, target, {
               genMode: (target.data as { genMode?: VideoGenMode }).genMode ?? "textToVideo",
-            });
+            }, defaults);
           }
-          const action = buildCanvasNodeActionCatalog(target, { nodes, edges }).actions.find(
+          const action = buildCanvasNodeActionCatalog(target, { nodes, edges, nodeDataDefaults: defaults }).actions.find(
             (item) => item.action === command.action,
           );
           if (!action) {
             addIssue(issues, path, `action not available on node: ${command.action}`);
+            unavailableActions.push({ envelopeIndex, commandIndex, nodeId: command.node_id, action: command.action });
           } else if (action.execution === "chat_command") {
             addIssue(issues, path, `action must be expressed as a canvas chat command: ${command.action}`);
           } else if (action.can_run_now === false) {
@@ -623,6 +619,7 @@ export function validateCanvasChatCommandEnvelopes(
   return {
     ok: issues.length === 0,
     issues,
+    ...(unavailableActions.length > 0 ? { unavailableActions } : {}),
   };
 }
 

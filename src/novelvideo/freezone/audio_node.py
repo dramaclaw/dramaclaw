@@ -18,6 +18,7 @@ from typing import Any
 
 import portalocker
 
+from novelvideo.shared.failure_signals import with_upstream_status
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, OUTPUT_DIR
 from novelvideo.media_archive_copy import copy_archived_result
 from novelvideo.generators.indextts2_fal import IndexTTS2FalClient
@@ -38,8 +39,8 @@ from novelvideo.project_config import (
     load_narrator_reference_audio_from_state_dir,
 )
 from novelvideo.seedance2_i2v.voice_clone import (
-    build_reference_audio_url,
     file_sha256,
+    generate_reference_speech,
     narration_style_prompt,
     resolve_character_voice,
     resolve_narrator_source,
@@ -663,6 +664,7 @@ async def generate_freezone_audio_speech(
     emotion_prompt: str = "",
     voice_ref: dict | None = None,
     speech_mode: str = "clone",
+    clone_model: str | None = None,
     preset_model: str = DEFAULT_PRESET_TTS_MODEL,
     preset_voice: str = "Serena",
     projection: Any = None,
@@ -733,22 +735,32 @@ async def generate_freezone_audio_speech(
         projection=projection,
     )
 
-    if egress_context is None:
+    # A validated catalog choice always routes through the configured gateway.
+    # Old queued jobs without a snapshot retain their original IndexTTS2 path.
+    if clone_model:
+        generator = IndexTTS2FalClient(
+            provider="newapi", model=clone_model, egress_context=egress_context
+        )
+    elif egress_context is None:
         generator = IndexTTS2FalClient()
     else:
         generator = IndexTTS2FalClient(
             provider="newapi",
             egress_context=egress_context,
         )
-    result = await generator.generate(
+    result = await generate_reference_speech(
+        generator,
         prompt=clean_text,
-        audio_url=build_reference_audio_url(selected_voice.audio_path),
+        reference_path=selected_voice.audio_path,
         output_path=output_path,
         emotion_prompt=str(emotion_prompt or "").strip()
         or narration_style_prompt(narration_style),
     )
     if not result.success:
-        raise RuntimeError(result.error or "IndexTTS2 generation failed")
+        raise with_upstream_status(
+            RuntimeError(result.error or "Reference speech generation failed"),
+            result,
+        )
 
     duration_ms = int((result.duration_seconds or 0) * 1000) or _duration_ms(
         output_path
@@ -757,7 +769,7 @@ async def generate_freezone_audio_speech(
         audio_path=output_path,
         duration_ms=duration_ms,
         mime_type="audio/mpeg",
-        model=INDEXTTS2_RECORD_MODEL,
+        model=clone_model or INDEXTTS2_RECORD_MODEL,
         voice_source=selected_voice.source,
         voice_sha256=selected_voice.sha256,
     )
@@ -781,7 +793,10 @@ async def _write_edge_tts_speech(
         generate_subtitle=False,
     )
     if not result.success:
-        raise RuntimeError(result.error or "Edge TTS generation failed")
+        raise with_upstream_status(
+            RuntimeError(result.error or "Edge TTS generation failed"),
+            result,
+        )
 
 
 def _newapi_audio_endpoint(base_url: str | None = None) -> str:
@@ -1015,7 +1030,10 @@ async def _write_newapi_audio_speech(
             else:
                 await reject_audio_operation(lease)
         if isinstance(exc, Exception):
-            raise RuntimeError("NewAPI audio generation failed") from None
+            raise with_upstream_status(
+                RuntimeError("NewAPI audio generation failed"),
+                exc,
+            ) from None
         raise
 
 

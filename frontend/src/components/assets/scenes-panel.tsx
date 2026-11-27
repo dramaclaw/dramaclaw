@@ -79,7 +79,7 @@ import {
 } from "@/lib/task-scope";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { sceneTypeLabel, sceneTypeOptions } from "@/lib/scene-type";
-import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
+import { timeOfDayLabel, timeOfDayOptions } from "@/features/canvas/domain/timeOfDay";
 import { resolveMediaUrl } from "@/lib/media-url";
 import {
   useBuildScenes,

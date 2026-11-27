@@ -42,3 +42,5 @@ docs/.obsidian/
 
 # Playwright 冒烟测试的产物
 /e2e/test-results/
+
+dist-canvas-server/

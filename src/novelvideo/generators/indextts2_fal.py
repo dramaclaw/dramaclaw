@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from novelvideo.shared.failure_signals import upstream_status_of
 from novelvideo.media_archive_copy import copy_archived_result
 
 from novelvideo.ports import get_usage_meter, update_current_model_call_log
@@ -171,6 +172,24 @@ class IndexTTS2FalClient:
         self._last_provider_request_id = ""
         self._last_provider_response_id = ""
 
+    def preflight_error(self) -> str | None:
+        """Check local prerequisites without resolving EE credentials or doing I/O."""
+        context = self.egress_context
+        if context is not None and (
+            type(context) is not TrustedEgressContext or not context.is_organization
+        ):
+            return "ORG_EGRESS_DENIED"
+        if context is not None and self.provider != "newapi":
+            return "ORG_EGRESS_DENIED"
+        if context is None and not (self.api_key or "").strip():
+            key_name = (
+                "DramaClawAPI API key"
+                if self.provider == "newapi"
+                else "FAL_KEY/FAL_API_KEY"
+            )
+            return f"{key_name} not set"
+        return None
+
     async def generate(
         self,
         *,
@@ -180,20 +199,9 @@ class IndexTTS2FalClient:
         emotion_prompt: str = "",
     ) -> TTSResult:
         """Generate dialogue audio from a reference sample and save it to ``output_path``."""
+        if error := self.preflight_error():
+            return TTSResult(success=False, error=error)
         context = self.egress_context
-        if context is not None and (
-            type(context) is not TrustedEgressContext or not context.is_organization
-        ):
-            return TTSResult(success=False, error="ORG_EGRESS_DENIED")
-        if context is not None and self.provider != "newapi":
-            return TTSResult(success=False, error="ORG_EGRESS_DENIED")
-        if context is None and not self.api_key:
-            key_name = (
-                "DramaClawAPI API key"
-                if self.provider == "newapi"
-                else "FAL_KEY/FAL_API_KEY"
-            )
-            return TTSResult(success=False, error=f"{key_name} not set")
         prompt = str(prompt or "").strip()
         if not prompt:
             return TTSResult(success=False, error="IndexTTS2 prompt is empty")
@@ -236,7 +244,7 @@ class IndexTTS2FalClient:
                     "model": self.model,
                     "input": prompt,
                     "metadata": {
-                        "audio_url": audio_url,
+                        "audio_url": "[reference audio]",
                         "should_use_prompt_for_emotion": True,
                         **(
                             {"emotion_prompt": str(emotion_prompt).strip()}
@@ -364,7 +372,9 @@ class IndexTTS2FalClient:
             if is_fatal_billing_error(exc):
                 raise
             return TTSResult(
-                success=False, error=f"{exc.__class__.__name__}: Fal audio failed"
+                success=False,
+                error=f"{exc.__class__.__name__}: Fal audio failed",
+                upstream_status=upstream_status_of(exc),
             )
 
     async def _generate_via_newapi(
@@ -462,7 +472,10 @@ class IndexTTS2FalClient:
                 return TTSResult(
                     success=False,
                     error=f"{exc.__class__.__name__}: {exc}",
+                    upstream_status=upstream_status_of(exc),
                 )
             return TTSResult(
-                success=False, error=f"{exc.__class__.__name__}: NewAPI audio failed"
+                success=False,
+                error=f"{exc.__class__.__name__}: NewAPI audio failed",
+                upstream_status=upstream_status_of(exc),
             )

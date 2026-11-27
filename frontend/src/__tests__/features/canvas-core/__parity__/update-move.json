@@ -1,0 +1,84 @@
+{
+  "canvas_id": "parity",
+  "nodes": [
+    {
+      "id": "source",
+      "type": "textAnnotationNode",
+      "position": {
+        "x": 50,
+        "y": 60
+      },
+      "data": {
+        "displayName": "文本",
+        "content": "Updated input",
+        "model": "newapi_gpt_image2",
+        "extraParams": {},
+        "isGenerating": false
+      },
+      "selected": true
+    },
+    {
+      "id": "generated",
+      "type": "imageGenNode",
+      "position": {
+        "x": 700,
+        "y": 20
+      },
+      "data": {
+        "displayName": "图片节点",
+        "imageUrl": "/output/sea.png",
+        "previewImageUrl": "/output/sea.png",
+        "aspectRatio": "16:9",
+        "isSizeManuallyAdjusted": false,
+        "requestAspectRatio": "auto",
+        "prompt": "Sea",
+        "model": "newapi_gpt_image2",
+        "size": "2K",
+        "count": 1,
+        "styleTemplateId": null,
+        "focusRegion": null,
+        "cameraSelection": null,
+        "referenceImageUrl": null,
+        "marks": [],
+        "isGenerating": false,
+        "generationStartedAt": null,
+        "generationDurationMs": 60000,
+        "workflowResultStale": true,
+        "workflowInvalidatedAt": "2024-10-27T03:33:20.000Z",
+        "workflowInvalidationReason": "upstream_input_changed"
+      }
+    },
+    {
+      "id": "spare",
+      "type": "textAnnotationNode",
+      "position": {
+        "x": 1220,
+        "y": 530
+      },
+      "data": {
+        "displayName": "文本",
+        "content": "Spare",
+        "model": "newapi_gpt_image2",
+        "extraParams": {},
+        "isGenerating": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "existing-edge",
+      "source": "source",
+      "target": "generated",
+      "data": {
+        "linkType": "prompt_for"
+      },
+      "type": "disconnectableEdge",
+      "sourceHandle": "source",
+      "targetHandle": "target"
+    }
+  ],
+  "metadata": null,
+  "client_save_id": "parity-save",
+  "save_source": "autosave",
+  "allow_empty_overwrite": false
+}

@@ -177,6 +177,7 @@ async def test_workflow_run_route_remains_home_node_bound(
 @pytest.mark.parametrize(
     "handler_name",
     [
+        "freezone_audio_models",
         "freezone_image_camera_options",
         "freezone_image_style_templates",
         "freezone_video_camera_templates",
@@ -235,6 +236,8 @@ PLACEMENT_FREE_CANVAS_ROUTES = {
     "remove_canvas_projection",
     "projection_status",
     "list_canvases",
+    "create_canvas",
+    "get_canvas_agent_view",
     "get_canvas_revision",
     "get_canvas",
     "list_canvas_history",
@@ -244,6 +247,12 @@ PLACEMENT_FREE_CANVAS_ROUTES = {
     "get_canvas_generation_history",
     "delete_node_generation_history_record",
     "put_canvas",
+    "agent_canvas_commands",
+    "create_canvas_confirmation",
+    "list_canvas_confirmations",
+    "decide_canvas_confirmation",
+    "agent_canvas_context",
+    "get_canvas_presence",
     "delete_canvas",
 }
 
@@ -293,13 +302,22 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
     # staging 的两个白模路由与 main 的逐帧拉片路由均保留。
     # OpenFilm 剪辑工作区再加 5 条非画布路由（TAG_FREEZONE_VIDEO）：打开 Studio 会话，
     # 以及 agent 的 film 读取 / 编辑 / 导入素材 / 导出；它们都走默认的 home-node 守卫。
-    assert router_decorators == 121
-    assert len(canvas_routes) == 31
+    # 三条画布确认路由（创建、列表、决定）与 agent_canvas_commands 一样 placement-free。
+    # The canvas create route and the agent view route are placement-free like list_canvases.
+    # The upload-address route (TAG_FREEZONE_MEDIA) is not a canvas route; default guard.
+    # The workflow-draft revision-conflict read is a canvas route that reads the drafts
+    # table in the project's local SQLite, so it keeps the default guard like the draft routes.
+    # The project audio model catalog is an audio route with the default home-node guard.
+    assert router_decorators == 132
+    assert len(canvas_routes) == 40
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
     assert "cancel_canvas_workflow_draft" in canvas_routes
     assert canvas_routes["cancel_canvas_workflow_draft"]
     assert not any(_opts_out_of_the_guard(call) for call in canvas_routes["cancel_canvas_workflow_draft"])
+    conflict_read = canvas_routes["get_canvas_workflow_draft_revision_conflict"]
+    assert conflict_read
+    assert not any(_opts_out_of_the_guard(call) for call in conflict_read)
 
     # 正向：白名单路由必须全部、且每一处调用都 opt-out。
     missing = {

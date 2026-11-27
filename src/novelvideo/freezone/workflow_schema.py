@@ -43,7 +43,7 @@ PLAN_TOOL_NAMES = frozenset({
 
 
 def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Repair only lossless intent serialization mistakes before strict validation.
+    """Repair only lossless workflow serialization mistakes before strict validation.
 
     Never fill missing items, merge conflicting forms, or remove arbitrary nulls:
     those may change the user's requested workflow. Stable scalar generation inputs
@@ -51,7 +51,7 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
     do not have to infer transport-level types such as ``"1"`` versus ``1``.
     """
     if name in PLAN_TOOL_NAMES and isinstance(arguments.get("plan"), dict):
-        return _normalize_plan_node_stage(arguments)
+        return _normalize_plan_node_fields(arguments)
     if name not in {"workflow_intent_compile", "freezone_prepare_workflow_draft"}:
         return arguments
     if not isinstance(arguments.get("intent"), dict):
@@ -106,26 +106,36 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
     return result
 
 
-def _normalize_plan_node_stage(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Move a node's ``data.stage`` label to its portable top-level ``stage``.
-
-    Plan readers already treat both locations as the same label and the compiler
-    strips it from emitted canvas data, so the move is lossless. A conflicting
-    top-level stage is left untouched for the validator to report.
-    """
+def _normalize_plan_node_fields(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Move known node fields to their canonical location without merging conflicts."""
     nodes = arguments["plan"].get("nodes")
     if not isinstance(nodes, list):
         return arguments
     result: dict[str, Any] | None = None
     for index, node in enumerate(nodes):
         data = node.get("data") if isinstance(node, dict) else None
-        stage = data.get("stage") if isinstance(data, dict) else None
-        if not isinstance(stage, str) or node.get("stage", stage) != stage:
+        if not isinstance(data, dict):
+            continue
+        stage = data.get("stage")
+        move_stage = isinstance(stage, str) and node.get("stage", stage) == stage
+        catalog = data.get("workflowCatalog")
+        goal = catalog.get("userGoal") if isinstance(catalog, dict) else None
+        builder = catalog.get("promptBuilder", {}) if isinstance(catalog, dict) else None
+        move_goal = (
+            isinstance(goal, str)
+            and isinstance(builder, dict)
+            and builder.get("userGoal", goal) == goal
+        )
+        if not (move_stage or move_goal):
             continue
         if result is None:
             result = deepcopy(arguments)
         moved = result["plan"]["nodes"][index]
-        moved["stage"] = moved["data"].pop("stage")
+        if move_stage:
+            moved["stage"] = moved["data"].pop("stage")
+        if move_goal:
+            moved_catalog = moved["data"]["workflowCatalog"]
+            moved_catalog.setdefault("promptBuilder", {})["userGoal"] = moved_catalog.pop("userGoal")
     return arguments if result is None else result
 
 
@@ -580,9 +590,94 @@ def _resource_text_node_schema() -> dict[str, Any]:
     }
 
 
+def compose_timeline_json_schema() -> dict[str, Any]:
+    clip = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "nodeId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "ID of a plan node connected by composition_input_for; resolved to its generated media at execution.",
+            },
+            "kind": {"enum": ["video", "audio"]},
+            "sourceUrl": {
+                "const": "",
+                "description": "Leave empty; do not invent future media URLs.",
+            },
+            "durationMs": {"type": "null"},
+            "displayName": {"type": ["string", "null"]},
+            "thumbUrl": {"type": "null"},
+            "timelineStartMs": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Timeline position in milliseconds. For example, 5000 places the clip at 5 seconds.",
+            },
+            "trimStartMs": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Source trim start in milliseconds.",
+            },
+            "trimEndMs": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Source trim end in milliseconds. Use 5000 for the end of a 5-second clip.",
+            },
+            "volume": {"type": "number", "minimum": 0, "maximum": 1},
+            "muted": {"type": "boolean"},
+            "speed": {"type": "number", "exclusiveMinimum": 0, "maximum": 4},
+            "fadeOutMs": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Fade over the last N milliseconds of the rendered audio clip; omit for no fade.",
+            },
+        },
+        "required": [
+            "id",
+            "nodeId",
+            "kind",
+            "sourceUrl",
+            "durationMs",
+            "displayName",
+            "thumbUrl",
+            "timelineStartMs",
+            "trimStartMs",
+            "trimEndMs",
+            "volume",
+            "muted",
+            "speed",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "description": "Executable composition timeline, not prose. Times are milliseconds. Use separate audio tracks at timelineStartMs=0 for simultaneous voice and music.",
+        "properties": {
+            "resolution": {"enum": ["720p", "1080p"]},
+            "tracks": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "minLength": 1},
+                        "kind": {"enum": ["video", "audio"]},
+                        "clips": {"type": "array", "minItems": 1, "items": clip},
+                    },
+                    "required": ["id", "kind", "clips"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["resolution", "tracks"],
+        "additionalProperties": False,
+    }
+
+
 def _compose_node_schema() -> dict[str, Any]:
     properties = _node_common_properties()
     properties["node_type"] = {"type": "string", "enum": ["videoComposeNode"]}
+    properties["data"]["properties"]["draftTimeline"] = compose_timeline_json_schema()
     return {
         "type": "object",
         "properties": properties,
@@ -834,6 +929,16 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "Use the declared JSON scalar types for the stable controls."
                 ),
                 "properties": {
+                    "audio_voice_ref": {
+                        "type": "object",
+                        "description": "Already selected custom voice shared by speech nodes. Use the user's exact voice ID.",
+                        "properties": {
+                            "scope": {"const": "user_custom"},
+                            "voiceId": {"type": "string", "pattern": r"\S"},
+                        },
+                        "required": ["scope", "voiceId"],
+                        "additionalProperties": False,
+                    },
                     "aspect_ratio": {"type": "string", "minLength": 1},
                     "image_aspect_ratio": {"type": "string", "minLength": 1},
                     "image_model": {"type": "string", "minLength": 1},
@@ -852,6 +957,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "video_generate_audio": {"type": "boolean"},
                     "video_generation_mode": {
                         "type": "string",
+                        "description": "Confirmed video mode. When shots consume image references, use a reference-capable mode supported by the selected model.",
                         "enum": list(PORTABLE_VIDEO_GENERATION_MODES),
                     },
                     "video_model": {"type": "string", "minLength": 1},

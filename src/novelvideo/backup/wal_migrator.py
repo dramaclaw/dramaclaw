@@ -1,83 +1,64 @@
-"""Convert SQLite files under state/ to WAL mode for backup replication."""
+"""Locate SQLite files under state/ for the daily snapshot job.
+
+Nothing converts journal modes here: Litestream switches every database it
+replicates to WAL, and data.db is switched by ensure_sqlite_schema.
+
+The state tree is mostly Freezone history (canvas snapshots, generation and
+event logs), and that part grows with use. So the walk prunes those trees,
+only opens files named like a database, and confirms each by its header,
+rather than opening every file under state/.
+"""
 
 from __future__ import annotations
 
-import logging
-import sqlite3
+import os
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePath
 
-logger = logging.getLogger("novelvideo.backup.wal_migrator")
+from novelvideo.backup.scope import is_deprecated_cognee_path
 
 _SQLITE_MAGIC = b"SQLite format 3\x00"
-_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal", ".snapshot", ".snapshot.tmp")
+# Every database the app creates under state/ uses one of these suffixes
+# (data.db, chat.db, settings.db, *.sqlite3, ...). WAL/SHM/journal sidecars and
+# our own .snapshot files end differently, so they drop out here too.
+_SQLITE_SUFFIXES = frozenset({".db", ".sqlite", ".sqlite3"})
+# Freezone's append-only history: per-canvas snapshots, deleted-canvas archives,
+# per-node generation logs and canvas event logs. JSON/JSONL only, never SQLite.
+_HISTORY_DIRS = frozenset({"_history", "_deleted", "_generation_history", "_canvas_events"})
+# Hermes owns its cache/session databases; only its top-level state.db is ours.
+_HERMES_HOME = ".hermes"
 
 
-def _is_sidecar_or_litestream(path: Path) -> bool:
-    if any(path.name.endswith(suffix) for suffix in _SIDECAR_SUFFIXES):
+def _skip_dir(relative: PurePath) -> bool:
+    name = relative.name
+    if name in _HISTORY_DIRS or name.endswith("-litestream"):
         return True
-    return any(part.endswith("-litestream") for part in path.parts)
+    # Deprecated Cognee stores are skipped; see novelvideo.backup.scope.
+    return is_deprecated_cognee_path(relative / "_")
+
+
+def _has_sqlite_magic(path: Path) -> bool:
+    try:
+        with path.open("rb") as file:
+            return file.read(len(_SQLITE_MAGIC)) == _SQLITE_MAGIC
+    except OSError:
+        return False
 
 
 def iter_sqlite_files(state_dir: Path) -> Iterator[Path]:
-    for path in sorted(Path(state_dir).rglob("*")):
-        if not path.is_file() or _is_sidecar_or_litestream(path):
-            continue
-        try:
-            with path.open("rb") as file:
-                if file.read(len(_SQLITE_MAGIC)) != _SQLITE_MAGIC:
-                    continue
-        except OSError:
-            continue
-        yield path
-
-
-def ensure_wal(db_path: Path) -> bool:
-    """Return True when the database is already WAL or was converted."""
-
-    conn = sqlite3.connect(db_path, timeout=10)
-    try:
-        conn.execute("PRAGMA busy_timeout=10000")
-        current = conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
-        if current == "wal":
-            return True
-        result = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower()
-        if result == "wal":
-            conn.execute("PRAGMA synchronous=NORMAL")
-            logger.info("converted to WAL: %s", db_path)
-            return True
-        logger.warning("WAL switch returned %s: %s", result, db_path)
-        return False
-    except sqlite3.Error as exc:
-        logger.warning("WAL switch failed (%s): %s", exc, db_path)
-        return False
-    finally:
-        conn.close()
-
-
-def migrate_state_tree(state_dir: Path) -> tuple[int, int]:
-    """Return (converted, failed). Databases already in WAL are not counted."""
-
-    converted = 0
-    failed = 0
-    for db_path in iter_sqlite_files(state_dir):
-        if db_path.name == "cognee_db":
-            continue
-        try:
-            conn = sqlite3.connect(db_path, timeout=10)
-            try:
-                already = conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
-            finally:
-                conn.close()
-        except sqlite3.Error as exc:
-            logger.warning("journal mode pre-check failed (%s): %s", exc, db_path)
-            failed += 1
-            continue
-        if already:
-            continue
-        if ensure_wal(db_path):
-            converted += 1
+    root = Path(state_dir)
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        current = Path(dirpath)
+        if current.name == _HERMES_HOME:
+            dirnames.clear()
         else:
-            failed += 1
-    logger.info("WAL migration done: converted=%d failed=%d", converted, failed)
-    return converted, failed
+            relative = current.relative_to(root)
+            dirnames[:] = [name for name in dirnames if not _skip_dir(relative / name)]
+        for name in filenames:
+            if PurePath(name).suffix not in _SQLITE_SUFFIXES:
+                continue
+            path = current / name
+            if path.is_file() and _has_sqlite_magic(path):
+                found.append(path)
+    yield from sorted(found)

@@ -29,8 +29,8 @@ Prerequisites: Docker + `docker compose`.
 | **Linux** | Docker Engine + `docker-compose-plugin` (from your distro's package manager) — Docker Compose **≥ 2.24** (`docker compose version`; the compose file uses the `env_file` long syntax) |
 
 Once installed, choose **published images** or a **source build**. For published
-v2.1.1 images, no gateway checkout is needed; follow [Quickstart option A](quickstart.md)
-to pin `DRAMACLAW_VERSION=2.1.1` and `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.3`.
+v2.2.0 images, no gateway checkout is needed; follow [Quickstart option A](quickstart.md)
+to pin `DRAMACLAW_VERSION=2.2.0` and `DRAMACLAW_GATEWAY_VERSION=v1.0.0-rc.24-dramaclaw.5`.
 
 To build your local code instead:
 
@@ -88,7 +88,8 @@ scripts/start-ce.sh
 
 Open `http://localhost:5173` for the Vite development UI; the API is at
 `http://localhost:8780`. The launcher installs dependencies and starts both services;
-Ctrl+C stops them. Keep `DRAMACLAW_CHAT_BACKEND=codex` in `.env`; an older setting
+Ctrl+C stops them. It also builds the server canvas bundle (`frontend/dist-canvas-server/`),
+which canvas creation needs. Keep `DRAMACLAW_CHAT_BACKEND=codex` in `.env`; an older setting
 selecting another backend produces an actionable error rather than a silent fallback.
 
 To manage the API and frontend separately, prepare the same runtime before starting
@@ -104,8 +105,13 @@ CODEX_BIN="$(bash scripts/setup-codex.sh)" &&
 In a second terminal, from the repository root:
 
 ```bash
-cd frontend && pnpm install && pnpm dev --host 127.0.0.1 --port 5173
+cd frontend && pnpm install && pnpm run build:canvas-server && pnpm dev --host 127.0.0.1 --port 5173
 ```
+
+Canvas creation needs Node.js and this bundle. Rebuild it after pulling frontend changes.
+If it is missing, the API logs a `canvas_core unavailable` warning at startup and canvas
+creation returns `canvas_core_unavailable`. The bundle is read when the first canvas
+operation starts the worker, so building it after the API has started is fine.
 
 To skip downloading, set `CODEX_BIN=/absolute/path/to/codex-dramaclaw` in `.env`
 for the launcher, or export it before the standalone setup command. An explicit binary
@@ -113,7 +119,7 @@ is operator-managed: the script checks that it runs, but cannot prove it contain
 credential-safety patches. Do not use the stock Codex CLI. A download/checksum failure
 stops startup before either service is launched and never falls back to another backend.
 
-Docker builds at v2.1.1 already include credential-safe Codex 0.164.0. Both source and
+Docker builds at v2.2.0 already include credential-safe Codex 0.162.0. Both source and
 release Compose select Codex by default; keep `DRAMACLAW_CHAT_BACKEND=codex` if setting
 it explicitly. `CODEX_BIN` in the native instructions above is a host-side path, not a
 container path.
@@ -134,7 +140,7 @@ Official mode needs nothing else. For the other two modes the API expects a gate
 mkdir -p state/newapi
 docker run -d --name dramaclaw-gateway -p 127.0.0.1:3000:3000 \
   -v "$PWD/state/newapi:/data" \
-  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.3
+  claymorelab/dramaclaw-gateway:v1.0.0-rc.24-dramaclaw.5
 ```
 
 or build and run the gateway from the sibling `dramaclaw-gateway` checkout with `SQLITE_PATH` pointing at that file. See [Configuring Models](configuring-models.md) for the mode setup.

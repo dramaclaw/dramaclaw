@@ -31,9 +31,15 @@ PRODUCT_TASK_TYPES = {
     "workflow_generate": "freezone_agent_workflow_generate",
     "recipe_generate": "freezone_agent_recipe_generate",
 }
+
+
+def agent_product_price_key(kind: str) -> str:
+    return f"freezone.agent.{kind}"
+
+
 AGENT_PRODUCT_PRICE_REFERENCE = tuple(
     {
-        "key": f"freezone.agent.{kind}",
+        "key": agent_product_price_key(kind),
         "label": label,
         "billing": "admin_configured",
         "reference_display": "由管理员配置，可显式设为免费",
@@ -46,6 +52,11 @@ AGENT_PRODUCT_PRICE_REFERENCE = tuple(
         ("recipe_generate", "Recipe 定义生成"),
     )
 )
+# Kinds whose product only an Agent turn produces: the server records their
+# model evidence when it observes the turn's result tool call, so no evidence
+# means the Agent did no work. Result kinds wait on an external provider and
+# may have incurred cost without such evidence.
+AGENT_TURN_PRODUCT_KINDS = frozenset({"workflow_generate", "recipe_generate"})
 PENDING_STATUSES = {"admitting", "reserved", "running", "accepted", "submitted"}
 TERMINAL_STATUSES = {"delivered", "failed", "cancelled"}
 OPERATION_ID_RE = re.compile(r"^agent_product_[a-zA-Z0-9_-]{1,96}$")
@@ -87,6 +98,32 @@ def is_recipe_compile_receipt(
         and isinstance(content, str)
         and bool(content.strip())
     )
+
+
+def workflow_result_attempt_required(operation_id: str) -> dict[str, Any]:
+    """Tell workflow callers how to recover from an undelivered terminal operation."""
+    code = "workflow_result_generation_attempt_required"
+    return {
+        "ok": False,
+        "status": code,
+        "code": code,
+        "error": "The workflow_result operation is already terminal.",
+        "message": (
+            "Call freezone_begin_agent_product_generation with a new "
+            "generation_session_id, then submit the draft with its new operation_id."
+        ),
+        "operation_id": operation_id,
+        "retryable": False,
+        "next_action": "begin_workflow_result_generation",
+    }
+
+
+class AgentProductOperationTerminal(ValueError):
+    """Model evidence cannot be added to a terminal operation."""
+
+    def __init__(self, status: str) -> None:
+        self.status = status
+        super().__init__("agent product operation is already terminal")
 
 
 class AgentProductSettlementPending(RuntimeError):
@@ -299,6 +336,25 @@ def read_agent_product_operation(
     return _payload(row) if row is not None else None
 
 
+def list_undelivered_agent_product_operations(
+    *, project_dir: Path, operation_ids: list[str]
+) -> list[dict[str, Any]]:
+    """Return those of the given operations that ended failed or cancelled."""
+    ids = sorted({str(item or "").strip() for item in operation_ids} - {""})
+    operations: list[dict[str, Any]] = []
+    with _connect(project_dir) as conn:
+        for offset in range(0, len(ids), 500):
+            batch = ids[offset : offset + 500]
+            rows = conn.execute(
+                "SELECT * FROM freezone_agent_product_operations "
+                "WHERE status IN ('failed', 'cancelled') "
+                f"AND operation_id IN ({','.join('?' for _ in batch)})",
+                batch,
+            ).fetchall()
+            operations.extend(_payload(row) for row in rows)
+    return operations
+
+
 def list_agent_product_operations_for_session(
     *, project_dir: Path, generation_session_id: str
 ) -> list[dict[str, Any]]:
@@ -401,10 +457,11 @@ def bind_agent_product_model_execution(
             raise ValueError("agent product operation not found")
         payload = _payload(current)
         if payload["status"] in TERMINAL_STATUSES:
-            raise ValueError("agent product operation is already terminal")
+            raise AgentProductOperationTerminal(payload["status"])
         existing = payload["model_evidence"]
         if existing:
-            if existing != evidence:
+            # A replay observes the same execution at a different time.
+            if existing != {**evidence, "executed_at": existing.get("executed_at")}:
                 raise ValueError(
                     "agent product operation is bound to another model execution"
                 )
@@ -512,7 +569,17 @@ def finish_agent_product_operation(
     result_ref: dict[str, Any] | None = None,
     server_recipe_compile: bool = False,
     server_recipe_direct_audio: bool = False,
+    keep_pending_if_model_executed: bool = False,
 ) -> dict[str, Any]:
+    """Write an operation outcome in one transaction.
+
+    With ``keep_pending_if_model_executed``, a cancelled/failed outcome is not
+    written when the operation already holds model execution evidence; the
+    operation stays pending and ``AgentProductSettlementPending`` is raised so
+    the caller keeps the reservation for reconciliation. The check runs inside
+    the write transaction, so evidence recorded after the caller's own read is
+    still seen.
+    """
     status = str(outcome or "").strip()
     if status not in PENDING_STATUSES | TERMINAL_STATUSES:
         raise ValueError("invalid agent product operation outcome")
@@ -550,6 +617,14 @@ def finish_agent_product_operation(
                 )
             return payload
         evidence = payload["model_evidence"]
+        if (
+            keep_pending_if_model_executed
+            and status in {"cancelled", "failed"}
+            and evidence.get("model_call_id")
+        ):
+            raise AgentProductSettlementPending(
+                operation_id=operation_id, status=payload["status"]
+            )
         if status == "delivered":
             if (
                 not recipe_delivery
@@ -650,6 +725,18 @@ async def terminalize_undelivered_agent_product_task(
         "settlement_status": settlement_status,
         "error_code": None,
     }
+    if settlement_status == "refund_pending":
+        # Closing the task would end the retries: this function skips closed
+        # tasks. Leave it open so the next call attempts the refund again.
+        manager.update_task_metadata_for_project(
+            ctx,
+            task_type,
+            0,
+            scope=operation_id,
+            metadata=task_metadata,
+            expected_task_id=expected_task_id,
+        )
+        return
     if outcome == "cancelled":
         manager.update_progress_for_project(
             ctx,

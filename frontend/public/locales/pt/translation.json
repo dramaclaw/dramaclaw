@@ -1,7 +1,16 @@
 {
   "chatSnapshot": {
-    "saveFailed": "Não foi possível salvar o histórico do chat. Tente novamente mais tarde; a mensagem atual continua disponível localmente.",
-    "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico."
+    "historyIncomplete": "Parte do histórico desta conversa é grande demais para ser carregada por completo. O texto das mensagens continua disponível. Peça a um administrador para compactar o histórico.",
+    "ceHistory": {
+      "title": "Parte do histórico não pôde ser carregada por completo",
+      "description": "Esta conversa contém registros grandes ou inválidos, por isso parte do raciocínio e dos registros de ferramentas não foi carregada. O texto das mensagens continua disponível. Isso não significa que uma chamada ao modelo falhou.",
+      "help": "Ver instruções de resolução",
+      "support": "Contatar o suporte da comunidade",
+      "continue": "Se ainda consegue enviar mensagens normalmente, pode continuar nesta conversa. Não é necessário limpar o chat nem excluir o projeto.",
+      "backup": "Para recuperar o histórico completo, pare primeiro o aplicativo e os serviços relacionados, faça uma cópia completa do banco de dados do chat (chat.db, incluindo os arquivos WAL existentes) e siga o guia para verificar e compactar os registros. A compactação não corrige todos os registros grandes ou inválidos.",
+      "privacy": "Ao pedir ajuda, informe a versão do aplicativo, o sistema operacional, capturas de tela e logs sem dados sensíveis. O banco de dados pode conter conversas privadas e informações sensíveis. Não o envie diretamente para uma issue pública.",
+      "recoveryGuide": "Abrir o guia detalhado de recuperação do histórico"
+    }
   },
   "workflowDraftContinuation": {
     "ariaLabel": "Confirmar criação do fluxo de trabalho",
@@ -531,7 +540,8 @@
         "initializeExpired": "Este início de sessão por OTP já não é suficientemente recente. Inicie sessão com um novo código e tente novamente.",
         "error": "Não foi possível alterar a palavra-passe. Tente novamente."
       },
-      "languagePortuguese": "Português"
+      "languagePortuguese": "Português",
+      "languageBurmese": "မြန်မာဘာသာ"
     },
     "pikoHub": {
       "play": "Piko Play",
@@ -791,6 +801,8 @@
     }
   },
   "aiAssistant": {
+    "contextCompacting": "Compactando o contexto…",
+    "contextCompacted": "Contexto compactado para a conversa continuar",
     "directorRunMode": {
       "manualLabel": "Modo manual",
       "manualDescription": "Confirmar cada etapa de geração antes da execução",
@@ -842,6 +854,8 @@
     "emptyTitle": "Iniciar uma conversa",
     "emptyDescription": "Pergunte sobre o progresso do projeto, tarefas que falharam ou peça ao assistente para organizar o seu plano criativo.",
     "syncingHistoryTitle": "A iniciar conversa",
+    "loadEarlierMessages": "Carregar mensagens anteriores",
+    "loadingEarlierMessages": "Carregando mensagens anteriores…",
     "syncingHistoryDescription": "A ligar ao Xia Director e a sincronizar o histórico da conversa. Aguarde.",
     "disclaimer": "O Xia Director pode cometer erros. Verifique os principais detalhes da história, das personagens e dos recursos.",
     "placeholder": "Depois de enviar um guião, peça ao Xia Director para avançar com os episódios, os elementos visuais, o áudio ou o vídeo final",
@@ -884,10 +898,6 @@
     "dropFiles": "Largue os ficheiros para os enviar",
     "unsupportedDropFiles": "Apenas são suportados ficheiros .txt, .md, .doc e .docx",
     "removeAttachment": "Remover anexo",
-    "approvalExpires": "Expira em {{seconds}}s",
-    "allowOnce": "Permitir uma vez",
-    "allowAlways": "Permitir sempre",
-    "deny": "Negar",
     "instance": "Instância",
     "model": "Modelo",
     "noInstances": "Nenhuma instância",
@@ -995,6 +1005,20 @@
         "vocalsAllowed": "Vozes permitidas",
         "continue": "Continuar com a voz selecionada"
       },
+      "canvasConfirmation": {
+        "kind": {
+          "delete_nodes": "Eliminar nós",
+          "clear_canvas": "Limpar a área de trabalho",
+          "paid_generation": "Executar geração"
+        },
+        "separator": ", ",
+        "credits": "A confirmação irá consumir créditos.",
+        "creditsAmount": "A confirmação irá consumir {{credits}} créditos.",
+        "expiresIn": "Válido por {{minutes}} min",
+        "confirm": "Confirmar",
+        "refuse": "Cancelar",
+        "failed": "A ação falhou. Tente novamente."
+      },
       "canvasExecuting": "A executar...",
       "canvasConfirmedExecuting": "Parâmetros confirmados. A execução está em curso; não é necessária nova confirmação.",
       "canvasConfirmExecution": "Confirmar execução",
@@ -1046,6 +1070,11 @@
         "audioOff": "Sem som"
       },
       "clarification": {
+        "adDirection": {
+          "question": "Como você prefere definir a direção criativa deste anúncio interativo?",
+          "describe": "Quero descrever a direção",
+          "recommend": "Sugira uma direção com base nos diferenciais do produto"
+        },
         "cancelled": "Cancelado",
         "skipped": "Ignorado",
         "submitted": "Enviado",
@@ -1531,6 +1560,8 @@
       "assetNamePlaceholder": "Introduza um nome para o recurso"
     },
     "canvasSync": {
+      "remoteDeletedLocalKept": "Um nó que alterou foi eliminado noutro sítio. A sua versão foi mantida.",
+      "localDeletedRemoteChanged": "Um nó que eliminou acabou de ser alterado noutro sítio (por exemplo, pelo Agent). Continua eliminado.",
       "backupFailed": "Falha na cópia de segurança na nuvem. Tente novamente mais tarde.",
       "backupPending": "Guardado localmente; será feita uma nova tentativa da cópia de segurança na nuvem.",
       "bodyOverLimit": "Os dados da área de trabalho ocupam {{actual}} KB, acima do limite de {{limit}} KB. A ação de guardar está em pausa.",
@@ -2812,7 +2843,7 @@
         "confirmDescription": "{{feature}} começará imediatamente após a confirmação.",
         "confirmAction": "Confirmar e iniciar",
         "costLoading": "A carregar o preço atual da organização",
-        "costUnavailable": "O preço está temporariamente indisponível. Tente novamente mais tarde.",
+        "costUnavailable": "O preço está indisponível.",
         "openWorld": "Abrir o Director World",
         "worldNotReady": "O Director World não está pronto"
       },
@@ -5860,7 +5891,7 @@
       "regenerateVideo": "Gerar vídeo novamente",
       "regenerateDescription": "Gerar novamente o vídeo e convertê-lo para GIF",
       "videoBilling": "Primeiro fotograma bloqueado · 4 segundos · 720P · Sem áudio. O vídeo é faturado pelo preço indicado; a conversão para GIF é gratuita.",
-      "quoteUnavailable": "A estimativa de créditos não está disponível. Tente novamente mais tarde.",
+      "quoteUnavailable": "A estimativa de créditos não está disponível.",
       "confirm": "Confirmar geração",
       "svgDescription": "Converter localmente para SVG. As imagens complexas podem perder detalhes.",
       "videoUnavailable": "Modelo de vídeo indisponível",
@@ -5946,8 +5977,6 @@
         "conditionalBranch": "Conditional branch (else/automatic)",
         "unknownInitialValues": "Initial variable values are unknown; defaulting to 0 (no global decl).",
         "invalidDefaultChoice": "{{name}}: # default {{index}} exceeds the number of choices and was ignored.",
-        "agentRefreshConflict": "The agent updated the canvas, but you have unsaved local changes. Save a copy or refresh to continue.",
-        "refreshConflict": "The canvas was updated in the background, but you have unsaved local changes. Save a copy or refresh to continue.",
         "storyGroup": "Interactive story",
         "segmentTitle": "Segment {{index}}",
         "firstFrame": "first frame",
@@ -6561,6 +6590,7 @@
     }
   },
   "modelPicker": {
+    "details": "Detalhes de {{model}}",
     "provider": "Fornecedor",
     "model": "Modelo",
     "empty": "Nenhum modelo disponível"
@@ -7019,6 +7049,7 @@
         "submit": "Gerar vídeo em HD",
         "model": "Model",
         "standardModel": "Standard video enhancement",
+        "claymoreModel": "Aprimoramento de vídeo RelayClaw",
         "modelUnavailable": "O modelo de aprimoramento salvo está indisponível. Selecione um modelo disponível para continuar."
       }
     },
@@ -7387,6 +7418,10 @@
       "voiceMissing": "Não está selecionada nenhuma voz personalizada utilizável",
       "translate": "Traduzir (chinês ⇄ inglês)",
       "voiceSettings": "Definições de voz",
+      "cloneModel": "Modelo de voz",
+      "noCloneModel": "Selecione um modelo de voz disponível",
+      "cloneModelsLoadFailed": "Falha ao carregar os modelos de voz",
+      "cloneVoiceIdRequired": "Este modelo exige um ID de voz do fornecedor e não aceita diretamente um áudio de referência.",
       "advancedSettings": "Definições avançadas",
       "generate": "Gerar",
       "generateWithoutVoice": "Gerar (ignorar quando não estiver selecionada uma voz personalizada)",
@@ -8098,7 +8133,63 @@
       "models": "Modelos e canais",
       "storage": "Armazenamento de multimédia",
       "freezoneSkills": "Competências da Freezone",
-      "freezoneRecipes": "Receitas da Freezone"
+      "freezoneRecipes": "Receitas da Freezone",
+      "agentKeys": "Agent Key"
+    },
+    "agentKeys": {
+      "title": "Agent Key",
+      "intro": "Uma agent key permite que ferramentas de IA externas (clientes MCP) ajam em seu nome nos projetos selecionados e gastem seus créditos. Não a compartilhe. Se a chave for perdida ou vazada, revogue-a imediatamente.",
+      "create": {
+        "title": "Criar chave",
+        "label": "Nome",
+        "labelPlaceholder": "ex.: Meu cliente MCP",
+        "scope": "Acesso a projetos",
+        "scopeSelected": "Projetos selecionados",
+        "scopeAll": "Todos os projetos",
+        "allWarning": "Esta chave pode agir em todos os seus projetos atuais e em qualquer projeto que você criar depois.",
+        "projectsLoading": "Carregando projetos…",
+        "projectsError": "Não foi possível carregar seus projetos.",
+        "noProjects": "Você ainda não tem projetos.",
+        "selectProject": "Selecione pelo menos um projeto.",
+        "submit": "Criar chave",
+        "created": "Agent key criada"
+      },
+      "reveal": {
+        "title": "Sua nova agent key",
+        "keyLabel": "Agent key",
+        "warning": "Esta chave é exibida apenas uma vez. Copie-a agora e guarde-a em local seguro; não será possível vê-la novamente.",
+        "usage": "No seu cliente MCP, use o endpoint {{tools}} ou {{workflows}} e envie o cabeçalho HTTP {{header}}.",
+        "copy": "Copiar",
+        "copied": "Agent key copiada",
+        "copyFailed": "Falha ao copiar. Copie a chave manualmente.",
+        "done": "Concluir"
+      },
+      "list": {
+        "title": "Suas chaves",
+        "loading": "Carregando chaves…",
+        "empty": "Você ainda não tem agent keys.",
+        "retry": "Tentar novamente",
+        "allProjects": "Todos os projetos",
+        "projects": "Projetos: {{names}}",
+        "created": "Criada em {{time}}",
+        "lastUsed": "Último uso {{time}}",
+        "neverUsed": "Nunca usada",
+        "expires": "Expira em {{time}}"
+      },
+      "status": {
+        "active": "Ativa",
+        "revoked": "Revogada",
+        "expired": "Expirada"
+      },
+      "revoke": {
+        "button": "Revogar",
+        "aria": "Revogar {{label}}",
+        "confirmTitle": "Revogar agent key",
+        "confirmDescription": "Revogar “{{label}}”? As ferramentas que usam esta chave deixarão de funcionar imediatamente. Esta ação não pode ser desfeita.",
+        "confirm": "Revogar",
+        "cancel": "Cancelar",
+        "done": "Agent key revogada"
+      }
     },
     "freezoneCatalog": {
       "skills": {
@@ -8617,7 +8708,13 @@
       },
       "mediaModels": {
         "title": "Modelos de geração de imagem/vídeo/áudio",
-        "description": "Os modelos provêm da configuração local personalizada atual. Adicione modelos de imagem ou vídeo e configure as capacidades apresentadas no XiaHua.",
+        "description": "Gira modelos locais de imagem, vídeo, áudio e blockout e as suas capacidades.",
+        "audioPurpose": "Finalidade do áudio",
+        "speech": "Síntese de voz",
+        "promptedSpeech": "Criar voz por descrição",
+        "voiceDesign": "Criar voz com modelo de destino",
+        "audioTarget": "Modelo de síntese de destino",
+        "audioTargetRequired": "Selecione um modelo de síntese compatível. Ative-o se o modelo de criação de voz estiver ativo.",
         "addModel": "Adicionar modelo",
         "addModelTitle": "Adicionar modelo multimédia",
         "editModelTitle": "Editar modelo multimédia",
@@ -8993,6 +9090,8 @@
       "hint": "Ligue pelo menos {{min}} nós de vídeo para abrir",
       "counts": "Vídeo {{video}} · Áudio {{audio}}",
       "open": "Abrir composição de vídeo",
+      "exporting": "A exportar…",
+      "exportFailed": "Falha na exportação",
       "reopen": "Reabrir",
       "resultName": "Vídeo montado"
     },
@@ -9216,6 +9315,7 @@
       "descriptionLabel": "Descrição"
     },
     "runtime": {
+      "waitingForConfirmation": "Aguardando sua confirmação",
       "waitingForGenerationParameters": "Waiting for generation parameters",
       "clarificationPaused": "Waiting for an answer is paused"
     }
@@ -9444,6 +9544,7 @@
     "restartTitle": "Recomeçar com um novo pedido?",
     "restartHint": "O resultado do pedido original é desconhecido. Recomeçar não irá repeti-lo. Gerar novamente criará um novo pedido e poderá resultar em outra cobrança. Continuar?",
     "refreshTarget": "Atualizar o destino de gravação",
+    "gatewayPrice": "O custo depende do gateway utilizado",
     "price": "Esta geração: {{price}} créditos por pedido",
     "quoteLoading": "A carregar o preço e a disponibilidade…",
     "close": "Fechar",
@@ -10194,9 +10295,9 @@
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Picture check",
-      "pictureCheckHint": "Project the blockout back onto the picture and check that positions, sizes and camera agree; one or two extra model rounds, so slower",
+      "pictureCheckHint": "Align positions and sizes to the picture; 1–2 extra rounds",
       "renderCheck": "Render check",
-      "renderCheckHint": "Render the blockout and let the model compare it with the picture and rewrite, twice; two extra model rounds, so slower",
+      "renderCheckHint": "Render and refine against the picture; 2 extra rounds",
       "model": "Model",
       "modelDefault": "{{name}} (default)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
@@ -10211,13 +10312,7 @@
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
-      "guide": {
-        "title": "Images that work well",
-        "space": "A scene whose layout is readable: a room, a street, a courtyard",
-        "floor": "The floor is visible, along with at least one wall or clear boundary",
-        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
-        "occlusion": "People or foreground objects do not cover the main pieces"
-      },
+      "guide": "Works best with a wide, eye-level shot that shows the floor and walls",
       "hint": {
         "title": "This image may affect the result; you can still continue",
         "small": "The image is small (short edge under 512 px), so details may be hard to read",
@@ -10254,6 +10349,7 @@
       "close": "Close model library",
       "categories": "Categories",
       "all": "All",
+      "recent": "Recentes",
       "category": {
         "primitive": "Primitives",
         "furniture": "Furniture",
