@@ -113,6 +113,15 @@ def test_flag_off_creates_no_change_directory(tmp_path, monkeypatch):
     assert not (tmp_path / "freezone" / "canvas_changes").exists()
 
 
+def test_server_save_publishes_without_push_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_AGENT_CANVAS_EXECUTOR", "server")
+    monkeypatch.delenv("DRAMACLAW_CANVAS_PATCH_PUSH", raising=False)
+    save(tmp_path, 1)
+    [entry] = entries(tmp_path)
+    assert entry["type"] == "canvas.patch"
+    assert entry["revision"] == 1
+
+
 def test_default_creation_publishes_once(tmp_path):
     assert canvas_store.ensure_default_canvas(tmp_path, project_id="project").created
     assert not canvas_store.ensure_default_canvas(tmp_path, project_id="project").created

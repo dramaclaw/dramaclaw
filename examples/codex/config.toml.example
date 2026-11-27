@@ -22,10 +22,11 @@ DRAMACLAW_USER = "local"
 # DRAMACLAW_PROJECT_ID = "your-project-id"
 # DRAMACLAW_CANVAS_ID = "your-canvas-id"
 
-# On the API server, DRAMACLAW_AGENT_CANVAS_EXECUTOR=server also runs supported
-# node actions and workflows without an open canvas. Unsupported actions still
-# need an open canvas; see docs/zh/guides/local-agent-mcp.md.
-# Server execution requires DRAMACLAW_CANVAS_PATCH_PUSH=1 on the API server.
+# On the API server, set DRAMACLAW_AGENT_CANVAS_EXECUTOR=server to enable server
+# execution and patch push. Supported node actions and workflows can run without
+# an open canvas. See docs/zh/guides/local-agent-mcp.md for supported actions.
+# In browser mode, set DRAMACLAW_CANVAS_PATCH_PUSH=1 for live sync across windows.
+# Explicitly disabling patch push conflicts with the server executor.
 
 [mcp_servers.dramaclaw_workflows]
 command = "/path/to/dramaclaw-ce/.venv/bin/python"

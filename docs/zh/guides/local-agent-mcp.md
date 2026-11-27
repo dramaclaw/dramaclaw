@@ -184,7 +184,9 @@ Agent 应改正该命令后重试一次，不要原样重发。对同一对节�
 
 ### 服务端执行器
 
-在 API 服务端同时设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server` 和 `DRAMACLAW_CANVAS_PATCH_PUSH=1` 即可启用，默认执行器为 `browser`。服务端处理结构修改、上下文读取，以及下列受支持的节点动作和工作流，无需浏览器打开画布。确认规则与浏览器相同，付费生成仍需用户确认；费用归发起运行的用户，每次媒体提交计费一次。
+在 API 服务端只需设置 `DRAMACLAW_AGENT_CANVAS_EXECUTOR=server` 即可启用服务端执行器和画布推送。默认的 `browser` 执行器可用 `DRAMACLAW_CANVAS_PATCH_PUSH=1` 开启多窗口实时同步，显式关闭推送与 `server` 冲突。
+
+服务端处理结构修改、上下文读取，以及下列受支持的节点动作和工作流，无需浏览器打开画布。确认规则与浏览器相同，付费生成仍需用户确认；费用归发起运行的用户，每次媒体提交计费一次。
 
 在 API 服务端将 `DRAMACLAW_PUBLIC_ORIGIN` 设为浏览器访问应用时使用的源，例如 `https://app.example.com`。外部 MCP 画布工具会在结果中返回可打开的 `canvas_url`。该变量未设置或留空时，使用 `SUPERTALE_OPENFILM_STUDIO_PUBLIC_ORIGIN`。没有可用的源时，结果省略链接。API 会忽略无效值，并在启动时记录包含变量名和无效原因的警告。
 
